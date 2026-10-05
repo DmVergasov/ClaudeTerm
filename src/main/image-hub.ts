@@ -78,7 +78,8 @@ export class ImageHub {
       card = { id, tabId, path, name: basename(path), relPath: relPathOf(f.cwd, path), source, caption, touchedAt, version: 1, updated: false, deleted: false }
     }
     f.cards.unshift(card)
-    f.unseen.add(id)
+    // a known file reported again by another source (e.g. the folder watcher after show_image) is not news
+    if (idx < 0 || contentChanged) f.unseen.add(id)
     const max = Math.max(1, this.o.maxItems())
     while (f.cards.length > max) {
       const dropped = f.cards.pop()

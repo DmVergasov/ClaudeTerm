@@ -91,6 +91,17 @@ describe('ImageHub', () => {
     expect(onChange).toHaveBeenCalledTimes(1)
   })
 
+  it('a seen image reported again without a content change is not unseen again', () => {
+    const { h } = hub()
+    h.addTab('t1', 'D:\\p')
+    h.add('t1', 'D:\\p\\a.png', 'shown', null)
+    h.markSeen('t1')
+    h.add('t1', 'D:\\p\\a.png', 'created', null) // the folder watcher reports the same file a moment later
+    expect(h.unseenCount('t1')).toBe(0)
+    h.add('t1', 'D:\\p\\a.png', 'created', null, undefined, true) // the file was rewritten
+    expect(h.unseenCount('t1')).toBe(1)
+  })
+
   it('the same path in two tabs gives two independent cards', () => {
     const { h } = hub()
     h.addTab('t1', 'D:\\same')
