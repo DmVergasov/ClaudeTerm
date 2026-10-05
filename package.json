@@ -3,8 +3,17 @@
   "productName": "ClaudeTerm",
   "version": "0.1.0",
   "private": true,
-  "description": "Terminal for Claude Code with an image panel",
-  "author": "ClaudeTerm",
+  "description": "A Windows terminal built for Claude Code: tabs, a conversation image panel, a live status bar and session restore",
+  "license": "MIT",
+  "author": "Dmitry Vergasov",
+  "homepage": "https://github.com/DmVergasov/ClaudeTerm#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DmVergasov/ClaudeTerm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DmVergasov/ClaudeTerm/issues"
+  },
   "main": "out/main/index.js",
   "scripts": {
     "build:resources": "node scripts/build-resources.mjs",
@@ -13,7 +22,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test",
-    "dist": "npm run build && electron-builder --win nsis"
+    "dist": "npm run build && electron-builder --win nsis",
+    "screenshots": "npm run build && playwright test -c playwright.screenshots.config.ts"
   },
   "dependencies": {
     "chokidar": "^4.0.3",
