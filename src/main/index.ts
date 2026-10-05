@@ -1,10 +1,12 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, ipcMain, Menu, nativeImage, shell } from 'electron'
+import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, statSync, watch } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo } from '../shared/ipc'
 import type { OpenTabRequest, ProfileDef, Settings, TabInfo } from '../shared/types'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
+import { Attention } from './attention'
 import { writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
@@ -21,6 +23,7 @@ import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { loadSettingsSafe } from './settings'
 import { SessionStore } from './session-store'
+import { wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { TabManager } from './tab-manager'
 import { readAgentMeta } from './transcript-agent-info'
@@ -131,6 +134,21 @@ function bootstrap(): void {
     }
   })
 
+  const playSound = (sound: string): void => {
+    if (sound === 'system' || !existsSync(sound)) {
+      shell.beep()
+      return
+    }
+    const p = wavPlayer(sound, process.env)
+    try {
+      spawn(p.file, p.args, { env: p.env, windowsHide: true, stdio: 'ignore' })
+        .on('error', (e) => log.warn(`cannot play ${sound}: ${e.message}`))
+        .unref()
+    } catch (e) {
+      log.warn(`cannot play ${sound}: ${(e as Error).message}`)
+    }
+  }
+
   const stopTabStatus = (tabId: string): void => {
     const timer = statusTimers.get(tabId)
     if (timer) clearTimeout(timer)
@@ -218,6 +236,7 @@ function bootstrap(): void {
     onTabClosed: (tabId) => {
       stopTabImages(tabId)
       stopTabStatus(tabId)
+      attention.removeTab(tabId)
     },
     spawn: spawnPty,
     pipeName,
@@ -246,6 +265,15 @@ function bootstrap(): void {
     }
   })
   const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
+
+  const attention = new Attention({
+    windowFocused: () => Boolean(win && !win.isDestroyed() && win.isFocused()),
+    activeTabId: () => tabs.activeTabId(),
+    settings: () => settings.attention,
+    flash: () => { if (win && !win.isDestroyed()) win.flashFrame(true) },
+    play: playSound,
+    markTab: (tabId) => send(IPC.evAttention, tabId)
+  })
 
   const openTab = (req: OpenTabRequest, activate = true): TabInfo | null => {
     try {
@@ -348,6 +376,12 @@ function bootstrap(): void {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       log.info(`session end tab=${msg.tabId} id=${msg.sessionId}`)
       statusHub.sessionEnd(msg.tabId, msg.sessionId)
+      return { ok: true }
+    },
+    attention: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      const signalled = attention.notify(msg.tabId)
+      log.info(`attention ${msg.reason} tab=${msg.tabId}${signalled ? '' : ' (seen)'}`)
       return { ok: true }
     }
   })

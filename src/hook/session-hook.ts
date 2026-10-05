@@ -1,5 +1,5 @@
 import { userInfo } from 'node:os'
-import { defaultPipeName, isUuid, type PipeMessage, type PipeResponse } from '../shared/protocol'
+import { type AttentionReason, defaultPipeName, isUuid, type PipeMessage, type PipeResponse } from '../shared/protocol'
 import { statusFromStatusLine } from './status-line'
 
 export type Sender = (pipeName: string, msg: PipeMessage) => Promise<PipeResponse>
@@ -43,6 +43,10 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
     }
   }
   if (event === 'SessionEnd') return { v: 1, type: 'session_end', tabId, sessionId }
+  const attention = (reason: AttentionReason): PipeMessage => ({ v: 1, type: 'attention', tabId, sessionId, reason })
+  if (event === 'PermissionRequest') return attention('permission')
+  if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') return attention('question')
+  if (event === 'Stop') return attention('done')
   return null
 }
 

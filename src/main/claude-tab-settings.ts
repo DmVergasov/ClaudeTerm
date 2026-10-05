@@ -15,13 +15,24 @@ export function hookCommandString(cmdPath: string): string {
 
 export function claudeTabSettingsJson(cmdPath: string): string {
   const command = hookCommandString(cmdPath)
-  const hook = [{ hooks: [{ type: 'command', command, timeout: 10 }] }]
+  const run = { type: 'command', command, timeout: 10 }
+  const hook = [{ hooks: [run] }]
   return JSON.stringify(
     {
       // refreshInterval: Claude Code re-runs statusLine only on new messages, /compact and mode changes,
       // so /effort and /model alone would not show up without it
       statusLine: { type: 'command', command: `${command} status`, refreshInterval: 5 },
-      hooks: { SessionStart: hook, SubagentStart: hook, SubagentStop: hook, SessionEnd: hook }
+      hooks: {
+        SessionStart: hook,
+        SubagentStart: hook,
+        SubagentStop: hook,
+        SessionEnd: hook,
+        // the moments Claude waits for the user. PermissionRequest fires as the dialog opens, while
+        // Notification(permission_prompt) only comes after ~6 s without an answer
+        PermissionRequest: hook,
+        PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [run] }],
+        Stop: hook
+      }
     },
     null,
     2

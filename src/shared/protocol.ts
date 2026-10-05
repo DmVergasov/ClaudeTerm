@@ -6,6 +6,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const MAX_CAPTION = 500
 const AGENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 const MAX_LABEL = 100
+const ATTENTION_REASONS: readonly string[] = ['permission', 'question', 'done'] satisfies AttentionReason[]
 
 export interface ShowImageMessage {
   v: 1
@@ -48,7 +49,18 @@ export interface SessionEndMessage {
   sessionId: string
 }
 
-export type PipeMessage = ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage
+export type AttentionReason = 'permission' | 'question' | 'done'
+
+/** Claude is waiting for the user: a permission prompt, an AskUserQuestion, or the end of a turn. */
+export interface AttentionMessage {
+  v: 1
+  type: 'attention'
+  tabId: string
+  sessionId: string
+  reason: AttentionReason
+}
+
+export type PipeMessage = ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
 export type PipeResponse = { ok: true } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
@@ -117,11 +129,15 @@ export function parsePipeMessage(line: string): ParseResult {
     }
   }
 
-  if (m.type === 'status' || m.type === 'subagent' || m.type === 'session_end') {
+  if (m.type === 'status' || m.type === 'subagent' || m.type === 'session_end' || m.type === 'attention') {
     if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
     if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
     const ids = { tabId: m.tabId, sessionId: m.sessionId }
     if (m.type === 'session_end') return { ok: true, message: { v: 1, type: 'session_end', ...ids } }
+    if (m.type === 'attention') {
+      if (typeof m.reason !== 'string' || !ATTENTION_REASONS.includes(m.reason)) return { ok: false, error: 'reason must be "permission", "question" or "done"' }
+      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason } }
+    }
     if (m.type === 'subagent') {
       if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }
       if (typeof m.agentId !== 'string' || !AGENT_ID_RE.test(m.agentId)) return { ok: false, error: 'agentId must match [A-Za-z0-9_-]{1,64}' }

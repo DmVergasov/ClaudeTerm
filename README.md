@@ -57,6 +57,10 @@ Under every Claude tab: the current model and reasoning effort, how full the con
 
 The 5-hour limit is shown for Claude Pro and Max subscriptions, where Claude Code reports it.
 
+### 🔔 Know when Claude is waiting for you
+
+When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the Windows default sound, flashes its taskbar button and marks the tab. Nothing happens while that tab is in front of you. The sound can be turned off or replaced with your own `.wav` in the settings.
+
 ### 🗂️ A real terminal, with tabs
 
 - **Shell profiles detected automatically** — PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and every WSL distribution, plus your own profiles.
@@ -129,7 +133,11 @@ Settings live in `%APPDATA%\ClaudeTerm\settings.json` — press `Ctrl+,` to open
     "ignore": [".git", "node_modules", "Intermediate", "DerivedDataCache", "Binaries", ".vs", ".idea"],
     "maxDepth": 8
   },
-  "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 }
+  "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 },
+  "attention": {                   // when Claude waits for you in a tab you are not looking at
+    "sound": "system",             // "system", "none", or the full path to a .wav file
+    "flash": true                  // flash the taskbar button
+  }
 }
 ```
 
@@ -137,7 +145,7 @@ Logs are in `%APPDATA%\ClaudeTerm\logs`.
 
 ### Good to know
 
-- Claude tabs start `claude` with `--settings` pointing at a file ClaudeTerm generates. It adds a `SessionStart`, `SubagentStart`, `SubagentStop` and `SessionEnd` hook and a `statusLine` command — that is how session restore, the image panel and the status bar know what is going on. Inside ClaudeTerm's Claude tabs this replaces a custom `statusLine` from your own Claude Code settings, and Claude Code hides its footer key hints.
+- Claude tabs start `claude` with `--settings` pointing at a file ClaudeTerm generates. It adds `SessionStart`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `PermissionRequest`, `PreToolUse` (only for `AskUserQuestion`) and `Stop` hooks and a `statusLine` command — that is how session restore, the image panel, the status bar and the waiting signal know what is going on. These hooks never print anything, so they don't change what Claude does. Inside ClaudeTerm's Claude tabs this replaces a custom `statusLine` from your own Claude Code settings, and Claude Code hides its footer key hints.
 - `claude` started by hand in a regular shell tab gets `show_image`, but not session restore, the transcript images or the status bar.
 
 ## How it works

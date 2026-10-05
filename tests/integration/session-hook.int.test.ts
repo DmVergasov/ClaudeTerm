@@ -58,7 +58,7 @@ async function listen(): Promise<{ pipe: string; got: PipeMessage[] }> {
     got.push(m)
     return { ok: true }
   }
-  server = await startPipeServer(pipe, { showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take })
+  server = await startPipeServer(pipe, { showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take, attention: take })
   return { pipe, got }
 }
 
@@ -127,6 +127,21 @@ describe('session hook end to end', () => {
     const r = await run('cmd.exe', ['/d', '/c', cmdPath], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, SUBAGENT_INPUT)
     expect(r).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([{ v: 1, type: 'subagent', tabId: TAB, sessionId: SID, event: 'start', agentId: AGENT, agentType: 'Explore' }])
+  })
+
+  it('Stop and AskUserQuestion via the generated .cmd forward attention and print nothing', async () => {
+    const { pipe, got } = await listen()
+    const { cmdPath } = writeClaudeTabFiles(join(work, 'data-attention'), process.execPath, bundle)
+    const env = { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
+    const ask = JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [] } })
+    const stop = JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false })
+    // anything on stdout would be read by Claude Code as a hook decision
+    expect(await run('cmd.exe', ['/d', '/c', cmdPath], env, ask)).toEqual({ code: 0, stdout: '' })
+    expect(await run('cmd.exe', ['/d', '/c', cmdPath], env, stop)).toEqual({ code: 0, stdout: '' })
+    expect(got).toEqual([
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question' },
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done' }
+    ])
   })
 
   it('exits 0 silently when ClaudeTerm is not running', async () => {

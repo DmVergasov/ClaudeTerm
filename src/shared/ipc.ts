@@ -34,7 +34,8 @@ export const IPC = {
   evToast: 'ev:toast',
   evSettings: 'ev:settings',
   evRestore: 'ev:restore',
-  evStatus: 'ev:status'
+  evStatus: 'ev:status',
+  evAttention: 'ev:attention'
 } as const
 
 export interface AppInfo {
@@ -107,4 +108,6 @@ export interface CtApi {
   onSettings(cb: (settings: Settings) => void): Unsubscribe
   onRestore(cb: (info: RestoreInfo | null) => void): Unsubscribe
   onStatus(cb: (update: StatusUpdate) => void): Unsubscribe
+  /** Claude in a background tab is waiting for the user */
+  onAttention(cb: (tabId: string) => void): Unsubscribe
 }

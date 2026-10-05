@@ -33,12 +33,21 @@ describe('hook files', () => {
     expect(hookCommandString('C:\\Users\\a&(b);#\\session-hook.cmd')).toBe('"C:/Users/a&(b);#/session-hook.cmd"')
   })
 
-  it('claudeTabSettingsJson declares the statusLine and the session/subagent hooks', () => {
+  it('claudeTabSettingsJson declares the statusLine, the session/subagent hooks and the attention hooks', () => {
     const command = '"C:/Users/me/AppData/Roaming/ClaudeTerm/session-hook.cmd"'
-    const hook = [{ hooks: [{ type: 'command', command, timeout: 10 }] }]
+    const run = { type: 'command', command, timeout: 10 }
+    const hook = [{ hooks: [run] }]
     expect(JSON.parse(claudeTabSettingsJson('C:\\Users\\me\\AppData\\Roaming\\ClaudeTerm\\session-hook.cmd'))).toEqual({
       statusLine: { type: 'command', command: `${command} status`, refreshInterval: 5 },
-      hooks: { SessionStart: hook, SubagentStart: hook, SubagentStop: hook, SessionEnd: hook }
+      hooks: {
+        SessionStart: hook,
+        SubagentStart: hook,
+        SubagentStop: hook,
+        SessionEnd: hook,
+        PermissionRequest: hook,
+        PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [run] }],
+        Stop: hook
+      }
     })
   })
 

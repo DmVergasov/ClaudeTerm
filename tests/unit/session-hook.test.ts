@@ -50,6 +50,24 @@ describe('runSessionHook: other hook events', () => {
     expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'session_end', tabId: TAB, sessionId: SID })
   })
 
+  it('maps a permission prompt, AskUserQuestion and Stop to attention messages', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'mkdir x' } }), ENV, send)
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: {} }), ENV, send)
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)
+    const attention = (reason: string) => ({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason })
+    expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', attention('permission'))
+    expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', attention('question'))
+    expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', attention('done'))
+  })
+
+  it('ignores notifications and other tools', async () => {
+    const send = vi.fn()
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Notification', notification_type: 'permission_prompt' }), ENV, send)).toBe(false)
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'Bash' }), ENV, send)).toBe(false)
+    expect(send).not.toHaveBeenCalled()
+  })
+
   it('ignores other events and subagent events without agent_id', async () => {
     const send = vi.fn()
     expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse' }), ENV, send)).toBe(false)

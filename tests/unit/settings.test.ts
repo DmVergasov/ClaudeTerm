@@ -35,6 +35,20 @@ describe('parseSettings', () => {
     expect(all).toContain('"imagePanel.autoOpen"')
   })
 
+  it('attention: system sound and flashing by default; "none" or an absolute .wav path are accepted', () => {
+    expect(DEFAULT_SETTINGS.attention).toEqual({ sound: 'system', flash: true })
+    expect(parseSettings(JSON.stringify({ attention: { sound: 'none', flash: false } })).settings.attention).toEqual({ sound: 'none', flash: false })
+    expect(parseSettings(JSON.stringify({ attention: { sound: 'D:\\sounds\\Ding.WAV' } })).settings.attention).toEqual({ sound: 'D:\\sounds\\Ding.WAV', flash: true })
+  })
+
+  it('attention: rejects other sounds and names the key', () => {
+    for (const sound of ['ding.wav', 'D:\\sounds\\ding.mp3', 'loud', true]) {
+      const r = parseSettings(JSON.stringify({ attention: { sound } }))
+      expect(r.settings.attention.sound).toBe('system')
+      expect(r.errors.join('\n')).toContain('"attention.sound"')
+    }
+  })
+
   it('normalizes profiles without args', () => {
     const r = parseSettings(JSON.stringify({ profiles: [{ name: 'My Bash', command: 'C:\\x\\bash.exe' }] }))
     expect(r.settings.profiles).toEqual([{ name: 'My Bash', command: 'C:\\x\\bash.exe', args: [] }])

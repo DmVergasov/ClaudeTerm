@@ -118,4 +118,16 @@ describe('status, subagent and session_end messages', () => {
     expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'session_end' }))).toEqual({ ok: true, message: { ...ids, type: 'session_end' } })
     expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'session_end', sessionId: 'x' })).ok).toBe(false)
   })
+
+  it('accepts attention with a known reason', () => {
+    for (const reason of ['permission', 'question', 'done']) {
+      expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'attention', reason }))).toEqual({ ok: true, message: { ...ids, type: 'attention', reason } })
+    }
+  })
+
+  it('rejects attention with an unknown reason or bad ids', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'attention', reason: 'idle' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'attention' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'attention', reason: 'done', tabId: 'x' })).ok).toBe(false)
+  })
 })

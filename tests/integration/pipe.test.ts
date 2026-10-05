@@ -13,7 +13,8 @@ const okHandlers: PipeHandlers = {
   session: () => ({ ok: true }),
   status: () => ({ ok: true }),
   subagent: () => ({ ok: true }),
-  sessionEnd: () => ({ ok: true })
+  sessionEnd: () => ({ ok: true }),
+  attention: () => ({ ok: true })
 }
 
 let server: PipeServerHandle | null = null

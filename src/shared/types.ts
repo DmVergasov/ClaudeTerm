@@ -64,6 +64,8 @@ export interface Settings {
   scrollback: number
   imageWatch: { enabled: boolean; extensions: string[]; ignore: string[]; maxDepth: number }
   imagePanel: { autoOpen: boolean; width: number; maxItems: number }
+  /** sound: 'system', 'none' or an absolute path to a .wav file */
+  attention: { sound: string; flash: boolean }
 }
 
 export interface MainStatus {

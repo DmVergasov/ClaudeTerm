@@ -263,6 +263,12 @@ async function boot(): Promise<void> {
     statusUpdates.set(u.tabId, u)
     if (u.tabId === activeId) statusBar.render(u)
   })
+  ct.onAttention((tabId) => {
+    const t = tabs.get(tabId)
+    if (!t || tabId === activeId) return
+    t.bell = true
+    renderTabs()
+  })
   imagePanel = new ImagePanel(
     document.getElementById('image-panel')!,
     {
