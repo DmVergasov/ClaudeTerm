@@ -23,7 +23,7 @@ import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { loadSettingsSafe } from './settings'
 import { SessionStore } from './session-store'
-import { wavPlayer } from './sound'
+import { createSoundPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { TabManager } from './tab-manager'
 import { readAgentMeta } from './transcript-agent-info'
@@ -134,20 +134,12 @@ function bootstrap(): void {
     }
   })
 
-  const playSound = (sound: string): void => {
-    if (sound === 'system' || !existsSync(sound)) {
-      shell.beep()
-      return
-    }
-    const p = wavPlayer(sound, process.env)
-    try {
-      spawn(p.file, p.args, { env: p.env, windowsHide: true, stdio: 'ignore' })
-        .on('error', (e) => log.warn(`cannot play ${sound}: ${e.message}`))
-        .unref()
-    } catch (e) {
-      log.warn(`cannot play ${sound}: ${(e as Error).message}`)
-    }
-  }
+  const playSound = createSoundPlayer({
+    env: process.env,
+    beep: () => shell.beep(),
+    spawn: (p) => spawn(p.file, p.args, { env: p.env, windowsHide: true, stdio: 'ignore' }),
+    warn: toast
+  })
 
   const stopTabStatus = (tabId: string): void => {
     const timer = statusTimers.get(tabId)
