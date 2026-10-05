@@ -23,15 +23,15 @@ describe('TranscriptParser', () => {
 
   it('image pasted by the user → kind pasted', () => {
     const out = new TranscriptParser({ subagent: false }).parseLine(pastedLine())
-    expect(out).toEqual([{ kind: 'pasted', filePath: null, data: PNG_B64, mediaType: 'image/png', caption: 'вставлено вами', timestamp: Date.parse('2026-10-05T10:00:02.000Z') }])
+    expect(out).toEqual([{ kind: 'pasted', filePath: null, data: PNG_B64, mediaType: 'image/png', caption: 'pasted by you', timestamp: Date.parse('2026-10-05T10:00:02.000Z') }])
   })
 
   it('subagent transcripts get a prefix', () => {
     const p = new TranscriptParser({ subagent: true })
     p.parseLine(toolUseLine('toolu_r1', 'Read', { file_path: SHOT }))
     p.parseLine(toolUseLine('toolu_s1', 'mcp__claude-in-chrome__computer', { action: 'screenshot' }))
-    expect(p.parseLine(toolResultLine('toolu_r1'))[0].caption).toBe('субагент · Read')
-    expect(p.parseLine(toolResultLine('toolu_s1'))[0].caption).toBe('субагент · claude-in-chrome · computer (screenshot)')
+    expect(p.parseLine(toolResultLine('toolu_r1'))[0].caption).toBe('subagent · Read')
+    expect(p.parseLine(toolResultLine('toolu_s1'))[0].caption).toBe('subagent · claude-in-chrome · computer (screenshot)')
   })
 
   it('tool_result without a known tool_use → kind tool without caption', () => {

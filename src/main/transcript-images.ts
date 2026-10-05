@@ -83,14 +83,14 @@ export class TranscriptParser {
   private describe(toolUseId: string | null, data: string, mediaType: string, timestamp: number | null): ExtractedImage {
     const sub = this.opts.subagent
     if (toolUseId === null) {
-      return { kind: 'pasted', filePath: null, data, mediaType, caption: sub ? 'субагент · входная картинка' : 'вставлено вами', timestamp }
+      return { kind: 'pasted', filePath: null, data, mediaType, caption: sub ? 'subagent · input image' : 'pasted by you', timestamp }
     }
     const tool = this.tools.get(toolUseId)
     if (tool?.name === 'Read' && typeof tool.input.file_path === 'string') {
-      return { kind: 'read', filePath: tool.input.file_path, data, mediaType, caption: sub ? 'субагент · Read' : null, timestamp }
+      return { kind: 'read', filePath: tool.input.file_path, data, mediaType, caption: sub ? 'subagent · Read' : null, timestamp }
     }
     const label = tool ? toolLabel(tool.name, tool.input) : null
-    const caption = label ? (sub ? `субагент · ${label}` : label) : sub ? 'субагент' : null
+    const caption = label ? (sub ? `subagent · ${label}` : label) : sub ? 'subagent' : null
     return { kind: 'tool', filePath: null, data, mediaType, caption, timestamp }
   }
 }

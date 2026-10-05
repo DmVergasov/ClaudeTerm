@@ -15,9 +15,9 @@ describe('statusSegments', () => {
     const agents = [agent({ type: 'code-reviewer', description: 'Review font fix' })]
     expect(statusSegments({ tabId: 't', main, agents }, 3 * 60_000 + 5_000)).toEqual([
       { key: 'model', text: 'Opus 5.5 · xhigh', title: 'claude-opus-5-5', level: 'normal' },
-      { key: 'context', text: 'ctx 41% · 82k/200k', title: '82 314 из 200 000 токенов', level: 'normal' },
-      { key: 'limit', text: '5h 24%', title: 'сброс в 21:40', level: 'normal' },
-      { key: 'agents', text: '⚙ 1: opus·high', title: 'code-reviewer · opus·high · 3 мин · «Review font fix»', level: 'normal' }
+      { key: 'context', text: 'ctx 41% · 82k/200k', title: '82,314 of 200,000 tokens', level: 'normal' },
+      { key: 'limit', text: '5h 24%', title: 'resets at 21:40', level: 'normal' },
+      { key: 'agents', text: '⚙ 1: opus·high', title: 'code-reviewer · opus·high · 3 min · "Review font fix"', level: 'normal' }
     ])
   })
 
@@ -47,7 +47,7 @@ describe('statusSegments', () => {
   })
 
   it('agent tooltip: under a minute, no description', () => {
-    expect(statusSegments({ tabId: 't', main, agents: [agent({ startedAt: 1000 })] }, 30_000).at(-1)?.title).toBe('Explore · opus·high · <1 мин')
+    expect(statusSegments({ tabId: 't', main, agents: [agent({ startedAt: 1000 })] }, 30_000).at(-1)?.title).toBe('Explore · opus·high · <1 min')
   })
 })
 

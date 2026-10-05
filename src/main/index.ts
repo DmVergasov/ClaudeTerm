@@ -167,7 +167,7 @@ function bootstrap(): void {
           void s[which]?.close()
           s[which] = null
         }
-        images.setNotice(tabId, `Авто-слежение остановлено: ${err.message}`)
+        images.setNotice(tabId, `Stopped watching for new images: ${err.message}`)
       }
     })
     return handle
@@ -179,7 +179,7 @@ function bootstrap(): void {
     sources.set(tab.id, s)
     if (tab.kind !== 'claude' || !settings.imageWatch.enabled) return
     if (shouldWatchDir(tab.cwd, homedir())) s.cwdWatcher = watchDir(tab.id, tab.cwd, 'cwdWatcher')
-    else images.setNotice(tab.id, 'Авто-слежение выключено для этой папки')
+    else images.setNotice(tab.id, 'Not watching this folder for new images')
   }
 
   const stopTabImages = (tabId: string): void => {

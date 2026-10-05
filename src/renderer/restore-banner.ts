@@ -1,16 +1,12 @@
 import type { RestoreInfo } from '../shared/ipc'
 
 export function plural(n: number): string {
-  const m10 = n % 10
-  const m100 = n % 100
-  if (m10 === 1 && m100 !== 11) return 'вкладка'
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'вкладки'
-  return 'вкладок'
+  return n === 1 ? 'tab' : 'tabs'
 }
 
 export function formatTime(iso: string): string {
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 export class RestoreBanner {
@@ -25,15 +21,15 @@ export class RestoreBanner {
       return
     }
     const text = document.createElement('span')
-    text.textContent = `Предыдущая сессия: ${info.tabs} ${plural(info.tabs)} (${info.claudeTabs} Claude) · ${formatTime(info.savedAt)}`
+    text.textContent = `Previous session: ${info.tabs} ${plural(info.tabs)} (${info.claudeTabs} Claude) · ${formatTime(info.savedAt)}`
     const go = document.createElement('button')
     go.className = 'banner-restore'
-    go.textContent = 'Продолжить'
+    go.textContent = 'Restore'
     go.addEventListener('click', () => this.onRestore())
     const close = document.createElement('button')
     close.className = 'banner-close'
     close.textContent = '×'
-    close.title = 'Скрыть'
+    close.title = 'Hide'
     close.addEventListener('click', () => {
       this.dismissed = true
       this.update(null)

@@ -51,22 +51,22 @@ export class Updater {
   async check(manual: boolean): Promise<void> {
     const b = this.d.backend
     if (!b) {
-      if (manual) this.d.notify('Обновления работают только в установленной версии')
+      if (manual) this.d.notify('Updates only work in the installed app')
       return
     }
     if (this.state.status === 'ready') {
-      if (manual) this.d.notify(`ClaudeTerm ${this.state.version} уже загружена — нажмите «Перезапустить»`)
+      if (manual) this.d.notify(`ClaudeTerm ${this.state.version} is downloaded — click Restart to install it`)
       return
     }
     if (this.checking) return
     this.checking = true
     try {
       const version = await b.check()
-      if (manual) this.d.notify(version ? `Загружается ClaudeTerm ${version}…` : `Установлена последняя версия (${this.d.currentVersion})`)
+      if (manual) this.d.notify(version ? `Downloading ClaudeTerm ${version}…` : `You have the latest version (${this.d.currentVersion})`)
       else if (version) this.d.log(`update ${version} found, downloading`)
     } catch (e) {
       const m = (e as Error).message
-      if (manual) this.d.notify(`Не удалось проверить обновления: ${m}`)
+      if (manual) this.d.notify(`Couldn't check for updates: ${m}`)
       else this.d.log(`update check failed: ${m}`)
     } finally {
       this.checking = false

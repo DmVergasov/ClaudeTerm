@@ -12,18 +12,18 @@ Users of 0.1.0–0.1.2 have no updater; they install 0.1.3 by hand once.
 
 1. ClaudeTerm checks for a new version in the background, 15 s after start and then every 4 hours. Nothing is shown while checking or downloading.
 2. When a new version has been downloaded, a banner appears under the tab bar:
-   `Доступна новая версия ClaudeTerm 0.1.4.  [Перезапустить]  ×`
-3. **Перезапустить**: ClaudeTerm saves the session, closes, the installer runs silently, and the new version starts and **reopens the same tabs on its own**: each Claude tab resumes its conversation (`claude --resume`), exactly like the existing session restore, but without the restore banner click.
+   `ClaudeTerm 0.1.4 is ready to install.  [Restart]  ×`
+3. **Restart**: ClaudeTerm saves the session, closes, the installer runs silently, and the new version starts and **reopens the same tabs on its own**: each Claude tab resumes its conversation (`claude --resume`), exactly like the existing session restore, but without the restore banner click.
 4. **×** hides the banner. The update is then installed silently the next time the user quits ClaudeTerm; the next start is the new version and offers the usual restore banner.
-5. The new-tab menu (▾) ends with a line `ClaudeTerm 0.1.3 — проверить обновления`. A manual check reports its result in a toast:
-   - `Установлена последняя версия (0.1.3)`
-   - `Загружается ClaudeTerm 0.1.4…` (the banner follows when it is ready)
-   - `Не удалось проверить обновления: <reason>`
-   - in a build that cannot update (dev, test, portable): `Обновления работают только в установленной версии`
+5. The new-tab menu (▾) ends with a line `ClaudeTerm 0.1.3 — check for updates`. A manual check reports its result in a toast:
+   - `You have the latest version (0.1.3)`
+   - `Downloading ClaudeTerm 0.1.4…` (the banner follows when it is ready)
+   - `Couldn't check for updates: <reason>`
+   - in a build that cannot update (dev, test, portable): `Updates only work in the installed app`
 6. Background check errors (offline, GitHub rate limit) are only logged, never shown.
 7. Setting `"autoUpdate": false` in settings.json turns background checks off (the manual check still works). Hot-reloaded like other settings.
 
-UI strings are Russian, like the rest of the current UI.
+UI strings are English, like the rest of the UI (the whole UI moved from Russian to English in the same release, at the user's request).
 
 ## Components
 

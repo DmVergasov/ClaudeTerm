@@ -23,13 +23,13 @@ export function modelFamily(id: string): string {
   return /^claude-([a-z]+)-/.exec(id)?.[1] ?? id
 }
 
-const groupDigits = (n: number): string => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+const groupDigits = (n: number): string => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 const agentKind = (a: AgentStatus): string => (a.model === null ? '…' : a.effort ? `${modelFamily(a.model)}·${a.effort}` : modelFamily(a.model))
 
 function minutes(ms: number): string {
   const m = Math.floor(ms / 60_000)
-  return m < 1 ? '<1 мин' : `${m} мин`
+  return m < 1 ? '<1 min' : `${m} min`
 }
 
 function agentGroups(agents: AgentStatus[]): string {
@@ -42,7 +42,7 @@ function agentGroups(agents: AgentStatus[]): string {
 }
 
 const agentLine = (a: AgentStatus, now: number): string =>
-  [a.type, agentKind(a), minutes(now - a.startedAt), ...(a.description ? [`«${a.description}»`] : [])].join(' · ')
+  [a.type, agentKind(a), minutes(now - a.startedAt), ...(a.description ? [`"${a.description}"`] : [])].join(' · ')
 
 export function statusSegments(u: StatusUpdate, now: number): Segment[] {
   const main = u.main
@@ -55,14 +55,14 @@ export function statusSegments(u: StatusUpdate, now: number): Segment[] {
     segments.push({
       key: 'context',
       text: `ctx ${Math.round(c.usedPct)}% · ${formatTokens(c.usedTokens)}/${formatTokens(c.size)}`,
-      title: `${groupDigits(c.usedTokens)} из ${groupDigits(c.size)} токенов`,
+      title: `${groupDigits(c.usedTokens)} of ${groupDigits(c.size)} tokens`,
       level: levelFor(c.usedPct)
     })
   }
   if (main.fiveHour) {
     const f = main.fiveHour
     const reset = new Date(f.resetsAt * 1000)
-    segments.push({ key: 'limit', text: `5h ${Math.round(f.usedPct)}%`, title: `сброс в ${pad2(reset.getHours())}:${pad2(reset.getMinutes())}`, level: levelFor(f.usedPct) })
+    segments.push({ key: 'limit', text: `5h ${Math.round(f.usedPct)}%`, title: `resets at ${pad2(reset.getHours())}:${pad2(reset.getMinutes())}`, level: levelFor(f.usedPct) })
   }
   if (u.agents.length > 0) {
     segments.push({ key: 'agents', text: `⚙ ${u.agents.length}: ${agentGroups(u.agents)}`, title: u.agents.map((a) => agentLine(a, now)).join('\n'), level: 'normal' })

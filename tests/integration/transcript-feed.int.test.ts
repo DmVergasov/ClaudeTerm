@@ -126,7 +126,7 @@ describe('TranscriptFeed', () => {
     await feed.poll()
     expect(images).toHaveLength(2)
     expect(images[0].path).toBe(images[1].path)
-    expect(images[0]).toMatchObject({ source: 'pasted', caption: 'вставлено вами' })
+    expect(images[0]).toMatchObject({ source: 'pasted', caption: 'pasted by you' })
     expect(readdirSync(join(cacheRoot, SID))).toHaveLength(1)
   })
 
@@ -138,7 +138,7 @@ describe('TranscriptFeed', () => {
     writeFileSync(join(feed.subagentDir, 'agent-a1.meta.json'), '{}')
     feed.scanSubagents()
     await feed.poll()
-    expect(images.map((i) => i.caption)).toEqual(['субагент · claude-in-chrome · computer (screenshot)'])
+    expect(images.map((i) => i.caption)).toEqual(['subagent · claude-in-chrome · computer (screenshot)'])
   })
 
   it('reports model and effort of a subagent once per change, ignoring synthetic lines and the main transcript', async () => {

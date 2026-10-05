@@ -39,7 +39,7 @@ test('a claude tab shows model, context, the 5h limit and running subagents', as
   await expect(bar.locator('.status-context')).toHaveText('ctx 41% · 82k/200k')
   await expect(bar.locator('.status-limit')).toHaveText('5h 24%')
   await expect(bar.locator('.status-agents')).toHaveText('⚙ 1: opus·high', { timeout: 10_000 })
-  await expect(bar.locator('.status-agents')).toHaveAttribute('title', 'Explore · opus·high · <1 мин · «Find asar users»')
+  await expect(bar.locator('.status-agents')).toHaveAttribute('title', 'Explore · opus·high · <1 min · "Find asar users"')
 
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'stop', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
   await expect(bar.locator('.status-agents')).toHaveCount(0)

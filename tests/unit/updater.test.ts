@@ -66,7 +66,7 @@ describe('Updater', () => {
     await u.check(true)
     b.result = '0.1.4'
     await u.check(true)
-    expect(out).toEqual(['toast:Установлена последняя версия (0.1.3)', 'toast:Загружается ClaudeTerm 0.1.4…'])
+    expect(out).toEqual(['toast:You have the latest version (0.1.3)', 'toast:Downloading ClaudeTerm 0.1.4…'])
   })
 
   it('background errors are only logged; manual errors are shown', async () => {
@@ -74,7 +74,7 @@ describe('Updater', () => {
     b.fail = 'net::ERR_INTERNET_DISCONNECTED'
     await u.check(false)
     await u.check(true)
-    expect(out).toEqual(['log:update check failed: net::ERR_INTERNET_DISCONNECTED', 'toast:Не удалось проверить обновления: net::ERR_INTERNET_DISCONNECTED'])
+    expect(out).toEqual(['log:update check failed: net::ERR_INTERNET_DISCONNECTED', 'toast:Couldn\'t check for updates: net::ERR_INTERNET_DISCONNECTED'])
   })
 
   it('a check while another is running is ignored', async () => {
@@ -95,7 +95,7 @@ describe('Updater', () => {
     expect(u.current).toEqual({ status: 'ready', version: '0.1.4' })
     await u.check(true)
     expect(b.checks).toBe(0)
-    expect(out).toEqual(['toast:ClaudeTerm 0.1.4 уже загружена — нажмите «Перезапустить»'])
+    expect(out).toEqual(['toast:ClaudeTerm 0.1.4 is downloaded — click Restart to install it'])
   })
 
   it('install saves the session before quitting into the installer, and only when ready', () => {
@@ -120,7 +120,7 @@ describe('Updater', () => {
     await u.check(false)
     await u.check(true)
     expect(timers).toEqual([])
-    expect(out).toEqual(['toast:Обновления работают только в установленной версии'])
+    expect(out).toEqual(['toast:Updates only work in the installed app'])
   })
 
   it('stop cancels the schedule', () => {

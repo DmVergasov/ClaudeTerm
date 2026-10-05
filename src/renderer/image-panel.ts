@@ -10,7 +10,7 @@ export interface ImagePanelCallbacks {
   markSeen(tabId: string): void
 }
 
-const SOURCE_LABEL: Record<ImageSource, string> = { created: 'created', shown: 'show_image', read: 'read', tool: 'tool', pasted: 'вы' }
+const SOURCE_LABEL: Record<ImageSource, string> = { created: 'created', shown: 'show_image', read: 'read', tool: 'tool', pasted: 'you' }
 
 export class ImagePanel {
   private collapsed = true
@@ -113,13 +113,13 @@ export class ImagePanel {
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault()
       showMenu({ x: e.clientX, y: e.clientY }, [
-        { label: 'Открыть в просмотрщике', action: () => this.cb.action(card.id, 'open') },
-        { label: 'Показать в Explorer', action: () => this.cb.action(card.id, 'reveal') },
-        { label: 'Копировать изображение', action: () => this.cb.action(card.id, 'copy-image') },
-        { label: 'Копировать путь', action: () => this.cb.action(card.id, 'copy-path') },
-        { label: 'Вставить путь в терминал', action: () => this.cb.insertPath(card.path) },
+        { label: 'Open in viewer', action: () => this.cb.action(card.id, 'open') },
+        { label: 'Show in Explorer', action: () => this.cb.action(card.id, 'reveal') },
+        { label: 'Copy image', action: () => this.cb.action(card.id, 'copy-image') },
+        { label: 'Copy path', action: () => this.cb.action(card.id, 'copy-path') },
+        { label: 'Insert path into terminal', action: () => this.cb.insertPath(card.path) },
         { label: '', separator: true },
-        { label: 'Убрать из ленты', action: () => this.cb.action(card.id, 'remove') }
+        { label: 'Remove from panel', action: () => this.cb.action(card.id, 'remove') }
       ])
     })
     return el
