@@ -28,3 +28,46 @@ test('after restarting into an update the tabs come back without asking', async 
   expect(existsSync(join(dataDir, 'update-restart.json'))).toBe(false)
   await app.close()
 })
+
+const ready = (version: string) => ({ status: 'ready', version })
+
+test('a downloaded update shows a banner whose button asks to restart into it', async () => {
+  const { app, page } = await launchApp()
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeAllListeners('update:install')
+    ipcMain.on('update:install', () => { (globalThis as Record<string, unknown>).__installAsked = true })
+  })
+  await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].webContents.send('ev:update', s), ready('9.9.9'))
+  const banner = page.locator('#update-banner')
+  await expect(banner).toBeVisible()
+  await expect(banner).toContainText('Доступна новая версия ClaudeTerm 9.9.9.')
+  await banner.locator('.banner-restart').click()
+  await expect.poll(() => app.evaluate(() => (globalThis as Record<string, unknown>).__installAsked === true)).toBe(true)
+  await app.close()
+})
+
+test('a dismissed banner stays hidden for that version but returns for a newer one', async () => {
+  const { app, page } = await launchApp()
+  const push = (v: string) => app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].webContents.send('ev:update', s), ready(v))
+  await push('9.9.9')
+  const banner = page.locator('#update-banner')
+  await banner.locator('.banner-close').click()
+  await expect(banner).toBeHidden()
+  await push('9.9.9')
+  await page.waitForTimeout(200)
+  await expect(banner).toBeHidden()
+  await push('9.9.10')
+  await expect(banner).toContainText('9.9.10')
+  await app.close()
+})
+
+test('the menu shows the version, and a check in a build that cannot update says so', async () => {
+  const { app, page } = await launchApp()
+  const version = await app.evaluate(({ app: a }) => a.getVersion())
+  await page.locator('.tab-menu').click()
+  const item = page.locator('.menu-item', { hasText: `ClaudeTerm ${version} — проверить обновления` })
+  await expect(item).toBeVisible()
+  await item.click()
+  await expect(page.locator('.toast', { hasText: 'Обновления работают только в установленной версии' })).toBeVisible()
+  await app.close()
+})

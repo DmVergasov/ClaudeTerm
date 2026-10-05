@@ -8,6 +8,7 @@ import { SearchBar } from './search'
 import { showMenu, type MenuItem } from './menu'
 import { RestoreBanner } from './restore-banner'
 import { StatusBar } from './status-bar'
+import { UpdateBanner } from './update-banner'
 import { TabBar } from './tabbar'
 import { TerminalView } from './terminal-view'
 import { resolveTheme } from './themes'
@@ -39,6 +40,7 @@ let imagePanel: ImagePanel
 let lightbox: Lightbox
 const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
+let updateBanner: UpdateBanner
 const statusUpdates = new Map<string, StatusUpdate>()
 
 const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? folderName(t.info.cwd)
@@ -212,7 +214,9 @@ function newTabMenu(anchor: HTMLElement): void {
       ...names.map((name) => ({ label: name, action: () => void ct.openTab({ kind: 'shell', cwd: appInfo.homeDir, profile: name }) })),
       { label: '', separator: true },
       { label: 'Claude Code', action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? appInfo.homeDir }) },
-      ...(restoreInfo ? [{ label: `Продолжить предыдущие сессии (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : [])
+      ...(restoreInfo ? [{ label: `Продолжить предыдущие сессии (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
+      { label: '', separator: true },
+      { label: `ClaudeTerm ${appInfo.version} — проверить обновления`, action: () => ct.checkForUpdates() }
     ]
     const r = anchor.getBoundingClientRect()
     showMenu({ x: r.left, y: r.bottom }, items)
@@ -263,6 +267,9 @@ async function boot(): Promise<void> {
   document.addEventListener('drop', (e) => e.preventDefault())
   lightbox = new Lightbox(document.getElementById('lightbox')!)
   statusBar = new StatusBar(document.getElementById('statusbar')!)
+  updateBanner = new UpdateBanner(document.getElementById('update-banner')!, () => ct.installUpdate())
+  ct.onUpdate((s) => updateBanner.update(s))
+  void ct.getUpdateState().then((s) => updateBanner.update(s))
   ct.onStatus((u) => {
     statusUpdates.set(u.tabId, u)
     if (u.tabId === activeId) statusBar.render(u)
