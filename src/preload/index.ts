@@ -29,6 +29,9 @@ const api: CtApi = {
   imageAction: (cardId, action) => ipcRenderer.send(IPC.imagesAction, cardId, action),
   getRestoreInfo: () => ipcRenderer.invoke(IPC.restoreGet),
   runRestore: () => ipcRenderer.send(IPC.restoreRun),
+  checkForUpdates: () => ipcRenderer.send(IPC.updateCheck),
+  installUpdate: () => ipcRenderer.send(IPC.updateInstall),
+  getUpdateState: () => ipcRenderer.invoke(IPC.updateGet),
   openExternal: (url) => ipcRenderer.send(IPC.openExternal, url),
   pathForFile: (file) => webUtils.getPathForFile(file),
   onTabOpened: (cb) => on(IPC.evTabOpened, cb),
@@ -43,7 +46,8 @@ const api: CtApi = {
   onSettings: (cb) => on(IPC.evSettings, cb),
   onRestore: (cb) => on(IPC.evRestore, cb),
   onStatus: (cb) => on(IPC.evStatus, cb),
-  onAttention: (cb) => on(IPC.evAttention, cb)
+  onAttention: (cb) => on(IPC.evAttention, cb),
+  onUpdate: (cb) => on(IPC.evUpdate, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

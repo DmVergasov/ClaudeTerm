@@ -7,6 +7,7 @@ import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type Resto
 import type { OpenTabRequest, ProfileDef, Settings, TabInfo } from '../shared/types'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
+import { autoUpdater } from 'electron-updater'
 import { writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
@@ -27,6 +28,8 @@ import { createSoundPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { TabManager } from './tab-manager'
 import { readAgentMeta } from './transcript-agent-info'
+import { consumeUpdateMarker, writeUpdateMarker } from './update-marker'
+import { Updater, type UpdaterBackend } from './updater'
 import { cleanupImageCache, TranscriptFeed } from './transcript-feed'
 import { loadWindowState, trackWindowState } from './window-state'
 
@@ -90,6 +93,8 @@ function bootstrap(): void {
   const claudeFiles = writeClaudeTabFiles(dataDir, process.execPath, resourcePath('hook/session-hook.js'))
   const sessions = new SessionStore(dataDir, { onError: (m) => log.warn(m) })
   let previous = sessions.rotateOnStartup()
+  // the previous run restarted into an update: reopen its tabs without asking
+  const restoreAfterUpdate = consumeUpdateMarker(dataDir, Date.now())
   const restoreInfo = (): RestoreInfo | null =>
     previous ? { tabs: previous.tabs.length, claudeTabs: previous.tabs.filter((t) => t.kind === 'claude').length, savedAt: previous.savedAt } : null
 
@@ -337,6 +342,42 @@ function bootstrap(): void {
     focusWindow()
   })
 
+  const createUpdateBackend = (): UpdaterBackend => {
+    const testFeed = process.env.CLAUDETERM_UPDATE_URL
+    if (testFeed) autoUpdater.setFeedURL({ provider: 'generic', url: testFeed })
+    autoUpdater.autoDownload = true
+    // a test feed must never install over the real installation when the app quits
+    autoUpdater.autoInstallOnAppQuit = !testFeed
+    autoUpdater.logger = {
+      info: (m: unknown) => log.info(`updater: ${String(m)}`),
+      warn: (m: unknown) => log.warn(`updater: ${String(m)}`),
+      error: (m: unknown) => log.error(`updater: ${String(m)}`),
+      debug: () => {}
+    }
+    return {
+      check: async () => {
+        const r = await autoUpdater.checkForUpdates()
+        return r?.isUpdateAvailable ? r.updateInfo.version : null
+      },
+      onDownloaded: (cb) => { autoUpdater.on('update-downloaded', (info) => cb(info.version)) },
+      onError: (cb) => { autoUpdater.on('error', (e) => cb(e.message)) },
+      quitAndInstall: () => autoUpdater.quitAndInstall(true, true)
+    }
+  }
+  const updater = new Updater({
+    backend: app.isPackaged && !isTest ? createUpdateBackend() : null,
+    currentVersion: app.getVersion(),
+    enabled: () => settings.autoUpdate,
+    publish: (s) => send(IPC.evUpdate, s),
+    notify: (m) => { if (rendererReady) send(IPC.evToast, m) },
+    beforeInstall: () => {
+      sessions.flush()
+      if (!writeUpdateMarker(dataDir, Date.now())) log.warn('cannot write the update restart marker')
+    },
+    log: (m) => log.info(m)
+  })
+  updater.start()
+
   startPipeServer(pipeName, {
     showImage: async (msg) => {
       const check = await checkImageFile(msg.path, [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
@@ -385,11 +426,12 @@ function bootstrap(): void {
       .then((r) => log.info(`mcp registration: ${r}`))
   }
 
-  ipcMain.handle(IPC.appInfo, (): AppInfo => ({ windowsBuild: Number(release().split('.')[2]) || 0, test: isTest, homeDir: homedir() }))
+  ipcMain.handle(IPC.appInfo, (): AppInfo => ({ windowsBuild: Number(release().split('.')[2]) || 0, test: isTest, homeDir: homedir(), version: app.getVersion() }))
   ipcMain.on(IPC.rendererReady, () => {
     rendererReady = true
     for (const n of startupNotices.splice(0)) send(IPC.evToast, n)
     for (const cmd of pendingLaunches.splice(0)) openFromLaunch(cmd)
+    if (restoreAfterUpdate) runRestore()
   })
   ipcMain.on(IPC.bell, () => { if (win && !win.isFocused()) win.flashFrame(true) })
   ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => openTab(req))
@@ -445,6 +487,9 @@ function bootstrap(): void {
   })
   ipcMain.handle(IPC.restoreGet, () => restoreInfo())
   ipcMain.on(IPC.restoreRun, () => runRestore())
+  ipcMain.on(IPC.updateCheck, () => { void updater.check(true) })
+  ipcMain.on(IPC.updateInstall, () => updater.install())
+  ipcMain.handle(IPC.updateGet, () => updater.current)
   ipcMain.handle(IPC.profilesList, () => profiles.map((p) => p.name))
   ipcMain.handle(IPC.settingsGet, () => settings)
   ipcMain.on(IPC.settingsOpen, () => { void shell.openPath(settingsPath) })
@@ -506,6 +551,7 @@ function bootstrap(): void {
   let ptysExited = false
   app.on('before-quit', (e) => {
     if (ptysExited) return
+    updater.stop()
     sessions.flush()
     for (const id of [...sources.keys()]) stopTabImages(id)
     for (const t of imageTimers.values()) clearTimeout(t)

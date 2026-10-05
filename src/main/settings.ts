@@ -16,7 +16,8 @@ export const DEFAULT_SETTINGS: Settings = {
     maxDepth: 8
   },
   imagePanel: { autoOpen: true, width: 320, maxItems: 200 },
-  attention: { sound: 'system', flash: true }
+  attention: { sound: 'system', flash: true },
+  autoUpdate: true
 }
 
 export interface ParsedSettings {
@@ -94,7 +95,8 @@ export function parseSettings(text: string | null): ParsedSettings {
     attention: {
       sound: take('attention.sound', at.sound, isSound, d.attention.sound),
       flash: take('attention.flash', at.flash, isBool, d.attention.flash)
-    }
+    },
+    autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)
   }
   return { settings, errors }
 }

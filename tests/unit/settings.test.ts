@@ -49,6 +49,14 @@ describe('parseSettings', () => {
     }
   })
 
+  it('autoUpdate: on by default, false turns it off, other values fall back', () => {
+    expect(DEFAULT_SETTINGS.autoUpdate).toBe(true)
+    expect(parseSettings(JSON.stringify({ autoUpdate: false })).settings.autoUpdate).toBe(false)
+    const r = parseSettings(JSON.stringify({ autoUpdate: 'no' }))
+    expect(r.settings.autoUpdate).toBe(true)
+    expect(r.errors.join('\n')).toContain('"autoUpdate"')
+  })
+
   it('normalizes profiles without args', () => {
     const r = parseSettings(JSON.stringify({ profiles: [{ name: 'My Bash', command: 'C:\\x\\bash.exe' }] }))
     expect(r.settings.profiles).toEqual([{ name: 'My Bash', command: 'C:\\x\\bash.exe', args: [] }])

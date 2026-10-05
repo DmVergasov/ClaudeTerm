@@ -66,6 +66,8 @@ export interface Settings {
   imagePanel: { autoOpen: boolean; width: number; maxItems: number }
   /** sound: 'system', 'none' or an absolute path to a .wav file */
   attention: { sound: string; flash: boolean }
+  /** check GitHub for new versions in the background */
+  autoUpdate: boolean
 }
 
 export interface MainStatus {

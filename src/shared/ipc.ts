@@ -1,4 +1,4 @@
-import type { AgentStatus, ImageCard, MainStatus, OpenTabRequest, Settings, TabInfo } from './types'
+import type { AgentStatus, ImageCard, MainStatus, OpenTabRequest, Settings, TabInfo, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -22,6 +22,9 @@ export const IPC = {
   imagesAction: 'images:action',
   restoreGet: 'restore:get',
   restoreRun: 'restore:run',
+  updateCheck: 'update:check',
+  updateInstall: 'update:install',
+  updateGet: 'update:get',
   openExternal: 'shell:open-external',
   evTabOpened: 'ev:tab-opened',
   evTabUpdated: 'ev:tab-updated',
@@ -35,13 +38,15 @@ export const IPC = {
   evSettings: 'ev:settings',
   evRestore: 'ev:restore',
   evStatus: 'ev:status',
-  evAttention: 'ev:attention'
+  evAttention: 'ev:attention',
+  evUpdate: 'ev:update'
 } as const
 
 export interface AppInfo {
   windowsBuild: number
   test: boolean
   homeDir: string
+  version: string
 }
 
 export interface ClipboardContent {
@@ -94,6 +99,9 @@ export interface CtApi {
   imageAction(cardId: string, action: ImageAction): void
   getRestoreInfo(): Promise<RestoreInfo | null>
   runRestore(): void
+  checkForUpdates(): void
+  installUpdate(): void
+  getUpdateState(): Promise<UpdateState>
   openExternal(url: string): void
   pathForFile(file: File): string
   onTabOpened(cb: (tab: TabInfo) => void): Unsubscribe
@@ -110,4 +118,5 @@ export interface CtApi {
   onStatus(cb: (update: StatusUpdate) => void): Unsubscribe
   /** Claude in a background tab is waiting for the user */
   onAttention(cb: (tabId: string) => void): Unsubscribe
+  onUpdate(cb: (state: UpdateState) => void): Unsubscribe
 }
