@@ -492,6 +492,8 @@ function bootstrap(): void {
     backgroundColor: '#0C0C0C',
     autoHideMenuBar: true,
     title: 'ClaudeTerm',
+    // the installed app takes its icon from ClaudeTerm.exe; dev and test runs use electron.exe's own
+    ...(app.isPackaged ? {} : { icon: join(__dirname, '..', '..', 'build', 'icon.png') }),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   })
   if (state.maximized) win.maximize()
