@@ -38,7 +38,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+        # latest.yml is what installed copies read to find a new version (electron-updater); the blockmap
+        # lets them download only the changed parts
         run: >
-          gh release create "$GITHUB_REF_NAME" dist/ClaudeTerm-Setup-*.exe
+          gh release create "$GITHUB_REF_NAME"
+          dist/ClaudeTerm-Setup-*.exe dist/ClaudeTerm-Setup-*.exe.blockmap dist/latest.yml
           --title "ClaudeTerm ${GITHUB_REF_NAME#v}"
           --generate-notes

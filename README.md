@@ -86,6 +86,8 @@ Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the
 > [!NOTE]
 > The installer is not code-signed yet, so Windows SmartScreen may warn about it: click **More info → Run anyway**.
 
+From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — проверить обновления** to check right away.
+
 On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image` tool) with Claude Code at user scope. Uninstalling removes the Explorer menu item and the MCP registration.
 
 **Requirements:** Windows 10 or 11 (x64) and Claude Code.
@@ -137,7 +139,8 @@ Settings live in `%APPDATA%\ClaudeTerm\settings.json` — press `Ctrl+,` to open
   "attention": {                   // when Claude waits for you in a tab you are not looking at
     "sound": "system",             // "system", "none", or the full path to a .wav file
     "flash": true                  // flash the taskbar button (a terminal bell, BEL, from any program flashes it regardless)
-  }
+  },
+  "autoUpdate": true               // check GitHub for new versions in the background
 }
 ```
 

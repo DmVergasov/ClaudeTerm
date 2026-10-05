@@ -346,6 +346,7 @@ function bootstrap(): void {
     const testFeed = process.env.CLAUDETERM_UPDATE_URL
     if (testFeed) autoUpdater.setFeedURL({ provider: 'generic', url: testFeed })
     autoUpdater.autoDownload = true
+    autoUpdater.disableWebInstaller = true
     // a test feed must never install over the real installation when the app quits
     autoUpdater.autoInstallOnAppQuit = !testFeed
     autoUpdater.logger = {
