@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in ClaudeTerm doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report this! Please check that it isn't already reported.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect to see instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a Claude tab in …
+        2. Ask Claude to …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: claudeterm
+    attributes:
+      label: ClaudeTerm version
+      description: The version in the installer's name or in Apps & features
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run `winver`
+      placeholder: Windows 11 24H2 (26100)
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Code version
+      description: Run `claude --version` (leave empty if it's not about Claude tabs)
+      placeholder: 2.1.289
+  - type: dropdown
+    id: shell
+    attributes:
+      label: Shell profile
+      options:
+        - PowerShell 7
+        - Windows PowerShell
+        - Command Prompt
+        - Git Bash
+        - WSL
+        - Custom profile
+        - Not relevant
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The relevant part of `%APPDATA%\ClaudeTerm\logs\main.log`. Please remove anything private.
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else?
+      description: Screenshots, your `settings.json` changes, other details

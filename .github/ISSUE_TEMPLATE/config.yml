@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/DmVergasov/ClaudeTerm/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
+  - name: Problem with Claude Code itself
+    url: https://github.com/anthropics/claude-code/issues
+    about: Bugs in Claude Code (not in ClaudeTerm) belong in the Claude Code repository.

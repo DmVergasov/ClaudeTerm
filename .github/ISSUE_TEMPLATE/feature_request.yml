@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an idea for ClaudeTerm
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation where ClaudeTerm gets in your way or falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to work on it?
+      options:
+        - Yes, I'd like to open a pull request
+        - Maybe, with some guidance
+        - No
