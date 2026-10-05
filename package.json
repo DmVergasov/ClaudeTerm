@@ -1,7 +1,7 @@
 {
   "name": "claudeterm",
   "productName": "ClaudeTerm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "A Windows terminal built for Claude Code: tabs, a conversation image panel, a live status bar and session restore",
   "license": "MIT",
