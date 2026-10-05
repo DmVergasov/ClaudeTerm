@@ -1,0 +1,63 @@
+:root {
+  --bg: #0c0c0c;
+  --chrome: #1b1b1f;
+  --chrome-2: #26262c;
+  --fg: #d6d6d6;
+  --muted: #8a8a93;
+  --accent: #d97757;
+  --border: #33333a;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+#app { display: flex; flex-direction: column; height: 100vh; }
+#workspace { flex: 1; display: flex; min-height: 0; }
+#terminals { flex: 1; position: relative; min-width: 0; }
+/* No padding here: FitAddon sizes the terminal from this element's computed height/width, which with
+   border-box include padding, so padding would yield one row/col too many. The gutter is the inset. */
+.terminal-host { position: absolute; inset: 4px 0 0 6px; }
+
+#tabbar { display: flex; align-items: stretch; height: 34px; background: var(--chrome); border-bottom: 1px solid var(--border); user-select: none; }
+.tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tab { display: flex; align-items: center; gap: 6px; max-width: 220px; min-width: 90px; padding: 0 6px 0 10px; border-right: 1px solid var(--border); color: var(--muted); cursor: default; }
+.tab.active { background: var(--bg); color: var(--fg); box-shadow: inset 0 2px 0 var(--accent); }
+.tab.exited .tab-title { text-decoration: line-through; }
+.tab-icon { font-size: 11px; color: var(--accent); }
+.tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-bell { color: var(--accent); font-size: 10px; }
+.tab-images { font-size: 11px; }
+.tab-close, .tab-new, .tab-menu { background: none; border: 0; color: var(--muted); font-size: 14px; cursor: pointer; padding: 0 6px; }
+.tab-close:hover, .tab-new:hover, .tab-menu:hover { color: var(--fg); }
+.tab-rename { flex: 1; min-width: 0; background: var(--chrome-2); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 1px 4px; }
+.menu { position: fixed; z-index: 50; min-width: 200px; background: var(--chrome-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; box-shadow: 0 8px 24px #0008; }
+.menu-item { padding: 6px 14px; cursor: pointer; white-space: nowrap; }
+.menu-item:hover { background: #ffffff14; }
+.menu-item.disabled { color: var(--muted); cursor: default; }
+.menu-sep { height: 1px; margin: 4px 0; background: var(--border); }
+#toasts { position: fixed; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
+.toast { max-width: 420px; padding: 8px 12px; background: var(--chrome-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; cursor: pointer; }
+#search { position: fixed; top: 40px; right: 16px; z-index: 40; background: var(--chrome-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+#search input { width: 280px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); padding: 4px 6px; font: inherit; }
+#banner { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: #2a211d; border-bottom: 1px solid var(--accent); }
+#banner span { flex: 1; }
+#banner button { background: var(--accent); color: #111; border: 0; border-radius: 4px; padding: 4px 12px; cursor: pointer; font: inherit; }
+#banner .banner-close { background: none; color: var(--muted); padding: 0 6px; font-size: 16px; }
+
+#image-panel { position: relative; display: flex; flex-direction: column; background: var(--chrome); border-left: 1px solid var(--border); min-width: 180px; }
+#image-panel.collapsed { display: none; }
+.panel-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 5; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--muted); }
+.panel-header button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; }
+.panel-notice { padding: 6px 10px; color: #e5c07b; font-size: 12px; border-bottom: 1px solid var(--border); }
+.panel-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 10px; }
+.panel-empty { color: var(--muted); text-align: center; margin-top: 24px; }
+.card { background: var(--chrome-2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; cursor: zoom-in; flex-shrink: 0; }
+.card img { display: block; width: 100%; max-height: 260px; object-fit: contain; background: #111; }
+.card.deleted img { filter: grayscale(1) opacity(0.4); }
+.card-meta { padding: 6px 8px; }
+.card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-sub { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-caption { margin-top: 4px; font-size: 12px; }
+#lightbox { position: fixed; inset: 0; z-index: 70; background: #000d; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#lightbox img { max-width: 92vw; max-height: 88vh; cursor: grab; transform-origin: center; }
+.lightbox-caption { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: #ddd; }

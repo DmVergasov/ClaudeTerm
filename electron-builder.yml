@@ -1,0 +1,31 @@
+appId: dev.claudeterm.app
+productName: ClaudeTerm
+executableName: ClaudeTerm
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  - node_modules/node-pty/**
+extraResources:
+  - from: resources/mcp
+    to: mcp
+    filter: ["*.js"]
+  - from: resources/hook
+    to: hook
+    filter: ["*.js"]
+npmRebuild: false
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ClaudeTerm
+  include: build/installer.nsh
+  artifactName: ClaudeTerm-Setup-${version}.${ext}

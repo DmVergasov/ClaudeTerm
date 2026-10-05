@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' ctimg: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>ClaudeTerm</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="tabbar"></div>
+      <div id="banner" hidden></div>
+      <div id="workspace">
+        <div id="terminals"></div>
+        <div id="image-panel" class="collapsed"></div>
+      </div>
+    </div>
+    <div id="search" hidden></div>
+    <div id="lightbox" hidden></div>
+    <div id="toasts"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
