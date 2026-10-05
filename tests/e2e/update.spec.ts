@@ -29,6 +29,26 @@ test('after restarting into an update the tabs come back without asking', async 
   await app.close()
 })
 
+test('after restarting into an update a session of shell tabs comes back too', async () => {
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  writeFileSync(join(dataDir, 'session-state.json'), JSON.stringify({
+    version: 1,
+    savedAt: new Date().toISOString(),
+    tabs: [
+      { kind: 'shell', profile: 'Windows PowerShell', cwd: work, title: 'build', claudeSessionId: null },
+      { kind: 'shell', profile: 'Windows PowerShell', cwd: work, title: 'logs', claudeSessionId: null }
+    ]
+  }))
+  writeFileSync(join(dataDir, 'update-restart.json'), JSON.stringify({ at: Date.now() }))
+  const { app, page } = await launchApp({ dataDir })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  await expect(page.locator('.tab', { hasText: 'build' })).toBeVisible()
+  await expect(page.locator('.tab', { hasText: 'logs' })).toBeVisible()
+  expect(await page.evaluate(() => window.__ct!.restoreVisible!())).toBe(false)
+  await app.close()
+})
+
 const ready = (version: string) => ({ status: 'ready', version })
 
 test('a downloaded update shows a banner whose button asks to restart into it', async () => {
@@ -69,5 +89,17 @@ test('the menu shows the version, and a check in a build that cannot update says
   await expect(item).toBeVisible()
   await item.click()
   await expect(page.locator('.toast', { hasText: 'Updates only work in the installed app' })).toBeVisible()
+  await app.close()
+})
+
+test('checking for updates after dismissing the banner brings its Restart button back', async () => {
+  const { app, page } = await launchApp()
+  await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].webContents.send('ev:update', s), ready('9.9.9'))
+  const banner = page.locator('#update-banner')
+  await banner.locator('.banner-close').click()
+  await expect(banner).toBeHidden()
+  await page.locator('.tab-menu').click()
+  await page.locator('.menu-item', { hasText: 'check for updates' }).click()
+  await expect(banner.locator('.banner-restart')).toBeVisible()
   await app.close()
 })

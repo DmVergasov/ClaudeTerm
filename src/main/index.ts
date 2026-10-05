@@ -29,7 +29,8 @@ import { StatusHub } from './status-hub'
 import { TabManager } from './tab-manager'
 import { readAgentMeta } from './transcript-agent-info'
 import { consumeUpdateMarker, writeUpdateMarker } from './update-marker'
-import { Updater, type UpdaterBackend } from './updater'
+import { Updater } from './updater'
+import { createUpdateBackend } from './update-backend'
 import { cleanupImageCache, TranscriptFeed } from './transcript-feed'
 import { loadWindowState, trackWindowState } from './window-state'
 
@@ -92,9 +93,9 @@ function bootstrap(): void {
   let profiles = computeProfiles(settings)
   const claudeFiles = writeClaudeTabFiles(dataDir, process.execPath, resourcePath('hook/session-hook.js'))
   const sessions = new SessionStore(dataDir, { onError: (m) => log.warn(m) })
-  let previous = sessions.rotateOnStartup()
   // the previous run restarted into an update: reopen its tabs without asking
   const restoreAfterUpdate = consumeUpdateMarker(dataDir, Date.now())
+  let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
   const restoreInfo = (): RestoreInfo | null =>
     previous ? { tabs: previous.tabs.length, claudeTabs: previous.tabs.filter((t) => t.kind === 'claude').length, savedAt: previous.savedAt } : null
 
@@ -342,31 +343,8 @@ function bootstrap(): void {
     focusWindow()
   })
 
-  const createUpdateBackend = (): UpdaterBackend => {
-    const testFeed = process.env.CLAUDETERM_UPDATE_URL
-    if (testFeed) autoUpdater.setFeedURL({ provider: 'generic', url: testFeed })
-    autoUpdater.autoDownload = true
-    autoUpdater.disableWebInstaller = true
-    // a test feed must never install over the real installation when the app quits
-    autoUpdater.autoInstallOnAppQuit = !testFeed
-    autoUpdater.logger = {
-      info: (m: unknown) => log.info(`updater: ${String(m)}`),
-      warn: (m: unknown) => log.warn(`updater: ${String(m)}`),
-      error: (m: unknown) => log.error(`updater: ${String(m)}`),
-      debug: () => {}
-    }
-    return {
-      check: async () => {
-        const r = await autoUpdater.checkForUpdates()
-        return r?.isUpdateAvailable ? r.updateInfo.version : null
-      },
-      onDownloaded: (cb) => { autoUpdater.on('update-downloaded', (info) => cb(info.version)) },
-      onError: (cb) => { autoUpdater.on('error', (e) => cb(e.message)) },
-      quitAndInstall: () => autoUpdater.quitAndInstall(true, true)
-    }
-  }
   const updater = new Updater({
-    backend: app.isPackaged && !isTest ? createUpdateBackend() : null,
+    backend: app.isPackaged && !isTest ? createUpdateBackend(autoUpdater, { testFeed: process.env.CLAUDETERM_UPDATE_URL, log }) : null,
     currentVersion: app.getVersion(),
     enabled: () => settings.autoUpdate,
     publish: (s) => send(IPC.evUpdate, s),

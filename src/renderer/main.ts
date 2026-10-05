@@ -216,7 +216,7 @@ function newTabMenu(anchor: HTMLElement): void {
       { label: 'Claude Code', action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? appInfo.homeDir }) },
       ...(restoreInfo ? [{ label: `Restore previous session (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
       { label: '', separator: true },
-      { label: `ClaudeTerm ${appInfo.version} — check for updates`, action: () => ct.checkForUpdates() }
+      { label: `ClaudeTerm ${appInfo.version} — check for updates`, action: () => { updateBanner.reveal(); ct.checkForUpdates() } }
     ]
     const r = anchor.getBoundingClientRect()
     showMenu({ x: r.left, y: r.bottom }, items)

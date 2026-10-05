@@ -76,6 +76,24 @@ describe('SessionStore', () => {
     expect(onError).toHaveBeenCalled()
   })
 
+  it('after an update any non-empty state is rotated, shell-only included', () => {
+    const s = new SessionStore(newDir())
+    writeFileSync(s.previousPath, JSON.stringify(snap([claudeTab])))
+    writeFileSync(s.statePath, JSON.stringify(snap([shellTab])))
+    expect(s.rotateOnStartup({ afterUpdate: true })).toEqual(snap([shellTab]))
+    expect(existsSync(s.statePath)).toBe(false)
+  })
+
+  it('after an update an empty state does not revive an older previous session', () => {
+    const s = new SessionStore(newDir())
+    writeFileSync(s.previousPath, JSON.stringify(snap([claudeTab])))
+    writeFileSync(s.statePath, JSON.stringify(snap([])))
+    expect(s.rotateOnStartup({ afterUpdate: true })).toBeNull()
+    const none = new SessionStore(newDir())
+    writeFileSync(none.previousPath, JSON.stringify(snap([claudeTab])))
+    expect(none.rotateOnStartup({ afterUpdate: true })).toBeNull()
+  })
+
   it('nothing saved → no previous', () => {
     expect(new SessionStore(newDir()).rotateOnStartup()).toBeNull()
   })

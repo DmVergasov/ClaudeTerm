@@ -46,9 +46,14 @@ export class SessionStore {
     this.previousPath = join(dir, 'previous-session.json')
   }
 
-  rotateOnStartup(): SessionSnapshot | null {
+  /**
+   * Makes the last run's tabs the previous session. A normal start keeps an older previous session over
+   * one without resumable Claude tabs; after an update the last run is the session to reopen, whatever it holds.
+   */
+  rotateOnStartup(opts: { afterUpdate?: boolean } = {}): SessionSnapshot | null {
     const current = this.read(this.statePath)
-    if (current && current.tabs.some((t) => t.kind === 'claude' && t.claudeSessionId !== null)) {
+    if (opts.afterUpdate && !(current && current.tabs.length > 0)) return null
+    if (current && (opts.afterUpdate || current.tabs.some((t) => t.kind === 'claude' && t.claudeSessionId !== null))) {
       try {
         renameSync(this.statePath, this.previousPath)
       } catch (e) {
