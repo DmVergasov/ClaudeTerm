@@ -1,4 +1,4 @@
-import type { ImageCard, OpenTabRequest, Settings, TabInfo } from './types'
+import type { AgentStatus, ImageCard, MainStatus, OpenTabRequest, Settings, TabInfo } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -33,7 +33,8 @@ export const IPC = {
   evImages: 'ev:images',
   evToast: 'ev:toast',
   evSettings: 'ev:settings',
-  evRestore: 'ev:restore'
+  evRestore: 'ev:restore',
+  evStatus: 'ev:status'
 } as const
 
 export interface AppInfo {
@@ -54,6 +55,12 @@ export interface ImagesUpdate {
   cards: ImageCard[]
   unseen: number
   notice: string | null
+}
+
+export interface StatusUpdate {
+  tabId: string
+  main: MainStatus | null
+  agents: AgentStatus[]
 }
 
 export interface RestoreInfo {
@@ -99,4 +106,5 @@ export interface CtApi {
   onToast(cb: (message: string) => void): Unsubscribe
   onSettings(cb: (settings: Settings) => void): Unsubscribe
   onRestore(cb: (info: RestoreInfo | null) => void): Unsubscribe
+  onStatus(cb: (update: StatusUpdate) => void): Unsubscribe
 }

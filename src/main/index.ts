@@ -21,7 +21,9 @@ import { spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { loadSettingsSafe } from './settings'
 import { SessionStore } from './session-store'
+import { StatusHub } from './status-hub'
 import { TabManager } from './tab-manager'
+import { readAgentMeta } from './transcript-agent-info'
 import { cleanupImageCache, TranscriptFeed } from './transcript-feed'
 import { loadWindowState, trackWindowState } from './window-state'
 
@@ -112,6 +114,30 @@ function bootstrap(): void {
   }
   const sources = new Map<string, TabImageSources>()
 
+  const statusTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const statusHub = new StatusHub({
+    now: () => Date.now(),
+    readMeta: (tabId, agentId) => {
+      const dir = sources.get(tabId)?.feed?.subagentDir
+      return dir ? readAgentMeta(dir, agentId) : null
+    },
+    // coalesce bursts (statusLine, hooks, subagent transcripts) into one update per tab
+    onChange: (tabId) => {
+      if (statusTimers.has(tabId)) return
+      statusTimers.set(tabId, setTimeout(() => {
+        statusTimers.delete(tabId)
+        send(IPC.evStatus, statusHub.get(tabId))
+      }, 50))
+    }
+  })
+
+  const stopTabStatus = (tabId: string): void => {
+    const timer = statusTimers.get(tabId)
+    if (timer) clearTimeout(timer)
+    statusTimers.delete(tabId)
+    statusHub.removeTab(tabId)
+  }
+
   const watchDir = (tabId: string, dir: string, which: 'cwdWatcher' | 'tempWatcher'): ImageWatcherHandle => {
     const handle: ImageWatcherHandle = watchImages(dir, settings.imageWatch, {
       added: (p) => images.add(tabId, p, 'created', null),
@@ -168,7 +194,8 @@ function bootstrap(): void {
       cacheRoot: imageCacheRoot,
       fileExists: existsSync,
       onImage: (img) => images.add(tabId, img.path, img.source, img.caption, img.at ?? undefined),
-      onError: (m) => log.warn(m)
+      onError: (m) => log.warn(m),
+      onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info)
     })
     s.feed.start()
     if (!settings.imageWatch.enabled) return
@@ -188,7 +215,10 @@ function bootstrap(): void {
 
   const tabs = new TabManager({
     onTabStarted: startTabImages,
-    onTabClosed: stopTabImages,
+    onTabClosed: (tabId) => {
+      stopTabImages(tabId)
+      stopTabStatus(tabId)
+    },
     spawn: spawnPty,
     pipeName,
     baseEnv: childEnv,
@@ -215,6 +245,7 @@ function bootstrap(): void {
       exit: (id, code) => send(IPC.evPtyExit, id, code)
     }
   })
+  const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
 
   const openTab = (req: OpenTabRequest, activate = true): TabInfo | null => {
     try {
@@ -298,7 +329,25 @@ function bootstrap(): void {
     session: (msg) => {
       log.info(`session ${msg.source} tab=${msg.tabId} id=${msg.sessionId} transcript=${msg.transcriptPath ?? '-'}`)
       if (!tabs.setClaudeSession(msg.tabId, msg.sessionId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      statusHub.session(msg.tabId, msg.sessionId, msg.source)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
+      return { ok: true }
+    },
+    status: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      statusHub.status(msg)
+      return { ok: true }
+    },
+    subagent: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      log.info(`subagent ${msg.event} tab=${msg.tabId} id=${msg.agentId} type=${msg.agentType}`)
+      statusHub.subagent(msg)
+      return { ok: true }
+    },
+    sessionEnd: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      log.info(`session end tab=${msg.tabId} id=${msg.sessionId}`)
+      statusHub.sessionEnd(msg.tabId, msg.sessionId)
       return { ok: true }
     }
   })

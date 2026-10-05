@@ -1,5 +1,6 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { launchApp } from './helpers'
+import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { launchApp, launchClaudeTab } from './helpers'
 
 interface TermLayout {
   innerHeight: number
@@ -105,6 +106,24 @@ test('terminal grid fits the host at every window size', async () => {
   for (let h = 600; h <= 600 + Math.ceil(cellHeight) + 1; h++) await check(1000, h)
   // 20 consecutive widths cover a full period for any cell width up to 20px
   for (let w = 1000; w < 1020; w++) await check(w, 600)
+  expect(failures).toEqual([])
+  await app.close()
+})
+
+test('terminal grid fits above the status bar at every window height', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  const status = { v: 1 as const, type: 'status' as const, tabId, sessionId: '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null }
+  expect(await sendPipeMessage(pipeName, status)).toEqual({ ok: true })
+  const bar = page.locator('#statusbar')
+  await expect(bar).toBeVisible()
+  const failures: string[] = []
+  for (let h = 600; h < 640; h++) {
+    await setContentSize(app, page, 1000, h)
+    const l = await termLayout(page)
+    const barTop = await bar.evaluate((e) => e.getBoundingClientRect().top)
+    for (const f of overflows(l)) failures.push(`1000x${h}: ${f}`)
+    if (l.screenBottom - barTop > 0.5) failures.push(`1000x${h}: last row under the status bar by ${(l.screenBottom - barTop).toFixed(1)}px`)
+  }
   expect(failures).toEqual([])
   await app.close()
 })

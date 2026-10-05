@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { cleanupImageCache, LineTailer, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
-import { PNG_B64, pastedLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
+import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
+import { assistantLine, PNG_B64, pastedLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -15,8 +16,13 @@ function setup() {
   const cacheRoot = join(root, 'cache')
   const images: FeedImage[] = []
   const errors: string[] = []
-  const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: (i) => images.push(i), onError: (m) => errors.push(m) })
-  return { root, projectDir, transcriptPath, cacheRoot, images, errors, feed }
+  const infos: [string, AgentModelInfo][] = []
+  const feed = new TranscriptFeed({
+    transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync,
+    onImage: (i) => images.push(i), onError: (m) => errors.push(m),
+    onSubagentInfo: (id, info) => infos.push([id, info])
+  })
+  return { root, projectDir, transcriptPath, cacheRoot, images, errors, infos, feed }
 }
 
 describe('LineTailer', () => {
@@ -133,6 +139,20 @@ describe('TranscriptFeed', () => {
     feed.scanSubagents()
     await feed.poll()
     expect(images.map((i) => i.caption)).toEqual(['субагент · claude-in-chrome · computer (screenshot)'])
+  })
+
+  it('reports model and effort of a subagent once per change, ignoring synthetic lines and the main transcript', async () => {
+    const { transcriptPath, infos, feed } = setup()
+    writeFileSync(transcriptPath, assistantLine('claude-opus-5-5', 'xhigh') + '\n')
+    mkdirSync(feed.subagentDir, { recursive: true })
+    const sub = join(feed.subagentDir, 'agent-a40a10c1d655cf759.jsonl')
+    writeFileSync(sub, [assistantLine('claude-sonnet-5-5', 'medium'), assistantLine('claude-sonnet-5-5', 'medium'), assistantLine('<synthetic>'), ''].join('\n'))
+    feed.scanSubagents()
+    await feed.poll()
+    expect(infos).toEqual([['a40a10c1d655cf759', { model: 'claude-sonnet-5-5', effort: 'medium' }]])
+    appendFileSync(sub, assistantLine('claude-sonnet-5-5', 'high') + '\n')
+    await feed.poll()
+    expect(infos.map(([, i]) => i.effort)).toEqual(['medium', 'high'])
   })
 
   it('reports a missing transcript once and stops after stop()', async () => {

@@ -41,7 +41,8 @@ const api: CtApi = {
   onImages: (cb) => on(IPC.evImages, cb),
   onToast: (cb) => on(IPC.evToast, cb),
   onSettings: (cb) => on(IPC.evSettings, cb),
-  onRestore: (cb) => on(IPC.evRestore, cb)
+  onRestore: (cb) => on(IPC.evRestore, cb),
+  onStatus: (cb) => on(IPC.evStatus, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

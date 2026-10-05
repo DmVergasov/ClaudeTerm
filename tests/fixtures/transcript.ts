@@ -21,3 +21,12 @@ export function pastedLine(data = PNG_B64): string {
 }
 
 export const textLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } })
+
+export function assistantLine(model: string, effort?: string): string {
+  return JSON.stringify({
+    type: 'assistant',
+    timestamp: '2026-10-05T10:00:03.000Z',
+    ...(effort ? { effort, perTurnEffort: effort } : { perTurnEffort: null }),
+    message: { role: 'assistant', model, content: [{ type: 'text', text: 'ok' }] }
+  })
+}

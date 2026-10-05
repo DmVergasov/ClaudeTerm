@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 export function hookCmdContent(execPath: string, hookScriptPath: string): string {
   const esc = (p: string): string => p.replace(/%/g, '%%')
-  return ['@echo off', 'chcp 65001 >nul 2>&1', 'set ELECTRON_RUN_AS_NODE=1', `"${esc(execPath)}" "${esc(hookScriptPath)}"`, 'exit /b 0', ''].join('\r\n')
+  return ['@echo off', 'chcp 65001 >nul 2>&1', 'set ELECTRON_RUN_AS_NODE=1', `"${esc(execPath)}" "${esc(hookScriptPath)}" %*`, 'exit /b 0', ''].join('\r\n')
 }
 
 export function hookCommandString(cmdPath: string): string {
@@ -14,7 +14,18 @@ export function hookCommandString(cmdPath: string): string {
 }
 
 export function claudeTabSettingsJson(cmdPath: string): string {
-  return JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: hookCommandString(cmdPath), timeout: 10 }] }] } }, null, 2)
+  const command = hookCommandString(cmdPath)
+  const hook = [{ hooks: [{ type: 'command', command, timeout: 10 }] }]
+  return JSON.stringify(
+    {
+      // refreshInterval: Claude Code re-runs statusLine only on new messages, /compact and mode changes,
+      // so /effort and /model alone would not show up without it
+      statusLine: { type: 'command', command: `${command} status`, refreshInterval: 5 },
+      hooks: { SessionStart: hook, SubagentStart: hook, SubagentStop: hook, SessionEnd: hook }
+    },
+    null,
+    2
+  )
 }
 
 export interface ClaudeTabFiles {

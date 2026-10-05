@@ -1,9 +1,12 @@
 import { createServer, type Socket } from 'node:net'
-import { encodeMessage, parsePipeMessage, type PipeResponse, type SessionMessage, type ShowImageMessage } from '../shared/protocol'
+import { encodeMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage } from '../shared/protocol'
 
 export interface PipeHandlers {
   showImage(msg: ShowImageMessage): Promise<PipeResponse>
   session(msg: SessionMessage): PipeResponse
+  status(msg: StatusMessage): PipeResponse
+  subagent(msg: SubagentMessage): PipeResponse
+  sessionEnd(msg: SessionEndMessage): PipeResponse
 }
 
 export interface PipeServerHandle {
@@ -15,8 +18,15 @@ const MAX_LINE = 64 * 1024
 async function handleLine(line: string, h: PipeHandlers): Promise<PipeResponse> {
   const parsed = parsePipeMessage(line)
   if (!parsed.ok) return { ok: false, error: parsed.error }
+  const m = parsed.message
   try {
-    return parsed.message.type === 'show_image' ? await h.showImage(parsed.message) : h.session(parsed.message)
+    switch (m.type) {
+      case 'show_image': return await h.showImage(m)
+      case 'session': return h.session(m)
+      case 'status': return h.status(m)
+      case 'subagent': return h.subagent(m)
+      case 'session_end': return h.sessionEnd(m)
+    }
   } catch (e) {
     return { ok: false, error: (e as Error).message }
   }

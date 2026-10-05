@@ -11,7 +11,7 @@ describe('hook files', () => {
       '@echo off',
       'chcp 65001 >nul 2>&1',
       'set ELECTRON_RUN_AS_NODE=1',
-      '"C:\\Program Files\\ClaudeTerm\\ClaudeTerm.exe" "C:\\Program Files\\ClaudeTerm\\resources\\hook\\session-hook.js"',
+      '"C:\\Program Files\\ClaudeTerm\\ClaudeTerm.exe" "C:\\Program Files\\ClaudeTerm\\resources\\hook\\session-hook.js" %*',
       'exit /b 0',
       ''
     ])
@@ -33,9 +33,12 @@ describe('hook files', () => {
     expect(hookCommandString('C:\\Users\\a&(b);#\\session-hook.cmd')).toBe('"C:/Users/a&(b);#/session-hook.cmd"')
   })
 
-  it('claudeTabSettingsJson declares one SessionStart command hook', () => {
+  it('claudeTabSettingsJson declares the statusLine and the session/subagent hooks', () => {
+    const command = '"C:/Users/me/AppData/Roaming/ClaudeTerm/session-hook.cmd"'
+    const hook = [{ hooks: [{ type: 'command', command, timeout: 10 }] }]
     expect(JSON.parse(claudeTabSettingsJson('C:\\Users\\me\\AppData\\Roaming\\ClaudeTerm\\session-hook.cmd'))).toEqual({
-      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: '"C:/Users/me/AppData/Roaming/ClaudeTerm/session-hook.cmd"', timeout: 10 }] }] }
+      statusLine: { type: 'command', command: `${command} status`, refreshInterval: 5 },
+      hooks: { SessionStart: hook, SubagentStart: hook, SubagentStop: hook, SessionEnd: hook }
     })
   })
 

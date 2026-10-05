@@ -65,3 +65,19 @@ export interface Settings {
   imageWatch: { enabled: boolean; extensions: string[]; ignore: string[]; maxDepth: number }
   imagePanel: { autoOpen: boolean; width: number; maxItems: number }
 }
+
+export interface MainStatus {
+  model: { id: string; displayName: string }
+  effort: string | null
+  context: { usedTokens: number; size: number; usedPct: number } | null
+  fiveHour: { usedPct: number; resetsAt: number } | null
+}
+
+export interface AgentStatus {
+  agentId: string
+  type: string
+  description: string | null
+  model: string | null
+  effort: string | null
+  startedAt: number
+}

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, write
 import { open } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
+import { assistantInfo, type AgentModelInfo } from './transcript-agent-info'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
 
 const CHUNK_BYTES = 4 * 1024 * 1024
@@ -71,6 +72,8 @@ export interface TranscriptFeedOptions {
   fileExists(path: string): boolean
   onImage(img: FeedImage): void
   onError?(message: string): void
+  /** model·effort of a subagent (from subagents/agent-<agentId>.jsonl), reported when it changes */
+  onSubagentInfo?(agentId: string, info: AgentModelInfo): void
   pollMs?: number
   subagentScanMs?: number
 }
@@ -78,6 +81,9 @@ export interface TranscriptFeedOptions {
 interface Source {
   tailer: LineTailer
   parser: TranscriptParser
+  /** null for the main transcript */
+  agentId: string | null
+  lastInfo: string | null
 }
 
 export class TranscriptFeed {
@@ -90,7 +96,7 @@ export class TranscriptFeed {
   private missingReported = false
 
   constructor(private readonly o: TranscriptFeedOptions) {
-    this.main = { tailer: new LineTailer(o.transcriptPath), parser: new TranscriptParser({ subagent: false }) }
+    this.main = { tailer: new LineTailer(o.transcriptPath), parser: new TranscriptParser({ subagent: false }), agentId: null, lastInfo: null }
   }
 
   get subagentDir(): string {
@@ -119,7 +125,8 @@ export class TranscriptFeed {
     }
     for (const n of names) {
       if (!n.endsWith('.jsonl') || this.subagents.has(n)) continue
-      this.subagents.set(n, { tailer: new LineTailer(join(this.subagentDir, n)), parser: new TranscriptParser({ subagent: true }) })
+      const agentId = n.startsWith('agent-') ? n.slice('agent-'.length, -'.jsonl'.length) : n.slice(0, -'.jsonl'.length)
+      this.subagents.set(n, { tailer: new LineTailer(join(this.subagentDir, n)), parser: new TranscriptParser({ subagent: true }), agentId, lastInfo: null })
     }
   }
 
@@ -164,6 +171,7 @@ export class TranscriptFeed {
   private consume(src: Source, lines: string[]): void {
     for (const line of lines) {
       if (this.stopped) return
+      this.reportInfo(src, line)
       try {
         for (const img of src.parser.parseLine(line)) {
           if (this.stopped) return
@@ -173,6 +181,20 @@ export class TranscriptFeed {
       } catch (e) {
         this.report(e)
       }
+    }
+  }
+
+  private reportInfo(src: Source, line: string): void {
+    if (src.agentId === null || !this.o.onSubagentInfo) return
+    const info = assistantInfo(line)
+    if (!info) return
+    const key = `${info.model}|${info.effort ?? ''}`
+    if (key === src.lastInfo) return
+    src.lastInfo = key
+    try {
+      this.o.onSubagentInfo(src.agentId, info)
+    } catch (e) {
+      this.report(e)
     }
   }
 

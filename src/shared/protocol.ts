@@ -1,8 +1,11 @@
 import { isAbsolute } from 'node:path'
+import type { MainStatus } from './types'
 
 export const PROTOCOL_VERSION = 1
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_CAPTION = 500
+const AGENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+const MAX_LABEL = 100
 
 export interface ShowImageMessage {
   v: 1
@@ -21,7 +24,31 @@ export interface SessionMessage {
   transcriptPath: string | null
 }
 
-export type PipeMessage = ShowImageMessage | SessionMessage
+export interface StatusMessage extends MainStatus {
+  v: 1
+  type: 'status'
+  tabId: string
+  sessionId: string
+}
+
+export interface SubagentMessage {
+  v: 1
+  type: 'subagent'
+  tabId: string
+  sessionId: string
+  event: 'start' | 'stop'
+  agentId: string
+  agentType: string
+}
+
+export interface SessionEndMessage {
+  v: 1
+  type: 'session_end'
+  tabId: string
+  sessionId: string
+}
+
+export type PipeMessage = ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage
 export type PipeResponse = { ok: true } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
@@ -35,6 +62,21 @@ export function defaultPipeName(username: string): string {
 
 export function encodeMessage(msg: PipeMessage | PipeResponse): string {
   return JSON.stringify(msg) + '\n'
+}
+
+type Obj = Record<string, unknown>
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const label = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v.slice(0, MAX_LABEL) : null)
+
+function parseContext(v: unknown): MainStatus['context'] {
+  if (!isObj(v) || !isNum(v.usedTokens) || !isNum(v.size) || v.size <= 0 || !isNum(v.usedPct)) return null
+  return { usedTokens: v.usedTokens, size: v.size, usedPct: v.usedPct }
+}
+
+function parseFiveHour(v: unknown): MainStatus['fiveHour'] {
+  if (!isObj(v) || !isNum(v.usedPct) || !isNum(v.resetsAt)) return null
+  return { usedPct: v.usedPct, resetsAt: v.resetsAt }
 }
 
 export function parsePipeMessage(line: string): ParseResult {
@@ -72,6 +114,25 @@ export function parsePipeMessage(line: string): ParseResult {
     return {
       ok: true,
       message: { v: 1, type: 'session', tabId: m.tabId, sessionId: m.sessionId, source: typeof m.source === 'string' ? m.source : 'unknown', transcriptPath }
+    }
+  }
+
+  if (m.type === 'status' || m.type === 'subagent' || m.type === 'session_end') {
+    if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
+    if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
+    const ids = { tabId: m.tabId, sessionId: m.sessionId }
+    if (m.type === 'session_end') return { ok: true, message: { v: 1, type: 'session_end', ...ids } }
+    if (m.type === 'subagent') {
+      if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }
+      if (typeof m.agentId !== 'string' || !AGENT_ID_RE.test(m.agentId)) return { ok: false, error: 'agentId must match [A-Za-z0-9_-]{1,64}' }
+      return { ok: true, message: { v: 1, type: 'subagent', ...ids, event: m.event, agentId: m.agentId, agentType: label(m.agentType) ?? 'agent' } }
+    }
+    const model: Obj = isObj(m.model) ? m.model : {}
+    const id = label(model.id)
+    if (!id) return { ok: false, error: 'model.id must be a non-empty string' }
+    return {
+      ok: true,
+      message: { v: 1, type: 'status', ...ids, model: { id, displayName: label(model.displayName) ?? id }, effort: label(m.effort), context: parseContext(m.context), fiveHour: parseFiveHour(m.fiveHour) }
     }
   }
 

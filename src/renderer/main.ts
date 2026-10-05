@@ -1,5 +1,5 @@
 import './styles.css'
-import type { AppInfo, RestoreInfo, ImagesUpdate } from '../shared/ipc'
+import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
 import type { Settings, TabInfo } from '../shared/types'
 import { ImagePanel } from './image-panel'
 import { Lightbox } from './lightbox'
@@ -7,6 +7,7 @@ import { mapKey, type KeyAction } from './keymap'
 import { SearchBar } from './search'
 import { showMenu, type MenuItem } from './menu'
 import { RestoreBanner } from './restore-banner'
+import { StatusBar } from './status-bar'
 import { TabBar } from './tabbar'
 import { TerminalView } from './terminal-view'
 import { resolveTheme } from './themes'
@@ -36,6 +37,8 @@ let banner: RestoreBanner
 let imagePanel: ImagePanel
 let lightbox: Lightbox
 const imageUpdates = new Map<string, ImagesUpdate>()
+let statusBar: StatusBar
+const statusUpdates = new Map<string, StatusUpdate>()
 
 const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? folderName(t.info.cwd)
 
@@ -195,6 +198,7 @@ function activate(tabId: string): void {
   if (t) t.bell = false
   renderTabs()
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
+  statusBar.render(statusUpdates.get(tabId) ?? null)
 }
 
 function newTabMenu(anchor: HTMLElement): void {
@@ -254,6 +258,11 @@ async function boot(): Promise<void> {
   document.addEventListener('dragover', (e) => e.preventDefault())
   document.addEventListener('drop', (e) => e.preventDefault())
   lightbox = new Lightbox(document.getElementById('lightbox')!)
+  statusBar = new StatusBar(document.getElementById('statusbar')!)
+  ct.onStatus((u) => {
+    statusUpdates.set(u.tabId, u)
+    if (u.tabId === activeId) statusBar.render(u)
+  })
   imagePanel = new ImagePanel(
     document.getElementById('image-panel')!,
     {
@@ -295,8 +304,12 @@ async function boot(): Promise<void> {
     t.view.dispose()
     tabs.delete(id)
     imageUpdates.delete(id)
+    statusUpdates.delete(id)
     order = order.filter((x) => x !== id)
-    if (activeId === id) activeId = null
+    if (activeId === id) {
+      activeId = null
+      statusBar.render(null)
+    }
     renderTabs()
   })
   ct.onTabActivated(activate)

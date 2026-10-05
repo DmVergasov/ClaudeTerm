@@ -60,3 +60,62 @@ describe('helpers', () => {
     expect(encodeMessage({ ok: true })).toBe('{"ok":true}\n')
   })
 })
+
+describe('status, subagent and session_end messages', () => {
+  const ids = { v: 1, tabId: TAB, sessionId: SID }
+
+  it('accepts a full status message', () => {
+    const msg = {
+      ...ids,
+      type: 'status',
+      model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
+      effort: 'xhigh',
+      context: { usedTokens: 82314, size: 200000, usedPct: 41.2 },
+      fiveHour: { usedPct: 23.5, resetsAt: 1790000000 }
+    }
+    expect(parsePipeMessage(JSON.stringify(msg))).toEqual({ ok: true, message: msg })
+  })
+
+  it('nulls malformed optional parts and defaults displayName to the model id', () => {
+    const r = parsePipeMessage(JSON.stringify({ ...ids, type: 'status', model: { id: 'claude-x' }, effort: 7, context: { usedTokens: 'a', size: 1, usedPct: 1 }, fiveHour: { usedPct: 5 } }))
+    expect(r).toEqual({ ok: true, message: { ...ids, type: 'status', model: { id: 'claude-x', displayName: 'claude-x' }, effort: null, context: null, fiveHour: null } })
+  })
+
+  it('rejects a zero context size', () => {
+    const r = parsePipeMessage(JSON.stringify({ ...ids, type: 'status', model: { id: 'm' }, context: { usedTokens: 1, size: 0, usedPct: 1 } }))
+    expect(r.ok && r.message.type === 'status' && r.message.context).toBe(null)
+  })
+
+  it('truncates labels to 100 characters', () => {
+    const r = parsePipeMessage(JSON.stringify({ ...ids, type: 'status', model: { id: 'm'.repeat(300), displayName: 'd'.repeat(300) }, effort: 'e'.repeat(300) }))
+    expect(r.ok && r.message.type === 'status' && [r.message.model.id.length, r.message.model.displayName.length, r.message.effort?.length]).toEqual([100, 100, 100])
+  })
+
+  it('rejects a status without model id or with bad ids', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'status', model: {} })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'status', tabId: 'x', model: { id: 'm' } })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'status', sessionId: 'x', model: { id: 'm' } })).ok).toBe(false)
+  })
+
+  it('accepts subagent start/stop and defaults agentType', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'subagent', event: 'start', agentId: 'a40a10c1d655cf759', agentType: 'Explore' }))).toEqual({
+      ok: true,
+      message: { ...ids, type: 'subagent', event: 'start', agentId: 'a40a10c1d655cf759', agentType: 'Explore' }
+    })
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'subagent', event: 'stop', agentId: 'a1' }))).toEqual({
+      ok: true,
+      message: { ...ids, type: 'subagent', event: 'stop', agentId: 'a1', agentType: 'agent' }
+    })
+  })
+
+  it('rejects a bad subagent event or agentId', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'subagent', event: 'pause', agentId: 'a1' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'subagent', event: 'start', agentId: '../x' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'subagent', event: 'start', agentId: 'a'.repeat(65) })).ok).toBe(false)
+  })
+
+  it('accepts session_end and rejects it with a bad session id', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'session_end' }))).toEqual({ ok: true, message: { ...ids, type: 'session_end' } })
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'session_end', sessionId: 'x' })).ok).toBe(false)
+  })
+})

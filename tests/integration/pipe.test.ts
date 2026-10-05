@@ -8,7 +8,13 @@ import type { SessionMessage, ShowImageMessage } from '../../src/shared/protocol
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const newPipe = (): string => `\\\\.\\pipe\\claudeterm-test-${randomUUID()}`
-const okHandlers: PipeHandlers = { showImage: async () => ({ ok: true }), session: () => ({ ok: true }) }
+const okHandlers: PipeHandlers = {
+  showImage: async () => ({ ok: true }),
+  session: () => ({ ok: true }),
+  status: () => ({ ok: true }),
+  subagent: () => ({ ok: true }),
+  sessionEnd: () => ({ ok: true })
+}
 
 let server: PipeServerHandle | null = null
 afterEach(async () => {
@@ -51,6 +57,21 @@ describe('pipe server + client', () => {
     const msg: SessionMessage = { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'startup', transcriptPath: null }
     expect(await sendPipeMessage(pipe, msg)).toEqual({ ok: false, error: 'not a claude tab' })
     expect(got).toEqual([msg])
+  })
+
+  it('routes status, subagent and session_end messages', async () => {
+    const pipe = newPipe()
+    const got: string[] = []
+    server = await startPipeServer(pipe, {
+      ...okHandlers,
+      status: (m) => { got.push(m.type); return { ok: true } },
+      subagent: (m) => { got.push(`${m.type}:${m.event}`); return { ok: true } },
+      sessionEnd: (m) => { got.push(m.type); return { ok: false, error: 'unknown claude tab' } }
+    })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'status', tabId: TAB, sessionId: SID, model: { id: 'm', displayName: 'M' }, effort: null, context: null, fiveHour: null })).toEqual({ ok: true })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'subagent', tabId: TAB, sessionId: SID, event: 'start', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'session_end', tabId: TAB, sessionId: SID })).toEqual({ ok: false, error: 'unknown claude tab' })
+    expect(got).toEqual(['status', 'subagent:start', 'session_end'])
   })
 
   it('returns validation errors for malformed lines', async () => {

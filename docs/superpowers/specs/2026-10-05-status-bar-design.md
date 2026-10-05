@@ -121,7 +121,7 @@ interface TabStatus { sessionId: string | null; main: MainStatus | null; agents:
 
 - `status` → `main` обновляется; если `sessionId` отличается от текущего — агенты сбрасываются.
 - `session` (SessionStart) с другим `sessionId` → `main` и агенты сбрасываются (`/clear`, `/resume`), строка скрыта до первого `status` новой сессии.
-- `subagent start` → добавить агента (`startedAt = now`); `stop` → удалить.
+- `subagent start` → добавить агента (`startedAt = now`); `stop` → удалить. Проверено на живой сессии: агент, закончивший ход в ожидании своих фоновых задач, получает `SubagentStop`, а при возобновлении — снова `SubagentStart`; строка показывает агентов, которые работают прямо сейчас.
 - `onSubagentInfo(tabId, agentId, model, effort)` → дописать в существующего агента (для неизвестного агента — запомнить, чтобы применить при `start`: транскрипт может опередить хук).
 - `session_end` и закрытие вкладки → состояние вкладки очищается (строка скрывается).
 - Описание агента — через инжектируемую `readMeta(tabId, agentId)`; читается лениво при `start` и повторно при `onSubagentInfo`, пока не получено (файл может появиться позже хука).
@@ -143,7 +143,7 @@ interface TabStatus { sessionId: string | null; main: MainStatus | null; agents:
 
 ### 4.1 Разметка и стиль
 
-`<div id="statusbar" hidden>` после `#workspace` в `index.html`. Высота ~22 px, шрифт 12 px «Segoe UI», цвет `--muted`, фон как у таб-бара, разделители `│`. Видна, только если у активной вкладки есть `main` (то есть пришёл хотя бы один `status`). Терминал подстраивается через существующий `ResizeObserver` (`#workspace` — flex-элемент).
+`<div id="statusbar" hidden>` после `#workspace` в `index.html`. Высота ~28 px, шрифт 15 px «Segoe UI» (подобрано пользователем: ×1,5, затем −15 %), цвет `--muted`, фон как у таб-бара, разделители `│`. Видна, только если у активной вкладки есть `main` (то есть пришёл хотя бы один `status`). Терминал подстраивается через существующий `ResizeObserver` (`#workspace` — flex-элемент).
 
 ### 4.2 Сегменты (`src/renderer/status-bar.ts`)
 

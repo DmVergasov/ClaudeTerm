@@ -66,3 +66,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #lightbox { position: fixed; inset: 0; z-index: 70; background: #000d; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #lightbox img { max-width: 92vw; max-height: 88vh; cursor: grab; transform-origin: center; }
 .lightbox-caption { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: #ddd; }
+#statusbar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; height: 28px; padding: 0 13px; background: var(--chrome); border-top: 1px solid var(--border); color: var(--muted); font-size: 15px; white-space: nowrap; overflow: hidden; user-select: none; }
+#statusbar .status-sep { color: var(--border); }
+#statusbar .status-agents { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#statusbar .warn { color: #e5c07b; }
+#statusbar .crit { color: #e06c75; }
