@@ -83,3 +83,5 @@ export interface AgentStatus {
   effort: string | null
   startedAt: number
 }
+
+export type UpdateState = { status: 'idle' } | { status: 'ready'; version: string }
