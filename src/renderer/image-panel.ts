@@ -18,6 +18,7 @@ export class ImagePanel {
   private readonly autoOpened = new Set<string>()
   private readonly list: HTMLElement
   private readonly noticeEl: HTMLElement
+  onVisibilityChange: () => void = () => {}
 
   constructor(private readonly root: HTMLElement, private readonly cb: ImagePanelCallbacks, private width: number, private readonly autoOpen: () => boolean) {
     const handle = document.createElement('div')
@@ -52,6 +53,7 @@ export class ImagePanel {
   setCollapsed(collapsed: boolean): void {
     this.collapsed = collapsed
     this.root.classList.toggle('collapsed', collapsed)
+    this.onVisibilityChange()
     if (!collapsed && this.current && this.current.unseen > 0) this.cb.markSeen(this.current.tabId)
   }
 

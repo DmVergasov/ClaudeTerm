@@ -45,8 +45,13 @@ function renderTabs(): void {
     return t ? [{ id, title: titleOf(t), kind: t.info.kind, bell: t.bell, images: t.images, exited: t.info.exited }] : []
   })
   tabBar.render(items, activeId)
+  if (imagePanel) refreshImageButton()
   const active = activeId ? tabs.get(activeId) : undefined
   document.title = active ? `${titleOf(active)} — ClaudeTerm` : 'ClaudeTerm'
+}
+
+function refreshImageButton(): void {
+  tabBar.setImages(imagePanel.visible, activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0)
 }
 
 function handleInput(tabId: string, data: string): void {
@@ -226,7 +231,11 @@ async function boot(): Promise<void> {
     rename: (id, title) => ct.renameTab(id, title),
     reorder: (ids) => ct.reorderTabs(ids),
     newTab: () => void ct.openTab({ kind: 'shell', cwd: appInfo.homeDir }),
-    openMenu: (anchor) => newTabMenu(anchor)
+    openMenu: (anchor) => newTabMenu(anchor),
+    toggleImages: () => {
+      runAction({ type: 'toggleImages' }, activeId)
+      if (activeId) tabs.get(activeId)?.view.term.focus()
+    }
   })
   searchBar = new SearchBar(
     document.getElementById('search')!,
@@ -261,6 +270,8 @@ async function boot(): Promise<void> {
     () => settings.imagePanel.autoOpen
   )
   toggleImagePanel = () => imagePanel.toggle()
+  imagePanel.onVisibilityChange = refreshImageButton
+  refreshImageButton()
   ct.onImages((u) => {
     imageUpdates.set(u.tabId, u)
     const t = tabs.get(u.tabId)
@@ -269,6 +280,7 @@ async function boot(): Promise<void> {
       renderTabs()
     }
     if (u.tabId === activeId) imagePanel.show(u)
+    refreshImageButton()
   })
   ct.onTabOpened(addTab)
   ct.onTabUpdated((info) => {

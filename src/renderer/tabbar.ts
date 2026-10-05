@@ -1,4 +1,5 @@
 import type { TabKind } from '../shared/types'
+import { formatBadge } from './badge'
 
 export interface TabBarItem {
   id: string
@@ -16,6 +17,7 @@ export interface TabBarCallbacks {
   reorder(ids: string[]): void
   newTab(): void
   openMenu(anchor: HTMLElement): void
+  toggleImages(): void
 }
 
 function button(text: string, cls: string, title: string, onClick: (e: MouseEvent) => void): HTMLButtonElement {
@@ -32,6 +34,9 @@ export class TabBar {
   private dragId: string | null = null
   private items: TabBarItem[] = []
   private activeId: string | null = null
+  private imagesVisible = false
+  private imagesUnseen = 0
+  private imagesButton: HTMLButtonElement | null = null
 
   constructor(private readonly root: HTMLElement, private readonly cb: TabBarCallbacks) {}
 
@@ -44,7 +49,38 @@ export class TabBar {
     for (const item of items) list.append(this.renderTab(item, item.id === activeId))
     const plus = button('+', 'tab-new', 'New tab (Ctrl+Shift+T)', () => this.cb.newTab())
     const more = button('▾', 'tab-menu', 'Profiles', (e) => this.cb.openMenu(e.currentTarget as HTMLElement))
-    this.root.replaceChildren(list, plus, more)
+    this.imagesButton = this.createImagesButton()
+    this.updateImagesButton()
+    this.root.replaceChildren(list, plus, more, this.imagesButton)
+  }
+
+  setImages(visible: boolean, unseen: number): void {
+    this.imagesVisible = visible
+    this.imagesUnseen = unseen
+    this.updateImagesButton()
+  }
+
+  private createImagesButton(): HTMLButtonElement {
+    const b = document.createElement('button')
+    b.className = 'tab-images-toggle'
+    b.title = 'Images (Ctrl+Shift+I)'
+    b.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="1.65" y="2.65" width="12.7" height="10.7" rx="1.5"/><circle cx="5.3" cy="6.2" r="1.1"/><path d="M2 12l3.7-3.7 2.6 2.6 2-2L14 12.5"/></svg>'
+    const badge = document.createElement('span')
+    badge.className = 'badge'
+    b.append(badge)
+    b.addEventListener('click', () => this.cb.toggleImages())
+    return b
+  }
+
+  private updateImagesButton(): void {
+    const b = this.imagesButton
+    if (!b) return
+    b.classList.toggle('active', this.imagesVisible)
+    const badge = b.querySelector<HTMLElement>('.badge')!
+    const text = formatBadge(this.imagesUnseen)
+    badge.textContent = text
+    badge.hidden = text === ''
   }
 
   private renderTab(item: TabBarItem, active: boolean): HTMLElement {
