@@ -218,7 +218,7 @@ claude mcp add --scope user claudeterm -e ELECTRON_RUN_AS_NODE=1 -- "<install>\C
   "profiles": [                               // дополняют/переопределяют автодетект по name
     { "name": "Git Bash", "command": "C:\\Program Files\\Git\\bin\\bash.exe", "args": ["--login", "-i"] }
   ],
-  "font": { "family": "Cascadia Mono", "size": 13 },
+  "font": { "family": "Cascadia Mono", "size": 12 },   // size в пунктах, как в Windows Terminal (12pt = 16px)
   "theme": "Campbell",                        // встроенные: Campbell, One Half Dark, One Half Light; или объект цветов xterm ITheme
   "scrollback": 10000,
   "imageWatch": {

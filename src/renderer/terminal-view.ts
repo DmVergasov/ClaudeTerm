@@ -6,10 +6,14 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 
+// Font sizes are in points, like Windows Terminal; xterm.js takes CSS pixels (1pt = 96/72 px)
+const ptToPx = (pt: number): number => (pt * 96) / 72
+
 export interface TerminalViewOptions {
   tabId: string
   container: HTMLElement
   fontFamily: string
+  /** points */
   fontSize: number
   theme: ITheme
   scrollback: number
@@ -37,7 +41,7 @@ export class TerminalView {
     this.term = new Terminal({
       allowProposedApi: true,
       fontFamily: o.fontFamily,
-      fontSize: o.fontSize,
+      fontSize: ptToPx(o.fontSize),
       theme: o.theme,
       scrollback: o.scrollback,
       cursorBlink: true,
@@ -88,7 +92,7 @@ export class TerminalView {
 
   setFont(family: string, size: number): void {
     this.term.options.fontFamily = family
-    this.term.options.fontSize = size
+    this.term.options.fontSize = ptToPx(size)
     this.refit()
   }
 

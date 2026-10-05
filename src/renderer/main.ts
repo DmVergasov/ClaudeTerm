@@ -27,7 +27,7 @@ let order: string[] = []
 let activeId: string | null = null
 let settings: Settings
 let appInfo: AppInfo
-let fontSize = 13
+let fontSize = 12
 let tabBar: TabBar
 let searchBar: SearchBar
 let toggleImagePanel = (): void => {}
