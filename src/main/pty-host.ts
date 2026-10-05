@@ -20,6 +20,13 @@ export interface SpawnOptions {
 
 export type SpawnPty = (opts: SpawnOptions) => PtyHandle
 
+const running = new Set<Promise<void>>()
+
+/** Resolves when every spawned PTY has exited, or after timeoutMs. */
+export function allPtysExited(timeoutMs: number): Promise<void> {
+  return Promise.race([Promise.all(running).then(() => undefined), new Promise<void>((r) => setTimeout(r, timeoutMs))])
+}
+
 export const spawnPty: SpawnPty = (o) => {
   const p = pty.spawn(o.file, o.args, {
     name: 'xterm-256color',
@@ -30,9 +37,14 @@ export const spawnPty: SpawnPty = (o) => {
     useConpty: true
   })
   let alive = true
+  let markExited = (): void => {}
+  const exited = new Promise<void>((r) => { markExited = r })
+  running.add(exited)
+  void exited.then(() => running.delete(exited))
   p.onData(o.onData)
   p.onExit(({ exitCode }) => {
     alive = false
+    markExited()
     o.onExit(exitCode)
   })
   return {

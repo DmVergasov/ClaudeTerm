@@ -17,7 +17,7 @@ import { createLogger } from './log'
 import { ensureMcpRegistered, execRunner, resolveClaude, type ClaudeCli } from './mcp-registrar'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
 import { buildLaunch, detectProfiles, filterAvailable, mergeProfiles, pickClaudeProfile, pickProfile, systemDetectDeps } from './profiles'
-import { spawnPty } from './pty-host'
+import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { loadSettingsSafe } from './settings'
 import { SessionStore } from './session-store'
@@ -475,7 +475,9 @@ function bootstrap(): void {
   else void win.loadFile(join(__dirname, '../renderer/index.html'))
 
   app.on('window-all-closed', () => app.quit())
-  app.on('before-quit', () => {
+  let ptysExited = false
+  app.on('before-quit', (e) => {
+    if (ptysExited) return
     sessions.flush()
     for (const id of [...sources.keys()]) stopTabImages(id)
     for (const t of imageTimers.values()) clearTimeout(t)
@@ -483,5 +485,12 @@ function bootstrap(): void {
     tabs.disposeAll()
     settingsWatcher.close()
     void pipe?.close()
+    // Quitting while ConPTY sessions are still shutting down keeps the process alive for seconds after the
+    // window is gone (indefinitely on some machines): let the killed PTYs exit first, then quit for real.
+    e.preventDefault()
+    void allPtysExited(3000).then(() => {
+      ptysExited = true
+      app.quit()
+    })
   })
 }
