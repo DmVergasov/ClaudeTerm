@@ -1,11 +1,16 @@
 import type { TabKind } from '../shared/types'
 import { formatBadge } from './badge'
 
+/** one full fade in and out of the attention pulse: 2 × the 1.2 s alternate animation in styles.css */
+const PULSE_CYCLE_MS = 2400
+
 export interface TabBarItem {
   id: string
   title: string
   kind: TabKind
   bell: boolean
+  /** Claude in this tab is waiting for the user */
+  attention: boolean
   images: number
   exited: boolean
 }
@@ -85,8 +90,11 @@ export class TabBar {
 
   private renderTab(item: TabBarItem, active: boolean): HTMLElement {
     const el = document.createElement('div')
-    el.className = `tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}`
+    el.className = `tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}`
     el.dataset.tabId = item.id
+    // render() rebuilds every tab, which would restart the pulse each time (a busy Claude retitles its tab every
+    // second); a negative delay from one shared clock makes a rebuilt tab carry on in the same phase
+    if (item.attention) el.style.animationDelay = `${-(performance.now() % PULSE_CYCLE_MS)}ms`
     el.draggable = true
     el.title = item.title
     const icon = document.createElement('span')

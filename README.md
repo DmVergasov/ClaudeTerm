@@ -136,7 +136,7 @@ Settings live in `%APPDATA%\ClaudeTerm\settings.json` — press `Ctrl+,` to open
   "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 },
   "attention": {                   // when Claude waits for you in a tab you are not looking at
     "sound": "system",             // "system", "none", or the full path to a .wav file
-    "flash": true                  // flash the taskbar button
+    "flash": true                  // flash the taskbar button (a terminal bell, BEL, from any program flashes it regardless)
   }
 }
 ```

@@ -47,9 +47,9 @@ export function bufferText(page: Page, tabId?: string): Promise<string> {
   return page.evaluate((id) => window.__ct!.bufferText(id ?? undefined), tabId ?? null)
 }
 
-export async function launchClaudeTab(): Promise<Launched & { work: string; tabId: string }> {
+export async function launchClaudeTab(settings: object = FAKE_CLAUDE_SETTINGS): Promise<Launched & { work: string; tabId: string }> {
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
-  const launched = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, args: ['--claude', work] })
+  const launched = await launchApp({ settings, args: ['--claude', work] })
   await launched.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await launched.page.evaluate(() => window.__ct!.activeTabId()))!
   return { ...launched, work, tabId }

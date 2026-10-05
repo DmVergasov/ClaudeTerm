@@ -19,6 +19,7 @@ interface TabState {
   view: TerminalView
   oscTitle: string | null
   bell: boolean
+  attention: boolean
   images: number
 }
 
@@ -45,7 +46,7 @@ const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? fol
 function renderTabs(): void {
   const items = order.flatMap((id) => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), kind: t.info.kind, bell: t.bell, images: t.images, exited: t.info.exited }] : []
+    return t ? [{ id, title: titleOf(t), kind: t.info.kind, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited }] : []
   })
   tabBar.render(items, activeId)
   if (imagePanel) refreshImageButton()
@@ -185,7 +186,7 @@ function addTab(info: TabInfo): void {
   })
   view.show(false)
   attachTerminalMouse(info.id, view)
-  tabs.set(info.id, { info, view, oscTitle: null, bell: false, images: 0 })
+  tabs.set(info.id, { info, view, oscTitle: null, bell: false, attention: false, images: 0 })
   if (!order.includes(info.id)) order.push(info.id)
   renderTabs()
 }
@@ -195,7 +196,10 @@ function activate(tabId: string): void {
   const focus = !(document.activeElement instanceof HTMLInputElement)
   for (const [id, t] of tabs) t.view.show(id === tabId, focus)
   const t = tabs.get(tabId)
-  if (t) t.bell = false
+  if (t) {
+    t.bell = false
+    t.attention = false
+  }
   renderTabs()
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
   statusBar.render(statusUpdates.get(tabId) ?? null)
@@ -266,7 +270,7 @@ async function boot(): Promise<void> {
   ct.onAttention((tabId) => {
     const t = tabs.get(tabId)
     if (!t || tabId === activeId) return
-    t.bell = true
+    t.attention = true
     renderTabs()
   })
   imagePanel = new ImagePanel(

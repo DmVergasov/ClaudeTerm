@@ -25,6 +25,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .tab-icon { font-size: 11px; color: var(--accent); }
 .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-bell { color: var(--accent); font-size: 10px; }
+/* Claude is waiting in this tab: pulse until it is opened */
+.tab.attention { color: var(--fg); animation: tab-attention 1.2s ease-in-out infinite alternate; }
+@keyframes tab-attention { from { background: transparent; } to { background: color-mix(in srgb, var(--accent) 55%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .tab.attention { animation: none; background: color-mix(in srgb, var(--accent) 40%, transparent); } }
 .tab-images { font-size: 11px; }
 .tab-close, .tab-new, .tab-menu { background: none; border: 0; color: var(--muted); font-size: 14px; cursor: pointer; padding: 0 6px; }
 .tab-close:hover, .tab-new:hover, .tab-menu:hover { color: var(--fg); }
