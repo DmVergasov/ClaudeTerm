@@ -547,6 +547,8 @@ function bootstrap(): void {
   const settingsWindow = new SettingsWindow({
     parent: () => win,
     preload: join(__dirname, '../preload/index.js'),
+    // the installed app takes its icon from ClaudeTerm.exe; dev and test runs use electron.exe's own
+    icon: app.isPackaged ? undefined : join(__dirname, '..', '..', 'build', 'icon.png'),
     load: (w) => {
       if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}/settings.html`)
       else void w.loadFile(join(__dirname, '../renderer/settings.html'))

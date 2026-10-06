@@ -22,6 +22,8 @@ export function settingsWindowBounds(parent: Rect, work: Rect): Rect {
 export interface SettingsWindowDeps {
   parent(): BrowserWindow | null
   preload: string
+  /** the window icon where the app's own .exe does not supply one (dev and test runs) */
+  icon?: string
   load(win: BrowserWindow): void
 }
 
@@ -51,6 +53,7 @@ export class SettingsWindow {
       fullscreenable: false,
       title: 'ClaudeTerm Settings',
       backgroundColor: '#1b1b1f',
+      ...(this.d.icon ? { icon: this.d.icon } : {}),
       webPreferences: { preload: this.d.preload, contextIsolation: true, nodeIntegration: false, sandbox: true }
     })
     win.setMenu(null)
