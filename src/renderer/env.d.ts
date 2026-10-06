@@ -7,6 +7,8 @@ export interface CtTestHook {
   bufferText(id?: string): string
   images?(id?: string): { name: string; source: string; caption: string | null }[]
   restoreVisible?(): boolean
+  /** the active terminal's theme background */
+  themeBackground?(): string | null
 }
 
 declare global {

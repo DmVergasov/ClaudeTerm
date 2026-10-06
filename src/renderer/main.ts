@@ -388,7 +388,8 @@ async function boot(): Promise<void> {
         const t = tabs.get(id)
         return t ? titleOf(t) : null
       },
-      bufferText: (id) => tabs.get(id ?? activeId ?? '')?.view.bufferText() ?? ''
+      bufferText: (id) => tabs.get(id ?? activeId ?? '')?.view.bufferText() ?? '',
+      themeBackground: () => (activeId ? tabs.get(activeId)?.view.term.options.theme?.background ?? null : null)
     }
   }
   ct.rendererReady()

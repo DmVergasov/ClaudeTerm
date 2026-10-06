@@ -5,3 +5,33 @@
 html, body { margin: 0; min-height: 100%; background: var(--chrome); color: var(--fg); font: 13px "Segoe UI", system-ui, sans-serif; color-scheme: dark; }
 #settings { padding: 16px 20px 20px; }
 .settings-heading { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+.settings-banner { display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 8px 12px; background: #2a211d; border: 1px solid var(--accent); border-radius: 6px; }
+.settings-banner span { flex: 1; }
+.settings-notice { margin: 8px 0; padding: 8px 12px; color: #e5c07b; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+section { margin-top: 18px; }
+.section-title { margin: 0 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.section-note { margin-left: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.field { display: grid; grid-template-columns: 170px 1fr; align-items: center; gap: 4px 12px; margin: 6px 0; }
+.field-label { color: var(--fg); }
+.field-input { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.field-error { grid-column: 2; color: #e06c75; font-size: 12px; }
+.check-field { margin: 6px 0; }
+.check-field .field-error { margin-left: 24px; }
+.hint { color: var(--muted); font-size: 12px; }
+.text-input, select { min-width: 0; padding: 4px 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font: inherit; outline: none; }
+.text-input:focus, select:focus { border-color: var(--accent); }
+.text-input.invalid { border-color: #e06c75; }
+input[type="text"].text-input { width: 300px; }
+input[type="number"].text-input { width: 100px; }
+.sound-line { display: flex; align-items: center; gap: 8px; width: 100%; }
+input[type="text"].sound-path { flex: 1; width: auto; color: var(--muted); }
+button { padding: 4px 12px; background: var(--chrome-2); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font: inherit; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+.notify { border-collapse: collapse; margin: 4px 0 8px; }
+.notify th, .notify td { padding: 4px 10px; }
+.notify thead th { color: var(--muted); font-weight: 400; font-size: 12px; }
+.notify tbody th { text-align: left; font-weight: 400; padding-left: 0; }
+.notify td { text-align: center; }
+.settings-footer { display: flex; align-items: center; gap: 12px; margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.settings-footer span { flex: 1; }
