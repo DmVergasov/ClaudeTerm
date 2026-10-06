@@ -26,6 +26,8 @@
   ·
   <a href="#settings">Settings</a>
   ·
+  <a href="CHANGELOG.md">Changelog</a>
+  ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 

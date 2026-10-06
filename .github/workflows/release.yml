@@ -29,6 +29,11 @@ jobs:
             exit 1
           fi
 
+      # the release notes are the version's section of CHANGELOG.md; without one the release stops here
+      - name: Take the release notes from CHANGELOG.md
+        shell: bash
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
+
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -44,4 +49,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME"
           dist/ClaudeTerm-Setup-*.exe dist/ClaudeTerm-Setup-*.exe.blockmap dist/latest.yml
           --title "ClaudeTerm ${GITHUB_REF_NAME#v}"
-          --generate-notes
+          --notes-file release-notes.md

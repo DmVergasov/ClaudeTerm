@@ -69,14 +69,14 @@ The original design notes and implementation plans are in [`docs/superpowers`](d
 
 ## Releases
 
-Maintainers release by bumping `version` in `package.json` and pushing a matching tag:
+Maintainers release by writing the version's section in [CHANGELOG.md](CHANGELOG.md) (what changed for people using the app, not a list of commits), bumping `version` in `package.json` and pushing a matching tag:
 
 ```powershell
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The **Release** workflow runs the tests, builds the installer and publishes it as a GitHub Release with generated notes.
+The **Release** workflow runs the tests, builds the installer and publishes it as a GitHub Release whose notes are that CHANGELOG.md section. It stops before building when the section is missing.
 
 ## License
 
