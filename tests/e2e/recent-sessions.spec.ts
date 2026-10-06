@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp } from './helpers'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -42,7 +42,9 @@ test('the main process lists sessions newest first and opens one in a Claude tab
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   const tabA = (await page.evaluate(() => window.__ct!.activeTabId()))!
   await expect.poll(() => bufferText(page, tabA), { timeout: 15_000 }).toContain(`--resume ${SID_A}`)
-  await expect.poll(() => bufferText(page, tabA), { timeout: 15_000 }).toContain(workA)
+  // the prompt shows the folder; compare its name, since TEMP can be an 8.3 short path (C:\Users\RUNNER~1\…)
+  // while PowerShell prints the long one
+  await expect.poll(() => bufferText(page, tabA), { timeout: 15_000 }).toContain(basename(workA))
   expect((await page.evaluate(() => window.ct.listSessions())).find((s) => s.id === SID_A)?.open).toBe(true)
 
   // a second tab in the same folder, then back to the conversation's own tab
