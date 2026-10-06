@@ -34,6 +34,15 @@ describe('TranscriptParser', () => {
     expect(p.parseLine(toolResultLine('toolu_s1'))[0].caption).toBe('subagent · claude-in-chrome · computer (screenshot)')
   })
 
+  it('tracks when tools run: a tool_use opens the window, its tool_result closes it', () => {
+    const p = new TranscriptParser({ subagent: false })
+    p.parseLine(toolUseLine('toolu_b1', 'Bash', { command: 'python plot.py' }, '2026-10-05T10:00:00.000Z'))
+    expect(p.activity.runningAt(Date.parse('2026-10-05T10:00:30.000Z'))).toBe(true)
+    p.parseLine(toolResultLine('toolu_b1', { timestamp: '2026-10-05T10:00:10.000Z' }))
+    expect(p.activity.runningAt(Date.parse('2026-10-05T10:00:05.000Z'))).toBe(true)
+    expect(p.activity.runningAt(Date.parse('2026-10-05T10:00:30.000Z'))).toBe(false)
+  })
+
   it('tool_result without a known tool_use → kind tool without caption', () => {
     expect(new TranscriptParser({ subagent: false }).parseLine(toolResultLine('toolu_unknown'))[0]).toMatchObject({ kind: 'tool', caption: null })
   })

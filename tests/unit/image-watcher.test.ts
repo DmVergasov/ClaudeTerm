@@ -1,9 +1,8 @@
-import type { Stats } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { makeIgnored, sessionTempDir, shouldWatchDir } from '../../src/main/image-watcher'
+import { isRootGoneEvent, sessionTempDir, shouldWatchDir, watchedImagePath } from '../../src/main/image-watcher'
 
-const file = { isFile: () => true } as Stats
-const dir = { isFile: () => false } as Stats
 const cfg = { extensions: ['png', 'jpg'], ignore: ['.git', 'node_modules', 'Intermediate'], maxDepth: 8 }
 
 describe('shouldWatchDir', () => {
@@ -20,24 +19,39 @@ describe('shouldWatchDir', () => {
   })
 })
 
-describe('makeIgnored', () => {
-  const ignored = makeIgnored('D:\\proj', cfg)
+describe('watchedImagePath', () => {
+  const root = join(tmpdir(), 'proj')
 
-  it('never ignores the root', () => {
-    expect(ignored('D:\\proj', dir)).toBe(false)
+  it('maps an image file name from the watcher to its full path', () => {
+    expect(watchedImagePath(root, join('out', 'plot.png'), cfg)).toBe(join(root, 'out', 'plot.png'))
+    expect(watchedImagePath(root, 'shot.PNG', cfg)).toBe(join(root, 'shot.PNG'))
   })
 
-  it('ignores listed segments case-insensitively at any depth', () => {
-    expect(ignored('D:\\proj\\node_modules', dir)).toBe(true)
-    expect(ignored('D:\\proj\\Plugins\\X\\intermediate\\a.png', file)).toBe(true)
-    expect(ignored('D:\\proj\\.git\\x', undefined)).toBe(true)
+  it('skips listed folders case-insensitively at any depth', () => {
+    expect(watchedImagePath(root, join('node_modules', 'x.png'), cfg)).toBeNull()
+    expect(watchedImagePath(root, join('Plugins', 'X', 'intermediate', 'a.png'), cfg)).toBeNull()
+    expect(watchedImagePath(root, join('.git', 'x.png'), cfg)).toBeNull()
   })
 
-  it('ignores non-image files only when stats say it is a file', () => {
-    expect(ignored('D:\\proj\\notes.txt', file)).toBe(true)
-    expect(ignored('D:\\proj\\shot.PNG', file)).toBe(false)
-    expect(ignored('D:\\proj\\folder.v2', dir)).toBe(false)
-    expect(ignored('D:\\proj\\notes.txt', undefined)).toBe(false)
+  it('skips other file types and events without a file name', () => {
+    expect(watchedImagePath(root, 'notes.txt', cfg)).toBeNull()
+    expect(watchedImagePath(root, 'out', cfg)).toBeNull()
+    expect(watchedImagePath(root, null, cfg)).toBeNull()
+  })
+
+  it('skips files below maxDepth folders', () => {
+    const shallow = { ...cfg, maxDepth: 2 }
+    expect(watchedImagePath(root, join('a', 'b', 'c.png'), shallow)).toBe(join(root, 'a', 'b', 'c.png'))
+    expect(watchedImagePath(root, join('a', 'b', 'c', 'd.png'), shallow)).toBeNull()
+  })
+})
+
+describe('isRootGoneEvent', () => {
+  it('an absolute path from a recursive watcher means the watched folder itself was deleted', () => {
+    expect(isRootGoneEvent('\\\\?\\D:\\proj')).toBe(true)
+    expect(isRootGoneEvent(join(tmpdir(), 'proj'))).toBe(true)
+    expect(isRootGoneEvent(join('out', 'a.png'))).toBe(false)
+    expect(isRootGoneEvent(null)).toBe(false)
   })
 })
 

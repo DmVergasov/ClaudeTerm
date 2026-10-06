@@ -14,7 +14,8 @@ import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
 import { isId, isIdList, isImageAction, isOptionalTitle, isPtyData, isPtySize, isUserInput } from './ipc-guards'
 import { checkImageFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
-import { ImageHub } from './image-hub'
+import { ImageHub, normalizeKey } from './image-hub'
+import { folderImageGoesTo, type FolderTab } from './image-routing'
 import { sessionTempDir, shouldWatchDir, watchImages, type ImageWatcherHandle } from './image-watcher'
 import { handleImgProtocol, registerImgScheme } from './img-protocol'
 import { createLogger } from './log'
@@ -127,6 +128,7 @@ function bootstrap(): void {
   const imagesUpdate = (tabId: string): ImagesUpdate => ({ tabId, cards: images.list(tabId), unseen: images.unseenCount(tabId), notice: images.notice(tabId) })
 
   interface TabImageSources {
+    cwd: string
     cwdWatcher: ImageWatcherHandle | null
     tempWatcher: ImageWatcherHandle | null
     feed: TranscriptFeed | null
@@ -165,10 +167,36 @@ function bootstrap(): void {
     statusHub.removeTab(tabId)
   }
 
+  const folderKey = (p: string): string => normalizeKey(p).replace(/[\\/]+$/, '')
+
+  /** Claude tabs watching the same folder as `tabId`, itself included */
+  const sameFolderTabs = (tabId: string): FolderTab[] => {
+    const own = sources.get(tabId)
+    if (!own) return []
+    const key = folderKey(own.cwd)
+    return [...sources]
+      .filter(([, s]) => s.cwdWatcher && folderKey(s.cwd) === key)
+      .map(([id, s]) => ({ tabId: id, toolRunningAt: (t: number) => s.feed?.toolRunningAt(t) ?? false }))
+  }
+
+  /** a new image in a tab's folder: with other Claude tabs in the same folder it may be theirs (see folderImageGoesTo) */
+  const folderImage = async (tabId: string, path: string, writtenAt: number, changed: boolean): Promise<void> => {
+    const peers = sameFolderTabs(tabId)
+    // the tool that wrote the file must be in the transcripts read so far
+    if (peers.length > 1) await Promise.all(peers.map((t) => sources.get(t.tabId)?.feed?.poll()))
+    if (!sources.has(tabId) || !folderImageGoesTo(tabId, peers, writtenAt)) return
+    images.add(tabId, path, 'created', null, undefined, changed)
+  }
+
   const watchDir = (tabId: string, dir: string, which: 'cwdWatcher' | 'tempWatcher'): ImageWatcherHandle => {
+    // the session's temp folder is its own; the tab's folder may be shared with other Claude tabs
+    const deliver = (p: string, writtenAt: number, changed: boolean): void => {
+      if (which === 'tempWatcher') images.add(tabId, p, 'created', null, undefined, changed)
+      else void folderImage(tabId, p, writtenAt, changed).catch((e) => log.warn(`image ${p}: ${(e as Error).message}`))
+    }
     const handle: ImageWatcherHandle = watchImages(dir, settings.imageWatch, {
-      added: (p) => images.add(tabId, p, 'created', null),
-      changed: (p) => images.add(tabId, p, 'created', null, undefined, true),
+      added: (p, at) => deliver(p, at, false),
+      changed: (p, at) => deliver(p, at, true),
       removed: (p) => images.markDeleted(tabId, p),
       error: (err) => {
         log.warn(`watcher ${dir}: ${err.message}`)
@@ -187,7 +215,7 @@ function bootstrap(): void {
 
   const startTabImages = (tab: TabInfo): void => {
     images.addTab(tab.id, tab.cwd)
-    const s: TabImageSources = { cwdWatcher: null, tempWatcher: null, feed: null, transcriptPath: null }
+    const s: TabImageSources = { cwd: tab.cwd, cwdWatcher: null, tempWatcher: null, feed: null, transcriptPath: null }
     sources.set(tab.id, s)
     if (tab.kind !== 'claude' || !settings.imageWatch.enabled) return
     if (shouldWatchDir(tab.cwd, homedir())) s.cwdWatcher = watchDir(tab.id, tab.cwd, 'cwdWatcher')
