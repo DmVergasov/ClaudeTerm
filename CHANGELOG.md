@@ -2,7 +2,7 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
-## Next
+## 0.1.9
 
 ### Fixes
 
