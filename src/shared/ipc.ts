@@ -53,7 +53,8 @@ export const IPC = {
 } as const
 
 export interface AppInfo {
-  windowsBuild: number
+  /** Windows build number, for xterm's ConPTY handling; null elsewhere */
+  windowsBuild: number | null
   test: boolean
   homeDir: string
   version: string
@@ -103,6 +104,8 @@ export type SetSettingResult = { ok: true } | { ok: false; error: string }
 export type Unsubscribe = () => void
 
 export interface CtApi {
+  /** process.platform of the app ('win32', 'linux'); known at once, without a round trip */
+  readonly platform: string
   appInfo(): Promise<AppInfo>
   rendererReady(): void
   /** the terminal in that tab rang its bell (BEL) */

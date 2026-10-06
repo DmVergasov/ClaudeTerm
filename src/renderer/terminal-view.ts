@@ -5,6 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
+import { windowsPtyOption } from './util'
 
 // Font sizes are in points, like Windows Terminal; xterm.js takes CSS pixels (1pt = 96/72 px)
 const ptToPx = (pt: number): number => (pt * 96) / 72
@@ -17,7 +18,7 @@ export interface TerminalViewOptions {
   fontSize: number
   theme: ITheme
   scrollback: number
-  windowsBuild: number
+  windowsBuild: number | null
   useWebgl: boolean
   onInput(data: string): void
   onResize(cols: number, rows: number): void
@@ -45,7 +46,7 @@ export class TerminalView {
       theme: o.theme,
       scrollback: o.scrollback,
       cursorBlink: true,
-      windowsPty: { backend: 'conpty', buildNumber: o.windowsBuild }
+      ...windowsPtyOption(o.windowsBuild)
     })
     this.fit = new FitAddon()
     this.search = new SearchAddon()

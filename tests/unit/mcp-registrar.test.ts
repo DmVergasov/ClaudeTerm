@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ensureMcpRegistered, resolveClaude, runClaude, type RunResult, type Runner } from '../../src/main/mcp-registrar'
+import { ensureMcpRegistered, resolveClaude, resolveClaudePosix, runClaude, type RunResult, type Runner } from '../../src/main/mcp-registrar'
 
 const EXE = 'C:\\Users\\me\\AppData\\Local\\Programs\\ClaudeTerm\\ClaudeTerm.exe'
 const SCRIPT = 'C:\\Users\\me\\AppData\\Local\\Programs\\ClaudeTerm\\resources\\mcp\\show-image-server.js'
@@ -45,6 +45,37 @@ describe('runClaude', () => {
   })
 })
 
+describe('resolveClaudePosix', () => {
+  const marked = (path: string): RunResult => ok(`Welcome!\n__CLAUDETERM_PATH__${path}__CLAUDETERM_PATH__`)
+
+  it('finds claude on the login shell PATH, not the app PATH, and runs it with that PATH', async () => {
+    const nvm = '/home/me/.nvm/versions/node/v22/bin'
+    const { run, calls } = fakeRunner([(c) => (c.file === '/bin/bash' ? marked(`/usr/bin:${nvm}`) : null)])
+    const cli = await resolveClaudePosix({ run, shell: '/bin/bash', env: { PATH: '/usr/bin', HOME: '/home/me' }, isExecutable: (p) => p === `${nvm}/claude` })
+    expect(cli).toEqual({ file: `${nvm}/claude`, viaCmd: false, env: { PATH: `/usr/bin:${nvm}`, HOME: '/home/me' } })
+    expect(calls[0].args.slice(0, 3)).toEqual(['-l', '-i', '-c'])
+  })
+
+  it('falls back to the app PATH when the login shell gives nothing; null when claude is nowhere', async () => {
+    const { run } = fakeRunner([() => fail()])
+    expect(await resolveClaudePosix({ run, shell: '/bin/zsh', env: { PATH: '/usr/local/bin' }, isExecutable: (p) => p === '/usr/local/bin/claude' }))
+      .toEqual({ file: '/usr/local/bin/claude', viaCmd: false, env: { PATH: '/usr/local/bin' } })
+    expect(await resolveClaudePosix({ run, shell: null, env: { PATH: '/usr/bin' }, isExecutable: () => false })).toBeNull()
+  })
+})
+
+describe('runClaude with an environment', () => {
+  it('passes the environment a Linux claude needs', async () => {
+    const seen: (NodeJS.ProcessEnv | undefined)[] = []
+    const run: Runner = async (_f, _a, opts) => {
+      seen.push(opts?.env)
+      return ok()
+    }
+    await runClaude(run, { file: '/x/claude', viaCmd: false, env: { PATH: '/x' } }, ['mcp', 'get', 'claudeterm'])
+    expect(seen).toEqual([{ PATH: '/x' }])
+  })
+})
+
 describe('ensureMcpRegistered', () => {
   it('does nothing when already registered for this install', async () => {
     const { run, calls } = fakeRunner([whereFinds(CLAUDE), (c) => (c.args[1] === 'get' ? ok(`claudeterm:\n  Command: ${EXE}\n  Args: ${SCRIPT}\n`) : null)])
@@ -59,6 +90,19 @@ describe('ensureMcpRegistered', () => {
       { file: CLAUDE, args: ['mcp', 'remove', '--scope', 'user', 'claudeterm'], verbatim: false },
       { file: CLAUDE, args: ['mcp', 'add', '--scope', 'user', 'claudeterm', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', EXE, SCRIPT], verbatim: false }
     ])
+  })
+
+  it('uses the claude it is given instead of looking it up', async () => {
+    const { run, calls } = fakeRunner([(c) => (c.args[1] === 'get' ? ok(`Command: ${EXE}\nArgs: ${SCRIPT}\n`) : null)])
+    const resolve = async () => ({ file: '/x/claude', viaCmd: false })
+    expect(await ensureMcpRegistered({ run, execPath: EXE, serverScript: SCRIPT, log: () => {}, resolve })).toBe('already')
+    expect(calls.map((c) => c.file)).toEqual(['/x/claude'])
+  })
+
+  it('re-registers when the app moved, even if the server script path is the same', async () => {
+    const { run, calls } = fakeRunner([whereFinds(CLAUDE), (c) => (c.args[1] === 'get' ? ok(`Command: C:\\old\\ClaudeTerm.exe\nArgs: ${SCRIPT}\n`) : null)])
+    expect(await ensureMcpRegistered({ run, execPath: EXE, serverScript: SCRIPT, log: () => {} })).toBe('registered')
+    expect(calls.at(-1)?.args[1]).toBe('add')
   })
 
   it('reports no-claude and failed', async () => {

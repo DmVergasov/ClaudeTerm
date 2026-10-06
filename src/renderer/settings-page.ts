@@ -143,7 +143,7 @@ function soundField(): HTMLElement {
   const browse = el('button', { type: 'button', textContent: 'Browse…' })
   const play = el('button', { type: 'button', textContent: '▶ Play' })
   const f = field('Sound',
-    el('div', { className: 'sound-line' }, el('label', {}, system, ' Windows default'), el('label', {}, custom, ' Custom .wav')),
+    el('div', { className: 'sound-line' }, el('label', {}, system, ` ${ct.platform === 'win32' ? 'Windows default' : 'System sound'}`), el('label', {}, custom, ' Custom .wav')),
     el('div', { className: 'sound-line' }, path, browse, play))
   const pick = async (): Promise<void> => {
     const file = await ct.pickSound()
@@ -182,7 +182,7 @@ const bannerText = el('span')
 const banner = el('div', { className: 'settings-banner', hidden: true }, bannerText, openFile())
 const notice = el('div', { className: 'settings-notice', hidden: true })
 
-const automaticHint = '(PowerShell 7 if installed, else Windows PowerShell)'
+const automaticHint = ct.platform === 'win32' ? '(PowerShell 7 if installed, else Windows PowerShell)' : '(your login shell)'
 const root = document.getElementById('settings')!
 root.append(
   el('h1', { className: 'settings-heading', textContent: 'Settings' }),

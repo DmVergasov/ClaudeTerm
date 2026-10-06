@@ -2,7 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, TEST_SHELL } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -32,7 +32,7 @@ test('setSetting writes settings.json, keeps the other keys and applies at once'
   const view = await page.evaluate(() => window.ct.getSettingsView())
   expect(view).toMatchObject({ path: join(dataDir, 'settings.json'), problems: [], locked: false })
   expect(view.settings.font.size).toBe(9)
-  expect(view.profiles).toContain('Windows PowerShell')
+  expect(view.profiles).toContain(TEST_SHELL)
   await app.close()
 })
 
@@ -228,7 +228,7 @@ test('a custom theme, an unknown profile and invalid values in the file are show
   const win = await openSettings(app, page)
   await expect(win.locator('[data-key="theme"] option:checked')).toHaveText('Custom (settings.json)')
   await expect(win.locator('[data-key="claude.shellProfile"] option:checked')).toHaveText('Gone Shell (not found)')
-  await expect(win.locator('[data-key="defaultProfile"] option:checked')).toHaveText('Windows PowerShell')
+  await expect(win.locator('[data-key="defaultProfile"] option:checked')).toHaveText(TEST_SHELL)
   await expect(win.locator('.settings-notice')).toContainText('invalid value for "scrollback"')
   await app.close()
 })

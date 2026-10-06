@@ -1,5 +1,6 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { WIN } from '../fixtures/platform'
 import { launchApp, launchClaudeTab } from './helpers'
 
 interface TermLayout {
@@ -80,6 +81,7 @@ async function setContentSize(app: ElectronApplication, page: Page, width: numbe
 }
 
 test('maximized window: the last terminal row and column are not cut off', async () => {
+  test.skip(!WIN && !process.env.XDG_CURRENT_DESKTOP, 'no desktop (xvfb): there is no window manager to maximize the window')
   const { app, page } = await launchApp()
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].maximize())

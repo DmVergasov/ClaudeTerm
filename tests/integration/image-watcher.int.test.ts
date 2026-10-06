@@ -89,6 +89,34 @@ describe('watchImages', () => {
     await vi.waitFor(() => expect(events).toContain(`add:${later}`), { timeout: 5000 })
   })
 
+  it('reports every image of a deleted folder as removed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ct-watch-'))
+    const events = watch(root)
+    await handle!.ready
+    const out = join(root, 'out')
+    mkdirSync(join(out, 'sub'), { recursive: true })
+    await sleep(200)
+    const pngs = [join(out, 'a.png'), join(out, 'b.png'), join(out, 'c.png'), join(out, 'sub', 'd.png')]
+    for (const p of pngs) writeFileSync(p, 'x')
+    await vi.waitFor(() => expect(events.filter((e) => e.startsWith('add:'))).toHaveLength(4), { timeout: 5000 })
+    rmSync(out, { recursive: true })
+    await vi.waitFor(() => expect(events.filter((e) => e.startsWith('unlink:')).sort()).toEqual(pngs.map((p) => `unlink:${p}`).sort()), { timeout: 5000 })
+  })
+
+  it('keeps reporting after an empty subfolder is deleted and created again at once', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ct-watch-'))
+    const out = join(root, 'out')
+    mkdirSync(out)
+    const events = watch(root)
+    await handle!.ready
+    rmSync(out, { recursive: true })
+    mkdirSync(out)
+    await sleep(500)
+    const later = join(out, 'later.png')
+    writeFileSync(later, 'x')
+    await vi.waitFor(() => expect(events).toContain(`add:${later}`), { timeout: 5000 })
+  })
+
   it('lets go of a watched folder that is deleted, without burning CPU, and watches it again once it is back', async () => {
     const root = join(mkdtempSync(join(tmpdir(), 'ct-watch-')), 'proj')
     mkdirSync(root)

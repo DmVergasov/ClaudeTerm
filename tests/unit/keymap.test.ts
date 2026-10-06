@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { mapKey, type KeyLike } from '../../src/renderer/keymap'
+import { imagePasteInput, mapKey, type KeyLike } from '../../src/renderer/keymap'
+
+describe('imagePasteInput', () => {
+  it('Alt+V for Claude Code on Windows, Ctrl+V elsewhere', () => {
+    expect(imagePasteInput('win32')).toBe('\x1bv')
+    expect(imagePasteInput('linux')).toBe('\x16')
+  })
+})
 
 const k = (code: string, mods: Partial<KeyLike> = {}, key = ''): KeyLike => ({ type: 'keydown', key, code, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods })
 const cs = { ctrlKey: true, shiftKey: true }

@@ -1,8 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { claudeTempRoot } from '../../src/main/image-watcher'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { WIN } from '../fixtures/platform'
 import { pastedLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
 import { FAKE_CLAUDE_SETTINGS, launchApp, PNG_1x1 } from './helpers'
 
@@ -18,16 +20,19 @@ async function claudeTab(env?: Record<string, string>) {
 }
 
 test('a PNG created in the session temp folder appears and is served via ctimg; the project folder is not watched', async () => {
-  // the app's temp folder, where Claude Code keeps each session's scratchpad: <temp>/claude/<project>/<session id>
+  // the app's temp folder; Claude Code keeps each session's scratchpad in <its temp root>/<project>/<session id>
   const temp = mkdtempSync(join(tmpdir(), 'ct-temp-'))
-  const { app, page, work, tabId, pipeName } = await claudeTab({ TEMP: temp, TMP: temp })
+  const { app, page, work, tabId, pipeName } = await claudeTab(WIN ? { TEMP: temp, TMP: temp } : { CLAUDE_CODE_TMPDIR: temp })
   const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
   mkdirSync(projectDir, { recursive: true })
   const transcriptPath = join(projectDir, `${SID}.jsonl`)
   writeFileSync(transcriptPath, '')
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
-  const scratchpad = join(temp, 'claude', 'D--e2e', SID)
+  const root = claudeTempRoot({ platform: process.platform, env: WIN ? {} : { CLAUDE_CODE_TMPDIR: temp }, tmpdir: temp, uid: process.getuid?.() ?? -1 })
+  const scratchpad = join(root, 'D--e2e', SID)
   await expect.poll(() => existsSync(scratchpad), { timeout: 10_000 }).toBe(true)
+  // Claude Code refuses a temp root others can enter: one made by ClaudeTerm first is private too
+  if (!WIN) expect(statSync(root).mode & 0o077).toBe(0)
   await page.waitForTimeout(500) // let the watcher start
   writeFileSync(join(work, 'project.png'), PNG_1x1)
   writeFileSync(join(scratchpad, 'plot.png'), PNG_1x1)

@@ -2,7 +2,7 @@ import { expect, test, type ElectronApplication } from '@playwright/test'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, makeDataDir, typeInTerminal } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, makeDataDir, TEST_SHELL, typeInTerminal } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -13,7 +13,7 @@ async function closeWindow(app: ElectronApplication): Promise<void> {
 }
 
 function snapshotFile(cwd: string): string {
-  return JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs: [{ kind: 'claude', profile: 'Windows PowerShell', cwd, title: 'mine', claudeSessionId: SID }] })
+  return JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs: [{ kind: 'claude', profile: TEST_SHELL, cwd, title: 'mine', claudeSessionId: SID }] })
 }
 
 test('restores a claude tab with --resume and its title', async () => {
@@ -56,7 +56,7 @@ test('a run that ends with no tabs does not wipe the previous session', async ()
 })
 
 function twoTabSnapshot(cwd: string): string {
-  const tab = (title: string) => ({ kind: 'claude', profile: 'Windows PowerShell', cwd, title, claudeSessionId: SID })
+  const tab = (title: string) => ({ kind: 'claude', profile: TEST_SHELL, cwd, title, claudeSessionId: SID })
   return JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs: [tab('one'), tab('two')] })
 }
 

@@ -29,3 +29,13 @@ nsis:
   shortcutName: ClaudeTerm
   include: build/installer.nsh
   artifactName: ClaudeTerm-Setup-${version}.${ext}
+linux:
+  target:
+    - target: deb
+      arch: [x64]
+  executableName: claudeterm
+  category: Development
+  synopsis: A terminal built for Claude Code
+  maintainer: Dmitry Vergasov
+deb:
+  artifactName: ClaudeTerm-${version}.${ext}

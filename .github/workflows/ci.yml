@@ -14,8 +14,12 @@ concurrency:
 
 jobs:
   test:
-    name: Typecheck and tests
-    runs-on: windows-latest
+    name: Typecheck and tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -29,12 +33,34 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - run: npx playwright test
+
+      - name: End-to-end tests
+        if: runner.os == 'Windows'
+        run: npx playwright test
+
+      - name: End-to-end tests
+        if: runner.os == 'Linux'
+        # no display and no setuid sandbox helper on the runner
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
+        run: xvfb-run -a npx playwright test
+
+      - name: Build the Linux package
+        if: runner.os == 'Linux'
+        run: npx electron-builder --linux deb --publish never
+
+      - name: Keep the Linux package for a hand check
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: dist/ClaudeTerm-*.deb
+          retention-days: 7
 
       - name: Keep end-to-end results when they fail
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-results
+          name: e2e-results-${{ matrix.os }}
           path: test-results/
           if-no-files-found: ignore

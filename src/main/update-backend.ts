@@ -16,6 +16,8 @@ export interface AutoUpdaterLike {
 export interface UpdateBackendOptions {
   /** a generic feed for testing (CLAUDETERM_UPDATE_URL); it never installs on quit */
   testFeed?: string
+  /** install a downloaded update when the app quits; off where installing asks for a password (Linux .deb) */
+  installOnQuit?: boolean
   log: { info(m: string): void; warn(m: string): void; error(m: string): void }
 }
 
@@ -24,7 +26,7 @@ export function createUpdateBackend(u: AutoUpdaterLike, o: UpdateBackendOptions)
   u.autoDownload = true
   u.disableWebInstaller = true
   // a test feed must never install over the real installation when the app quits
-  u.autoInstallOnAppQuit = !o.testFeed
+  u.autoInstallOnAppQuit = !o.testFeed && (o.installOnQuit ?? true)
   u.logger = {
     info: (m) => o.log.info(`updater: ${String(m)}`),
     warn: (m) => o.log.warn(`updater: ${String(m)}`),

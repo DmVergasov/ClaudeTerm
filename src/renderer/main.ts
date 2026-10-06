@@ -4,7 +4,7 @@ import type { Settings, TabInfo } from '../shared/types'
 import { ImagePanel } from './image-panel'
 import { Lightbox } from './lightbox'
 import { RecentSessionsWindow } from './recent-sessions'
-import { mapKey, type KeyAction } from './keymap'
+import { imagePasteInput, mapKey, type KeyAction } from './keymap'
 import { SearchBar } from './search'
 import { showMenu, type MenuItem } from './menu'
 import { RestoreBanner } from './restore-banner'
@@ -94,8 +94,8 @@ function copySelection(t: TabState): boolean {
 async function paste(t: TabState, allowImage: boolean): Promise<void> {
   const clip = await ct.readClipboard()
   if (clip.text.length > 0) t.view.term.paste(clip.text)
-  // image-only clipboard: Alt+V makes claude read the image from the clipboard itself
-  else if (allowImage && clip.hasImage) handleInput(t.info.id, '\x1bv')
+  // image-only clipboard: Claude Code's image-paste key makes claude read the image from the clipboard itself
+  else if (allowImage && clip.hasImage) handleInput(t.info.id, imagePasteInput(ct.platform))
 }
 
 function runAction(a: KeyAction, tabId: string | null): void {

@@ -2,7 +2,7 @@
 
 Thanks for helping! Bug reports, ideas, docs fixes and code are all welcome.
 
-- **Found a bug?** [Open a bug report](https://github.com/DmVergasov/ClaudeTerm/issues/new?template=bug_report.yml). Logs from `%APPDATA%\ClaudeTerm\logs` help a lot.
+- **Found a bug?** [Open a bug report](https://github.com/DmVergasov/ClaudeTerm/issues/new?template=bug_report.yml). Logs from `%APPDATA%\ClaudeTerm\logs` (`~/.config/ClaudeTerm/logs` on Linux) help a lot.
 - **Have an idea?** [Open a feature request](https://github.com/DmVergasov/ClaudeTerm/issues/new?template=feature_request.yml) before writing a large change, so we can agree on the approach first.
 - **Looking for something to work on?** Issues labelled [`good first issue`](https://github.com/DmVergasov/ClaudeTerm/labels/good%20first%20issue) are a good start.
 - **Security issue?** Please don't open a public issue — see [SECURITY.md](SECURITY.md).
@@ -11,7 +11,7 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
-You need **Windows 10 or 11**, **Node.js 22.12+** and **Git**. [Claude Code](https://docs.claude.com/en/docs/claude-code) is needed for trying Claude tabs by hand, not for the tests.
+You need **Windows 10 or 11** or **Linux**, **Node.js 22.12+** and **Git** (on Linux also `build-essential` and `python3`: node-pty is compiled on install). [Claude Code](https://docs.claude.com/en/docs/claude-code) is needed for trying Claude tabs by hand, not for the tests.
 
 ```powershell
 git clone https://github.com/DmVergasov/ClaudeTerm.git
@@ -20,7 +20,9 @@ npm ci
 npm run dev
 ```
 
-`npm run dev` runs the app with hot reload. A development copy keeps its data in `%APPDATA%\ClaudeTerm-dev` and listens on its own named pipe, so it does not interfere with an installed ClaudeTerm.
+`npm run dev` runs the app with hot reload. A development copy keeps its data in `%APPDATA%\ClaudeTerm-dev` (`~/.config/ClaudeTerm-dev` on Linux) and listens on its own named pipe (Unix socket on Linux), so it does not interfere with an installed ClaudeTerm.
+
+On Ubuntu 24.04 and in WSL the development Electron has no setuid sandbox helper: run `ELECTRON_DISABLE_SANDBOX=1 npm run dev`; headless end-to-end tests run under `xvfb-run -a`.
 
 | Command | What it does |
 |---|---|
@@ -30,6 +32,7 @@ npm run dev
 | `npm run test:e2e` | Build, then end-to-end tests against the real Electron app (Playwright) |
 | `npm run screenshots` | Regenerate the README screenshots and the app icon |
 | `npm run dist` | Build the installer into `dist\` |
+| `npm run dist:linux` | Build the .deb into `dist/` (Linux) |
 
 ## Project layout
 

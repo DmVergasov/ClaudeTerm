@@ -1,5 +1,5 @@
 export type TabKind = 'claude' | 'shell'
-export type ShellFamily = 'powershell' | 'cmd' | 'bash' | 'wsl' | 'other'
+export type ShellFamily = 'powershell' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'wsl' | 'other'
 
 export interface ProfileDef {
   name: string

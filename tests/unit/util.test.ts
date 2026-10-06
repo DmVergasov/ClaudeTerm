@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { folderName } from '../../src/renderer/util'
+import { folderName, windowsPtyOption } from '../../src/renderer/util'
+
+describe('windowsPtyOption', () => {
+  it('ConPTY handling on Windows only', () => {
+    expect(windowsPtyOption(22631)).toEqual({ windowsPty: { backend: 'conpty', buildNumber: 22631 } })
+    expect(windowsPtyOption(null)).toEqual({})
+  })
+})
 
 describe('folderName', () => {
   it('returns the last path segment', () => {

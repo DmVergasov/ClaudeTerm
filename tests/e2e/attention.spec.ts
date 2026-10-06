@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, PROMPT } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // the mark is what these tests check; keep the desktop quiet while they run
@@ -62,11 +62,11 @@ test('a terminal bell in a background tab only puts a dot on it', async () => {
   const { app, page, tabId: first, work } = await launchClaudeTab()
   const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work))!.id
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, shell)
-  await expect.poll(() => bufferText(page, shell), { timeout: 20_000 }).toMatch(/PS .*>/)
+  await expect.poll(() => bufferText(page, shell), { timeout: 20_000 }).toMatch(PROMPT)
   await page.evaluate((id) => window.ct.activateTab(id), first)
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, first)
 
-  await page.evaluate((id) => window.ct.writePty(id, 'Write-Host -NoNewline ([char]7)\r'), shell)
+  await page.evaluate(([id, text]) => window.ct.writePty(id, text), [shell, bellCommand()] as const)
   const shellTab = page.locator(`[data-tab-id="${shell}"]`)
   await expect(shellTab.locator('.tab-bell')).toHaveCount(1)
   await expect(shellTab).not.toHaveClass(/\battention\b/)
@@ -99,10 +99,10 @@ test('with the bell tab highlight off, a terminal bell in a background tab leave
   const { app, page, tabId: first, work } = await launchClaudeTab(quietNotifications({ bell: { sound: false, flash: false, tab: false } }))
   const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work))!.id
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, shell)
-  await expect.poll(() => bufferText(page, shell), { timeout: 20_000 }).toMatch(/PS .*>/)
+  await expect.poll(() => bufferText(page, shell), { timeout: 20_000 }).toMatch(PROMPT)
   await page.evaluate((id) => window.ct.activateTab(id), first)
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, first)
-  await page.evaluate((id) => window.ct.writePty(id, "Write-Host -NoNewline ([char]7); 'after-bell'\r"), shell)
+  await page.evaluate(([id, text]) => window.ct.writePty(id, text), [shell, bellCommand('after-bell')] as const)
   await expect.poll(() => bufferText(page, shell), { timeout: 10_000 }).toContain('after-bell')
   // the bell goes renderer → main → renderer; give that round trip time before checking it left no dot
   await page.waitForTimeout(500)

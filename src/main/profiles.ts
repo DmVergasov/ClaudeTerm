@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { win32 } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { userInfo } from 'node:os'
+import { posix, win32 } from 'node:path'
 import { isUuid } from '../shared/protocol'
 import type { ProfileDef, ShellFamily, TabKind } from '../shared/types'
+import { isWindowsPath } from './path-key'
 
 export interface DetectDeps {
   exists(path: string): boolean
@@ -35,6 +37,56 @@ export function detectProfiles(deps: DetectDeps): ProfileDef[] {
     for (const distro of deps.listWslDistros()) out.push({ name: `WSL: ${distro}`, command: wsl, args: ['-d', distro] })
   }
   return out
+}
+
+export interface PosixDetectDeps {
+  /** the user's login shell; null when unknown */
+  loginShell: string | null
+  /** the text of /etc/shells; null when it cannot be read */
+  etcShells: string | null
+  exists(path: string): boolean
+}
+
+const POSIX_SHELLS = ['bash', 'zsh', 'fish']
+
+/** The login shell first, then bash, zsh and fish from /etc/shells or the usual folders; one profile per name, each a login shell. */
+export function detectPosixProfiles(d: PosixDetectDeps): ProfileDef[] {
+  const listed = (d.etcShells ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('/'))
+  const usual = POSIX_SHELLS.flatMap((n) => [`/bin/${n}`, `/usr/bin/${n}`, `/usr/local/bin/${n}`])
+  const out: ProfileDef[] = []
+  for (const command of [...(d.loginShell ? [d.loginShell] : []), ...listed, ...usual]) {
+    const name = posix.basename(command)
+    if (command !== d.loginShell && !POSIX_SHELLS.includes(name)) continue
+    if (out.some((p) => p.name === name) || !d.exists(command)) continue
+    out.push({ name, command, args: ['-l'] })
+  }
+  return out
+}
+
+/** The user's login shell: the passwd entry, else $SHELL. */
+export function loginShell(): string | null {
+  try {
+    const s = userInfo().shell
+    if (s) return s
+  } catch {
+    // no passwd entry for this user
+  }
+  return process.env.SHELL || null
+}
+
+export function systemPosixDetectDeps(): PosixDetectDeps {
+  let etcShells: string | null = null
+  try {
+    etcShells = readFileSync('/etc/shells', 'utf8')
+  } catch {
+    // no /etc/shells: the usual folders are still searched
+  }
+  return { loginShell: loginShell(), etcShells, exists: existsSync }
+}
+
+/** The shells installed here: Windows' own (where.exe, wsl.exe) or the POSIX ones. */
+export function detectInstalledProfiles(): ProfileDef[] {
+  return process.platform === 'win32' ? detectProfiles(systemDetectDeps()) : detectPosixProfiles(systemPosixDetectDeps())
 }
 
 export function mergeProfiles(detected: ProfileDef[], user: ProfileDef[]): ProfileDef[] {
@@ -89,13 +141,15 @@ export function shellFamily(p: ProfileDef): ShellFamily {
   if (exe === 'pwsh' || exe === 'powershell') return 'powershell'
   if (exe === 'cmd') return 'cmd'
   if (exe === 'wsl') return 'wsl'
+  if (exe === 'zsh') return 'zsh'
+  if (exe === 'fish') return 'fish'
   if (exe === 'bash') return 'bash'
   return 'other'
 }
 
 export function canHostClaude(p: ProfileDef): boolean {
   const f = shellFamily(p)
-  return f === 'powershell' || f === 'cmd' || f === 'bash'
+  return f === 'powershell' || f === 'cmd' || f === 'bash' || f === 'zsh' || f === 'fish'
 }
 
 export function pickClaudeProfile(profiles: ProfileDef[], preferred: string | null): { profile: ProfileDef; warning: string | null } {
@@ -116,7 +170,12 @@ export function quoteForShell(family: ShellFamily, value: string): string {
     case 'cmd':
       return `"${value}"`
     case 'bash':
-      return `'${value.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`
+    case 'zsh':
+      // Git Bash takes C:/… paths; a Linux path is used as it is
+      return `'${(isWindowsPath(value) ? value.replace(/\\/g, '/') : value).replace(/'/g, "'\\''")}'`
+    case 'fish':
+      // inside fish single quotes only \ and ' are special
+      return `'${value.replace(/[\\']/g, '\\$&')}'`
     default:
       throw new Error(`cannot quote for shell family "${family}"`)
   }
@@ -154,6 +213,11 @@ export function buildLaunch(profile: ProfileDef, kind: TabKind, claude: ClaudeLa
       return { file: profile.command, args: `/k ${buildClaudeCommandLine(family, claude)}` }
     case 'bash':
       return { file: profile.command, args: ['--login', '-i', '-c', `${buildClaudeCommandLine(family, claude)}; exec bash --login -i`] }
+    case 'zsh':
+      return { file: profile.command, args: ['-l', '-i', '-c', `${buildClaudeCommandLine(family, claude)}; exec zsh -l -i`] }
+    case 'fish':
+      // fish runs the command after its config files and stays interactive: the shell is there when claude exits
+      return { file: profile.command, args: ['-l', '-C', buildClaudeCommandLine(family, claude)] }
     default:
       throw new Error(`profile "${profile.name}" cannot host claude`)
   }

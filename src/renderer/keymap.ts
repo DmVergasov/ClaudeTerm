@@ -28,6 +28,11 @@ export interface KeyLike {
   metaKey: boolean
 }
 
+/** What makes claude read an image from the clipboard: Alt+V in Claude Code on Windows, Ctrl+V elsewhere */
+export function imagePasteInput(platform: string): string {
+  return platform === 'win32' ? '\x1bv' : '\x16'
+}
+
 // Uses KeyboardEvent.code (physical key) so shortcuts work with any keyboard layout.
 export function mapKey(e: KeyLike): KeyAction | null {
   if (e.type !== 'keydown' || e.metaKey) return null

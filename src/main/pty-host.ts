@@ -1,4 +1,8 @@
 import * as pty from 'node-pty'
+import { waitSessionGone } from './pty-session'
+
+/** how long a killed tab's programs get to quit after SIGHUP before its PTY counts as exited (not Windows) */
+export const SESSION_EXIT_WAIT_MS = 2000
 
 export interface PtyHandle {
   readonly pid: number
@@ -37,6 +41,7 @@ export const spawnPty: SpawnPty = (o) => {
     useConpty: true
   })
   let alive = true
+  let killed = false
   let markExited = (): void => {}
   const exited = new Promise<void>((r) => { markExited = r })
   running.add(exited)
@@ -44,8 +49,14 @@ export const spawnPty: SpawnPty = (o) => {
   p.onData(o.onData)
   p.onExit(({ exitCode }) => {
     alive = false
-    markExited()
-    o.onExit(exitCode)
+    const report = (): void => {
+      markExited()
+      o.onExit(exitCode)
+    }
+    // ConPTY ends every program of the console at once. Elsewhere SIGHUP reaches the shell and the programs it ran
+    // (claude) take a moment to save and quit: wait for them, so a restart never overlaps them.
+    if (killed && process.platform !== 'win32') void waitSessionGone(p.pid, SESSION_EXIT_WAIT_MS).then(report)
+    else report()
   })
   return {
     pid: p.pid,
@@ -54,6 +65,7 @@ export const spawnPty: SpawnPty = (o) => {
     kill: () => {
       if (!alive) return
       alive = false
+      killed = true
       try { p.kill() } catch { /* process already gone */ }
     }
   }

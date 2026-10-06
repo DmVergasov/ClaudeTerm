@@ -1,7 +1,9 @@
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { isAbsolute, join, posix, win32, type PlatformPath } from 'node:path'
 import { hasImageExtension } from '../shared/image-file'
+import { nativePath } from './path-key'
+import { TreeWatcher } from './tree-watcher'
 
 export interface WatchConfig {
   extensions: string[]
@@ -32,6 +34,8 @@ const MAX_STAT_RETRIES = 50
 const RESCAN_QUIET_MS = 300
 const RESCAN_MIN_INTERVAL_MS = 3000
 const RESCAN_SLACK_MS = 2000
+/** Linux stamps files from a clock that lags Date.now() by up to a tick: a file made just after watching started can look older */
+const CLOCK_SLACK_MS = 20
 
 function imagePathFilter(root: string, cfg: WatchConfig): (filename: string | null) => string | null {
   const ignore = new Set(cfg.ignore.map((s) => s.toLowerCase()))
@@ -51,15 +55,26 @@ export function watchedImagePath(root: string, filename: string | null, cfg: Wat
 }
 
 /**
- * A recursive watcher names files relative to its folder; an absolute name (`\\?\D:\proj` on Windows) is the folder
- * itself going away. Its handle then reports that again and again, thousands of times a second, until closed.
+ * A recursive watcher names files relative to its folder; an absolute name (`\\?\D:\proj` on Windows), or an empty
+ * one (Node's recursive watcher on Linux, the folder relative to itself), is the folder itself going away. On Windows
+ * its handle then reports that again and again, thousands of times a second, until closed.
  */
 export function isRootGoneEvent(filename: string | null): boolean {
-  return filename !== null && (filename.startsWith('\\\\?\\') || isAbsolute(filename))
+  return filename !== null && (filename === '' || filename.startsWith('\\\\?\\') || isAbsolute(filename))
 }
 
-export function sessionTempDir(transcriptPath: string, sessionId: string, tmpRoot: string): string {
-  return join(tmpRoot, 'claude', basename(dirname(transcriptPath)), sessionId)
+/**
+ * Claude Code's own temp folder: <CLAUDE_CODE_TMPDIR or %TEMP%>\claude on Windows,
+ * <CLAUDE_CODE_TMPDIR or /tmp>/claude-<uid> elsewhere (Claude Code ignores TMPDIR there).
+ */
+export function claudeTempRoot(o: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; tmpdir: string; uid: number }): string {
+  if (o.platform === 'win32') return win32.join(o.env.CLAUDE_CODE_TMPDIR || o.tmpdir, 'claude')
+  return posix.join(o.env.CLAUDE_CODE_TMPDIR || '/tmp', `claude-${o.uid}`)
+}
+
+/** A session's own folder in it, where its scratchpad lives: <root>/<project key>/<session id> */
+export function sessionTempDir(transcriptPath: string, sessionId: string, claudeRoot: string, path: PlatformPath = nativePath): string {
+  return path.join(claudeRoot, path.basename(path.dirname(transcriptPath)), sessionId)
 }
 
 /** Images under `dir` (within the ignore list and depth) whose file was created or modified at or after `since`. */
@@ -105,7 +120,8 @@ interface Pending {
 
 /**
  * Watches a folder tree for new, changed and deleted images with one recursive fs.watch: no scan of the tree and one
- * handle however big it is, and subfolders deleted and created again keep working.
+ * handle however big it is, and subfolders deleted and created again keep working. Linux has no recursive watch of its
+ * own: there a TreeWatcher watches each folder.
  * The OS drops events when many arrive at once (a nameless event); the tree is then searched for recent images.
  */
 export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): ImageWatcherHandle {
@@ -114,7 +130,7 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
   // images reported so far, with the file state reported: a later write is a change, the same state again is nothing
   const reported = new Map<string, { size: number; mtimeMs: number }>()
   const pending = new Map<string, Pending>()
-  let watcher: FSWatcher | null = null
+  let watcher: FSWatcher | TreeWatcher | null = null
   let retry: ReturnType<typeof setTimeout> | null = null
   let closed = false
   let lostSince: number | null = null
@@ -158,7 +174,7 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
     if (before && before.size === e.last.size && before.mtimeMs === e.last.mtimeMs) return
     reported.set(p, e.last)
     // a file that was there before watching started is changed, not new (birthtime is 0 where unsupported)
-    if (before || (st.birthtimeMs > 0 && st.birthtimeMs < startedAt)) h.changed(p)
+    if (before || (st.birthtimeMs > 0 && st.birthtimeMs < startedAt - CLOCK_SLACK_MS)) h.changed(p)
     else h.added(p)
   }
 
@@ -227,7 +243,7 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
 
   function open(): void {
     try {
-      watcher = watch(dir, { recursive: true }, onEvent)
+      watcher = process.platform === 'win32' ? watch(dir, { recursive: true }, onEvent) : new TreeWatcher(dir, onEvent, cfg)
     } catch (err) {
       if (!existsSync(dir)) scheduleRetry()
       else h.error(err instanceof Error ? err : new Error(String(err)))

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildClaudeCommandLine, buildLaunch, canHostClaude, detectProfiles, filterAvailable, mergeProfiles, parseWslList,
-  pickClaudeProfile, pickProfile, profileResolver, quoteForShell, shellFamily, type DetectDeps
+  buildClaudeCommandLine, buildLaunch, canHostClaude, detectPosixProfiles, detectProfiles, filterAvailable, mergeProfiles, parseWslList,
+  pickClaudeProfile, pickProfile, profileResolver, quoteForShell, shellFamily, type DetectDeps, type PosixDetectDeps
 } from '../../src/main/profiles'
 import type { ProfileDef } from '../../src/shared/types'
 
@@ -158,5 +158,59 @@ describe('profileResolver', () => {
     resolve([])
     expect(resolve([mine]).profiles).toEqual([detected, mine])
     expect(detections).toBe(1)
+  })
+})
+
+const ZSH: ProfileDef = { name: 'zsh', command: '/usr/bin/zsh', args: ['-l'] }
+const LBASH: ProfileDef = { name: 'bash', command: '/bin/bash', args: ['-l'] }
+const FISH: ProfileDef = { name: 'fish', command: '/usr/bin/fish', args: ['-l'] }
+
+describe('detectPosixProfiles', () => {
+  const shells = '# /etc/shells: valid login shells\n/bin/sh\n/bin/bash\n/usr/bin/bash\n/usr/bin/zsh\n/usr/bin/fish\n'
+  const installed = ['/bin/sh', '/bin/bash', '/usr/bin/bash', '/usr/bin/zsh', '/usr/bin/fish']
+  const d = (o: Partial<PosixDetectDeps> = {}): PosixDetectDeps => ({ loginShell: '/usr/bin/zsh', etcShells: shells, exists: (p) => installed.includes(p), ...o })
+
+  it('lists the login shell first, then bash, zsh and fish once each, as login shells', () => {
+    expect(detectPosixProfiles(d())).toEqual([ZSH, LBASH, FISH])
+  })
+
+  it('keeps a login shell it does not know, and finds shells without /etc/shells', () => {
+    expect(detectPosixProfiles(d({ loginShell: '/usr/bin/tcsh', etcShells: null, exists: (p) => p === '/usr/bin/tcsh' || p === '/bin/bash' })))
+      .toEqual([{ name: 'tcsh', command: '/usr/bin/tcsh', args: ['-l'] }, LBASH])
+  })
+
+  it('skips shells that are listed but not installed', () => {
+    expect(detectPosixProfiles(d({ loginShell: null, exists: (p) => p === '/bin/bash' })).map((p) => p.name)).toEqual(['bash'])
+  })
+})
+
+describe('Linux shells', () => {
+  const claude = { command: 'claude', settingsPath: '/home/me/.config/ClaudeTerm/claude-tab-settings.json', resumeSessionId: SID }
+  const line = `claude --settings '/home/me/.config/ClaudeTerm/claude-tab-settings.json' --resume ${SID}`
+
+  it('families: zsh and fish by name, bash and pwsh as on Windows', () => {
+    expect(shellFamily(ZSH)).toBe('zsh')
+    expect(shellFamily(FISH)).toBe('fish')
+    expect(shellFamily(LBASH)).toBe('bash')
+    expect(shellFamily({ name: 'pwsh', command: '/usr/bin/pwsh', args: [] })).toBe('powershell')
+    expect([ZSH, FISH, LBASH].every(canHostClaude)).toBe(true)
+  })
+
+  it('Linux paths keep their backslashes; zsh quotes like bash, fish its own way', () => {
+    const p = "/home/bob o'neil/.config/ClaudeTerm/a\\b.json"
+    expect(quoteForShell('bash', p)).toBe("'/home/bob o'\\''neil/.config/ClaudeTerm/a\\b.json'")
+    expect(quoteForShell('zsh', p)).toBe(quoteForShell('bash', p))
+    expect(quoteForShell('fish', p)).toBe("'/home/bob o\\'neil/.config/ClaudeTerm/a\\\\b.json'")
+  })
+
+  it('bash and zsh run claude, then become the shell; fish runs it as its first command and stays', () => {
+    expect(buildLaunch(LBASH, 'claude', claude)).toEqual({ file: '/bin/bash', args: ['--login', '-i', '-c', `${line}; exec bash --login -i`] })
+    expect(buildLaunch(ZSH, 'claude', claude)).toEqual({ file: '/usr/bin/zsh', args: ['-l', '-i', '-c', `${line}; exec zsh -l -i`] })
+    expect(buildLaunch(FISH, 'claude', claude)).toEqual({ file: '/usr/bin/fish', args: ['-l', '-C', line] })
+  })
+
+  it('Automatic is the first profile, the login shell', () => {
+    expect(pickProfile([ZSH, LBASH], null)).toBe(ZSH)
+    expect(pickClaudeProfile([ZSH, LBASH], null)).toEqual({ profile: ZSH, warning: null })
   })
 })

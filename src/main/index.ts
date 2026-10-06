@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } f
 import { homedir, release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
+import { socketDir } from '../shared/protocol'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
 import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo } from '../shared/types'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
@@ -15,19 +16,22 @@ import { initDataDir, resolvePipeName } from './data-dir'
 import { isId, isIdList, isImageAction, isOptionalTitle, isPtyData, isPtySize, isUserInput } from './ipc-guards'
 import { checkImageFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
 import { ImageHub } from './image-hub'
-import { sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
+import { claudeTempRoot, sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
 import { handleImgProtocol, registerImgScheme } from './img-protocol'
 import { createLogger } from './log'
-import { ensureMcpRegistered, execRunner, resolveClaude, type ClaudeCli } from './mcp-registrar'
+import { findExecutable, isExecutableFile } from './login-env'
+import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
+import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
-import { buildLaunch, detectProfiles, pickClaudeProfile, pickProfile, profileResolver, systemDetectDeps } from './profiles'
+import { buildLaunch, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver } from './profiles'
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
 import { SettingsWindow } from './settings-window'
 import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
-import { createSoundPlayer } from './sound'
+import { socketProblem } from './socket-file'
+import { createSoundPlayer, linuxSoundDeps, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { TabManager } from './tab-manager'
 import { readAgentMeta } from './transcript-agent-info'
@@ -87,7 +91,7 @@ function bootstrap(): void {
   }
 
   // a settings change (every click in the settings window) must not start the shell detection again
-  const resolveProfiles = profileResolver(() => detectProfiles(systemDetectDeps()), existsSync)
+  const resolveProfiles = profileResolver(detectInstalledProfiles, existsSync)
   const computeProfiles = (s: Settings): { profiles: ProfileDef[]; notices: string[] } => resolveProfiles(s.profiles)
 
   const loaded = loadSettingsSafe(settingsPath)
@@ -111,6 +115,7 @@ function bootstrap(): void {
     previous ? { tabs: previous.tabs.length, claudeTabs: previous.tabs.filter((t) => t.kind === 'claude').length, savedAt: previous.savedAt } : null
 
   const imageCacheRoot = join(tmpdir(), 'ClaudeTerm', 'images')
+  const claudeRoot = claudeTempRoot({ platform: process.platform, env: process.env, tmpdir: tmpdir(), uid: process.getuid?.() ?? -1 })
   cleanupImageCache(imageCacheRoot, 7 * 24 * 60 * 60 * 1000)
   const imageTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const images = new ImageHub({
@@ -151,7 +156,9 @@ function bootstrap(): void {
   })
 
   const playSound = createSoundPlayer({
-    env: process.env,
+    ...(process.platform === 'win32'
+      ? { player: (f: string) => wavPlayer(f, process.env), systemSound: null }
+      : linuxSoundDeps(process.env, (cmd) => findExecutable(cmd, process.env.PATH ?? '', isExecutableFile) !== null, existsSync)),
     beep: () => shell.beep(),
     spawn: (p) => spawn(p.file, p.args, { env: p.env, windowsHide: true, stdio: 'ignore' }),
     warn: toast
@@ -205,7 +212,7 @@ function bootstrap(): void {
 
   const attachTranscript = (tabId: string, sessionId: string, transcriptPath: string): void => {
     const s = sources.get(tabId)
-    if (!s || s.transcriptPath?.toLowerCase() === transcriptPath.toLowerCase()) return
+    if (!s || (s.transcriptPath !== null && pathKey(s.transcriptPath) === pathKey(transcriptPath))) return
     s.feed?.stop()
     void s.tempWatcher?.close()
     s.tempWatcher = null
@@ -220,12 +227,13 @@ function bootstrap(): void {
       onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info)
     })
     // images there, also ones Claude reads, are shown by their path inside it (scratchpad\plot.png)
-    const temp = sessionTempDir(transcriptPath, sessionId, tmpdir())
+    const temp = sessionTempDir(transcriptPath, sessionId, claudeRoot)
     images.setTempDir(tabId, temp)
     s.feed.start()
     if (!settings.imageWatch.enabled) return
     try {
-      mkdirSync(temp, { recursive: true })
+      // private, as Claude Code makes it: on Linux it refuses a temp root others can enter
+      mkdirSync(temp, { recursive: true, mode: 0o700 })
       s.tempWatcher = watchTemp(tabId, temp)
     } catch (e) {
       log.warn(`cannot watch ${temp}: ${(e as Error).message}`)
@@ -235,7 +243,11 @@ function bootstrap(): void {
   handleImgProtocol(images, () => [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
 
   let claudeCli: ClaudeCli | null | undefined
-  void resolveClaude(execRunner).then((cli) => { claudeCli = cli })
+  // looked up once: on Linux this starts the login shell
+  const findingClaude = process.platform === 'win32'
+    ? resolveClaude(execRunner)
+    : resolveClaudePosix({ run: execRunner, shell: loginShell(), env: process.env, isExecutable: isExecutableFile })
+  void findingClaude.then((cli) => { claudeCli = cli })
 
   const tabs = new TabManager({
     onTabStarted: startTabImages,
@@ -358,7 +370,7 @@ function bootstrap(): void {
   })
 
   const updater = new Updater({
-    backend: app.isPackaged && !isTest ? createUpdateBackend(autoUpdater, { testFeed: process.env.CLAUDETERM_UPDATE_URL, log }) : null,
+    backend: app.isPackaged && !isTest ? createUpdateBackend(autoUpdater, { testFeed: process.env.CLAUDETERM_UPDATE_URL, installOnQuit: process.platform === 'win32', log }) : null,
     currentVersion: app.getVersion(),
     enabled: () => settings.autoUpdate,
     publish: (s) => send(IPC.evUpdate, s),
@@ -371,7 +383,11 @@ function bootstrap(): void {
   })
   updater.start()
 
-  startPipeServer(pipeName, {
+  // a socket left by a run that crashed would refuse the new one; a socket folder others can enter is never used
+  const uid = process.getuid?.() ?? -1
+  const pipeProblem = process.platform === 'win32' ? null : socketProblem(pipeName, { privateDir: socketDir({ platform: process.platform, env: {}, uid }), uid })
+  if (pipeProblem) toast(`Claude tabs cannot report to ClaudeTerm (status, images, notifications): ${pipeProblem}`)
+  else startPipeServer(pipeName, {
     showImage: async (msg) => {
       const check = await checkImageFile(msg.path, [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
       if (!check.ok) return { ok: false, error: check.error }
@@ -415,11 +431,11 @@ function bootstrap(): void {
     .catch((e: unknown) => log.error(`pipe server failed: ${String(e)}`))
 
   if (app.isPackaged && process.env.CLAUDETERM_SKIP_MCP_REGISTER !== '1') {
-    void ensureMcpRegistered({ run: execRunner, execPath: process.execPath, serverScript: resourcePath('mcp/show-image-server.js'), log: (m) => log.warn(m) })
+    void ensureMcpRegistered({ run: execRunner, execPath: process.execPath, serverScript: resourcePath('mcp/show-image-server.js'), log: (m) => log.warn(m), resolve: () => findingClaude })
       .then((r) => log.info(`mcp registration: ${r}`))
   }
 
-  ipcMain.handle(IPC.appInfo, (): AppInfo => ({ windowsBuild: Number(release().split('.')[2]) || 0, test: isTest, homeDir: homedir(), version: app.getVersion() }))
+  ipcMain.handle(IPC.appInfo, (): AppInfo => ({ windowsBuild: process.platform === 'win32' ? Number(release().split('.')[2]) || 0 : null, test: isTest, homeDir: homedir(), version: app.getVersion() }))
   ipcMain.on(IPC.rendererReady, () => {
     rendererReady = true
     for (const n of startupNotices.splice(0)) send(IPC.evToast, n)

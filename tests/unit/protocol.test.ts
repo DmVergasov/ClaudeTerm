@@ -1,22 +1,28 @@
 import { describe, expect, it } from 'vitest'
 import { defaultPipeName, encodeMessage, isUuid, parsePipeMessage } from '../../src/shared/protocol'
+import { WIN } from '../fixtures/platform'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+// parsePipeMessage checks paths with the platform's isAbsolute: the samples are absolute where the tests run
+const PLOT = WIN ? 'D:\\proj\\out\\plot.png' : '/proj/out/plot.png'
+const A_PNG = WIN ? 'C:\\a.png' : '/a.png'
+const TP = WIN ? 'C:\\Users\\u\\.claude\\projects\\D--x\\s.jsonl' : '/home/u/.claude/projects/-x/s.jsonl'
+const EVIL = WIN ? 'C:\\x\\evil.exe' : '/x/evil.exe'
 
 describe('parsePipeMessage', () => {
   it('accepts a show_image message', () => {
-    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'show_image', tabId: TAB, path: 'D:\\proj\\out\\plot.png', caption: 'Plot' }))
-    expect(r).toEqual({ ok: true, message: { v: 1, type: 'show_image', tabId: TAB, path: 'D:\\proj\\out\\plot.png', caption: 'Plot' } })
+    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'show_image', tabId: TAB, path: PLOT, caption: 'Plot' }))
+    expect(r).toEqual({ ok: true, message: { v: 1, type: 'show_image', tabId: TAB, path: PLOT, caption: 'Plot' } })
   })
 
   it('defaults missing tabId and caption to null', () => {
-    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'show_image', path: 'C:\\a.png' }))
-    expect(r).toEqual({ ok: true, message: { v: 1, type: 'show_image', tabId: null, path: 'C:\\a.png', caption: null } })
+    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'show_image', path: A_PNG }))
+    expect(r).toEqual({ ok: true, message: { v: 1, type: 'show_image', tabId: null, path: A_PNG, caption: null } })
   })
 
   it('truncates captions to 500 characters', () => {
-    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'show_image', path: 'C:\\a.png', caption: 'x'.repeat(900) }))
+    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'show_image', path: A_PNG, caption: 'x'.repeat(900) }))
     expect(r.ok && r.message.type === 'show_image' && r.message.caption?.length).toBe(500)
   })
 
@@ -24,18 +30,17 @@ describe('parsePipeMessage', () => {
     expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'show_image', path: 'out\\a.png' })).ok).toBe(false)
     expect(parsePipeMessage('{not json').ok).toBe(false)
     expect(parsePipeMessage('[1,2]').ok).toBe(false)
-    expect(parsePipeMessage(JSON.stringify({ v: 2, type: 'show_image', path: 'C:\\a.png' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ v: 2, type: 'show_image', path: A_PNG })).ok).toBe(false)
     expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'run', cmd: 'calc' })).ok).toBe(false)
   })
 
   it('accepts a session message with transcript path', () => {
-    const tp = 'C:\\Users\\u\\.claude\\projects\\D--x\\s.jsonl'
-    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: tp }))
-    expect(r).toEqual({ ok: true, message: { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: tp } })
+    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP }))
+    expect(r).toEqual({ ok: true, message: { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP } })
   })
 
   it('nulls an invalid transcript path and defaults source', () => {
-    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'session', tabId: TAB, sessionId: SID, transcriptPath: 'C:\\x\\evil.exe' }))
+    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'session', tabId: TAB, sessionId: SID, transcriptPath: EVIL }))
     expect(r).toEqual({ ok: true, message: { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'unknown', transcriptPath: null } })
   })
 
@@ -52,8 +57,14 @@ describe('helpers', () => {
     expect(isUuid(42)).toBe(false)
   })
 
-  it('defaultPipeName sanitizes the user name', () => {
-    expect(defaultPipeName('John Doe')).toBe('\\\\.\\pipe\\claudeterm-John_Doe')
+  it('defaultPipeName: a named pipe on Windows, with the user name sanitized', () => {
+    expect(defaultPipeName('John Doe', { platform: 'win32', env: {}, uid: -1 })).toBe('\\\\.\\pipe\\claudeterm-John_Doe')
+  })
+
+  it('defaultPipeName: a socket in XDG_RUNTIME_DIR on Linux, else in a private folder in /tmp', () => {
+    expect(defaultPipeName('John Doe', { platform: 'linux', env: { XDG_RUNTIME_DIR: '/run/user/1000' }, uid: 1000 })).toBe('/run/user/1000/claudeterm-John_Doe.sock')
+    expect(defaultPipeName('jd', { platform: 'linux', env: {}, uid: 1000 })).toBe('/tmp/claudeterm-1000/claudeterm-jd.sock')
+    expect(defaultPipeName('jd', { platform: 'linux', env: { XDG_RUNTIME_DIR: 'relative' }, uid: 1000 })).toBe('/tmp/claudeterm-1000/claudeterm-jd.sock')
   })
 
   it('encodeMessage produces one line', () => {

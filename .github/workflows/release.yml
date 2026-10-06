@@ -8,8 +8,43 @@ permissions:
   contents: write
 
 jobs:
+  linux:
+    name: Build the Linux package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check that the tag matches package.json
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ($expected)"
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run dist:linux -- --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          # latest-linux.yml is what installed copies read to find a new version
+          path: |
+            dist/ClaudeTerm-*.deb
+            dist/latest-linux.yml
+          if-no-files-found: error
+
   release:
     name: Build the installer and publish the release
+    needs: linux
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -39,14 +74,20 @@ jobs:
       - run: npm test
       - run: npm run dist -- --publish never
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-package
+          path: dist
+
       - name: Publish the GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        # latest.yml is what installed copies read to find a new version (electron-updater); the blockmap
-        # lets them download only the changed parts
+        # latest.yml / latest-linux.yml are what installed copies read to find a new version (electron-updater);
+        # the blockmap lets Windows download only the changed parts
         run: >
           gh release create "$GITHUB_REF_NAME"
           dist/ClaudeTerm-Setup-*.exe dist/ClaudeTerm-Setup-*.exe.blockmap dist/latest.yml
+          dist/ClaudeTerm-*.deb dist/latest-linux.yml
           --title "ClaudeTerm ${GITHUB_REF_NAME#v}"
           --notes-file release-notes.md

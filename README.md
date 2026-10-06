@@ -5,7 +5,7 @@
 <h1 align="center">ClaudeTerm</h1>
 
 <p align="center">
-  <b>A Windows terminal built for Claude Code.</b><br>
+  <b>A terminal built for Claude Code, on Windows and Linux.</b><br>
   Tabs for every shell, every image of the conversation in a side panel,<br>
   a live status bar for model, context, limits and subagents — and your sessions back after a reboot.
 </p>
@@ -13,12 +13,12 @@
 <p align="center">
   <a href="https://github.com/DmVergasov/ClaudeTerm/actions/workflows/ci.yml"><img src="https://github.com/DmVergasov/ClaudeTerm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/DmVergasov/ClaudeTerm/releases/latest"><img src="https://img.shields.io/github/v/release/DmVergasov/ClaudeTerm?label=release&color=d97757" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4" alt="Windows 10 | 11">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux-0078d4" alt="Windows 10 | 11 | Linux">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/DmVergasov/ClaudeTerm?color=8a8a93" alt="MIT license"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/DmVergasov/ClaudeTerm/releases/latest"><b>Download for Windows</b></a>
+  <a href="https://github.com/DmVergasov/ClaudeTerm/releases/latest"><b>Download for Windows or Linux</b></a>
   ·
   <a href="#features">Features</a>
   ·
@@ -61,20 +61,20 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 ### 🔔 Know when Claude is waiting for you
 
-When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the Windows default sound, flashes its taskbar button and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
+When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
 
 ### 🗂️ A real terminal, with tabs
 
-- **Shell profiles detected automatically** — PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and every WSL distribution, plus your own profiles.
+- **Shell profiles detected automatically** — PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and every WSL distribution, plus your own profiles. On Linux: your login shell, bash, zsh and fish.
 - **Claude tabs** — `claude` runs inside your shell of choice, and you stay in that shell when it exits.
-- **Proper Windows terminal behaviour** — ConPTY, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
+- **Proper terminal behaviour** — ConPTY on Windows, a real PTY on Linux, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
 - **Font sizes in points**, exactly like Windows Terminal — `12` looks the same in both.
 
 <p align="center"><img src="docs/images/new-tab-menu.png" width="560" alt="New tab menu with detected shell profiles"></p>
 
 ### 📂 Open Claude Code here
 
-Right-click any folder (or the background of a folder) in Explorer → **Open Claude Code here**. A Claude tab opens in the running ClaudeTerm window — or ClaudeTerm starts if it isn't running. On Windows 11 the item is under **Show more options**.
+Right-click any folder (or the background of a folder) in Explorer → **Open Claude Code here**. A Claude tab opens in the running ClaudeTerm window — or ClaudeTerm starts if it isn't running. On Windows 11 the item is under **Show more options**. Windows only; on Linux run `claudeterm --claude <folder>`.
 
 ### 🔁 Continue previous sessions
 
@@ -92,11 +92,13 @@ Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the
 > [!NOTE]
 > The installer is not code-signed yet, so Windows SmartScreen may warn about it: click **More info → Run anyway**.
 
+**Linux (x64; Ubuntu 22.04+, Debian 12+ and their derivatives):** download `ClaudeTerm-<version>.deb` from the latest release and run `sudo apt install ./ClaudeTerm-<version>.deb`. ClaudeTerm downloads updates by itself; installing one asks for your password when you click restart. To paste images into Claude, Claude Code needs `xclip` (X11) or `wl-clipboard` (Wayland).
+
 From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — check for updates** to check right away.
 
-On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image` tool) with Claude Code at user scope. Uninstalling removes the Explorer menu item and the MCP registration.
+On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image` tool) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux, remove the registration yourself after `sudo apt remove claudeterm`: `claude mcp remove --scope user claudeterm`.
 
-**Requirements:** Windows 10 or 11 (x64) and Claude Code.
+**Requirements:** Windows 10 or 11 (x64), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code.
 
 ## Keyboard shortcuts
 
@@ -127,11 +129,11 @@ Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notific
 
 ![Settings window](docs/images/settings.png)
 
-Everything is stored in `%APPDATA%\ClaudeTerm\settings.json`. Profiles, image types, ignored folders, a custom theme and the image panel size are set only there — the window's **Open settings.json** button opens it, and changes to the file apply as soon as you save it. When the window saves a change, it rewrites the file as plain JSON with two-space indentation.
+Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeTerm/settings.json` on Linux). Profiles, image types, ignored folders, a custom theme and the image panel size are set only there — the window's **Open settings.json** button opens it, and changes to the file apply as soon as you save it. When the window saves a change, it rewrites the file as plain JSON with two-space indentation.
 
 ```jsonc
 {
-  "defaultProfile": null,          // profile name; null = PowerShell 7 if installed, else Windows PowerShell
+  "defaultProfile": null,          // profile name; null = PowerShell 7 if installed, else Windows PowerShell (Linux: your login shell)
   "claude": {
     "command": "claude",           // how to start Claude Code
     "shellProfile": null           // shell that hosts claude in Claude tabs; null = same rule as above
@@ -160,7 +162,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json`. Profiles, image ty
 }
 ```
 
-Logs are in `%APPDATA%\ClaudeTerm\logs`.
+Logs are in `%APPDATA%\ClaudeTerm\logs` (`~/.config/ClaudeTerm/logs` on Linux).
 
 ### Good to know
 
@@ -185,11 +187,11 @@ flowchart LR
   end
 ```
 
-ClaudeTerm is an Electron app: `node-pty` runs the shells over ConPTY and xterm.js draws them. The hook script and the MCP server are small Node scripts run by the ClaudeTerm executable itself; they report to the app over a named pipe, tagged with the tab they run in (`CLAUDETERM_TAB_ID`). Images and model details come from Claude Code's own transcript files, which ClaudeTerm tails read-only.
+ClaudeTerm is an Electron app: `node-pty` runs the shells over ConPTY (a PTY on Linux) and xterm.js draws them. The hook script and the MCP server are small Node scripts run by the ClaudeTerm executable itself; they report to the app over a named pipe (a Unix socket on Linux), tagged with the tab they run in (`CLAUDETERM_TAB_ID`). Images and model details come from Claude Code's own transcript files, which ClaudeTerm tails read-only.
 
 ## Building from source
 
-You need Windows 10/11, [Node.js](https://nodejs.org) 22.12 or later, and Git.
+You need Windows 10/11 or Linux, [Node.js](https://nodejs.org) 22.12 or later, and Git (on Linux also `build-essential` and `python3`: node-pty is compiled on install).
 
 ```powershell
 git clone https://github.com/DmVergasov/ClaudeTerm.git
@@ -199,6 +201,7 @@ npm run dev          # run with hot reload (uses %APPDATA%\ClaudeTerm-dev, separ
 npm test             # unit and integration tests
 npm run test:e2e     # end-to-end tests against the built app
 npm run dist         # build the installer into dist\
+npm run dist:linux   # build the .deb into dist/ (on Linux)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the project layout and how to get a change merged.

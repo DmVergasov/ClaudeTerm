@@ -38,6 +38,12 @@ describe('createUpdateBackend', () => {
     expect(u.autoInstallOnAppQuit).toBe(false)
   })
 
+  it('on Linux an update waits for the restart button: installing it asks for the password', () => {
+    const u = fakeUpdater(null)
+    createUpdateBackend(u as unknown as AutoUpdaterLike, { log, installOnQuit: false })
+    expect(u.autoInstallOnAppQuit).toBe(false)
+  })
+
   it('check resolves the newer version, or null when up to date', async () => {
     expect(await createUpdateBackend(fakeUpdater(null) as unknown as AutoUpdaterLike, { log }).check()).toBeNull()
     const none = fakeUpdater({ isUpdateAvailable: false, updateInfo: { version: '0.1.3' } })

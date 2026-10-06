@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path'
+import { isAbsolute, posix } from 'node:path'
 import type { MainStatus } from './types'
 
 export const PROTOCOL_VERSION = 1
@@ -68,8 +68,24 @@ export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value)
 }
 
-export function defaultPipeName(username: string): string {
-  return `\\\\.\\pipe\\claudeterm-${username.replace(/[^A-Za-z0-9_.-]/g, '_')}`
+export interface PipeContext {
+  platform: NodeJS.Platform
+  env: NodeJS.ProcessEnv
+  uid: number
+}
+
+export const currentPipeContext = (): PipeContext => ({ platform: process.platform, env: process.env, uid: process.getuid?.() ?? -1 })
+
+/** Where ClaudeTerm keeps its socket outside Windows: the user's runtime folder, else a private folder in /tmp. */
+export function socketDir(ctx: PipeContext): string {
+  const xdg = ctx.env.XDG_RUNTIME_DIR
+  return xdg && posix.isAbsolute(xdg) ? xdg : `/tmp/claudeterm-${ctx.uid}`
+}
+
+/** ClaudeTerm's address for this user: a named pipe on Windows, a Unix socket elsewhere. */
+export function defaultPipeName(username: string, ctx: PipeContext = currentPipeContext()): string {
+  const name = `claudeterm-${username.replace(/[^A-Za-z0-9_.-]/g, '_')}`
+  return ctx.platform === 'win32' ? `\\\\.\\pipe\\${name}` : posix.join(socketDir(ctx), `${name}.sock`)
 }
 
 export function encodeMessage(msg: PipeMessage | PipeResponse): string {

@@ -8,6 +8,7 @@ function on<A extends unknown[]>(channel: string, cb: (...args: A) => void): () 
 }
 
 const api: CtApi = {
+  platform: process.platform,
   appInfo: () => ipcRenderer.invoke(IPC.appInfo),
   rendererReady: () => ipcRenderer.send(IPC.rendererReady),
   bell: (tabId) => ipcRenderer.send(IPC.bell, tabId),

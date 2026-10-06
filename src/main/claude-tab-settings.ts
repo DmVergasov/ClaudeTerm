@@ -1,20 +1,27 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { isWindowsPath } from './path-key'
 
 export function hookCmdContent(execPath: string, hookScriptPath: string): string {
   const esc = (p: string): string => p.replace(/%/g, '%%')
   return ['@echo off', 'chcp 65001 >nul 2>&1', 'set ELECTRON_RUN_AS_NODE=1', `"${esc(execPath)}" "${esc(hookScriptPath)}" %*`, 'exit /b 0', ''].join('\r\n')
 }
 
-export function hookCommandString(cmdPath: string): string {
-  // Always double-quote: the command is run by bash (Git Bash) as well as cmd. Inside bash double quotes
-  // only \ " $ ` are special, so escape those; ' & ( ) ; # and spaces are then literal.
-  const p = cmdPath.replace(/\\/g, '/').replace(/(["$`\\])/g, '\\$1')
+/** The same wrapper for Linux: sh runs the hook script under ClaudeTerm's own Node and always succeeds. */
+export function hookShContent(execPath: string, hookScriptPath: string): string {
+  const q = (p: string): string => `'${p.replace(/'/g, "'\\''")}'`
+  return ['#!/bin/sh', `ELECTRON_RUN_AS_NODE=1 ${q(execPath)} ${q(hookScriptPath)} "$@"`, 'exit 0', ''].join('\n')
+}
+
+export function hookCommandString(hookPath: string): string {
+  // Always double-quote: the command is run by bash (Git Bash, Linux) as well as cmd. Inside bash double quotes
+  // only \ " $ ` are special, so escape those; ' & ( ) ; # and spaces are then literal. Git Bash takes C:/… paths.
+  const p = (isWindowsPath(hookPath) ? hookPath.replace(/\\/g, '/') : hookPath).replace(/(["$`\\])/g, '\\$1')
   return `"${p}"`
 }
 
-export function claudeTabSettingsJson(cmdPath: string): string {
-  const command = hookCommandString(cmdPath)
+export function claudeTabSettingsJson(hookPath: string): string {
+  const command = hookCommandString(hookPath)
   const run = { type: 'command', command, timeout: 10 }
   const hook = [{ hooks: [run] }]
   return JSON.stringify(
@@ -41,14 +48,16 @@ export function claudeTabSettingsJson(cmdPath: string): string {
 
 export interface ClaudeTabFiles {
   settingsPath: string
-  cmdPath: string
+  hookPath: string
 }
 
-export function writeClaudeTabFiles(dataDir: string, execPath: string, hookScriptPath: string): ClaudeTabFiles {
+export function writeClaudeTabFiles(dataDir: string, execPath: string, hookScriptPath: string, platform: NodeJS.Platform = process.platform): ClaudeTabFiles {
   mkdirSync(dataDir, { recursive: true })
-  const cmdPath = join(dataDir, 'session-hook.cmd')
+  const win = platform === 'win32'
+  const hookPath = join(dataDir, win ? 'session-hook.cmd' : 'session-hook.sh')
   const settingsPath = join(dataDir, 'claude-tab-settings.json')
-  writeFileSync(cmdPath, hookCmdContent(execPath, hookScriptPath), 'utf8')
-  writeFileSync(settingsPath, claudeTabSettingsJson(cmdPath), 'utf8')
-  return { settingsPath, cmdPath }
+  writeFileSync(hookPath, win ? hookCmdContent(execPath, hookScriptPath) : hookShContent(execPath, hookScriptPath), 'utf8')
+  if (!win) chmodSync(hookPath, 0o755)
+  writeFileSync(settingsPath, claudeTabSettingsJson(hookPath), 'utf8')
+  return { settingsPath, hookPath }
 }

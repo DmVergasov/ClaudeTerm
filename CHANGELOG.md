@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## Next
+
+### New
+
+- **ClaudeTerm runs on Linux.** Download `ClaudeTerm-<version>.deb` from the release and install it with `sudo apt install ./ClaudeTerm-<version>.deb` (x64; Ubuntu 22.04 or later, Debian 12 or later, and their derivatives). Shell tabs open your login shell, bash, zsh or fish; Claude tabs, the status bar, notifications, the image panel, session restore and updates work as on Windows. Installing an update asks for your password. To paste images into Claude, install `xclip` (X11) or `wl-clipboard` (Wayland).
+
 ## 0.1.7
 
 ### Changes

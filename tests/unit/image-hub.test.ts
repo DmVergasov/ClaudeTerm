@@ -1,10 +1,11 @@
+import { posix, win32, type PlatformPath } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { cardId, ImageHub, relPathOf } from '../../src/main/image-hub'
 
-function hub(maxItems = 200) {
+function hub(maxItems = 200, path: PlatformPath = win32) {
   const onChange = vi.fn()
   let t = 1000
-  return { h: new ImageHub({ maxItems: () => maxItems, onChange, now: () => ++t }), onChange }
+  return { h: new ImageHub({ maxItems: () => maxItems, onChange, now: () => ++t, path }), onChange }
 }
 
 describe('ImageHub', () => {
@@ -144,20 +145,37 @@ describe('ImageHub', () => {
   })
 })
 
+describe('ImageHub on Linux', () => {
+  it('paths that differ only in case are two images', () => {
+    const { h } = hub(200, posix)
+    h.addTab('t1', '/proj')
+    h.add('t1', '/proj/plot.png', 'shown', null)
+    h.add('t1', '/proj/Plot.png', 'shown', null)
+    expect(h.list('t1').map((c) => c.relPath)).toEqual(['Plot.png', 'plot.png'])
+  })
+})
+
 describe('helpers', () => {
   it('cardId depends on tab and normalized path', () => {
-    expect(cardId('t1', 'D:\\a.png')).toBe(cardId('t1', 'd:\\A.PNG'))
-    expect(cardId('t1', 'D:\\a.png')).not.toBe(cardId('t2', 'D:\\a.png'))
+    expect(cardId('t1', 'D:\\a.png', win32)).toBe(cardId('t1', 'd:\\A.PNG', win32))
+    expect(cardId('t1', 'D:\\a.png', win32)).not.toBe(cardId('t2', 'D:\\a.png', win32))
   })
 
   it('relPathOf only shortens paths inside cwd', () => {
-    expect(relPathOf('D:\\proj', 'D:\\proj\\out\\a.png')).toBe('out\\a.png')
-    expect(relPathOf('D:\\proj', 'D:\\other\\a.png')).toBe('D:\\other\\a.png')
-    expect(relPathOf('D:\\proj', 'C:\\a.png')).toBe('C:\\a.png')
+    expect(relPathOf('D:\\proj', 'D:\\proj\\out\\a.png', null, win32)).toBe('out\\a.png')
+    expect(relPathOf('D:\\proj', 'D:\\other\\a.png', null, win32)).toBe('D:\\other\\a.png')
+    expect(relPathOf('D:\\proj', 'C:\\a.png', null, win32)).toBe('C:\\a.png')
   })
 
   it('relPathOf also shortens paths inside the session temp folder', () => {
-    expect(relPathOf('D:\\proj', 'C:\\T\\sid\\scratchpad\\a.png', 'C:\\T\\sid')).toBe('scratchpad\\a.png')
-    expect(relPathOf('D:\\proj', 'C:\\T\\other\\a.png', 'C:\\T\\sid')).toBe('C:\\T\\other\\a.png')
+    expect(relPathOf('D:\\proj', 'C:\\T\\sid\\scratchpad\\a.png', 'C:\\T\\sid', win32)).toBe('scratchpad\\a.png')
+    expect(relPathOf('D:\\proj', 'C:\\T\\other\\a.png', 'C:\\T\\sid', win32)).toBe('C:\\T\\other\\a.png')
+  })
+
+  it('on Linux, case counts in card ids, and scratchpad paths are shortened too', () => {
+    expect(cardId('t1', '/a.png', posix)).not.toBe(cardId('t1', '/A.png', posix))
+    expect(relPathOf('/proj', '/proj/out/a.png', null, posix)).toBe('out/a.png')
+    expect(relPathOf('/proj', '/tmp/claude-1000/-proj/sid/scratchpad/a.png', '/tmp/claude-1000/-proj/sid', posix)).toBe('scratchpad/a.png')
+    expect(relPathOf('/proj', '/other/a.png', '/tmp/claude-1000/-proj/sid', posix)).toBe('/other/a.png')
   })
 })

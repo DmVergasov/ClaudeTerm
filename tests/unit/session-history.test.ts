@@ -1,5 +1,6 @@
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { WIN } from '../fixtures/platform'
 import {
   claudeProjectsDir, HEAD_BYTES, oneLine, parseSessionHead, parseSessionTail, SessionHistory, TAIL_BYTES, WIDE_TAIL_BYTES,
   type HistoryFs
@@ -19,9 +20,9 @@ function memFs(files: Record<string, { text: string; mtimeMs: number }>, failing
   const reads: string[] = []
   const fs: HistoryFs = {
     readdir: async (dir) => {
-      const prefix = dir + '\\'
+      const prefix = dir + sep
       const names = new Set<string>()
-      for (const p of Object.keys(files)) if (p.startsWith(prefix)) names.add(p.slice(prefix.length).split('\\')[0])
+      for (const p of Object.keys(files)) if (p.startsWith(prefix)) names.add(p.slice(prefix.length).split(sep)[0])
       if (names.size === 0) throw new Error(`ENOENT ${dir}`)
       return [...names]
     },
@@ -142,7 +143,7 @@ describe('SessionHistory', () => {
       [file('D--b', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\b', 'two?'), { type: 'custom-title', customTitle: 'Two' }), mtimeMs: 3000 },
       [file('D--b', `${SID3}.jsonl`)]: { text: jsonl(user('D:\\b', 'scripted', { entrypoint: 'sdk-cli' })), mtimeMs: 4000 },
       [file('D--b', 'notes.jsonl')]: { text: jsonl(user('D:\\b', 'x')), mtimeMs: 5000 },
-      [file('D--b', `${SID2}\\subagents\\agent-1.jsonl`)]: { text: jsonl(user('D:\\b', 'sub')), mtimeMs: 6000 }
+      [file('D--b', join(SID2, 'subagents', 'agent-1.jsonl'))]: { text: jsonl(user('D:\\b', 'sub')), mtimeMs: 6000 }
     })
     expect(await new SessionHistory(ROOT, fs).list(10)).toEqual([
       { id: SID2, cwd: 'D:\\b', title: 'Two', firstPrompt: 'two?', lastPrompt: null, modifiedAt: 3000 },
@@ -209,7 +210,7 @@ describe('SessionHistory', () => {
     expect((await new SessionHistory(ROOT, fs).list(10)).map((s) => s.id)).toEqual([SID2])
   })
 
-  it('a first message longer than both windows with nothing before it: the folder comes from the tail, mapped back to the project folder', async () => {
+  it.runIf(WIN)('a first message longer than both windows with nothing before it: the folder comes from the tail, mapped back to the project folder (Windows folders)', async () => {
     // a pasted screenshot: the user line carries cwd only after its huge message
     const image = { type: 'user', message: { role: 'user', content: [{ type: 'image', source: { data: 'i'.repeat(TAIL_BYTES + 50_000) } }, { type: 'text', text: 'what is this' }] }, cwd: 'D:\\a', entrypoint: 'cli', isSidechain: false }
     // later entries run in a subfolder the conversation moved to
@@ -217,6 +218,15 @@ describe('SessionHistory', () => {
     const { fs } = memFs({ [file('D--a', `${SID1}.jsonl`)]: { text, mtimeMs: 7 } })
     expect(await new SessionHistory(ROOT, fs).list(10)).toEqual([
       { id: SID1, cwd: 'D:\\a', title: null, firstPrompt: null, lastPrompt: 'what is this', modifiedAt: 7 }
+    ])
+  })
+
+  it.runIf(!WIN)('a first message longer than both windows with nothing before it: the folder comes from the tail, mapped back to the project folder (Linux folders)', async () => {
+    const image = { type: 'user', message: { role: 'user', content: [{ type: 'image', source: { data: 'i'.repeat(TAIL_BYTES + 50_000) } }, { type: 'text', text: 'what is this' }] }, cwd: '/a', entrypoint: 'cli', isSidechain: false }
+    const text = jsonl(image, attachment('/a/sub'), { type: 'last-prompt', lastPrompt: 'what is this' })
+    const { fs } = memFs({ [file('-a', `${SID1}.jsonl`)]: { text, mtimeMs: 7 } })
+    expect(await new SessionHistory(ROOT, fs).list(10)).toEqual([
+      { id: SID1, cwd: '/a', title: null, firstPrompt: null, lastPrompt: 'what is this', modifiedAt: 7 }
     ])
   })
 

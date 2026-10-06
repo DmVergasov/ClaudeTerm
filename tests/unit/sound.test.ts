@@ -1,13 +1,14 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
-import { createSoundPlayer, type ProcessSpec, wavPlayer } from '../../src/main/sound'
+import { createSoundPlayer, FREEDESKTOP_SOUND, linuxPlayer, linuxSoundDeps, type ProcessSpec, wavPlayer } from '../../src/main/sound'
 
-function setup(o: { spawnThrows?: boolean } = {}) {
+function setup(o: { spawnThrows?: boolean; systemSound?: string | null; noPlayer?: boolean } = {}) {
   const calls: string[] = []
   const children: EventEmitter[] = []
   const play = createSoundPlayer({
-    env: { SystemRoot: 'C:\\Windows' },
     beep: () => calls.push('beep'),
+    player: (p) => (o.noPlayer ? null : wavPlayer(p, { SystemRoot: 'C:\\Windows' })),
+    systemSound: o.systemSound ?? null,
     spawn: (p: ProcessSpec) => {
       if (o.spawnThrows) throw new Error('spawn EPERM')
       calls.push(`spawn:${p.env.CLAUDETERM_SOUND}`)
@@ -21,10 +22,28 @@ function setup(o: { spawnThrows?: boolean } = {}) {
 }
 
 describe('createSoundPlayer', () => {
-  it('"system" is the Windows default beep', () => {
+  it('"system" beeps where there is no system sound file', () => {
     const { play, calls } = setup()
     play('system')
     expect(calls).toEqual(['beep'])
+  })
+
+  it('"system" plays the system sound file where there is one, and beeps without a warning when it cannot', () => {
+    const { play, calls, children } = setup({ systemSound: '/usr/share/sounds/x.oga' })
+    play('system')
+    children[0].emit('exit', 1)
+    expect(calls).toEqual(['spawn:/usr/share/sounds/x.oga', 'beep'])
+  })
+
+  it('no player on this machine: beep, and say why once', () => {
+    const { play, calls } = setup({ noPlayer: true })
+    play('/s/a.wav')
+    play('/s/a.wav')
+    expect(calls).toEqual([
+      'beep',
+      'warn:Cannot play the attention sound /s/a.wav (no sound player found: paplay, pw-play or aplay); using the system sound',
+      'beep'
+    ])
   })
 
   it('a .wav is played by a separate process; a clean exit needs nothing else', () => {
@@ -80,5 +99,37 @@ describe('wavPlayer', () => {
 
   it('falls back to powershell.exe from PATH without SystemRoot', () => {
     expect(wavPlayer('D:\\a.wav', {}).file).toBe('powershell.exe')
+  })
+})
+
+describe('linuxPlayer', () => {
+  const env = { PATH: '/usr/bin' }
+
+  it('prefers paplay, then pw-play, then aplay; the path is an argument, never shell text', () => {
+    const path = "/home/me/my sounds/it's $(x).wav"
+    expect(linuxPlayer(path, () => true, env)).toEqual({ file: 'paplay', args: [path], env })
+    expect(linuxPlayer(path, (c) => c !== 'paplay', env)?.file).toBe('pw-play')
+    expect(linuxPlayer(path, (c) => c === 'aplay', env)?.file).toBe('aplay')
+    expect(linuxPlayer(path, () => false, env)).toBeNull()
+  })
+
+  it('aplay plays .wav only', () => {
+    expect(linuxPlayer('/s/bell.oga', (c) => c === 'aplay', env)).toBeNull()
+  })
+})
+
+describe('linuxSoundDeps', () => {
+  it('the system sound is the freedesktop one when installed; players are looked up once', () => {
+    const asked: string[] = []
+    const has = (c: string): boolean => {
+      asked.push(c)
+      return c === 'pw-play'
+    }
+    const d = linuxSoundDeps({}, has, (p) => p === FREEDESKTOP_SOUND)
+    expect(d.systemSound).toBe(FREEDESKTOP_SOUND)
+    d.player('/a.wav')
+    d.player('/b.wav')
+    expect(asked).toEqual(['paplay', 'pw-play'])
+    expect(linuxSoundDeps({}, has, () => false).systemSound).toBeNull()
   })
 })

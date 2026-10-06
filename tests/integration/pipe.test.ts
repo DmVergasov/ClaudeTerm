@@ -1,13 +1,14 @@
-import { randomUUID } from 'node:crypto'
 import { connect } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startPipeServer, type PipeHandlers, type PipeServerHandle } from '../../src/main/pipe-server'
 import { PipeUnavailableError, sendPipeMessage } from '../../src/shared/pipe-client'
 import type { SessionMessage, ShowImageMessage } from '../../src/shared/protocol'
+import { testPipeName, WIN } from '../fixtures/platform'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
-const newPipe = (): string => `\\\\.\\pipe\\claudeterm-test-${randomUUID()}`
+const newPipe = (): string => testPipeName('test')
+const IMG = WIN ? 'C:\\x\\a.png' : '/x/a.png'
 const okHandlers: PipeHandlers = {
   showImage: async () => ({ ok: true }),
   session: () => ({ ok: true }),
@@ -46,9 +47,9 @@ describe('pipe server + client', () => {
     const pipe = newPipe()
     const got: ShowImageMessage[] = []
     server = await startPipeServer(pipe, { ...okHandlers, showImage: async (m) => { got.push(m); return { ok: true } } })
-    const res = await sendPipeMessage(pipe, { v: 1, type: 'show_image', tabId: TAB, path: 'C:\\x\\a.png', caption: null })
+    const res = await sendPipeMessage(pipe, { v: 1, type: 'show_image', tabId: TAB, path: IMG, caption: null })
     expect(res).toEqual({ ok: true })
-    expect(got).toEqual([{ v: 1, type: 'show_image', tabId: TAB, path: 'C:\\x\\a.png', caption: null }])
+    expect(got).toEqual([{ v: 1, type: 'show_image', tabId: TAB, path: IMG, caption: null }])
   })
 
   it('routes session messages', async () => {
@@ -85,20 +86,20 @@ describe('pipe server + client', () => {
   it('turns handler exceptions into ok:false', async () => {
     const pipe = newPipe()
     server = await startPipeServer(pipe, { ...okHandlers, showImage: async () => { throw new Error('boom') } })
-    expect(await sendPipeMessage(pipe, { v: 1, type: 'show_image', tabId: null, path: 'C:\\a.png', caption: null })).toEqual({ ok: false, error: 'boom' })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'show_image', tabId: null, path: IMG, caption: null })).toEqual({ ok: false, error: 'boom' })
   })
 
   it('answers several messages on one connection in order', async () => {
     const pipe = newPipe()
     let n = 0
     server = await startPipeServer(pipe, { ...okHandlers, showImage: async () => (++n === 1 ? { ok: true } : { ok: false, error: 'second' }) })
-    const one = JSON.stringify({ v: 1, type: 'show_image', path: 'C:\\a.png' })
+    const one = JSON.stringify({ v: 1, type: 'show_image', path: IMG })
     const lines = await rawLines(pipe, `${one}\n${one}\n`, 2)
     expect(lines.map((l) => JSON.parse(l))).toEqual([{ ok: true }, { ok: false, error: 'second' }])
   })
 
   it('client rejects with PipeUnavailableError when nobody listens', async () => {
-    await expect(sendPipeMessage(newPipe(), { v: 1, type: 'show_image', tabId: null, path: 'C:\\a.png', caption: null }, 500)).rejects.toBeInstanceOf(PipeUnavailableError)
+    await expect(sendPipeMessage(newPipe(), { v: 1, type: 'show_image', tabId: null, path: IMG, caption: null }, 500)).rejects.toBeInstanceOf(PipeUnavailableError)
   })
   function collectUntilClose(pipe: string, chunks: string[], gapMs: number): Promise<string[]> {
     return new Promise((resolve) => {
@@ -132,7 +133,7 @@ describe('pipe server + client', () => {
     const pipe = newPipe()
     let calls = 0
     server = await startPipeServer(pipe, { ...okHandlers, showImage: async () => { calls++; return { ok: true } } })
-    const valid = JSON.stringify({ v: 1, type: 'show_image', path: 'C:/a.png' }) + '\n'
+    const valid = JSON.stringify({ v: 1, type: 'show_image', path: IMG }) + '\n'
     const lines = await collectUntilClose(pipe, ['a'.repeat(70 * 1024) + '\n' + valid + valid], 80)
     expect(lines.map((l) => JSON.parse(l))).toEqual([{ ok: false, error: 'message too large' }])
     expect(calls).toBe(0)

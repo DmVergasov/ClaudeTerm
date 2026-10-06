@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { isRootGoneEvent, sessionTempDir, watchedImagePath } from '../../src/main/image-watcher'
+import { claudeTempRoot, isRootGoneEvent, sessionTempDir, watchedImagePath } from '../../src/main/image-watcher'
 
 const cfg = { extensions: ['png', 'jpg'], ignore: ['.git', 'node_modules', 'Intermediate'], maxDepth: 8 }
 
@@ -38,12 +38,25 @@ describe('isRootGoneEvent', () => {
     expect(isRootGoneEvent(join(tmpdir(), 'proj'))).toBe(true)
     expect(isRootGoneEvent(join('out', 'a.png'))).toBe(false)
     expect(isRootGoneEvent(null)).toBe(false)
+    // Node's recursive watcher on Linux names the watched folder itself by its path relative to itself
+    expect(isRootGoneEvent('')).toBe(true)
   })
 })
 
-describe('sessionTempDir', () => {
-  it('mirrors Claude Code temp layout: %TEMP%\\claude\\<project key>\\<session id>', () => {
-    expect(sessionTempDir('C:\\Users\\me\\.claude\\projects\\D--Workspace\\5d2c.jsonl', '5d2c', 'C:\\Users\\me\\AppData\\Local\\Temp'))
+describe('Claude Code temp folders', () => {
+  it('Windows: <CLAUDE_CODE_TMPDIR or %TEMP%>\\claude', () => {
+    expect(claudeTempRoot({ platform: 'win32', env: {}, tmpdir: 'C:\\Users\\me\\AppData\\Local\\Temp', uid: -1 })).toBe('C:\\Users\\me\\AppData\\Local\\Temp\\claude')
+    expect(claudeTempRoot({ platform: 'win32', env: { CLAUDE_CODE_TMPDIR: 'E:\\t' }, tmpdir: 'C:\\T', uid: -1 })).toBe('E:\\t\\claude')
+  })
+
+  it('Linux: <CLAUDE_CODE_TMPDIR or /tmp>/claude-<uid>, whatever TMPDIR says', () => {
+    expect(claudeTempRoot({ platform: 'linux', env: {}, tmpdir: '/var/tmp', uid: 1000 })).toBe('/tmp/claude-1000')
+    expect(claudeTempRoot({ platform: 'linux', env: { CLAUDE_CODE_TMPDIR: '/scratch' }, tmpdir: '/tmp', uid: 1000 })).toBe('/scratch/claude-1000')
+  })
+
+  it('a session folder is <root>/<project key>/<session id>', () => {
+    expect(sessionTempDir('C:\\Users\\me\\.claude\\projects\\D--Workspace\\5d2c.jsonl', '5d2c', 'C:\\Users\\me\\AppData\\Local\\Temp\\claude', win32))
       .toBe('C:\\Users\\me\\AppData\\Local\\Temp\\claude\\D--Workspace\\5d2c')
+    expect(sessionTempDir('/home/me/.claude/projects/-home-me-ws/5d2c.jsonl', '5d2c', '/tmp/claude-1000', posix)).toBe('/tmp/claude-1000/-home-me-ws/5d2c')
   })
 })
