@@ -28,10 +28,10 @@ export function testEnv(dataDir: string, pipeName: string): Record<string, strin
 
 export interface Launched { app: ElectronApplication; page: Page; dataDir: string; pipeName: string }
 
-export async function launchApp(o: { dataDir?: string; settings?: object; args?: string[] } = {}): Promise<Launched> {
+export async function launchApp(o: { dataDir?: string; settings?: object; args?: string[]; env?: Record<string, string> } = {}): Promise<Launched> {
   const dataDir = o.dataDir ?? makeDataDir(o.settings)
   const pipeName = `\\\\.\\pipe\\claudeterm-e2e-${randomUUID()}`
-  const app = await electron.launch({ args: [ROOT, ...(o.args ?? [])], env: testEnv(dataDir, pipeName) })
+  const app = await electron.launch({ args: [ROOT, ...(o.args ?? [])], env: { ...testEnv(dataDir, pipeName), ...o.env } })
   const page = await app.firstWindow()
   await page.waitForFunction(() => Boolean(window.__ct))
   return { app, page, dataDir, pipeName }

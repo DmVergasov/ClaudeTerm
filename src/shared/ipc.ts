@@ -1,4 +1,4 @@
-import type { AgentStatus, ImageCard, MainStatus, OpenTabRequest, Settings, TabInfo, UpdateState } from './types'
+import type { AgentStatus, ImageCard, MainStatus, OpenTabRequest, RecentSession, Settings, TabInfo, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -22,6 +22,8 @@ export const IPC = {
   imagesAction: 'images:action',
   restoreGet: 'restore:get',
   restoreRun: 'restore:run',
+  sessionsList: 'sessions:list',
+  sessionsOpen: 'sessions:open',
   updateCheck: 'update:check',
   updateInstall: 'update:install',
   updateGet: 'update:get',
@@ -101,6 +103,10 @@ export interface CtApi {
   imageAction(cardId: string, action: ImageAction): void
   getRestoreInfo(): Promise<RestoreInfo | null>
   runRestore(): void
+  /** the most recent Claude Code sessions, newest first */
+  listSessions(): Promise<RecentSession[]>
+  /** go to the tab in that conversation, or resume it in a new Claude tab */
+  openSession(id: string): void
   checkForUpdates(): void
   installUpdate(): void
   getUpdateState(): Promise<UpdateState>

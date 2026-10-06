@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, statSync, watch } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo } from '../shared/ipc'
-import type { OpenTabRequest, ProfileDef, Settings, TabInfo } from '../shared/types'
+import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo } from '../shared/types'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
 import { autoUpdater } from 'electron-updater'
@@ -23,6 +23,7 @@ import { buildLaunch, detectProfiles, filterAvailable, mergeProfiles, pickClaude
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { loadSettingsSafe } from './settings'
+import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
 import { createSoundPlayer } from './sound'
 import { StatusHub } from './status-hub'
@@ -96,6 +97,9 @@ function bootstrap(): void {
   // the previous run restarted into an update: reopen its tabs without asking
   const restoreAfterUpdate = consumeUpdateMarker(dataDir, Date.now())
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
+  const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
+  // what the window was last shown; opening looks the id up here, so the renderer only passes an id
+  let listedSessions = new Map<string, SessionSummary>()
   const restoreInfo = (): RestoreInfo | null =>
     previous ? { tabs: previous.tabs.length, claudeTabs: previous.tabs.filter((t) => t.kind === 'claude').length, savedAt: previous.savedAt } : null
 
@@ -420,6 +424,27 @@ function bootstrap(): void {
   })
   ipcMain.on(IPC.bell, () => { if (win && !win.isFocused()) win.flashFrame(true) })
   ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => openTab(req))
+  ipcMain.handle(IPC.sessionsList, async (): Promise<RecentSession[]> => {
+    const list = await history.list(100)
+    listedSessions = new Map(list.map((s) => [s.id, s]))
+    const open = new Set(tabs.list().map((t) => t.claudeSessionId))
+    return list.map((s) => ({ ...s, open: open.has(s.id) }))
+  })
+  ipcMain.on(IPC.sessionsOpen, (_e, id: unknown) => {
+    const s = isId(id) ? listedSessions.get(id) : undefined
+    if (!s) return
+    const tab = tabs.list().find((t) => t.claudeSessionId === s.id)
+    if (tab) {
+      tabs.activate(tab.id)
+      return
+    }
+    // Claude Code finds a conversation by its folder: resuming it anywhere else fails
+    if (!isDirectory(s.cwd)) {
+      toast(`The folder of this session no longer exists: ${s.cwd}`)
+      return
+    }
+    openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id })
+  })
   ipcMain.on(IPC.tabsClose, (_e, id: unknown) => {
     if (!isId(id)) return
     tabs.close(id)
