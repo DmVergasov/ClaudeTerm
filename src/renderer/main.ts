@@ -121,7 +121,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'zoomIn': setFontSize(fontSize + 1); break
     case 'zoomOut': setFontSize(fontSize - 1); break
     case 'zoomReset': setFontSize(settings.font.size); break
-    case 'openSettings': ct.openSettingsFile(); break
+    case 'openSettings': ct.openSettingsWindow(); break
     case 'recentSessions': void sessionsWindow.open(); break
   }
 }
@@ -212,6 +212,7 @@ function newTabMenu(anchor: HTMLElement): void {
       { label: 'Recent sessions…', action: () => void sessionsWindow.open() },
       ...(restoreInfo ? [{ label: `Restore previous session (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
       { label: '', separator: true },
+      { label: 'Settings…', action: () => ct.openSettingsWindow() },
       { label: `ClaudeTerm ${appInfo.version} — check for updates`, action: () => { updateBanner.reveal(); ct.checkForUpdates() } }
     ]
     const r = anchor.getBoundingClientRect()

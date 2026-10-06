@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { FAKE_CLAUDE_SETTINGS, launchApp } from './helpers'
@@ -11,6 +11,14 @@ function renderedFontSize(page: Page): Promise<string> {
 }
 
 const readSettings = (dataDir: string): Record<string, any> => JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8'))
+
+/** Ctrl+, in the main window; returns the settings window once its page is up */
+async function openSettings(app: ElectronApplication, page: Page): Promise<Page> {
+  await page.locator('.terminal-host:visible .xterm').click()
+  const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press('Control+Comma')])
+  await win.waitForSelector('#settings .settings-heading')
+  return win
+}
 
 test('setSetting writes settings.json, keeps the other keys and applies at once', async () => {
   const { app, page, dataDir } = await launchApp({ settings: { ...QUIET, myNote: 'keep' } })
@@ -91,4 +99,40 @@ test('the view reports a broken file as locked and every window hears about it',
   writeFileSync(join(dataDir, 'settings.json'), '{}')
   await expect.poll(() => page.evaluate(() => window.ct.getSettingsView().then((v) => v.locked))).toBe(false)
   await app.close()
+})
+
+test('Ctrl+, opens one settings window; Esc closes it', async () => {
+  const { app, page } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  expect(await win.title()).toBe('ClaudeTerm Settings')
+  await page.keyboard.press('Control+Comma')
+  await page.waitForTimeout(500)
+  expect(app.windows()).toHaveLength(2)
+  const closed = win.waitForEvent('close')
+  // the window is gone before the key comes back up, which fails the press itself; the close event is the check
+  await win.keyboard.press('Escape').catch(() => {})
+  await closed
+  expect(app.windows()).toHaveLength(1)
+  await app.close()
+})
+
+test('the ▾ menu opens the settings window', async () => {
+  const { app, page } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await page.locator('.tab-menu').click()
+  const [win] = await Promise.all([app.waitForEvent('window'), page.locator('.menu-item', { hasText: 'Settings…' }).click()])
+  await expect(win.locator('#settings .settings-heading')).toHaveText('Settings')
+  await app.close()
+})
+
+test('closing the main window with settings open ends the app', async () => {
+  const { app, page } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await openSettings(app, page)
+  const closed = app.waitForEvent('close')
+  const started = Date.now()
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)?.close() }).catch(() => {})
+  await closed
+  expect(Date.now() - started).toBeLessThan(5000)
 })

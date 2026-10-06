@@ -1,0 +1,7 @@
+@import './colors.css';
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; min-height: 100%; background: var(--chrome); color: var(--fg); font: 13px "Segoe UI", system-ui, sans-serif; color-scheme: dark; }
+#settings { padding: 16px 20px 20px; }
+.settings-heading { margin: 0 0 8px; font-size: 18px; font-weight: 600; }

@@ -1,12 +1,4 @@
-:root {
-  --bg: #0c0c0c;
-  --chrome: #1b1b1f;
-  --chrome-2: #26262c;
-  --fg: #d6d6d6;
-  --muted: #8a8a93;
-  --accent: #d97757;
-  --border: #33333a;
-}
+@import './colors.css';
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px "Segoe UI", system-ui, sans-serif; overflow: hidden; }

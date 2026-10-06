@@ -16,6 +16,7 @@ export const IPC = {
   profilesList: 'profiles:list',
   settingsGet: 'settings:get',
   settingsOpen: 'settings:open',
+  settingsOpenWindow: 'settings:open-window',
   settingsView: 'settings:view',
   settingsSet: 'settings:set',
   settingsPickSound: 'settings:pick-sound',
@@ -118,6 +119,8 @@ export interface CtApi {
   listProfiles(): Promise<string[]>
   getSettings(): Promise<Settings>
   openSettingsFile(): void
+  /** opens the settings window, or brings it forward */
+  openSettingsWindow(): void
   getSettingsView(): Promise<SettingsView>
   /** writes one setting to settings.json and applies it */
   setSetting(key: SettingKey, value: SettingValue): Promise<SetSettingResult>

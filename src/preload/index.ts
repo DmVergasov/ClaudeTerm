@@ -22,6 +22,7 @@ const api: CtApi = {
   listProfiles: () => ipcRenderer.invoke(IPC.profilesList),
   getSettings: () => ipcRenderer.invoke(IPC.settingsGet),
   openSettingsFile: () => ipcRenderer.send(IPC.settingsOpen),
+  openSettingsWindow: () => ipcRenderer.send(IPC.settingsOpenWindow),
   getSettingsView: () => ipcRenderer.invoke(IPC.settingsView),
   setSetting: (key, value) => ipcRenderer.invoke(IPC.settingsSet, key, value),
   pickSound: () => ipcRenderer.invoke(IPC.settingsPickSound),

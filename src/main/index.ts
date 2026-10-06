@@ -24,6 +24,7 @@ import { buildLaunch, detectProfiles, filterAvailable, mergeProfiles, pickClaude
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
+import { SettingsWindow } from './settings-window'
 import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
 import { createSoundPlayer } from './sound'
@@ -543,6 +544,15 @@ function bootstrap(): void {
     return r.canceled ? null : r.filePaths[0] ?? null
   })
   ipcMain.on(IPC.settingsPlaySound, () => playSound(settings.notifications.sound))
+  const settingsWindow = new SettingsWindow({
+    parent: () => win,
+    preload: join(__dirname, '../preload/index.js'),
+    load: (w) => {
+      if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}/settings.html`)
+      else void w.loadFile(join(__dirname, '../renderer/settings.html'))
+    }
+  })
+  ipcMain.on(IPC.settingsOpenWindow, () => settingsWindow.open())
   ipcMain.handle(IPC.clipboardRead, async (): Promise<ClipboardContent> => ({ text: await clipboard.readText(), hasImage: await clipboard.has('image/png') }))
   ipcMain.on(IPC.clipboardWriteText, (_e, text: string) => { void clipboard.writeText(text) })
   ipcMain.on(IPC.openExternal, (_e, url: string) => { if (/^https?:\/\//i.test(url)) void shell.openExternal(url) })
