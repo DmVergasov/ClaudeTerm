@@ -1,9 +1,10 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, ipcMain, Menu, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, shell } from 'electron'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, statSync, watch } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo } from '../shared/ipc'
+import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
+import { isSettingKey, isSettingValue } from '../shared/settings-keys'
 import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo } from '../shared/types'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
@@ -22,7 +23,7 @@ import { startPipeServer, type PipeServerHandle } from './pipe-server'
 import { buildLaunch, detectProfiles, filterAvailable, mergeProfiles, pickClaudeProfile, pickProfile, systemDetectDeps } from './profiles'
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
-import { loadSettingsSafe } from './settings'
+import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
 import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
 import { createSoundPlayer } from './sound'
@@ -75,23 +76,32 @@ function bootstrap(): void {
   const send = (channel: string, ...args: unknown[]): void => {
     if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
   }
+  const broadcast = (channel: string, ...args: unknown[]): void => {
+    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, ...args)
+  }
   const toast = (message: string): void => {
     log.warn(message)
     if (rendererReady) send(IPC.evToast, message)
     else startupNotices.push(message)
   }
 
-  const computeProfiles = (s: Settings): ProfileDef[] => {
+  const computeProfiles = (s: Settings): { profiles: ProfileDef[]; notices: string[] } => {
     const { available, missing } = filterAvailable(s.profiles, existsSync)
-    for (const p of missing) toast(`Profile "${p.name}" not found: ${p.command}`)
-    return mergeProfiles(detectProfiles(systemDetectDeps()), available)
+    return {
+      profiles: mergeProfiles(detectProfiles(systemDetectDeps()), available),
+      notices: missing.map((p) => `Profile "${p.name}" not found: ${p.command}`)
+    }
   }
 
   const loaded = loadSettingsSafe(settingsPath)
   let settings: Settings = loaded.settings
+  let lastLoad: ParsedSettings = loaded
   if (loaded.failed) log.error(loaded.errors[0])
-  startupNotices.push(...loaded.errors)
-  let profiles = computeProfiles(settings)
+  const startProfiles = computeProfiles(settings)
+  let profiles = startProfiles.profiles
+  // notices toast when they appear, not again on every reload that still has them
+  let lastNotices = [...loaded.errors, ...startProfiles.notices]
+  startupNotices.push(...lastNotices)
   const claudeFiles = writeClaudeTabFiles(dataDir, process.execPath, resourcePath('hook/session-hook.js'))
   const sessions = new SessionStore(dataDir, { onError: (m) => log.warn(m) })
   // the previous run restarted into an update: reopen its tabs without asking
@@ -505,26 +515,66 @@ function bootstrap(): void {
   ipcMain.handle(IPC.profilesList, () => profiles.map((p) => p.name))
   ipcMain.handle(IPC.settingsGet, () => settings)
   ipcMain.on(IPC.settingsOpen, () => { void shell.openPath(settingsPath) })
+  ipcMain.handle(IPC.settingsView, () => settingsView())
+  ipcMain.handle(IPC.settingsSet, (_e, key: unknown, value: unknown): SetSettingResult => {
+    if (!isSettingKey(key) || !isSettingValue(value)) return { ok: false, error: 'Not a setting' }
+    let text: string | null = null
+    try {
+      text = readFileSync(settingsPath, 'utf8')
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, error: `Cannot read settings.json: ${(e as Error).message}` }
+    }
+    const edited = applySettingEdit(text, key, value)
+    if (!edited.ok) return edited
+    try {
+      writeFileSync(settingsPath, edited.text, 'utf8')
+    } catch (e) {
+      return { ok: false, error: `Cannot save settings.json: ${(e as Error).message}` }
+    }
+    // apply now; the watcher reloads the same file a moment later and changes nothing
+    reloadSettings()
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.settingsPickSound, async (e): Promise<string | null> => {
+    if (isTest && process.env.CLAUDETERM_TEST_PICK_SOUND) return process.env.CLAUDETERM_TEST_PICK_SOUND
+    const owner = BrowserWindow.fromWebContents(e.sender)
+    const options: Electron.OpenDialogOptions = { title: 'Choose a sound', filters: [{ name: 'Sounds', extensions: ['wav'] }], properties: ['openFile'] }
+    const r = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    return r.canceled ? null : r.filePaths[0] ?? null
+  })
+  ipcMain.on(IPC.settingsPlaySound, () => playSound(settings.notifications.sound))
   ipcMain.handle(IPC.clipboardRead, async (): Promise<ClipboardContent> => ({ text: await clipboard.readText(), hasImage: await clipboard.has('image/png') }))
   ipcMain.on(IPC.clipboardWriteText, (_e, text: string) => { void clipboard.writeText(text) })
   ipcMain.on(IPC.openExternal, (_e, url: string) => { if (/^https?:\/\//i.test(url)) void shell.openExternal(url) })
 
+  const settingsView = (): SettingsView => ({
+    settings,
+    profiles: profiles.map((p) => p.name),
+    path: settingsPath,
+    problems: lastLoad.errors,
+    locked: Boolean(lastLoad.failed || lastLoad.broken)
+  })
+  const reloadSettings = (): void => {
+    const next = loadSettingsSafe(settingsPath)
+    lastLoad = next
+    let notices = next.errors
+    // a file that cannot be read keeps the current settings
+    if (!next.failed) {
+      settings = next.settings
+      const computed = computeProfiles(settings)
+      profiles = computed.profiles
+      notices = [...notices, ...computed.notices]
+      send(IPC.evSettings, settings)
+    }
+    for (const n of notices) if (!lastNotices.includes(n)) toast(n)
+    lastNotices = notices
+    broadcast(IPC.evSettingsView, settingsView())
+  }
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
   const settingsWatcher = watch(dataDir, (_event, file) => {
     if (file !== 'settings.json') return
     if (reloadTimer) clearTimeout(reloadTimer)
-    reloadTimer = setTimeout(() => {
-      const next = loadSettingsSafe(settingsPath)
-      if (next.failed) {
-        // keep the current settings
-        for (const err of next.errors) toast(err)
-        return
-      }
-      settings = next.settings
-      profiles = computeProfiles(settings)
-      for (const err of next.errors) toast(err)
-      send(IPC.evSettings, settings)
-    }, 300)
+    reloadTimer = setTimeout(reloadSettings, 300)
   })
   settingsWatcher.on('error', (e) => {
     log.warn(`settings watcher stopped: ${e.message}`)

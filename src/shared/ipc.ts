@@ -1,3 +1,4 @@
+import type { SettingKey, SettingValue } from './settings-keys'
 import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, RecentSession, Settings, TabInfo, UpdateState } from './types'
 
 export const IPC = {
@@ -15,6 +16,10 @@ export const IPC = {
   profilesList: 'profiles:list',
   settingsGet: 'settings:get',
   settingsOpen: 'settings:open',
+  settingsView: 'settings:view',
+  settingsSet: 'settings:set',
+  settingsPickSound: 'settings:pick-sound',
+  settingsPlaySound: 'settings:play-sound',
   clipboardRead: 'clipboard:read',
   clipboardWriteText: 'clipboard:write-text',
   imagesList: 'images:list',
@@ -39,6 +44,7 @@ export const IPC = {
   evImages: 'ev:images',
   evToast: 'ev:toast',
   evSettings: 'ev:settings',
+  evSettingsView: 'ev:settings-view',
   evRestore: 'ev:restore',
   evStatus: 'ev:status',
   evAttention: 'ev:attention',
@@ -78,6 +84,21 @@ export interface RestoreInfo {
   savedAt: string
 }
 
+/** what the settings window shows */
+export interface SettingsView {
+  settings: Settings
+  /** profile names, in the order of the new tab menu */
+  profiles: string[]
+  /** settings.json */
+  path: string
+  /** notices from the last load of settings.json */
+  problems: string[]
+  /** settings.json cannot be read or is not a JSON object: the window does not edit it */
+  locked: boolean
+}
+
+export type SetSettingResult = { ok: true } | { ok: false; error: string }
+
 export type Unsubscribe = () => void
 
 export interface CtApi {
@@ -97,6 +118,13 @@ export interface CtApi {
   listProfiles(): Promise<string[]>
   getSettings(): Promise<Settings>
   openSettingsFile(): void
+  getSettingsView(): Promise<SettingsView>
+  /** writes one setting to settings.json and applies it */
+  setSetting(key: SettingKey, value: SettingValue): Promise<SetSettingResult>
+  /** asks for a .wav file; saves nothing */
+  pickSound(): Promise<string | null>
+  /** plays the notification sound now in use */
+  playSound(): void
   readClipboard(): Promise<ClipboardContent>
   writeClipboardText(text: string): void
   listImages(tabId: string): Promise<ImagesUpdate>
@@ -124,6 +152,7 @@ export interface CtApi {
   onImages(cb: (update: ImagesUpdate) => void): Unsubscribe
   onToast(cb: (message: string) => void): Unsubscribe
   onSettings(cb: (settings: Settings) => void): Unsubscribe
+  onSettingsView(cb: (view: SettingsView) => void): Unsubscribe
   onRestore(cb: (info: RestoreInfo | null) => void): Unsubscribe
   onStatus(cb: (update: StatusUpdate) => void): Unsubscribe
   /** mark that tab: the bell dot for 'bell', the pulse for the Claude cases */

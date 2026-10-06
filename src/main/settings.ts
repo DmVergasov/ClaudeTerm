@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, win32 } from 'node:path'
-import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS } from '../shared/settings-keys'
+import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import type { NotificationSettings, ProfileDef, Settings } from '../shared/types'
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -32,6 +32,8 @@ export interface ParsedSettings {
   errors: string[]
   /** true when the file could not be read at all (settings are then the defaults) */
   failed?: boolean
+  /** the text is not a JSON object (settings are then the defaults); the settings window does not edit such a file */
+  broken?: boolean
 }
 
 type Guard<T> = (v: unknown) => v is T
@@ -58,9 +60,9 @@ export function parseSettings(text: string | null): ParsedSettings {
   try {
     raw = JSON.parse(text)
   } catch (e) {
-    return { settings: d, errors: [`settings.json: ${(e as Error).message}`] }
+    return { settings: d, errors: [`settings.json: ${(e as Error).message}`], broken: true }
   }
-  if (!isPlainObj(raw)) return { settings: d, errors: ['settings.json: root must be an object'] }
+  if (!isPlainObj(raw)) return { settings: d, errors: ['settings.json: root must be an object'], broken: true }
 
   const errors: string[] = []
   const take = <T>(key: string, value: unknown, ok: Guard<T>, fallback: T): T => {
@@ -103,10 +105,10 @@ export function parseSettings(text: string | null): ParsedSettings {
     profiles,
     font: {
       family: take('font.family', font.family, isStr, d.font.family),
-      size: take('font.size', font.size, numIn(6, 72), d.font.size)
+      size: take('font.size', font.size, numIn(NUMBER_LIMITS['font.size'].min, NUMBER_LIMITS['font.size'].max), d.font.size)
     },
     theme: take('theme', raw.theme, isTheme, d.theme),
-    scrollback: take('scrollback', raw.scrollback, numIn(0, 1_000_000), d.scrollback),
+    scrollback: take('scrollback', raw.scrollback, numIn(NUMBER_LIMITS.scrollback.min, NUMBER_LIMITS.scrollback.max), d.scrollback),
     imageWatch: {
       enabled: take('imageWatch.enabled', iw.enabled, isBool, d.imageWatch.enabled),
       extensions: take('imageWatch.extensions', iw.extensions, isStrArr, d.imageWatch.extensions),
@@ -139,4 +141,36 @@ export function loadSettingsFile(path: string): ParsedSettings {
     return { settings: structuredClone(DEFAULT_SETTINGS), errors: [] }
   }
   return parseSettings(readFileSync(path, 'utf8').replace(/^﻿/, ''))
+}
+
+export type EditResult = { ok: true; text: string } | { ok: false; error: string }
+
+/** settings.json with one setting changed, checked the way the app reads it. Keys it does not know and the key order are kept. */
+export function applySettingEdit(text: string | null, key: SettingKey, value: SettingValue): EditResult {
+  const body = (text ?? '').replace(/^﻿/, '')
+  let raw: unknown = {}
+  if (body.trim() !== '') {
+    try {
+      raw = JSON.parse(body)
+    } catch (e) {
+      return { ok: false, error: `settings.json can't be used: ${(e as Error).message}` }
+    }
+  }
+  if (!isPlainObj(raw)) return { ok: false, error: "settings.json can't be used: the root must be an object" }
+  if (key.startsWith('notifications.')) {
+    // one source of truth: the old attention section turns into notifications on the first notifications edit
+    if (raw.notifications === undefined) raw.notifications = parseSettings(body).settings.notifications
+    delete raw.attention
+  }
+  const path = key.split('.')
+  let node = raw
+  for (const part of path.slice(0, -1)) {
+    const next = node[part]
+    if (!isPlainObj(next)) node[part] = {}
+    node = node[part] as Record<string, unknown>
+  }
+  node[path[path.length - 1]!] = value
+  const out = JSON.stringify(raw, null, 2) + '\n'
+  if (parseSettings(out).errors.some((e) => e.includes(`"${key}"`))) return { ok: false, error: `Invalid value for ${key}` }
+  return { ok: true, text: out }
 }

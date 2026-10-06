@@ -4,3 +4,32 @@ import type { NotificationCase, NotificationChannels } from './types'
 
 export const NOTIFICATION_CASES: readonly NotificationCase[] = ['permission', 'question', 'done', 'bell']
 export const NOTIFICATION_CHANNELS: readonly (keyof NotificationChannels)[] = ['sound', 'flash', 'tab']
+
+/** number ranges the parser and the settings window both check */
+export const NUMBER_LIMITS = {
+  'font.size': { min: 6, max: 72 },
+  scrollback: { min: 0, max: 1_000_000 }
+} as const
+
+/** the settings the settings window edits */
+export type SettingKey =
+  | `notifications.${NotificationCase}.${keyof NotificationChannels}`
+  | 'notifications.sound'
+  | 'font.family' | 'font.size' | 'theme' | 'scrollback'
+  | 'defaultProfile' | 'claude.command' | 'claude.shellProfile'
+  | 'imageWatch.enabled' | 'imagePanel.autoOpen' | 'autoUpdate'
+
+export type SettingValue = string | number | boolean | null
+
+export const SETTING_KEYS: readonly SettingKey[] = [
+  ...NOTIFICATION_CASES.flatMap((c) => NOTIFICATION_CHANNELS.map((ch) => `notifications.${c}.${ch}` as const)),
+  'notifications.sound',
+  'font.family', 'font.size', 'theme', 'scrollback',
+  'defaultProfile', 'claude.command', 'claude.shellProfile',
+  'imageWatch.enabled', 'imagePanel.autoOpen', 'autoUpdate'
+]
+
+export const isSettingKey = (v: unknown): v is SettingKey => typeof v === 'string' && (SETTING_KEYS as readonly string[]).includes(v)
+
+export const isSettingValue = (v: unknown): v is SettingValue =>
+  v === null || typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))

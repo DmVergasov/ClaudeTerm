@@ -230,12 +230,16 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
 }
 
 function applySettings(s: Settings): void {
+  const prev = settings
   settings = s
-  fontSize = s.font.size
-  const theme = resolveTheme(s.theme)
-  for (const t of tabs.values()) {
-    t.view.setFont(s.font.family, fontSize)
-    t.view.setTheme(theme)
+  // a change to some other setting keeps the Ctrl+= zoom
+  if (s.font.family !== prev.font.family || s.font.size !== prev.font.size) {
+    fontSize = s.font.size
+    for (const t of tabs.values()) t.view.setFont(s.font.family, fontSize)
+  }
+  if (JSON.stringify(s.theme) !== JSON.stringify(prev.theme)) {
+    const theme = resolveTheme(s.theme)
+    for (const t of tabs.values()) t.view.setTheme(theme)
   }
 }
 
