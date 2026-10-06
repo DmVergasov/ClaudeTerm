@@ -51,8 +51,10 @@ test('the pulse keeps its phase when the tab bar is redrawn', async () => {
   await page.evaluate((id) => window.ct.renameTab(id, 'renamed'), other)
   await expect(page.locator(`[data-tab-id="${other}"]`)).toHaveAttribute('title', 'renamed')
   const after = await phase()
-  // the pulse runs on one clock: the redraw carries on where it was (modulo a full 2.4 s cycle) instead of restarting
-  expect((((after - before) % 2400) + 2400) % 2400).toBeLessThan(500)
+  // the pulse runs on one clock: the redraw carries on where it was (modulo a full 2.4 s cycle) instead of restarting;
+  // measured both ways round the cycle, since the two readings can come out a fraction of a millisecond apart either way
+  const drift = (((after - before) % 2400) + 2400) % 2400
+  expect(Math.min(drift, 2400 - drift)).toBeLessThan(500)
   await app.close()
 })
 
