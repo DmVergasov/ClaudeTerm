@@ -71,14 +71,15 @@ describe('status, subagent and session_end messages', () => {
       model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
       effort: 'xhigh',
       context: { usedTokens: 82314, size: 200000, usedPct: 41.2 },
-      fiveHour: { usedPct: 23.5, resetsAt: 1790000000 }
+      fiveHour: { usedPct: 23.5, resetsAt: 1790000000 },
+      sevenDay: { usedPct: 41.2, resetsAt: 1790500000 }
     }
     expect(parsePipeMessage(JSON.stringify(msg))).toEqual({ ok: true, message: msg })
   })
 
   it('nulls malformed optional parts and defaults displayName to the model id', () => {
-    const r = parsePipeMessage(JSON.stringify({ ...ids, type: 'status', model: { id: 'claude-x' }, effort: 7, context: { usedTokens: 'a', size: 1, usedPct: 1 }, fiveHour: { usedPct: 5 } }))
-    expect(r).toEqual({ ok: true, message: { ...ids, type: 'status', model: { id: 'claude-x', displayName: 'claude-x' }, effort: null, context: null, fiveHour: null } })
+    const r = parsePipeMessage(JSON.stringify({ ...ids, type: 'status', model: { id: 'claude-x' }, effort: 7, context: { usedTokens: 'a', size: 1, usedPct: 1 }, fiveHour: { usedPct: 5 }, sevenDay: { resetsAt: 5 } }))
+    expect(r).toEqual({ ok: true, message: { ...ids, type: 'status', model: { id: 'claude-x', displayName: 'claude-x' }, effort: null, context: null, fiveHour: null, sevenDay: null } })
   })
 
   it('rejects a zero context size', () => {

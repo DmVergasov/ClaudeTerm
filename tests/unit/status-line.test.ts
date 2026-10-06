@@ -31,7 +31,8 @@ describe('statusFromStatusLine', () => {
       model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
       effort: 'xhigh',
       context: { usedTokens: 82314, size: 200000, usedPct: 41.2 },
-      fiveHour: { usedPct: 23.5, resetsAt: 1790000000 }
+      fiveHour: { usedPct: 23.5, resetsAt: 1790000000 },
+      sevenDay: { usedPct: 41.2, resetsAt: 1790500000 }
     })
   })
 
@@ -40,7 +41,7 @@ describe('statusFromStatusLine', () => {
     expect(statusFromStatusLine(input, TAB)).toEqual({
       v: 1, type: 'status', tabId: TAB, sessionId: SID,
       model: { id: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5' },
-      effort: null, context: null, fiveHour: null
+      effort: null, context: null, fiveHour: null, sevenDay: null
     })
   })
 
@@ -49,10 +50,11 @@ describe('statusFromStatusLine', () => {
     expect(statusFromStatusLine(input, TAB)?.context).toEqual({ usedTokens: 50000, size: 200000, usedPct: 25 })
   })
 
-  it('drops a five_hour window without resets_at and defaults displayName to the id', () => {
-    const input = { ...full, model: { id: 'claude-opus-5-5' }, rate_limits: { five_hour: { used_percentage: 10 } } }
+  it('drops a limit window without resets_at and defaults displayName to the id', () => {
+    const input = { ...full, model: { id: 'claude-opus-5-5' }, rate_limits: { five_hour: { used_percentage: 10 }, seven_day: { used_percentage: 20 } } }
     const s = statusFromStatusLine(input, TAB)
     expect(s?.fiveHour).toBe(null)
+    expect(s?.sevenDay).toBe(null)
     expect(s?.model).toEqual({ id: 'claude-opus-5-5', displayName: 'claude-opus-5-5' })
   })
 

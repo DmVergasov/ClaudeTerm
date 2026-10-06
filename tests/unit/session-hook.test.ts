@@ -84,7 +84,7 @@ describe('runStatusLine', () => {
     expect(await runStatusLine(input, ENV, send)).toBe(true)
     expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', {
       v: 1, type: 'status', tabId: TAB, sessionId: SID,
-      model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: null, context: null, fiveHour: null
+      model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: null, context: null, fiveHour: null, sevenDay: null
     })
   })
 

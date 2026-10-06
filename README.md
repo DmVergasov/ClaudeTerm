@@ -51,11 +51,11 @@ Click a card to open it full-size (wheel to zoom, drag to pan, arrows to flip); 
 
 ### 📊 A status bar that answers "how much is left?"
 
-Under every Claude tab: the current model and reasoning effort, how full the context window is, how much of the 5-hour usage limit is spent, and which subagents are running right now with their model and effort. Hover for exact token counts, the limit's reset time, and a list of the agents with their tasks.
+Under every Claude tab: the current model and reasoning effort, how full the context window is, how much of the 5-hour and weekly usage limits is spent, and which subagents are running right now with their model and effort. Hover for exact token counts, when each limit resets, and a list of the agents with their tasks.
 
-<p align="center"><img src="docs/images/status-bar.png" width="640" alt="Status bar: model, effort, context, 5-hour limit, running subagents"></p>
+<p align="center"><img src="docs/images/status-bar.png" width="640" alt="Status bar: model, effort, context, 5-hour and weekly limits, running subagents"></p>
 
-The 5-hour limit is shown for Claude Pro and Max subscriptions, where Claude Code reports it.
+The limits are shown for Claude Pro and Max subscriptions, where Claude Code reports them.
 
 ### 🔔 Know when Claude is waiting for you
 
@@ -111,6 +111,8 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Open settings | `Ctrl+,` |
 
 Right-click in the terminal copies the selection, or pastes when nothing is selected. Double-click a tab to rename it.
+
+Right-click a tab → **Restart session** restarts Claude Code in the same tab and resumes the conversation — handy after adding an MCP server, a plugin or a settings change that Claude Code only reads at startup. For a shell tab the item is **Restart shell**.
 
 ## Settings
 

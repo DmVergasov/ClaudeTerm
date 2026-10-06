@@ -193,7 +193,8 @@ test('README screenshots', async () => {
       v: 1, type: 'status', tabId, sessionId: SID,
       model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'high',
       context: { usedTokens: 76_412, size: 200_000, usedPct: 38.2 },
-      fiveHour: { usedPct: 23.4, resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600 }
+      fiveHour: { usedPct: 23.4, resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600 },
+      sevenDay: { usedPct: 41.2, resetsAt: Math.floor(Date.now() / 1000) + 3 * 86400 }
     })
   ).toEqual({ ok: true })
   for (const [id, type] of agents) {

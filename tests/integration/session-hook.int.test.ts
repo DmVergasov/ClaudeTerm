@@ -25,7 +25,7 @@ const SUBAGENT_INPUT = JSON.stringify({ session_id: SID, hook_event_name: 'Subag
 const expectedStatus = {
   v: 1, type: 'status', tabId: TAB, sessionId: SID,
   model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh',
-  context: { usedTokens: 82314, size: 200000, usedPct: 41.2 }, fiveHour: null
+  context: { usedTokens: 82314, size: 200000, usedPct: 41.2 }, fiveHour: null, sevenDay: null
 }
 
 const work = mkdtempSync(join(tmpdir(), 'ct-hookint-'))

@@ -4,7 +4,7 @@ import type { AgentStatus } from '../shared/types'
 export type Level = 'normal' | 'warn' | 'crit'
 
 export interface Segment {
-  key: 'model' | 'context' | 'limit' | 'agents'
+  key: 'model' | 'context' | 'limit' | 'week' | 'agents'
   text: string
   title: string
   level: Level
@@ -25,6 +25,10 @@ export function modelFamily(id: string): string {
 
 const groupDigits = (n: number): string => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 const pad2 = (n: number): string => String(n).padStart(2, '0')
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** Fri 9 Oct, 14:00 — a month name, so the date reads the same everywhere */
+const dayAndTime = (d: Date): string => `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 const agentKind = (a: AgentStatus): string => (a.model === null ? '…' : a.effort ? `${modelFamily(a.model)}·${a.effort}` : modelFamily(a.model))
 
 function minutes(ms: number): string {
@@ -63,6 +67,10 @@ export function statusSegments(u: StatusUpdate, now: number): Segment[] {
     const f = main.fiveHour
     const reset = new Date(f.resetsAt * 1000)
     segments.push({ key: 'limit', text: `5h ${Math.round(f.usedPct)}%`, title: `resets at ${pad2(reset.getHours())}:${pad2(reset.getMinutes())}`, level: levelFor(f.usedPct) })
+  }
+  if (main.sevenDay) {
+    const w = main.sevenDay
+    segments.push({ key: 'week', text: `7d ${Math.round(w.usedPct)}%`, title: `resets ${dayAndTime(new Date(w.resetsAt * 1000))}`, level: levelFor(w.usedPct) })
   }
   if (u.agents.length > 0) {
     segments.push({ key: 'agents', text: `⚙ ${u.agents.length}: ${agentGroups(u.agents)}`, title: u.agents.map((a) => agentLine(a, now)).join('\n'), level: 'normal' })

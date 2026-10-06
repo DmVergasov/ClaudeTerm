@@ -69,7 +69,7 @@ describe('pipe server + client', () => {
       subagent: (m) => { got.push(`${m.type}:${m.event}`); return { ok: true } },
       sessionEnd: (m) => { got.push(m.type); return { ok: false, error: 'unknown claude tab' } }
     })
-    expect(await sendPipeMessage(pipe, { v: 1, type: 'status', tabId: TAB, sessionId: SID, model: { id: 'm', displayName: 'M' }, effort: null, context: null, fiveHour: null })).toEqual({ ok: true })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'status', tabId: TAB, sessionId: SID, model: { id: 'm', displayName: 'M' }, effort: null, context: null, fiveHour: null, sevenDay: null })).toEqual({ ok: true })
     expect(await sendPipeMessage(pipe, { v: 1, type: 'subagent', tabId: TAB, sessionId: SID, event: 'start', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
     expect(await sendPipeMessage(pipe, { v: 1, type: 'session_end', tabId: TAB, sessionId: SID })).toEqual({ ok: false, error: 'unknown claude tab' })
     expect(got).toEqual(['status', 'subagent:start', 'session_end'])

@@ -51,7 +51,7 @@ export class StatusHub {
     const t = this.tab(m.tabId)
     if (t.retired.has(m.sessionId)) return
     if (t.sessionId !== m.sessionId) this.switchTo(t, m.sessionId)
-    t.main = { model: m.model, effort: m.effort, context: m.context, fiveHour: m.fiveHour }
+    t.main = { model: m.model, effort: m.effort, context: m.context, fiveHour: m.fiveHour, sevenDay: m.sevenDay }
     this.deps.onChange(m.tabId)
   }
 

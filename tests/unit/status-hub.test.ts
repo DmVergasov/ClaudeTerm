@@ -10,7 +10,7 @@ const SID2 = '6e3d2c8b-9f5a-4b4c-a2d3-e4f5a6b7c8d9'
 
 const status = (over: Partial<StatusMessage> = {}): StatusMessage => ({
   v: 1, type: 'status', tabId: TAB, sessionId: SID,
-  model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null,
+  model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null, sevenDay: null,
   ...over
 })
 const sub = (event: 'start' | 'stop', agentId: string, over: Partial<SubagentMessage> = {}): SubagentMessage => ({
@@ -29,7 +29,7 @@ describe('StatusHub', () => {
   it('status sets the main part and notifies', () => {
     const { hub, changes } = makeHub()
     hub.status(status())
-    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: { model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null }, agents: [] })
+    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: { model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null, sevenDay: null }, agents: [] })
     expect(changes).toEqual([TAB])
   })
 

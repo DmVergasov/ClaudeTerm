@@ -86,7 +86,7 @@ function parseContext(v: unknown): MainStatus['context'] {
   return { usedTokens: v.usedTokens, size: v.size, usedPct: v.usedPct }
 }
 
-function parseFiveHour(v: unknown): MainStatus['fiveHour'] {
+function parseLimit(v: unknown): MainStatus['fiveHour'] {
   if (!isObj(v) || !isNum(v.usedPct) || !isNum(v.resetsAt)) return null
   return { usedPct: v.usedPct, resetsAt: v.resetsAt }
 }
@@ -148,7 +148,7 @@ export function parsePipeMessage(line: string): ParseResult {
     if (!id) return { ok: false, error: 'model.id must be a non-empty string' }
     return {
       ok: true,
-      message: { v: 1, type: 'status', ...ids, model: { id, displayName: label(model.displayName) ?? id }, effort: label(m.effort), context: parseContext(m.context), fiveHour: parseFiveHour(m.fiveHour) }
+      message: { v: 1, type: 'status', ...ids, model: { id, displayName: label(model.displayName) ?? id }, effort: label(m.effort), context: parseContext(m.context), fiveHour: parseLimit(m.fiveHour), sevenDay: parseLimit(m.sevenDay) }
     }
   }
 

@@ -17,10 +17,11 @@ const statusMsg = (tabId: string): StatusMessage => ({
   model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
   effort: 'xhigh',
   context: { usedTokens: 82_314, size: 200_000, usedPct: 41.2 },
-  fiveHour: { usedPct: 23.5, resetsAt: Math.floor(Date.now() / 1000) + 3600 }
+  fiveHour: { usedPct: 23.5, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+  sevenDay: { usedPct: 41.2, resetsAt: Math.floor(Date.now() / 1000) + 3 * 86400 }
 })
 
-test('a claude tab shows model, context, the 5h limit and running subagents', async () => {
+test('a claude tab shows model, context, the 5h and weekly limits and running subagents', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
   const subagentDir = join(projectDir, SID, 'subagents')
@@ -38,6 +39,7 @@ test('a claude tab shows model, context, the 5h limit and running subagents', as
   await expect(bar.locator('.status-model')).toHaveText('Opus 5.5 · xhigh')
   await expect(bar.locator('.status-context')).toHaveText('ctx 41% · 82k/200k')
   await expect(bar.locator('.status-limit')).toHaveText('5h 24%')
+  await expect(bar.locator('.status-week')).toHaveText('7d 41%')
   await expect(bar.locator('.status-agents')).toHaveText('⚙ 1: opus·high', { timeout: 10_000 })
   await expect(bar.locator('.status-agents')).toHaveAttribute('title', 'Explore · opus·high · <1 min · "Find asar users"')
 

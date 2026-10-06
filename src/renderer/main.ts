@@ -223,6 +223,16 @@ function newTabMenu(anchor: HTMLElement): void {
   })
 }
 
+function tabMenu(id: string, at: { x: number; y: number }): void {
+  const t = tabs.get(id)
+  if (!t) return
+  showMenu(at, [
+    { label: t.info.kind === 'claude' ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
+    { label: '', separator: true },
+    { label: 'Close tab', action: () => ct.closeTab(id) }
+  ])
+}
+
 function applySettings(s: Settings): void {
   settings = s
   fontSize = s.font.size
@@ -244,6 +254,7 @@ async function boot(): Promise<void> {
     reorder: (ids) => ct.reorderTabs(ids),
     newTab: () => void ct.openTab({ kind: 'shell', cwd: appInfo.homeDir }),
     openMenu: (anchor) => newTabMenu(anchor),
+    tabMenu,
     toggleImages: () => {
       runAction({ type: 'toggleImages' }, activeId)
       if (activeId) tabs.get(activeId)?.view.term.focus()
@@ -335,6 +346,16 @@ async function boot(): Promise<void> {
     renderTabs()
   })
   ct.onPtyData((id, data) => tabs.get(id)?.view.write(data))
+  ct.onPtyReset((id) => {
+    const t = tabs.get(id)
+    if (!t) return
+    t.view.reset()
+    // the stopped process's title and marks don't describe the new one
+    t.oscTitle = null
+    t.bell = false
+    t.attention = false
+    renderTabs()
+  })
   ct.onPtyExit((id, code) => tabs.get(id)?.view.write(`\r\n\x1b[90m[process exited with code ${code}] Enter — restart, Ctrl+Shift+W — close\x1b[0m\r\n`))
   ct.onToast((m) => showToast(m))
   ct.onSettings(applySettings)

@@ -29,7 +29,8 @@ function setup(over: Partial<TabManagerDeps> = {}) {
     activated: (id) => log.push(`activated:${id}`),
     order: (ids) => log.push(`order:${ids.join(',')}`),
     data: (id, d) => data.push([id, d]),
-    exit: (id, code) => log.push(`exit:${id}:${code}`)
+    exit: (id, code) => log.push(`exit:${id}:${code}`),
+    reset: (id) => log.push(`reset:${id}`)
   }
   const onStateChanged = vi.fn()
   const onTabStarted = vi.fn()
@@ -101,10 +102,13 @@ describe('TabManager', () => {
     tm.restart(tab.id)
     expect(ptys).toHaveLength(2)
     expect(tm.get(tab.id)?.exited).toBe(false)
+    expect(log).not.toContain(`reset:${tab.id}`)
     tm.write(tab.id, 'dir\r')
     expect(ptys[1].writes).toEqual(['dir\r'])
+    // a second Enter that arrives after the restart leaves the new process alone
     tm.restart(tab.id)
     expect(ptys).toHaveLength(2)
+    expect(ptys[1].killed).toBe(false)
   })
 
   it('restart of a claude tab re-resolves the launch with the current session id', () => {
@@ -210,5 +214,87 @@ describe('TabManager', () => {
     expect(ptys.every((p) => p.killed)).toBe(true)
     expect(onStateChanged).not.toHaveBeenCalled()
     expect(tm.list()).toEqual([])
+  })
+
+  it('restart of a running tab kills its process, resets the terminal, then starts again; the old process is ignored', async () => {
+    const { tm, ptys, log, data } = setup({ flushMs: 0 })
+    const tab = tm.open({ kind: 'shell', cwd: 'D:\\x', profile: 'Git Bash' })
+    const done = tm.restart(tab.id, { live: true })
+    expect(ptys[0].killed).toBe(true)
+    expect(log).toContain(`reset:${tab.id}`)
+    expect(ptys).toHaveLength(1)
+    ptys[0].emitData('late output')
+    ptys[0].emitExit(1)
+    await done
+    expect(ptys).toHaveLength(2)
+    expect(ptys[1].opts).toMatchObject({ cwd: 'D:\\x', env: expect.objectContaining({ CLAUDETERM_TAB_ID: tab.id }) })
+    expect(log).not.toContain(`exit:${tab.id}:1`)
+    expect(tm.get(tab.id)).toMatchObject({ id: tab.id, exited: false, profile: 'Git Bash' })
+    tm.write(tab.id, 'ls\r')
+    expect(ptys[1].writes).toEqual(['ls\r'])
+    await new Promise((r) => setTimeout(r, 5))
+    expect(data).toEqual([])
+  })
+
+  it('restart of a running claude tab resumes the current conversation', async () => {
+    const resolveLaunch = vi.fn((req: { profile?: string | null }) => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }))
+    const { tm, ptys } = setup({ resolveLaunch })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    tm.setClaudeSession(tab.id, SID_B)
+    const done = tm.restart(tab.id, { live: true })
+    ptys[0].emitExit(0)
+    await done
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_B }))
+    expect(ptys).toHaveLength(2)
+  })
+
+  it('restart waits at most restartWaitMs for a process that does not exit', async () => {
+    vi.useFakeTimers()
+    const { tm, ptys } = setup({ restartWaitMs: 3000 })
+    const tab = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    const done = tm.restart(tab.id, { live: true })
+    await vi.advanceTimersByTimeAsync(2999)
+    expect(ptys).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await done
+    expect(ptys).toHaveLength(2)
+  })
+
+  it('a second restart while one is under way does nothing, and a tab closed meanwhile is not started', async () => {
+    const { tm, ptys } = setup()
+    const tab = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    const first = tm.restart(tab.id, { live: true })
+    const second = tm.restart(tab.id, { live: true })
+    ptys[0].emitExit(0)
+    await Promise.all([first, second])
+    expect(ptys).toHaveLength(2)
+    const again = tm.restart(tab.id, { live: true })
+    tm.close(tab.id)
+    ptys[1].emitExit(0)
+    await again
+    expect(ptys).toHaveLength(2)
+  })
+
+  it('a claude conversation that was never saved restarts as a new one', async () => {
+    const resolveLaunch = vi.fn((req: { profile?: string | null }) => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }))
+    const resumable = vi.fn(() => false)
+    const { tm, ptys } = setup({ resolveLaunch, resumable })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    tm.setClaudeSession(tab.id, SID_A)
+    const done = tm.restart(tab.id, { live: true })
+    ptys[0].emitExit(0)
+    await done
+    expect(resumable).toHaveBeenCalledWith(tab.id, SID_A)
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', resumeSessionId: null }))
+  })
+
+  it('disposeAll during a restart starts nothing', async () => {
+    const { tm, ptys } = setup()
+    const tab = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    const done = tm.restart(tab.id, { live: true })
+    tm.disposeAll()
+    ptys[0].emitExit(0)
+    await done
+    expect(ptys).toHaveLength(1)
   })
 })

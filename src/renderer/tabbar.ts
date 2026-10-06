@@ -22,6 +22,7 @@ export interface TabBarCallbacks {
   reorder(ids: string[]): void
   newTab(): void
   openMenu(anchor: HTMLElement): void
+  tabMenu(id: string, at: { x: number; y: number }): void
   toggleImages(): void
 }
 
@@ -127,6 +128,10 @@ export class TabBar {
       }
     })
     el.addEventListener('click', () => this.cb.activate(item.id))
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+      this.cb.tabMenu(item.id, { x: e.clientX, y: e.clientY })
+    })
     el.addEventListener('dblclick', () => this.beginRename(label, item))
     el.addEventListener('dragstart', () => { this.dragId = item.id })
     el.addEventListener('dragover', (e) => { if (this.dragId) e.preventDefault() })

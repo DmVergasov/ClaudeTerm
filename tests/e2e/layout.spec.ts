@@ -112,7 +112,7 @@ test('terminal grid fits the host at every window size', async () => {
 
 test('terminal grid fits above the status bar at every window height', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
-  const status = { v: 1 as const, type: 'status' as const, tabId, sessionId: '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null }
+  const status = { v: 1 as const, type: 'status' as const, tabId, sessionId: '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null, sevenDay: null }
   expect(await sendPipeMessage(pipeName, status)).toEqual({ ok: true })
   const bar = page.locator('#statusbar')
   await expect(bar).toBeVisible()

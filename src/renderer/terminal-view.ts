@@ -82,6 +82,12 @@ export class TerminalView {
 
   write(data: string): void { this.term.write(data) }
 
+  /**
+   * A fresh terminal for a restarted process: a killed one may have left the alternate screen or mouse modes on.
+   * RIS goes through the write queue, so output still waiting to be parsed cannot land after the reset.
+   */
+  reset(): void { this.term.write('\x1bc') }
+
   show(visible: boolean, focus = true): void {
     this.element.style.display = visible ? 'block' : 'none'
     if (visible) {

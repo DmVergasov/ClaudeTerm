@@ -75,6 +75,7 @@ export interface MainStatus {
   effort: string | null
   context: { usedTokens: number; size: number; usedPct: number } | null
   fiveHour: { usedPct: number; resetsAt: number } | null
+  sevenDay: { usedPct: number; resetsAt: number } | null
 }
 
 export interface AgentStatus {

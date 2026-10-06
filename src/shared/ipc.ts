@@ -33,6 +33,7 @@ export const IPC = {
   evTabsOrder: 'ev:tabs-order',
   evPtyData: 'ev:pty-data',
   evPtyExit: 'ev:pty-exit',
+  evPtyReset: 'ev:pty-reset',
   evImages: 'ev:images',
   evToast: 'ev:toast',
   evSettings: 'ev:settings',
@@ -86,7 +87,8 @@ export interface CtApi {
   activateTab(tabId: string): void
   renameTab(tabId: string, title: string | null): void
   reorderTabs(ids: string[]): void
-  restartTab(tabId: string): void
+  /** `live` also restarts a tab whose process is still running */
+  restartTab(tabId: string, live?: boolean): void
   writePty(tabId: string, data: string): void
   resizePty(tabId: string, cols: number, rows: number): void
   listProfiles(): Promise<string[]>
@@ -111,6 +113,7 @@ export interface CtApi {
   onTabsOrder(cb: (ids: string[]) => void): Unsubscribe
   onPtyData(cb: (tabId: string, data: string) => void): Unsubscribe
   onPtyExit(cb: (tabId: string, code: number) => void): Unsubscribe
+  onPtyReset(cb: (tabId: string) => void): Unsubscribe
   onImages(cb: (update: ImagesUpdate) => void): Unsubscribe
   onToast(cb: (message: string) => void): Unsubscribe
   onSettings(cb: (settings: Settings) => void): Unsubscribe

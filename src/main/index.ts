@@ -252,6 +252,11 @@ function bootstrap(): void {
       return { profileName: profile.name, spec: buildLaunch(profile, 'shell', null) }
     },
     onStateChanged: () => sessions.scheduleSave(tabs.snapshot()),
+    // Claude Code writes the transcript with the first message; --resume of a conversation without one fails
+    resumable: (tabId) => {
+      const p = sources.get(tabId)?.transcriptPath
+      return p ? existsSync(p) : true
+    },
     events: {
       opened: (t) => send(IPC.evTabOpened, t),
       updated: (t) => send(IPC.evTabUpdated, t),
@@ -259,7 +264,8 @@ function bootstrap(): void {
       activated: (id) => send(IPC.evTabActivated, id),
       order: (ids) => send(IPC.evTabsOrder, ids),
       data: (id, d) => send(IPC.evPtyData, id, d),
-      exit: (id, code) => send(IPC.evPtyExit, id, code)
+      exit: (id, code) => send(IPC.evPtyExit, id, code),
+      reset: (id) => send(IPC.evPtyReset, id)
     }
   })
   const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
@@ -422,7 +428,9 @@ function bootstrap(): void {
   ipcMain.on(IPC.tabsActivate, (_e, id: unknown) => { if (isId(id)) tabs.activate(id) })
   ipcMain.on(IPC.tabsRename, (_e, id: unknown, title: unknown) => { if (isId(id) && isOptionalTitle(title)) tabs.rename(id, title) })
   ipcMain.on(IPC.tabsReorder, (_e, ids: unknown) => { if (isIdList(ids)) tabs.reorder(ids) })
-  ipcMain.on(IPC.tabsRestart, (_e, id: unknown) => { if (isId(id)) tabs.restart(id) })
+  ipcMain.on(IPC.tabsRestart, (_e, id: unknown, live: unknown) => {
+    if (isId(id)) tabs.restart(id, { live: live === true }).catch((e: Error) => log.warn(`cannot restart tab: ${e.message}`))
+  })
   ipcMain.on(IPC.ptyWrite, (_e, id: unknown, data: unknown) => {
     if (!isId(id) || !isPtyData(data)) return
     if (id === autoTabId && isUserInput(data)) autoTabId = null

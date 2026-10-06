@@ -16,6 +16,8 @@ export interface TabEvents {
   order(ids: string[]): void
   data(tabId: string, data: string): void
   exit(tabId: string, code: number): void
+  /** a running tab is being restarted: its terminal should start clean */
+  reset(tabId: string): void
 }
 
 export interface TabManagerDeps {
@@ -27,7 +29,11 @@ export interface TabManagerDeps {
   onTabStarted?(tab: TabInfo): void
   onTabClosed?(tabId: string): void
   onStateChanged?(): void
+  /** whether a Claude conversation can be resumed; one without a message has no transcript yet */
+  resumable?(tabId: string, sessionId: string): boolean
   flushMs?: number
+  /** how long a restart waits for the old process to exit before starting the new one */
+  restartWaitMs?: number
 }
 
 interface TabRecord {
@@ -38,6 +44,11 @@ interface TabRecord {
   timer: ReturnType<typeof setTimeout> | null
   cols: number
   rows: number
+  /** bumped on every start, so output and exit of a replaced process are ignored */
+  gen: number
+  /** resolves when the current process has exited */
+  stopped: Promise<void>
+  restarting: boolean
 }
 
 export class TabManager {
@@ -59,7 +70,7 @@ export class TabManager {
       claudeSessionId: req.kind === 'claude' ? req.resumeSessionId ?? null : null,
       exited: false
     }
-    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30 }
+    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false }
     this.tabs.set(info.id, rec)
     this.order.push(info.id)
     this.deps.events.opened({ ...info })
@@ -115,20 +126,45 @@ export class TabManager {
     this.changed()
   }
 
-  restart(tabId: string): void {
+  /**
+   * Starts the tab's process again in the same tab. With `live`, a running process is stopped first (e.g. so
+   * Claude Code picks up a newly added MCP server); otherwise only an exited tab restarts. A Claude tab resumes
+   * its current conversation.
+   */
+  async restart(tabId: string, opts: { live?: boolean } = {}): Promise<void> {
     const rec = this.tabs.get(tabId)
-    if (!rec || !rec.info.exited) return
+    if (!rec || rec.restarting || (!rec.info.exited && !opts.live)) return
     if (rec.info.kind === 'claude') {
       // the conversation may have changed since open (/clear), so resume the CURRENT one
+      const id = rec.info.claudeSessionId
+      const resumeSessionId = id !== null && (this.deps.resumable?.(rec.info.id, id) ?? true) ? id : null
       try {
-        rec.launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: rec.info.claudeSessionId })
+        rec.launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId })
       } catch {
         // keep the previous launch
       }
     }
-    rec.info.exited = false
-    this.deps.events.updated({ ...rec.info })
-    this.start(rec)
+    if (rec.info.exited) {
+      rec.info.exited = false
+      this.deps.events.updated({ ...rec.info })
+      this.start(rec)
+      return
+    }
+    rec.restarting = true
+    rec.gen++
+    if (rec.timer) clearTimeout(rec.timer)
+    rec.timer = null
+    rec.buffer = ''
+    const stopped = rec.stopped
+    rec.pty?.kill()
+    rec.pty = null
+    this.deps.events.reset(rec.info.id)
+    // let the old process go first, so two Claude Code processes never share one conversation
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([stopped, new Promise<void>((r) => { timer = setTimeout(r, this.deps.restartWaitMs ?? 3000) })])
+    clearTimeout(timer)
+    rec.restarting = false
+    if (this.isLive(rec) && !this.disposed) this.start(rec)
   }
 
   write(tabId: string, data: string): void {
@@ -187,6 +223,9 @@ export class TabManager {
 
   private start(rec: TabRecord): void {
     const env = { ...this.deps.baseEnv(), CLAUDETERM_TAB_ID: rec.info.id, CLAUDETERM_PIPE: this.deps.pipeName }
+    const gen = ++rec.gen
+    let markStopped = (): void => {}
+    rec.stopped = new Promise<void>((r) => { markStopped = r })
     try {
       rec.pty = this.deps.spawn({
         file: rec.launch.spec.file,
@@ -195,10 +234,14 @@ export class TabManager {
         env,
         cols: rec.cols,
         rows: rec.rows,
-        onData: (d) => this.queue(rec, d),
-        onExit: (code) => this.exited(rec, code)
+        onData: (d) => { if (rec.gen === gen) this.queue(rec, d) },
+        onExit: (code) => {
+          markStopped()
+          if (rec.gen === gen) this.exited(rec, code)
+        }
       })
     } catch (e) {
+      markStopped()
       rec.pty = null
       this.queue(rec, `\r\n[failed to start ${rec.launch.spec.file}: ${(e as Error).message}]\r\n`)
       this.exited(rec, -1)
