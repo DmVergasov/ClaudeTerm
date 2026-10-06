@@ -5,6 +5,12 @@ import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab } from './
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // the mark is what these tests check; keep the desktop quiet while they run
 const QUIET = { ...FAKE_CLAUDE_SETTINGS, attention: { sound: 'none', flash: false } }
+const OFF = { sound: false, flash: false, tab: true }
+/** per-case settings with the desktop kept quiet */
+const quietNotifications = (over: object = {}): object => ({
+  ...FAKE_CLAUDE_SETTINGS,
+  notifications: { permission: OFF, question: OFF, done: OFF, bell: { sound: false, flash: false, tab: true }, ...over }
+})
 
 test('Claude waiting in a background tab makes that tab pulse until it is opened', async () => {
   const { app, page, tabId, work, pipeName } = await launchClaudeTab(QUIET)
@@ -70,5 +76,34 @@ test('attention for a shell tab is rejected', async () => {
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: false, error: `unknown claude tab: ${tabId}` })
+  await app.close()
+})
+
+test('each case follows its own settings: a finished answer without tab highlight leaves the tab alone, a permission prompt marks it', async () => {
+  const { app, page, tabId, work, pipeName } = await launchClaudeTab(quietNotifications({ done: { sound: false, flash: false, tab: false } }))
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  const claudeTab = page.locator(`[data-tab-id="${tabId}"]`)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  // the mark would arrive right after the pipe answer; give it time to show up if it were sent
+  await page.waitForTimeout(300)
+  await expect(claudeTab).not.toHaveClass(/\battention\b/)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
+  await expect(claudeTab).toHaveClass(/\battention\b/)
+  await app.close()
+})
+
+test('with the bell tab highlight off, a terminal bell in a background tab leaves no dot', async () => {
+  const { app, page, tabId: first, work } = await launchClaudeTab(quietNotifications({ bell: { sound: false, flash: false, tab: false } }))
+  const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work))!.id
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, shell)
+  await expect.poll(() => bufferText(page, shell), { timeout: 20_000 }).toMatch(/PS .*>/)
+  await page.evaluate((id) => window.ct.activateTab(id), first)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, first)
+  await page.evaluate((id) => window.ct.writePty(id, "Write-Host -NoNewline ([char]7); 'after-bell'\r"), shell)
+  await expect.poll(() => bufferText(page, shell), { timeout: 10_000 }).toContain('after-bell')
+  // the bell goes renderer → main → renderer; give that round trip time before checking it left no dot
+  await page.waitForTimeout(500)
+  await expect(page.locator(`[data-tab-id="${shell}"] .tab-bell`)).toHaveCount(0)
   await app.close()
 })

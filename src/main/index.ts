@@ -277,10 +277,10 @@ function bootstrap(): void {
   const attention = new Attention({
     windowFocused: () => Boolean(win && !win.isDestroyed() && win.isFocused()),
     activeTabId: () => tabs.activeTabId(),
-    settings: () => settings.attention,
+    settings: () => settings.notifications,
     flash: () => { if (win && !win.isDestroyed()) win.flashFrame(true) },
     play: playSound,
-    markTab: (tabId) => send(IPC.evAttention, tabId)
+    markTab: (tabId, reason) => send(IPC.evAttention, tabId, reason)
   })
 
   const openTab = (req: OpenTabRequest, activate = true): TabInfo | null => {
@@ -402,7 +402,7 @@ function bootstrap(): void {
     },
     attention: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
-      const signalled = attention.notify(msg.tabId)
+      const signalled = attention.notify(msg.tabId, msg.reason)
       log.info(`attention ${msg.reason} tab=${msg.tabId}${signalled ? '' : ' (seen)'}`)
       return { ok: true }
     }
@@ -422,7 +422,7 @@ function bootstrap(): void {
     for (const cmd of pendingLaunches.splice(0)) openFromLaunch(cmd)
     if (restoreAfterUpdate) runRestore()
   })
-  ipcMain.on(IPC.bell, () => { if (win && !win.isFocused()) win.flashFrame(true) })
+  ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) attention.notify(tabId, 'bell') })
   ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => openTab(req))
   ipcMain.handle(IPC.sessionsList, async (): Promise<RecentSession[]> => {
     const list = await history.list(100)

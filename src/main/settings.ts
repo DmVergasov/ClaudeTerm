@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, win32 } from 'node:path'
-import type { ProfileDef, Settings } from '../shared/types'
+import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS } from '../shared/settings-keys'
+import type { NotificationSettings, ProfileDef, Settings } from '../shared/types'
 
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
@@ -16,7 +17,13 @@ export const DEFAULT_SETTINGS: Settings = {
     maxDepth: 8
   },
   imagePanel: { autoOpen: true, width: 320, maxItems: 200 },
-  attention: { sound: 'system', flash: true },
+  notifications: {
+    sound: 'system',
+    permission: { sound: true, flash: true, tab: true },
+    question: { sound: true, flash: true, tab: true },
+    done: { sound: true, flash: true, tab: true },
+    bell: { sound: false, flash: true, tab: true }
+  },
   autoUpdate: true
 }
 
@@ -37,7 +44,10 @@ const isStrArr: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.ev
 const numIn = (min: number, max: number): Guard<number> => (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
 const isPlainObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isTheme: Guard<Settings['theme']> = (v): v is Settings['theme'] => isStr(v) || (isPlainObj(v) && Object.values(v).every((x) => typeof x === 'string'))
-const isSound: Guard<string> = (v): v is string => v === 'system' || v === 'none' || (isStr(v) && win32.isAbsolute(v) && /\.wav$/i.test(v))
+const isSoundFile: Guard<string> = (v): v is string => v === 'system' || (isStr(v) && win32.isAbsolute(v) && /\.wav$/i.test(v))
+/** the old attention.sound also took "none" */
+const isLegacySound: Guard<string> = (v): v is string => v === 'none' || isSoundFile(v)
+const CLAUDE_CASES = ['permission', 'question', 'done'] as const
 const isProfiles: Guard<RawProfile[]> = (v): v is RawProfile[] =>
   Array.isArray(v) && v.every((p) => isPlainObj(p) && isStr(p.name) && isStr(p.command) && (p.args === undefined || isStrArr(p.args)))
 
@@ -64,9 +74,25 @@ export function parseSettings(text: string | null): ParsedSettings {
   const font = obj(raw.font)
   const iw = obj(raw.imageWatch)
   const ip = obj(raw.imagePanel)
-  const at = obj(raw.attention)
 
   const profiles: ProfileDef[] = take('profiles', raw.profiles, isProfiles, []).map((p) => ({ name: p.name, command: p.command, args: p.args ?? [] }))
+
+  const notifications: NotificationSettings = structuredClone(d.notifications)
+  if (raw.notifications === undefined && raw.attention !== undefined) {
+    // a file from before per-case notifications
+    const at = obj(raw.attention)
+    const sound = take('attention.sound', at.sound, isLegacySound, 'system')
+    const flash = take('attention.flash', at.flash, isBool, true)
+    if (sound !== 'none') notifications.sound = sound
+    for (const c of CLAUDE_CASES) notifications[c] = { sound: sound !== 'none', flash, tab: true }
+  } else {
+    const nt = obj(raw.notifications)
+    notifications.sound = take('notifications.sound', nt.sound, isSoundFile, notifications.sound)
+    for (const c of NOTIFICATION_CASES) {
+      const cv = obj(nt[c])
+      for (const ch of NOTIFICATION_CHANNELS) notifications[c][ch] = take(`notifications.${c}.${ch}`, cv[ch], isBool, notifications[c][ch])
+    }
+  }
 
   const settings: Settings = {
     defaultProfile: take('defaultProfile', raw.defaultProfile, isNullableStr, d.defaultProfile),
@@ -92,10 +118,7 @@ export function parseSettings(text: string | null): ParsedSettings {
       width: take('imagePanel.width', ip.width, numIn(120, 4000), d.imagePanel.width),
       maxItems: take('imagePanel.maxItems', ip.maxItems, numIn(1, 10_000), d.imagePanel.maxItems)
     },
-    attention: {
-      sound: take('attention.sound', at.sound, isSound, d.attention.sound),
-      flash: take('attention.flash', at.flash, isBool, d.attention.flash)
-    },
+    notifications,
     autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)
   }
   return { settings, errors }

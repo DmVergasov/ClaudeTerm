@@ -35,18 +35,61 @@ describe('parseSettings', () => {
     expect(all).toContain('"imagePanel.autoOpen"')
   })
 
-  it('attention: system sound and flashing by default; "none" or an absolute .wav path are accepted', () => {
-    expect(DEFAULT_SETTINGS.attention).toEqual({ sound: 'system', flash: true })
-    expect(parseSettings(JSON.stringify({ attention: { sound: 'none', flash: false } })).settings.attention).toEqual({ sound: 'none', flash: false })
-    expect(parseSettings(JSON.stringify({ attention: { sound: 'D:\\sounds\\Ding.WAV' } })).settings.attention).toEqual({ sound: 'D:\\sounds\\Ding.WAV', flash: true })
+  it('notifications: defaults are the old behaviour, the bell rings no sound', () => {
+    expect(DEFAULT_SETTINGS.notifications).toEqual({
+      sound: 'system',
+      permission: { sound: true, flash: true, tab: true },
+      question: { sound: true, flash: true, tab: true },
+      done: { sound: true, flash: true, tab: true },
+      bell: { sound: false, flash: true, tab: true }
+    })
+    expect(parseSettings('{}').settings.notifications).toEqual(DEFAULT_SETTINGS.notifications)
   })
 
-  it('attention: rejects other sounds and names the key', () => {
-    for (const sound of ['ding.wav', 'D:\\sounds\\ding.mp3', 'loud', true]) {
-      const r = parseSettings(JSON.stringify({ attention: { sound } }))
-      expect(r.settings.attention.sound).toBe('system')
-      expect(r.errors.join('\n')).toContain('"attention.sound"')
+  it('notifications: each field is read on its own and an invalid one falls back with a notice naming it', () => {
+    const r = parseSettings(JSON.stringify({ notifications: { sound: 'D:\\sounds\\Ding.WAV', done: { sound: false, tab: 'no' }, bell: { sound: true } } }))
+    expect(r.settings.notifications.sound).toBe('D:\\sounds\\Ding.WAV')
+    expect(r.settings.notifications.done).toEqual({ sound: false, flash: true, tab: true })
+    expect(r.settings.notifications.bell).toEqual({ sound: true, flash: true, tab: true })
+    expect(r.settings.notifications.permission).toEqual({ sound: true, flash: true, tab: true })
+    expect(r.errors).toEqual(['settings.json: invalid value for "notifications.done.tab", using default'])
+  })
+
+  it('notifications.sound: "system" or an absolute .wav only', () => {
+    for (const sound of ['none', 'ding.wav', 'D:\\sounds\\ding.mp3', 'loud', true]) {
+      const r = parseSettings(JSON.stringify({ notifications: { sound } }))
+      expect(r.settings.notifications.sound).toBe('system')
+      expect(r.errors.join('\n')).toContain('"notifications.sound"')
     }
+  })
+
+  it('attention (old files): "none" turns the Claude sounds off, a .wav becomes the sound, flash: false stops Claude flashing', () => {
+    const off = parseSettings(JSON.stringify({ attention: { sound: 'none', flash: false } }))
+    expect(off.errors).toEqual([])
+    expect(off.settings.notifications).toEqual({
+      sound: 'system',
+      permission: { sound: false, flash: false, tab: true },
+      question: { sound: false, flash: false, tab: true },
+      done: { sound: false, flash: false, tab: true },
+      bell: { sound: false, flash: true, tab: true }
+    })
+    const wav = parseSettings(JSON.stringify({ attention: { sound: 'D:\\s\\ding.wav' } })).settings.notifications
+    expect(wav.sound).toBe('D:\\s\\ding.wav')
+    expect(wav.done).toEqual({ sound: true, flash: true, tab: true })
+  })
+
+  it('attention (old files): invalid values fall back with a notice naming them', () => {
+    const r = parseSettings(JSON.stringify({ attention: { sound: 'loud', flash: 'yes' } }))
+    expect(r.settings.notifications).toEqual(DEFAULT_SETTINGS.notifications)
+    expect(r.errors.join('\n')).toContain('"attention.sound"')
+    expect(r.errors.join('\n')).toContain('"attention.flash"')
+  })
+
+  it('notifications wins over attention', () => {
+    const r = parseSettings(JSON.stringify({ attention: { sound: 'none' }, notifications: { done: { flash: false } } }))
+    expect(r.settings.notifications.permission.sound).toBe(true)
+    expect(r.settings.notifications.done).toEqual({ sound: true, flash: false, tab: true })
+    expect(r.errors).toEqual([])
   })
 
   it('autoUpdate: on by default, false turns it off, other values fall back', () => {

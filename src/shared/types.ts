@@ -55,6 +55,19 @@ export interface SessionSnapshot {
   tabs: SessionSnapshotTab[]
 }
 
+export type NotificationCase = 'permission' | 'question' | 'done' | 'bell'
+
+export interface NotificationChannels {
+  sound: boolean
+  /** flash the taskbar button when the window is not focused */
+  flash: boolean
+  /** mark the tab when it is not the active one */
+  tab: boolean
+}
+
+/** sound: 'system' or an absolute path to a .wav file; then the signals each case gives */
+export type NotificationSettings = { sound: string } & Record<NotificationCase, NotificationChannels>
+
 export interface Settings {
   defaultProfile: string | null
   claude: { command: string; shellProfile: string | null }
@@ -64,8 +77,7 @@ export interface Settings {
   scrollback: number
   imageWatch: { enabled: boolean; extensions: string[]; ignore: string[]; maxDepth: number }
   imagePanel: { autoOpen: boolean; width: number; maxItems: number }
-  /** sound: 'system', 'none' or an absolute path to a .wav file */
-  attention: { sound: string; flash: boolean }
+  notifications: NotificationSettings
   /** check GitHub for new versions in the background */
   autoUpdate: boolean
 }

@@ -178,15 +178,7 @@ function addTab(info: TabInfo): void {
       t.oscTitle = title.trim() || null
       renderTabs()
     },
-    onBell: () => {
-      const t = tabs.get(info.id)
-      if (!t) return
-      if (info.id !== activeId) {
-        t.bell = true
-        renderTabs()
-      }
-      if (!document.hasFocus()) ct.bell()
-    },
+    onBell: () => ct.bell(info.id),
     onLink: (uri) => ct.openExternal(uri)
   })
   view.show(false)
@@ -294,10 +286,11 @@ async function boot(): Promise<void> {
     statusUpdates.set(u.tabId, u)
     if (u.tabId === activeId) statusBar.render(u)
   })
-  ct.onAttention((tabId) => {
+  ct.onAttention((tabId, reason) => {
     const t = tabs.get(tabId)
     if (!t || tabId === activeId) return
-    t.attention = true
+    if (reason === 'bell') t.bell = true
+    else t.attention = true
     renderTabs()
   })
   imagePanel = new ImagePanel(

@@ -1,4 +1,4 @@
-import type { AgentStatus, ImageCard, MainStatus, OpenTabRequest, RecentSession, Settings, TabInfo, UpdateState } from './types'
+import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, RecentSession, Settings, TabInfo, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -83,7 +83,8 @@ export type Unsubscribe = () => void
 export interface CtApi {
   appInfo(): Promise<AppInfo>
   rendererReady(): void
-  bell(): void
+  /** the terminal in that tab rang its bell (BEL) */
+  bell(tabId: string): void
   openTab(req: OpenTabRequest): Promise<TabInfo | null>
   closeTab(tabId: string): void
   activateTab(tabId: string): void
@@ -125,7 +126,7 @@ export interface CtApi {
   onSettings(cb: (settings: Settings) => void): Unsubscribe
   onRestore(cb: (info: RestoreInfo | null) => void): Unsubscribe
   onStatus(cb: (update: StatusUpdate) => void): Unsubscribe
-  /** Claude in a background tab is waiting for the user */
-  onAttention(cb: (tabId: string) => void): Unsubscribe
+  /** mark that tab: the bell dot for 'bell', the pulse for the Claude cases */
+  onAttention(cb: (tabId: string, reason: NotificationCase) => void): Unsubscribe
   onUpdate(cb: (state: UpdateState) => void): Unsubscribe
 }
