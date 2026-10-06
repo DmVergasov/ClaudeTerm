@@ -78,6 +78,8 @@ Right-click any folder (or the background of a folder) in Explorer → **Open Cl
 
 Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the same tabs, and **each Claude tab resumes its own conversation** (`claude --resume <session>`), even when several of them ran in the same folder or you used `/clear` in between.
 
+**Recent sessions** (`Ctrl+Shift+H`, or **Recent sessions…** in the ▾ menu) lists your latest Claude Code conversations from every project — also ones started outside ClaudeTerm — with their titles, folders and last messages. Type to filter, Enter to continue one: ClaudeTerm opens a Claude tab in that folder with `claude --resume`, or switches to the tab that already has it.
+
 ## Install
 
 1. Install [Claude Code](https://docs.claude.com/en/docs/claude-code) so that `claude` is on your `PATH`.
@@ -107,6 +109,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | New line in the Claude prompt | `Shift+Enter` |
 | Find in scrollback | `Ctrl+Shift+F` |
 | Show / hide the image panel | `Ctrl+Shift+I` |
+| Recent sessions | `Ctrl+Shift+H` |
 | Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Open settings | `Ctrl+,` |
 

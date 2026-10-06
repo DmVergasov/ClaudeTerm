@@ -13,6 +13,7 @@ describe('mapKey', () => {
     expect(mapKey(k('KeyV', cs, 'М'))).toEqual({ type: 'paste' })
     expect(mapKey(k('KeyF', cs, 'А'))).toEqual({ type: 'find' })
     expect(mapKey(k('KeyI', cs, 'Ш'))).toEqual({ type: 'toggleImages' })
+    expect(mapKey(k('KeyH', cs, 'Р'))).toEqual({ type: 'recentSessions' })
   })
 
   it('Shift+Enter sends ESC CR for a newline in the claude prompt', () => {

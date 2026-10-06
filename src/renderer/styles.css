@@ -75,3 +75,18 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #statusbar .status-agents { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #statusbar .warn { color: #e5c07b; }
 #statusbar .crit { color: #e06c75; }
+#sessions { position: fixed; inset: 0; z-index: 45; display: flex; justify-content: center; align-items: flex-start; padding: 60px 16px 0; background: #0007; }
+.sessions-box { color-scheme: dark; width: min(640px, 100%); max-height: calc(100vh - 120px); display: flex; flex-direction: column; background: var(--chrome-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 32px #0009; overflow: hidden; }
+.sessions-heading { padding: 10px 14px 0; color: var(--muted); font-size: 12px; }
+.sessions-search { margin: 8px 12px; padding: 6px 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font: inherit; outline: none; }
+.sessions-search:focus { border-color: var(--accent); }
+.sessions-list { overflow-y: auto; padding-bottom: 6px; }
+.session-row { padding: 6px 14px; cursor: pointer; }
+.session-row:hover { background: #ffffff0d; }
+.session-row.selected { background: #ffffff1a; box-shadow: inset 2px 0 0 var(--accent); }
+.session-top { display: flex; gap: 8px; align-items: baseline; }
+.session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-open { color: var(--accent); font-size: 12px; white-space: nowrap; }
+.session-meta, .session-last { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-last { opacity: 0.75; }
+.sessions-empty { padding: 12px 14px; color: var(--muted); }

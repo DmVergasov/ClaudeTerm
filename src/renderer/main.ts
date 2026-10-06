@@ -3,6 +3,7 @@ import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared
 import type { Settings, TabInfo } from '../shared/types'
 import { ImagePanel } from './image-panel'
 import { Lightbox } from './lightbox'
+import { RecentSessionsWindow } from './recent-sessions'
 import { mapKey, type KeyAction } from './keymap'
 import { SearchBar } from './search'
 import { showMenu, type MenuItem } from './menu'
@@ -38,6 +39,7 @@ let restoreInfo: RestoreInfo | null = null
 let banner: RestoreBanner
 let imagePanel: ImagePanel
 let lightbox: Lightbox
+let sessionsWindow: RecentSessionsWindow
 const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
 let updateBanner: UpdateBanner
@@ -120,6 +122,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'zoomOut': setFontSize(fontSize - 1); break
     case 'zoomReset': setFontSize(settings.font.size); break
     case 'openSettings': ct.openSettingsFile(); break
+    case 'recentSessions': void sessionsWindow.open(); break
   }
 }
 
@@ -214,6 +217,7 @@ function newTabMenu(anchor: HTMLElement): void {
       ...names.map((name) => ({ label: name, action: () => void ct.openTab({ kind: 'shell', cwd: appInfo.homeDir, profile: name }) })),
       { label: '', separator: true },
       { label: 'Claude Code', action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? appInfo.homeDir }) },
+      { label: 'Recent sessions…', action: () => void sessionsWindow.open() },
       ...(restoreInfo ? [{ label: `Restore previous session (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
       { label: '', separator: true },
       { label: `ClaudeTerm ${appInfo.version} — check for updates`, action: () => { updateBanner.reveal(); ct.checkForUpdates() } }
@@ -277,6 +281,11 @@ async function boot(): Promise<void> {
   document.addEventListener('dragover', (e) => e.preventDefault())
   document.addEventListener('drop', (e) => e.preventDefault())
   lightbox = new Lightbox(document.getElementById('lightbox')!)
+  sessionsWindow = new RecentSessionsWindow(document.getElementById('sessions')!, {
+    load: () => ct.listSessions(),
+    open: (id) => ct.openSession(id),
+    closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
+  })
   statusBar = new StatusBar(document.getElementById('statusbar')!)
   updateBanner = new UpdateBanner(document.getElementById('update-banner')!, () => ct.installUpdate())
   ct.onUpdate((s) => updateBanner.update(s))
@@ -360,6 +369,7 @@ async function boot(): Promise<void> {
   ct.onToast((m) => showToast(m))
   ct.onSettings(applySettings)
   window.addEventListener('focus', () => {
+    if (sessionsWindow.isOpen) return
     const t = activeId ? tabs.get(activeId) : undefined
     t?.view.term.focus()
   })

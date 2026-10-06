@@ -16,6 +16,7 @@ export type KeyAction =
   | { type: 'zoomOut' }
   | { type: 'zoomReset' }
   | { type: 'openSettings' }
+  | { type: 'recentSessions' }
 
 export interface KeyLike {
   type: string
@@ -40,6 +41,7 @@ export function mapKey(e: KeyLike): KeyAction | null {
       case 'KeyV': return { type: 'paste' }
       case 'KeyF': return { type: 'find' }
       case 'KeyI': return { type: 'toggleImages' }
+      case 'KeyH': return { type: 'recentSessions' }
       case 'Tab': return { type: 'prevTab' }
     }
     return null
