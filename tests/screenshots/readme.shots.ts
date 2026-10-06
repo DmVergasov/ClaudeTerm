@@ -1,6 +1,6 @@
 // Generates the README screenshots in docs/images from demo data: `npm run screenshots`.
 import { expect, test, type Page } from '@playwright/test'
-import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
@@ -121,6 +121,25 @@ async function chart(page: Page, file: string, spec: ChartSpec): Promise<void> {
   writeFileSync(file, Buffer.from(await page.evaluate(drawChart, spec), 'base64'))
 }
 
+interface DemoSession { id: string; cwd: string; title: string; prompt: string; hoursAgo: number }
+
+/** Invented conversations in a temporary Claude config folder: the Recent sessions shot must never show real history. */
+function writeDemoSessions(config: string, sessions: DemoSession[]): void {
+  for (const s of sessions) {
+    const dir = join(config, 'projects', s.cwd.replace(/[^A-Za-z0-9]/g, '-'))
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, `${s.id}.jsonl`)
+    const lines = [
+      { type: 'user', cwd: s.cwd, entrypoint: 'cli', isSidechain: false, message: { role: 'user', content: s.prompt } },
+      { type: 'ai-title', aiTitle: s.title },
+      { type: 'last-prompt', lastPrompt: s.prompt }
+    ]
+    writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+    const at = new Date(Date.now() - s.hoursAgo * 3_600_000)
+    utimesSync(file, at, at)
+  }
+}
+
 test('README screenshots', async () => {
   test.setTimeout(120_000)
   mkdirSync(OUT, { recursive: true })
@@ -138,7 +157,16 @@ test('README screenshots', async () => {
     defaultProfile: 'Windows PowerShell',
     imageWatch: { ignore: ['.git', 'node_modules', 'reports'] }
   }
-  const { app, page, pipeName } = await launchApp({ settings, args: ['--claude', project] })
+  const claudeConfig = join(root, 'claude-config')
+  writeDemoSessions(claudeConfig, [
+    { id: SID, cwd: project, title: 'Q3 revenue report with charts', prompt: 'Plot monthly revenue for 2026 and compare it with 2025', hoursAgo: 0.05 },
+    { id: '8c1f4e2a-6b3d-4f5a-9e7c-2d1b0a3f4e5c', cwd: api, title: 'Rate limiting for the public API', prompt: 'add a per-key rate limit to /v1/orders', hoursAgo: 2 },
+    { id: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d', cwd: project, title: 'Flaky date filter test', prompt: 'the date filter test fails on Mondays, find out why', hoursAgo: 27 },
+    { id: '7f6e5d4c-3b2a-4c1d-9e8f-7a6b5c4d3e2f', cwd: api, title: 'OAuth device flow for the CLI', prompt: 'switch the CLI login to the OAuth device flow', hoursAgo: 74 },
+    { id: '2b4d6f8a-1c3e-4a5b-8d7f-9e0a1b2c3d4e', cwd: join(root, 'docs-site'), title: 'Getting started guide', prompt: 'write a getting started page for new contributors', hoursAgo: 122 },
+    { id: '9d8c7b6a-5f4e-4d3c-a2b1-0f9e8d7c6b5a', cwd: join(root, 'mobile-app'), title: 'Crash when opening settings on Android 15', prompt: 'the app crashes on Android 15 when I open settings', hoursAgo: 480 }
+  ])
+  const { app, page, pipeName } = await launchApp({ settings, args: ['--claude', project], env: { CLAUDE_CONFIG_DIR: claudeConfig } })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
   // a 1280x800 window at 2x regardless of the monitor (a forced scale factor would not fit a 1080p screen)
@@ -222,6 +250,14 @@ test('README screenshots', async () => {
   await expect(menu).toBeVisible()
   const menuBox = (await menu.boundingBox())!
   await page.screenshot({ path: join(OUT, 'new-tab-menu.png'), clip: { x: 0, y: 0, width: Math.ceil(menuBox.x + menuBox.width + 24), height: Math.ceil(menuBox.y + menuBox.height + 24) } })
+
+  await page.locator('.menu-item', { hasText: 'Recent sessions…' }).click()
+  const sessionsBox = page.locator('#sessions .sessions-box')
+  await expect(sessionsBox.locator('.session-row')).toHaveCount(6)
+  await page.mouse.move(1270, 790)
+  const box = (await sessionsBox.boundingBox())!
+  await page.screenshot({ path: join(OUT, 'recent-sessions.png'), clip: { x: box.x - 24, y: box.y - 24, width: box.width + 48, height: box.height + 48 } })
+  await page.keyboard.press('Escape')
 
   await app.close()
 })
