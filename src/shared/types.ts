@@ -88,3 +88,20 @@ export interface AgentStatus {
 }
 
 export type UpdateState = { status: 'idle' } | { status: 'ready'; version: string }
+
+/** A Claude Code conversation found in Claude Code's transcripts. */
+export interface SessionSummary {
+  id: string
+  cwd: string
+  /** the /rename name, else Claude Code's generated title; null when neither is there */
+  title: string | null
+  firstPrompt: string | null
+  lastPrompt: string | null
+  /** ms since epoch: when the transcript last changed */
+  modifiedAt: number
+}
+
+export interface RecentSession extends SessionSummary {
+  /** a ClaudeTerm tab is in this conversation */
+  open: boolean
+}
