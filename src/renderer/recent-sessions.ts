@@ -76,9 +76,12 @@ export class RecentSessionsWindow {
       else if (e.key === 'ArrowUp') this.move(-1)
       else if (e.key === 'Enter') this.choose(this.shown[this.selected])
       else if (e.key === 'Escape') this.close()
-      else return
+      else if (e.key !== 'Tab') return
       e.preventDefault()
     })
+    // the terminal behind the window must not get the keyboard while it is open (a click on the heading,
+    // a Tab): typing would go to Claude's prompt
+    this.input.addEventListener('blur', () => { if (this.isOpen) this.input.focus() })
   }
 
   get isOpen(): boolean {

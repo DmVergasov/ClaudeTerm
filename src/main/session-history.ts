@@ -1,5 +1,5 @@
 import { open, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { isUuid } from '../shared/protocol'
 import type { SessionSummary } from '../shared/types'
 
@@ -15,6 +15,10 @@ export function claudeProjectsDir(env: NodeJS.ProcessEnv, home: string): string 
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** Claude Code in a terminal, in VS Code, in the desktop app; `sdk-*` and `print` are scripted runs */
+const INTERACTIVE = new Set(['cli', 'claude-vscode', 'claude-desktop'])
+const isInteractive = (entrypoint: unknown): boolean => entrypoint === undefined || (typeof entrypoint === 'string' && INTERACTIVE.has(entrypoint))
 
 /** One line, whitespace collapsed, at most 200 characters; null for nothing. */
 export function oneLine(v: unknown): string | null {
@@ -41,20 +45,33 @@ function entries(text: string, cutStart: boolean, cutEnd: boolean): Obj[] {
   return out
 }
 
-/** The text the user typed: a string or text blocks; tool results and <command…>/caveat wrappers are not. */
+/** The text of a user entry: a string or text blocks; tool results have none. */
+function contentText(content: unknown): string | null {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return null
+  const parts = content.filter((b): b is Obj => isObj(b) && b.type === 'text' && typeof b.text === 'string').map((b) => b.text as string)
+  return parts.length > 0 ? parts.join(' ') : null
+}
+
+/** What the user typed; <command…> and caveat wrappers are not typing. */
 function typedText(content: unknown): string | null {
-  let text: string | null = null
-  if (typeof content === 'string') text = content
-  else if (Array.isArray(content)) {
-    const parts = content.filter((b): b is Obj => isObj(b) && b.type === 'text' && typeof b.text === 'string').map((b) => b.text as string)
-    if (parts.length > 0) text = parts.join(' ')
-  }
-  if (text === null || text.trimStart().startsWith('<')) return null
-  return oneLine(text)
+  const text = contentText(content)
+  return text === null || text.trimStart().startsWith('<') ? null : oneLine(text)
+}
+
+/** A slash command the user ran, as `/name args`. */
+function commandText(content: unknown): string | null {
+  const text = contentText(content)
+  const name = text ? /<command-name>([\s\S]*?)<\/command-name>/.exec(text)?.[1] : undefined
+  if (!text || !name) return null
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? ''
+  return oneLine(`${name} ${args}`)
 }
 
 export interface SessionHead {
-  cwd: string
+  /** null when no entry in the window carries one (a huge first message, e.g. a pasted screenshot) */
+  cwd: string | null
+  /** the first typed message, else the first slash command */
   firstPrompt: string | null
   /** a user entry of the main conversation is in the window */
   hasUser: boolean
@@ -62,28 +79,33 @@ export interface SessionHead {
 
 /**
  * The start of a transcript. `whole` tells whether the window holds the entire file (otherwise its last line
- * may be cut). Null when the file is not a session for the list: no folder, a sidechain, a `claude -p` run.
+ * may be cut). Null when the file is not a session for the list: a sidechain or a scripted (`claude -p`) run.
  */
 export function parseSessionHead(text: string, whole: boolean): SessionHead | null {
   const list = entries(text, false, !whole)
   // user, attachment and system entries carry the folder; the first user entry can be far in
   const first = list.find((e) => typeof e.cwd === 'string' && e.cwd.length > 0)
-  if (!first || first.isSidechain === true) return null
-  if (first.entrypoint !== undefined && first.entrypoint !== 'cli') return null
+  if (first && (first.isSidechain === true || !isInteractive(first.entrypoint))) return null
   let hasUser = false
-  let firstPrompt: string | null = null
+  let typed: string | null = null
+  let command: string | null = null
   for (const e of list) {
     if (e.type !== 'user' || e.isSidechain === true) continue
     hasUser = true
-    if (firstPrompt === null && e.isMeta !== true) firstPrompt = typedText(isObj(e.message) ? e.message.content : undefined)
+    if (e.isMeta === true) continue
+    const content = isObj(e.message) ? e.message.content : undefined
+    typed ??= typedText(content)
+    command ??= commandText(content)
   }
-  return { cwd: first.cwd as string, firstPrompt, hasUser }
+  return { cwd: first ? (first.cwd as string) : null, firstPrompt: typed ?? command, hasUser }
 }
 
 export interface SessionTail {
   customTitle: string | null
   aiTitle: string | null
   lastPrompt: string | null
+  /** the first main-conversation entry with a folder, for transcripts whose head has none */
+  folder: { cwd: string; interactive: boolean } | null
 }
 
 /**
@@ -91,13 +113,26 @@ export interface SessionTail {
  * on, so the last occurrence is the current one. `fromStart` tells whether the window starts at the file's start.
  */
 export function parseSessionTail(text: string, fromStart: boolean): SessionTail {
-  const t: SessionTail = { customTitle: null, aiTitle: null, lastPrompt: null }
+  const t: SessionTail = { customTitle: null, aiTitle: null, lastPrompt: null, folder: null }
   for (const e of entries(text, !fromStart, false)) {
+    if (!t.folder && typeof e.cwd === 'string' && e.cwd.length > 0 && e.isSidechain !== true) t.folder = { cwd: e.cwd, interactive: isInteractive(e.entrypoint) }
     if (e.type === 'custom-title') t.customTitle = oneLine(e.customTitle) ?? t.customTitle
     else if (e.type === 'ai-title') t.aiTitle = oneLine(e.aiTitle) ?? t.aiTitle
     else if (e.type === 'last-prompt') t.lastPrompt = oneLine(e.lastPrompt) ?? t.lastPrompt
   }
   return t
+}
+
+/**
+ * The folder a project's transcripts belong to: Claude Code names the project folder after it, with every
+ * character other than a letter or digit turned into '-'. A later entry's cwd can be a subfolder the
+ * conversation moved to, so walk up to the folder whose name matches; null when none does.
+ */
+export function projectFolder(cwd: string, projectName: string): string | null {
+  for (let p = cwd; ; p = dirname(p)) {
+    if (p.replace(/[^a-zA-Z0-9]/g, '-') === projectName) return p
+    if (dirname(p) === p) return null
+  }
 }
 
 export interface HistoryFs {
@@ -197,7 +232,13 @@ export class SessionHistory {
     let tail = await this.tail(f, TAIL_BYTES)
     if (!tail.customTitle && !tail.aiTitle && !tail.lastPrompt && f.size > TAIL_BYTES) tail = await this.tail(f, WIDE_TAIL_BYTES)
     if (!head.hasUser && !tail.lastPrompt) return null
-    return { id: f.id, cwd: head.cwd, title: tail.customTitle ?? tail.aiTitle, firstPrompt: head.firstPrompt, lastPrompt: tail.lastPrompt, modifiedAt: f.mtimeMs }
+    let cwd = head.cwd
+    if (cwd === null) {
+      if (!tail.folder?.interactive) return null
+      // claude --resume finds the conversation only from the project's own folder
+      cwd = projectFolder(tail.folder.cwd, basename(dirname(f.path))) ?? tail.folder.cwd
+    }
+    return { id: f.id, cwd, title: tail.customTitle ?? tail.aiTitle, firstPrompt: head.firstPrompt, lastPrompt: tail.lastPrompt, modifiedAt: f.mtimeMs }
   }
 
   private async tail(f: TranscriptFile, bytes: number): Promise<SessionTail> {

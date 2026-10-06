@@ -58,11 +58,25 @@ describe('parseSessionHead', () => {
     expect(parseSessionHead(jsonl({ type: 'last-prompt', lastPrompt: 'x' }, attachment('D:\\a')), true)).toEqual({ cwd: 'D:\\a', firstPrompt: null, hasUser: false })
   })
 
-  it('claude -p runs, sidechains and files without a folder are not sessions', () => {
+  it('claude -p runs and sidechains are not sessions; without a folder in the window the folder is unknown', () => {
     expect(parseSessionHead(jsonl(user('D:\\a', 'hi', { entrypoint: 'sdk-cli' })), true)).toBeNull()
+    expect(parseSessionHead(jsonl(user('D:\\a', 'hi', { entrypoint: 'print' })), true)).toBeNull()
     expect(parseSessionHead(jsonl(user('D:\\a', 'hi', { isSidechain: true })), true)).toBeNull()
-    expect(parseSessionHead(jsonl({ type: 'bridge-session', id: 'b' }), true)).toBeNull()
-    expect(parseSessionHead('', true)).toBeNull()
+    expect(parseSessionHead(jsonl({ type: 'bridge-session', id: 'b' }), true)).toEqual({ cwd: null, firstPrompt: null, hasUser: false })
+    expect(parseSessionHead('', true)).toEqual({ cwd: null, firstPrompt: null, hasUser: false })
+  })
+
+  it('sessions from the VS Code extension and the desktop app are interactive too', () => {
+    expect(parseSessionHead(jsonl(user('D:\\a', 'hi', { entrypoint: 'claude-vscode' })), true)?.cwd).toBe('D:\\a')
+    expect(parseSessionHead(jsonl(user('D:\\a', 'hi', { entrypoint: 'claude-desktop' })), true)?.cwd).toBe('D:\\a')
+    expect(parseSessionHead(jsonl(user('D:\\a', 'hi', { entrypoint: 'sdk-ts' })), true)).toBeNull()
+  })
+
+  it('a session started with a slash command is named after it, unless a message was typed', () => {
+    const command = user('D:\\a', '<command-message>ship-build</command-message>\n<command-name>/ship-build</command-name>\n<command-args>android  release</command-args>')
+    expect(parseSessionHead(jsonl(command), true)?.firstPrompt).toBe('/ship-build android release')
+    expect(parseSessionHead(jsonl(user('D:\\a', '<command-name>/mcp</command-name>')), true)?.firstPrompt).toBe('/mcp')
+    expect(parseSessionHead(jsonl(command, user('D:\\a', 'hello')), true)?.firstPrompt).toBe('hello')
   })
 
   it('a missing entrypoint (older Claude Code) counts as interactive', () => {
@@ -98,7 +112,7 @@ describe('parseSessionTail', () => {
       { type: 'ai-title', aiTitle: 'A1' }, { type: 'last-prompt', lastPrompt: 'p1' },
       { type: 'custom-title', customTitle: 'Mine' }, { type: 'ai-title', aiTitle: 'A2' }, { type: 'last-prompt', lastPrompt: 'p2' }
     )
-    expect(parseSessionTail(text, true)).toEqual({ customTitle: 'Mine', aiTitle: 'A2', lastPrompt: 'p2' })
+    expect(parseSessionTail(text, true)).toEqual({ customTitle: 'Mine', aiTitle: 'A2', lastPrompt: 'p2', folder: null })
   })
 
   it('drops the first line when the window starts inside the file', () => {
@@ -108,7 +122,7 @@ describe('parseSessionTail', () => {
 
   it('a half-written last line is ignored', () => {
     const text = jsonl({ type: 'ai-title', aiTitle: 'Done' }) + '{"type":"ai-title","aiTitle":"Half'
-    expect(parseSessionTail(text, true)).toEqual({ customTitle: null, aiTitle: 'Done', lastPrompt: null })
+    expect(parseSessionTail(text, true)).toEqual({ customTitle: null, aiTitle: 'Done', lastPrompt: null, folder: null })
   })
 })
 
@@ -193,5 +207,26 @@ describe('SessionHistory', () => {
       [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\a', 'b')), mtimeMs: 1 }
     }, [bad])
     expect((await new SessionHistory(ROOT, fs).list(10)).map((s) => s.id)).toEqual([SID2])
+  })
+
+  it('a first message longer than both windows with nothing before it: the folder comes from the tail, mapped back to the project folder', async () => {
+    // a pasted screenshot: the user line carries cwd only after its huge message
+    const image = { type: 'user', message: { role: 'user', content: [{ type: 'image', source: { data: 'i'.repeat(TAIL_BYTES + 50_000) } }, { type: 'text', text: 'what is this' }] }, cwd: 'D:\\a', entrypoint: 'cli', isSidechain: false }
+    // later entries run in a subfolder the conversation moved to
+    const text = jsonl(image, attachment('D:\\a\\sub'), { type: 'last-prompt', lastPrompt: 'what is this' })
+    const { fs } = memFs({ [file('D--a', `${SID1}.jsonl`)]: { text, mtimeMs: 7 } })
+    expect(await new SessionHistory(ROOT, fs).list(10)).toEqual([
+      { id: SID1, cwd: 'D:\\a', title: null, firstPrompt: null, lastPrompt: 'what is this', modifiedAt: 7 }
+    ])
+  })
+
+  it('a tail folder outside the project folder is used as it is; a claude -p run found only by its tail is skipped', async () => {
+    const image = (entrypoint: string): object => ({ type: 'user', message: { role: 'user', content: 'x'.repeat(TAIL_BYTES + 50_000) }, cwd: 'E:\\elsewhere', entrypoint, isSidechain: false })
+    const { fs } = memFs({
+      [file('D--a', `${SID1}.jsonl`)]: { text: jsonl(image('cli'), attachment('E:\\elsewhere'), { type: 'last-prompt', lastPrompt: 'go' }), mtimeMs: 2 },
+      [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(image('sdk-cli'), { ...attachment('E:\\elsewhere'), entrypoint: 'sdk-cli' }, { type: 'last-prompt', lastPrompt: 'go' }), mtimeMs: 1 }
+    })
+    const list = await new SessionHistory(ROOT, fs).list(10)
+    expect(list.map((s) => [s.id, s.cwd])).toEqual([[SID1, 'E:\\elsewhere']])
   })
 })

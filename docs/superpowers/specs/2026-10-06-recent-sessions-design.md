@@ -29,7 +29,7 @@ Claude Code writes every conversation to `<config>/projects/<encoded folder>/<se
 
 | entry | fields used |
 |---|---|
-| `user`, `attachment`, `system` entries | `cwd`, `entrypoint` (`cli` = interactive, `sdk-cli` = `claude -p`/SDK), `isSidechain` |
+| `user`, `attachment`, `system` entries | `cwd`, `entrypoint` (`cli`, `claude-vscode`, `claude-desktop` = interactive; `sdk-*` and `print` = scripted), `isSidechain` |
 | `{"type":"user", …}` | also `isMeta`, `message.content` (a string, or blocks with `{type:"text",text}`) |
 | `{"type":"custom-title","customTitle":…}` | the `/rename` name |
 | `{"type":"ai-title","aiTitle":…}` | the generated title |
@@ -39,15 +39,15 @@ Claude Code appends `custom-title`, `ai-title` and `last-prompt` again as the co
 
 A file is a session for this list when:
 - its name is `<uuid>.jsonl` directly inside a project folder (subagent transcripts live deeper and are not listed);
-- the first entry in it that carries a `cwd` is not a sidechain and has `entrypoint` absent or `cli` (`sdk-cli` runs are scripted, not conversations to continue);
+- the first entry in it that carries a `cwd` is not a sidechain and has `entrypoint` absent, `cli`, `claude-vscode` or `claude-desktop` (`sdk-*` and `print` runs are scripted, not conversations to continue);
 - it holds a conversation: a non-sidechain `user` entry in the head window or a `last-prompt` in the tail window.
 
-The first `user` entry is not always near the start: some files open with several large `attachment` entries, so the first message can sit beyond the head window. That is why `cwd` comes from the first entry carrying one, and a `last-prompt` also proves a conversation. Checked on the user's 267 transcripts: 227 qualify, 38 are `sdk-cli`, 2 have no `cwd` (empty or bridge-only files); every qualifying file has a title or a last message in its tail.
+The first `user` entry is not always near the start: some files open with several large `attachment` entries, so the first message can sit beyond the head window. That is why `cwd` comes from the first entry carrying one, and a `last-prompt` also proves a conversation. When nothing in the head carries a `cwd` — a pasted screenshot as the first message puts `cwd` after a message larger than the head — the first main-conversation entry with a `cwd` in the tail decides instead (its `entrypoint` must be interactive too). That entry may run in a subfolder the conversation moved to, so its `cwd` is walked up to the folder whose encoded name (every character other than a letter or digit turned into `-`) is the project folder's name; when none matches, it is used as it is. Checked on the user's transcripts: 224 qualify; sessions started with a slash command get no generated title, so the command names them (12 of the newest 100).
 
 Field meanings:
 - **id** — the file name without `.jsonl` (equals `sessionId`).
-- **cwd** — `cwd` of the first entry carrying one.
-- **first message** — text of the first non-meta `user` entry in the head window whose content is text (a string or text blocks; tool results don't count); `null` when there is none there. Text starting with `<` (command and caveat wrappers like `<command-name>`) is skipped.
+- **cwd** — `cwd` of the first entry carrying one (in the head, else in the tail as described above).
+- **first message** — text of the first non-meta `user` entry in the head window whose content is text (a string or text blocks; tool results don't count). Text starting with `<` (command and caveat wrappers) is not typing; when nothing was typed, the first slash command is used as `/name args` from its `<command-name>` and `<command-args>`; `null` when there is neither.
 - **title / last message** — the last `custom-title` / `ai-title` / `last-prompt` in the file.
 - **active at** — the file's modification time.
 
