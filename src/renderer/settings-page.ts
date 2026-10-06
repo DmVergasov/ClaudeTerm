@@ -200,7 +200,7 @@ root.append(
     textField('Command', 'claude.command', 'text', (v) => v.settings.claude.command, checkText),
     selectField('Shell for Claude tabs', 'claude.shellProfile', (v) => profileOptions(v.profiles, v.settings.claude.shellProfile), profileValue)),
   section('Images', 'applies to new tabs',
-    checkboxField('imageWatch.enabled', 'Watch Claude tab folders for new images', (v) => v.settings.imageWatch.enabled),
+    checkboxField('imageWatch.enabled', 'Show new images from the session scratchpad', (v) => v.settings.imageWatch.enabled),
     checkboxField('imagePanel.autoOpen', 'Open the image panel when a new image arrives', (v) => v.settings.imagePanel.autoOpen)),
   section('Updates', null,
     checkboxField('autoUpdate', 'Check for updates automatically', (v) => v.settings.autoUpdate)),

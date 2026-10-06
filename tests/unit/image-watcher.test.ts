@@ -1,23 +1,9 @@
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { isRootGoneEvent, sessionTempDir, shouldWatchDir, watchedImagePath } from '../../src/main/image-watcher'
+import { isRootGoneEvent, sessionTempDir, watchedImagePath } from '../../src/main/image-watcher'
 
 const cfg = { extensions: ['png', 'jpg'], ignore: ['.git', 'node_modules', 'Intermediate'], maxDepth: 8 }
-
-describe('shouldWatchDir', () => {
-  it('refuses drive roots and the home folder', () => {
-    expect(shouldWatchDir('D:\\', 'C:\\Users\\me')).toBe(false)
-    expect(shouldWatchDir('D:', 'C:\\Users\\me')).toBe(false)
-    expect(shouldWatchDir('C:\\Users\\me', 'C:\\Users\\me')).toBe(false)
-    expect(shouldWatchDir('c:\\users\\ME\\', 'C:\\Users\\me')).toBe(false)
-  })
-
-  it('accepts project folders', () => {
-    expect(shouldWatchDir('D:\\Workspace\\LocHub', 'C:\\Users\\me')).toBe(true)
-    expect(shouldWatchDir('C:\\Users\\me\\proj', 'C:\\Users\\me')).toBe(true)
-  })
-})
 
 describe('watchedImagePath', () => {
   const root = join(tmpdir(), 'proj')

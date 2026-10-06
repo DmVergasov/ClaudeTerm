@@ -10,6 +10,8 @@ export interface ImageHubOptions {
 
 interface Feed {
   cwd: string
+  /** the session's temp folder, where its scratchpad is */
+  tempDir: string | null
   cards: ImageCard[]
   unseen: Set<string>
   notice: string | null
@@ -25,9 +27,13 @@ export function cardId(tabId: string, path: string): string {
   return createHash('sha1').update(`${tabId}\0${normalizeKey(path)}`).digest('hex').slice(0, 20)
 }
 
-export function relPathOf(cwd: string, p: string): string {
-  const r = relative(cwd, p)
-  return r && !r.startsWith('..') && !isAbsolute(r) ? r : p
+/** `p` inside the tab's folder or the session's temp folder, else in full */
+export function relPathOf(cwd: string, p: string, tempDir: string | null = null): string {
+  for (const root of tempDir ? [cwd, tempDir] : [cwd]) {
+    const r = relative(root, p)
+    if (r && !r.startsWith('..') && !isAbsolute(r)) return r
+  }
+  return p
 }
 
 export class ImageHub {
@@ -36,7 +42,12 @@ export class ImageHub {
   constructor(private readonly o: ImageHubOptions) {}
 
   addTab(tabId: string, cwd: string): void {
-    if (!this.feeds.has(tabId)) this.feeds.set(tabId, { cwd, cards: [], unseen: new Set(), notice: null })
+    if (!this.feeds.has(tabId)) this.feeds.set(tabId, { cwd, tempDir: null, cards: [], unseen: new Set(), notice: null })
+  }
+
+  setTempDir(tabId: string, dir: string | null): void {
+    const f = this.feeds.get(tabId)
+    if (f) f.tempDir = dir
   }
 
   removeTab(tabId: string): void {
@@ -75,7 +86,7 @@ export class ImageHub {
         source: SOURCE_RANK[source] >= SOURCE_RANK[prev.source] ? source : prev.source
       }
     } else {
-      card = { id, tabId, path, name: basename(path), relPath: relPathOf(f.cwd, path), source, caption, touchedAt, version: 1, updated: false, deleted: false }
+      card = { id, tabId, path, name: basename(path), relPath: relPathOf(f.cwd, path, f.tempDir), source, caption, touchedAt, version: 1, updated: false, deleted: false }
     }
     f.cards.unshift(card)
     // a known file reported again by another source (e.g. the folder watcher after show_image) is not news

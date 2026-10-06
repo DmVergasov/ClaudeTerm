@@ -1,6 +1,6 @@
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { hasImageExtension } from '../shared/image-file'
 
 export interface WatchConfig {
@@ -10,9 +10,8 @@ export interface WatchConfig {
 }
 
 export interface WatchHandlers {
-  /** `seenAt`: when the file was written, as far as the watcher knows (a copied file keeps its old modification time) */
-  added(path: string, seenAt: number): void
-  changed(path: string, seenAt: number): void
+  added(path: string): void
+  changed(path: string): void
   removed(path: string): void
   error(err: Error): void
 }
@@ -33,16 +32,6 @@ const MAX_STAT_RETRIES = 50
 const RESCAN_QUIET_MS = 300
 const RESCAN_MIN_INTERVAL_MS = 3000
 const RESCAN_SLACK_MS = 2000
-
-// path.resolve('D:') returns the current directory of drive D, so a bare drive is completed to its root first
-const full = (p: string): string => resolve(/^[A-Za-z]:$/.test(p) ? `${p}\\` : p)
-const canon = (p: string): string => full(p).replace(/[\\/]+$/, '').toLowerCase()
-
-export function shouldWatchDir(dir: string, home: string): boolean {
-  const d = canon(dir)
-  const root = parse(full(dir)).root.replace(/[\\/]+$/, '').toLowerCase()
-  return d !== root && d !== canon(home)
-}
 
 function imagePathFilter(root: string, cfg: WatchConfig): (filename: string | null) => string | null {
   const ignore = new Set(cfg.ignore.map((s) => s.toLowerCase()))
@@ -74,9 +63,9 @@ export function sessionTempDir(transcriptPath: string, sessionId: string, tmpRoo
 }
 
 /** Images under `dir` (within the ignore list and depth) whose file was created or modified at or after `since`. */
-async function recentImages(dir: string, cfg: WatchConfig, since: number, stopped: () => boolean): Promise<{ path: string; at: number }[]> {
+async function recentImages(dir: string, cfg: WatchConfig, since: number, stopped: () => boolean): Promise<string[]> {
   const ignore = new Set(cfg.ignore.map((s) => s.toLowerCase()))
-  const found: { path: string; at: number }[] = []
+  const found: string[] = []
   const walk = async (d: string, depth: number): Promise<void> => {
     if (stopped()) return
     let entries
@@ -94,8 +83,7 @@ async function recentImages(dir: string, cfg: WatchConfig, since: number, stoppe
       } else if (e.isFile() && hasImageExtension(e.name, cfg.extensions)) {
         try {
           const st = await stat(p)
-          const at = Math.max(st.mtimeMs, st.birthtimeMs)
-          if (at >= since) found.push({ path: p, at })
+          if (Math.max(st.mtimeMs, st.birthtimeMs) >= since) found.push(p)
         } catch {
           // gone again
         }
@@ -108,7 +96,6 @@ async function recentImages(dir: string, cfg: WatchConfig, since: number, stoppe
 }
 
 interface Pending {
-  seenAt: number
   lastEvent: number
   last: { size: number; mtimeMs: number } | null
   stableSince: number
@@ -118,7 +105,7 @@ interface Pending {
 
 /**
  * Watches a folder tree for new, changed and deleted images with one recursive fs.watch: no scan of the tree and one
- * handle however big it is, and subfolders deleted and created again (build output, test results) keep working.
+ * handle however big it is, and subfolders deleted and created again keep working.
  * The OS drops events when many arrive at once (a nameless event); the tree is then searched for recent images.
  */
 export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): ImageWatcherHandle {
@@ -171,18 +158,18 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
     if (before && before.size === e.last.size && before.mtimeMs === e.last.mtimeMs) return
     reported.set(p, e.last)
     // a file that was there before watching started is changed, not new (birthtime is 0 where unsupported)
-    if (before || (st.birthtimeMs > 0 && st.birthtimeMs < startedAt)) h.changed(p, e.seenAt)
-    else h.added(p, e.seenAt)
+    if (before || (st.birthtimeMs > 0 && st.birthtimeMs < startedAt)) h.changed(p)
+    else h.added(p)
   }
 
-  const track = (p: string, seenAt: number): void => {
+  const track = (p: string): void => {
     const now = Date.now()
     const e = pending.get(p)
     if (e) {
       e.lastEvent = now
       return
     }
-    pending.set(p, { seenAt, lastEvent: now, last: null, stableSince: now, retries: 0, timer: setTimeout(() => void settle(p), POLL_MS) })
+    pending.set(p, { lastEvent: now, last: null, stableSince: now, retries: 0, timer: setTimeout(() => void settle(p), POLL_MS) })
   }
 
   const rescan = async (): Promise<void> => {
@@ -196,7 +183,7 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
     lostSince = null
     rescanning = true
     try {
-      for (const f of await recentImages(dir, cfg, since, () => closed)) if (!closed) track(f.path, f.at)
+      for (const p of await recentImages(dir, cfg, since, () => closed)) if (!closed) track(p)
     } finally {
       rescanning = false
       lastRescan = Date.now()
@@ -217,7 +204,7 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
       return
     }
     const p = toPath(name)
-    if (p) track(p, Date.now())
+    if (p) track(p)
   }
 
   const scheduleRetry = (): void => {

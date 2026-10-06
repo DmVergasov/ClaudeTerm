@@ -16,11 +16,6 @@ export function toolResultLine(toolUseId: string, opts: { mediaType?: string; da
   })
 }
 
-/** a tool_result with text only, e.g. a finished Bash command */
-export function toolTextResultLine(toolUseId: string, timestamp = '2026-10-05T10:00:01.000Z', text = 'done'): string {
-  return JSON.stringify({ type: 'user', timestamp, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: [{ type: 'text', text }] }] } })
-}
-
 export function pastedLine(data = PNG_B64): string {
   return JSON.stringify({ type: 'user', timestamp: '2026-10-05T10:00:02.000Z', imagePasteIds: [1], message: { role: 'user', content: [{ type: 'text', text: 'look at this' }, image('image/png', data)] } })
 }

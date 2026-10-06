@@ -44,7 +44,7 @@
 Claude Code works with images all the time — browser screenshots, charts it plots, files it reads, pictures you paste. In a plain terminal you never see them. ClaudeTerm puts them in a panel beside each Claude tab, the way the Claude mobile app does:
 
 - **From the conversation** — screenshots returned by tools and MCP servers, images Claude opens with `Read`, images you paste, including those of subagents. On `--resume` the panel fills with the conversation's history.
-- **Files Claude creates** — new and changed images in the project folder and in the session's temp folder. When several Claude tabs work in the same folder, a new image there goes to the tab whose Claude (or one of its subagents) was running a tool when the file was written; if none was, it goes to all of them.
+- **Its scratchpad** — new and changed images in the temp folder Claude Code gives each session. The project folder is not watched, so images that another session, a dev server or a test run writes there stay out of your panel; an image Claude saves in the project shows up once Claude opens it or shows it.
 - **On request** — the bundled `show_image` MCP tool lets Claude put any image in front of you with a caption.
 
 Click a card to open it full-size (wheel to zoom, drag to pan, arrows to flip); right-click to open it in a viewer, reveal it in Explorer, copy the image or its path, or insert the path into the prompt.
@@ -142,7 +142,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json`. Profiles, image ty
   "font": { "family": "Cascadia Mono, Consolas, monospace", "size": 12 },   // size in points
   "theme": "Campbell",             // "Campbell", "One Half Dark", "One Half Light", or an xterm.js theme object
   "scrollback": 10000,
-  "imageWatch": {                  // folders watched for new images (Claude tabs only)
+  "imageWatch": {                  // new images in the session's scratchpad (Claude tabs only)
     "enabled": true,
     "extensions": ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
     "ignore": [".git", "node_modules", "Intermediate", "DerivedDataCache", "Binaries", ".vs", ".idea"],
@@ -179,7 +179,7 @@ flowchart LR
   hook -- "named pipe" --> main
   mcp -- "named pipe" --> main
   transcript[("session transcript\n+ subagent transcripts")] --> main
-  folders[("project &amp; session\ntemp folders")] --> main
+  scratchpad[("session temp folder\n(scratchpad)")] --> main
   subgraph app["ClaudeTerm (Electron)"]
     main["main process\ntabs · images · status"] -- IPC --> renderer["renderer\nxterm.js · image panel · status bar"]
   end

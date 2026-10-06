@@ -116,13 +116,6 @@ export class TranscriptFeed {
     if (this.scanTimer) clearInterval(this.scanTimer)
   }
 
-  /** whether this session or one of its subagents was running a tool at `t` (as far as the transcripts were read) */
-  toolRunningAt(t: number): boolean {
-    if (this.main.parser.activity.runningAt(t)) return true
-    for (const s of this.subagents.values()) if (s.parser.activity.runningAt(t)) return true
-    return false
-  }
-
   scanSubagents(): void {
     let names: string[]
     try {

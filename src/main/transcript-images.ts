@@ -1,5 +1,3 @@
-import { ToolActivity } from './tool-activity'
-
 export type ExtractedKind = 'read' | 'tool' | 'pasted'
 
 export interface ExtractedImage {
@@ -32,8 +30,6 @@ interface ToolUse {
 
 export class TranscriptParser {
   private readonly tools = new Map<string, ToolUse>()
-  /** when this transcript's tools ran */
-  readonly activity = new ToolActivity()
 
   constructor(private readonly opts: { subagent: boolean }) {}
 
@@ -49,24 +45,22 @@ export class TranscriptParser {
     const root: unknown = isObj(obj.message) && 'content' in obj.message ? obj.message.content : obj
     const ts = typeof obj.timestamp === 'string' ? Date.parse(obj.timestamp) : Number.NaN
     const timestamp = Number.isNaN(ts) ? null : ts
-    this.collectToolUses(root, timestamp ?? Date.now())
+    this.collectToolUses(root)
     const out: ExtractedImage[] = []
     this.collectImages(root, null, timestamp, out)
     return out
   }
 
-  private collectToolUses(node: unknown, at: number): void {
+  private collectToolUses(node: unknown): void {
     if (Array.isArray(node)) {
-      for (const n of node) this.collectToolUses(n, at)
+      for (const n of node) this.collectToolUses(n)
       return
     }
     if (!isObj(node)) return
     if (node.type === 'tool_use' && typeof node.id === 'string' && typeof node.name === 'string') {
       this.tools.set(node.id, { name: node.name, input: isObj(node.input) ? node.input : {} })
-      this.activity.start(node.id, at)
     }
-    if (node.type === 'tool_result' && typeof node.tool_use_id === 'string') this.activity.end(node.tool_use_id, at)
-    for (const v of Object.values(node)) if (typeof v === 'object' && v !== null) this.collectToolUses(v, at)
+    for (const v of Object.values(node)) if (typeof v === 'object' && v !== null) this.collectToolUses(v)
   }
 
   private collectImages(node: unknown, toolUseId: string | null, timestamp: number | null, out: ExtractedImage[]): void {

@@ -23,6 +23,15 @@ describe('ImageHub', () => {
     expect(h.unseenCount('t1')).toBe(2)
   })
 
+  it('shows an image in the session temp folder by its path inside that folder', () => {
+    const { h } = hub()
+    h.addTab('t1', 'D:\\proj')
+    h.setTempDir('t1', 'C:\\Temp\\claude\\D--proj\\sid')
+    h.add('t1', 'C:\\Temp\\claude\\D--proj\\sid\\scratchpad\\plot.png', 'created', null)
+    h.add('t1', 'D:\\proj\\out\\a.png', 'read', null)
+    expect(h.list('t1').map((c) => c.relPath)).toEqual(['out\\a.png', 'scratchpad\\plot.png'])
+  })
+
   it('re-adding a known path updates the card instead of duplicating it (case-insensitive)', () => {
     const { h } = hub()
     h.addTab('t1', 'D:\\proj')
@@ -145,5 +154,10 @@ describe('helpers', () => {
     expect(relPathOf('D:\\proj', 'D:\\proj\\out\\a.png')).toBe('out\\a.png')
     expect(relPathOf('D:\\proj', 'D:\\other\\a.png')).toBe('D:\\other\\a.png')
     expect(relPathOf('D:\\proj', 'C:\\a.png')).toBe('C:\\a.png')
+  })
+
+  it('relPathOf also shortens paths inside the session temp folder', () => {
+    expect(relPathOf('D:\\proj', 'C:\\T\\sid\\scratchpad\\a.png', 'C:\\T\\sid')).toBe('scratchpad\\a.png')
+    expect(relPathOf('D:\\proj', 'C:\\T\\other\\a.png', 'C:\\T\\sid')).toBe('C:\\T\\other\\a.png')
   })
 })

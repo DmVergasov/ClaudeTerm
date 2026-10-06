@@ -4,16 +4,16 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 
 ## 0.1.7
 
+### Changes
+
+- **The image panel follows the conversation, like the Claude mobile app.** It shows the images of the conversation (tool and MCP screenshots, images Claude opens with `Read`, images you paste, and those of subagents), images Claude shows with `show_image`, and new images in the session's scratchpad, the temp folder Claude Code gives each session. ClaudeTerm no longer watches the project folder, so images that another Claude session, a dev server or a test run writes there stay out of your panel. An image Claude saves in the project appears once Claude opens it or shows it.
+- The setting **Watch Claude tab folders for new images** is now **Show new images from the session scratchpad**.
+
 ### Fixes
 
-- **No more lag or freezes caused by watching for images.** When a folder inside a project was deleted and created again (build output, test results, a script that clears its output), ClaudeTerm could keep a CPU core or more busy until it was restarted: the window lagged when dragged, and the app could stop responding.
-- **Images stay in the tab that made them.** With several Claude tabs in the same folder, a new image there goes to the tab whose Claude (or one of its subagents) was running a tool when the file was written. If none was, for example when a dev server wrote it, it still shows in all of them.
-
-### Improvements
-
-- Claude tabs in large projects open without a pause: ClaudeTerm no longer scans the whole folder tree first (a big Unreal project took about 13 seconds), and watches it with a single handle.
-- A burst of images written at once, such as dozens of screenshots from a test run, now shows up in full.
-- Image watching survives the project folder itself being deleted and created again.
+- **No more lag or freezes caused by watching for images.** When a watched folder was deleted and created again (build output, test results, a script that clears its output), ClaudeTerm could keep a CPU core or more busy until it was restarted: the window lagged when dragged, and the app could stop responding.
+- Claude tabs in large projects open without a pause: ClaudeTerm no longer scans the project's folder tree first (a big Unreal project took about 13 seconds).
+- A burst of images written at once, such as dozens of screenshots, now shows up in full.
 
 ## 0.1.6
 

@@ -1,6 +1,6 @@
 // Generates the README screenshots in docs/images from demo data: `npm run screenshots`.
 import { expect, test, type Page } from '@playwright/test'
-import { copyFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
@@ -147,15 +147,16 @@ test('README screenshots', async () => {
   const project = join(root, 'acme-dashboard')
   const api = join(root, 'api-server')
   for (const dir of [project, api]) {
-    mkdirSync(join(dir, 'out'), { recursive: true })
+    mkdirSync(dir, { recursive: true })
     copyFileSync(DEMO_CLAUDE, join(dir, 'demo-claude.mjs'))
   }
+  // the app's temp folder, where each Claude session keeps its scratchpad
+  const temp = join(root, 'temp')
+  mkdirSync(temp)
 
-  // reports/ is not watched, so the show_image chart there arrives only through the pipe (with its caption)
   const settings = {
     claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' },
-    defaultProfile: 'Windows PowerShell',
-    imageWatch: { ignore: ['.git', 'node_modules', 'reports'] }
+    defaultProfile: 'Windows PowerShell'
   }
   const claudeConfig = join(root, 'claude-config')
   writeDemoSessions(claudeConfig, [
@@ -166,7 +167,7 @@ test('README screenshots', async () => {
     { id: '2b4d6f8a-1c3e-4a5b-8d7f-9e0a1b2c3d4e', cwd: join(root, 'docs-site'), title: 'Getting started guide', prompt: 'write a getting started page for new contributors', hoursAgo: 122 },
     { id: '9d8c7b6a-5f4e-4d3c-a2b1-0f9e8d7c6b5a', cwd: join(root, 'mobile-app'), title: 'Crash when opening settings on Android 15', prompt: 'the app crashes on Android 15 when I open settings', hoursAgo: 480 }
   ])
-  const { app, page, pipeName } = await launchApp({ settings, args: ['--claude', project], env: { CLAUDE_CONFIG_DIR: claudeConfig } })
+  const { app, page, pipeName } = await launchApp({ settings, args: ['--claude', project], env: { CLAUDE_CONFIG_DIR: claudeConfig, TEMP: temp, TMP: temp } })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
   // a 1280x800 window at 2x regardless of the monitor (a forced scale factor would not fit a 1080p screen)
@@ -180,13 +181,25 @@ test('README screenshots', async () => {
   await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(tabId)
   await expect.poll(() => bufferText(page, tabId), { timeout: 20_000 }).toContain('North America leads Q3')
 
-  // images: two files the "agent" saved in the project folder, one shown with show_image
-  await page.waitForTimeout(1500) // let the folder watcher become ready
-  await chart(page, join(project, 'out', 'revenue-2026.png'), {
+  // the session: its transcript, subagents and temp folder
+  const projects = join(root, 'claude-projects', 'D--work-acme-dashboard')
+  const subagents = join(projects, SID, 'subagents')
+  mkdirSync(subagents, { recursive: true })
+  const transcriptPath = join(projects, `${SID}.jsonl`)
+  writeFileSync(transcriptPath, '')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
+  const sessionTemp = join(temp, 'claude', 'D--work-acme-dashboard', SID)
+  await expect.poll(() => existsSync(sessionTemp), { timeout: 10_000 }).toBe(true)
+
+  // images: two charts the "agent" saved to its scratchpad, one shown with show_image
+  await page.waitForTimeout(500) // let the watcher start
+  const scratchpad = join(sessionTemp, 'scratchpad')
+  mkdirSync(scratchpad)
+  await chart(page, join(scratchpad, 'revenue-2026.png'), {
     title: 'Revenue by month, 2026', subtitle: 'Net revenue, thousands of USD', kind: 'bars', labels: MONTHS,
     series: [{ name: '2026', color: '#d97757', values: REVENUE_2026 }]
   })
-  await chart(page, join(project, 'out', 'revenue-yoy.png'), {
+  await chart(page, join(scratchpad, 'revenue-yoy.png'), {
     title: 'Year over year', subtitle: 'Net revenue, thousands of USD', kind: 'lines', labels: MONTHS,
     series: [{ name: '2025', color: '#8a8a93', values: REVENUE_2025 }, { name: '2026', color: '#d97757', values: REVENUE_2026 }]
   })
@@ -201,11 +214,6 @@ test('README screenshots', async () => {
   await expect.poll(() => page.evaluate(() => window.__ct!.images!().length), { timeout: 10_000 }).toBe(3)
 
   // status bar: main session and three running subagents
-  const projects = join(root, 'claude-projects', 'D--work-acme-dashboard')
-  const subagents = join(projects, SID, 'subagents')
-  mkdirSync(subagents, { recursive: true })
-  const transcriptPath = join(projects, `${SID}.jsonl`)
-  writeFileSync(transcriptPath, '')
   const agents: [string, string, string, string, string | undefined][] = [
     ['a1', 'Explore', 'Find other revenue reports', 'claude-sonnet-5-5', 'medium'],
     ['a2', 'code-reviewer', 'Review plot_revenue.py', 'claude-opus-5-5', 'high'],
@@ -215,7 +223,6 @@ test('README screenshots', async () => {
     writeFileSync(join(subagents, `agent-${id}.jsonl`), assistantLine(model, effort) + '\n')
     writeFileSync(join(subagents, `agent-${id}.meta.json`), JSON.stringify({ agentType: type, description }))
   }
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
   expect(
     await sendPipeMessage(pipeName, {
       v: 1, type: 'status', tabId, sessionId: SID,

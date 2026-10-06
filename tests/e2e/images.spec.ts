@@ -1,31 +1,41 @@
 import { expect, test, type Page } from '@playwright/test'
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { pastedLine, toolResultLine, toolTextResultLine, toolUseLine } from '../fixtures/transcript'
+import { pastedLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
 import { FAKE_CLAUDE_SETTINGS, launchApp, PNG_1x1 } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const images = (page: Page): Promise<{ name: string; source: string; caption: string | null }[]> => page.evaluate(() => window.__ct!.images!())
-const SID_B = '6e3d2c8b-9f5a-4b4c-c2d3-e4f5a6b7c8d9'
-const tabImages = async (page: Page, tabId: string): Promise<string[]> => (await page.evaluate((id) => window.__ct!.images!(id), tabId)).map((i) => i.name)
 
-async function claudeTab() {
+async function claudeTab(env?: Record<string, string>) {
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
-  const launched = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, args: ['--claude', work] })
+  const launched = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, args: ['--claude', work], env })
   await launched.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await launched.page.evaluate(() => window.__ct!.activeTabId()))!
   return { ...launched, work, tabId }
 }
 
-test('a PNG created in the claude tab folder appears and is served via ctimg', async () => {
-  const { app, page, work } = await claudeTab()
-  await page.waitForTimeout(1500) // let the folder watcher become ready
-  writeFileSync(join(work, 'plot.png'), PNG_1x1)
+test('a PNG created in the session temp folder appears and is served via ctimg; the project folder is not watched', async () => {
+  // the app's temp folder, where Claude Code keeps each session's scratchpad: <temp>/claude/<project>/<session id>
+  const temp = mkdtempSync(join(tmpdir(), 'ct-temp-'))
+  const { app, page, work, tabId, pipeName } = await claudeTab({ TEMP: temp, TMP: temp })
+  const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
+  mkdirSync(projectDir, { recursive: true })
+  const transcriptPath = join(projectDir, `${SID}.jsonl`)
+  writeFileSync(transcriptPath, '')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
+  const scratchpad = join(temp, 'claude', 'D--e2e', SID)
+  await expect.poll(() => existsSync(scratchpad), { timeout: 10_000 }).toBe(true)
+  await page.waitForTimeout(500) // let the watcher start
+  writeFileSync(join(work, 'project.png'), PNG_1x1)
+  writeFileSync(join(scratchpad, 'plot.png'), PNG_1x1)
   await expect.poll(() => images(page), { timeout: 10_000 }).toEqual([{ name: 'plot.png', source: 'created', caption: null }])
   await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
   await expect(page.locator('.card img').first()).toHaveJSProperty('naturalWidth', 1)
+  await page.waitForTimeout(1500)
+  expect((await images(page)).map((i) => i.name)).toEqual(['plot.png'])
   await app.close()
 })
 
@@ -35,33 +45,6 @@ test('show_image over the pipe lands in the tab with its caption', async () => {
   writeFileSync(file, PNG_1x1)
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'show_image', tabId, path: file, caption: 'Revenue' })).toEqual({ ok: true })
   await expect.poll(() => images(page), { timeout: 10_000 }).toEqual([{ name: 'chart.png', source: 'shown', caption: 'Revenue' }])
-  await app.close()
-})
-
-test('two Claude tabs in one folder: a new image goes to the tab running a tool, or to both when neither is', async () => {
-  const { app, page, work, tabId: busy, pipeName } = await claudeTab()
-  const idle = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'claude', cwd }), work))!.id
-  const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
-  mkdirSync(projectDir, { recursive: true })
-  const busyTranscript = join(projectDir, `${SID}.jsonl`)
-  const idleTranscript = join(projectDir, `${SID_B}.jsonl`)
-  // Claude in the first tab is running a command; in the second it is not
-  writeFileSync(busyTranscript, toolUseLine('toolu_b1', 'Bash', { command: 'python plot.py' }, new Date().toISOString()) + '\n')
-  writeFileSync(idleTranscript, '')
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: busy, sessionId: SID, source: 'startup', transcriptPath: busyTranscript })).toEqual({ ok: true })
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: idle, sessionId: SID_B, source: 'startup', transcriptPath: idleTranscript })).toEqual({ ok: true })
-  await page.waitForTimeout(1500) // watchers ready, transcripts read
-  writeFileSync(join(work, 'plot.png'), PNG_1x1)
-  await expect.poll(() => tabImages(page, busy), { timeout: 10_000 }).toEqual(['plot.png'])
-  await page.waitForTimeout(1500)
-  expect(await tabImages(page, idle)).toEqual([])
-
-  // the command is over: nobody runs a tool, so the next image goes to both tabs
-  appendFileSync(busyTranscript, toolTextResultLine('toolu_b1', new Date().toISOString()) + '\n')
-  await page.waitForTimeout(2500)
-  writeFileSync(join(work, 'later.png'), PNG_1x1)
-  await expect.poll(() => tabImages(page, idle), { timeout: 10_000 }).toEqual(['later.png'])
-  await expect.poll(() => tabImages(page, busy), { timeout: 10_000 }).toEqual(['later.png', 'plot.png'])
   await app.close()
 })
 

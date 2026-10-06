@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { cleanupImageCache, LineTailer, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
-import { assistantLine, PNG_B64, pastedLine, textLine, toolResultLine, toolTextResultLine, toolUseLine } from '../fixtures/transcript'
+import { assistantLine, PNG_B64, pastedLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -153,18 +153,6 @@ describe('TranscriptFeed', () => {
     appendFileSync(sub, assistantLine('claude-sonnet-5-5', 'high') + '\n')
     await feed.poll()
     expect(infos.map(([, i]) => i.effort)).toEqual(['medium', 'high'])
-  })
-
-  it('tells whether the session or one of its subagents was running a tool at a given time', async () => {
-    const { transcriptPath, feed } = setup()
-    writeFileSync(transcriptPath, [toolUseLine('toolu_b1', 'Bash', { command: 'npm test' }, '2026-10-05T10:00:00.000Z'), toolTextResultLine('toolu_b1', '2026-10-05T10:00:05.000Z'), ''].join('\n'))
-    mkdirSync(feed.subagentDir, { recursive: true })
-    writeFileSync(join(feed.subagentDir, 'agent-a1.jsonl'), toolUseLine('toolu_b2', 'Bash', { command: 'python plot.py' }, '2026-10-05T11:00:00.000Z') + '\n')
-    feed.scanSubagents()
-    await feed.poll()
-    expect(feed.toolRunningAt(Date.parse('2026-10-05T10:00:03.000Z'))).toBe(true)
-    expect(feed.toolRunningAt(Date.parse('2026-10-05T10:30:00.000Z'))).toBe(false)
-    expect(feed.toolRunningAt(Date.parse('2026-10-05T11:00:30.000Z'))).toBe(true)
   })
 
   it('reports a missing transcript once and stops after stop()', async () => {
