@@ -59,7 +59,7 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 ### 🔔 Know when Claude is waiting for you
 
-When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the Windows default sound, flashes its taskbar button and marks the tab. Nothing happens while that tab is in front of you. The sound can be turned off or replaced with your own `.wav` in the settings.
+When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the Windows default sound, flashes its taskbar button and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
 
 ### 🗂️ A real terminal, with tabs
 
@@ -121,7 +121,11 @@ Right-click a tab → **Restart session** restarts Claude Code in the same tab a
 
 ## Settings
 
-Settings live in `%APPDATA%\ClaudeTerm\settings.json` — press `Ctrl+,` to open it. Changes apply as soon as you save the file.
+Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notifications, font, theme, shells, Claude Code, images and updates. Changes apply at once.
+
+![Settings window](docs/images/settings.png)
+
+Everything is stored in `%APPDATA%\ClaudeTerm\settings.json`. Profiles, image types, ignored folders, a custom theme and the image panel size are set only there — the window's **Open settings.json** button opens it, and changes to the file apply as soon as you save it. When the window saves a change, it rewrites the file as plain JSON with two-space indentation.
 
 ```jsonc
 {
@@ -143,10 +147,13 @@ Settings live in `%APPDATA%\ClaudeTerm\settings.json` — press `Ctrl+,` to open
     "maxDepth": 8
   },
   "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 },
-  "attention": {                   // when Claude waits for you in a tab you are not looking at
-    "sound": "system",             // "system", "none", or the full path to a .wav file
-    "flash": true                  // flash the taskbar button (a terminal bell, BEL, from any program flashes it regardless)
-  },
+  "notifications": {               // when a tab you are not looking at needs you
+    "sound": "system",             // "system" or the full path to a .wav file
+    "permission": { "sound": true,  "flash": true, "tab": true },   // Claude asks for a permission
+    "question":   { "sound": true,  "flash": true, "tab": true },   // Claude asks a question
+    "done":       { "sound": true,  "flash": true, "tab": true },   // Claude finished its turn
+    "bell":       { "sound": false, "flash": true, "tab": true }    // a terminal bell (BEL) from any program
+  },                               // flash: the taskbar button; tab: highlight the tab (a dot for the bell)
   "autoUpdate": true               // check GitHub for new versions in the background
 }
 ```

@@ -261,3 +261,20 @@ test('README screenshots', async () => {
 
   await app.close()
 })
+
+test('settings window screenshot', async () => {
+  // default settings in a fresh data folder: nothing from this machine's own settings
+  const { app, page } = await launchApp()
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const [win] = await Promise.all([app.waitForEvent('window'), page.evaluate(() => window.ct.openSettingsWindow())])
+  await win.waitForSelector('#settings [data-key="font.size"]')
+  const cdp = await win.context().newCDPSession(win)
+  await expect(win.locator('[data-key="font.family"]')).toHaveValue('Cascadia Mono, Consolas, monospace')
+  // the whole form, without the scrollbar a 720 px tall window has
+  const height = await win.evaluate(() => document.documentElement.scrollHeight)
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 640, height, deviceScaleFactor: 2, mobile: false })
+  await expect.poll(() => win.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true)
+  await win.mouse.move(630, 10)
+  await win.screenshot({ path: join(OUT, 'settings.png') })
+  await app.close()
+})
