@@ -48,7 +48,8 @@ test('a run that ends with no tabs does not wipe the previous session', async ()
   const { app, page } = await launchApp({ dataDir })
   await expect.poll(() => page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
   const closed = app.waitForEvent('close')
-  await page.locator('.tab .tab-close').click()
+  // closing the last tab closes the window, which can fail the click itself before it returns; the close event is the check
+  await page.locator('.tab .tab-close').click().catch(() => {})
   await closed
   expect(existsSync(join(dataDir, 'previous-session.json'))).toBe(true)
   const state = JSON.parse(readFileSync(join(dataDir, 'session-state.json'), 'utf8')) as { tabs: unknown[] }
