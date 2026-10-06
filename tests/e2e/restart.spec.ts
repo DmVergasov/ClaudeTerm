@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { WIN } from '../fixtures/platform'
@@ -48,6 +49,22 @@ test('a restart before the first message starts a new conversation instead of re
   await expect.poll(async () => (await bufferText(page, tabId)).match(/fake-claude --settings/g)?.length ?? 0, { timeout: 15_000 }).toBe(1)
   await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toMatch(/fake-claude --settings/)
   expect(await bufferText(page, tabId)).not.toContain('--resume')
+  await app.close()
+})
+
+test('a conversation whose transcript Claude Code filed under another project folder is resumed', async () => {
+  const { app, page, pipeName, tabId, work } = await launchClaudeTab()
+  await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toMatch(/fake-claude --settings/)
+  // the session moved to another folder, so its transcript is not where Claude Code reported it at startup
+  const projects = join(work, 'projects')
+  mkdirSync(join(projects, 'D--Workspace-Start'), { recursive: true })
+  mkdirSync(join(projects, 'D--Workspace-Moved'), { recursive: true })
+  writeFileSync(join(projects, 'D--Workspace-Moved', `${SID}.jsonl`), '{}\n')
+  const transcriptPath = join(projects, 'D--Workspace-Start', `${SID}.jsonl`)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
+  await page.locator('.tab').first().click({ button: 'right' })
+  await page.locator('.menu-item', { hasText: 'Restart session' }).click()
+  await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toContain(`--resume ${SID}`)
   await app.close()
 })
 

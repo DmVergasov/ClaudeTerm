@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { open } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs'
+import { access, open, readdir } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { assistantInfo, type AgentModelInfo } from './transcript-agent-info'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
@@ -58,6 +58,52 @@ export class LineTailer {
   }
 }
 
+/** Claude Code's projects folder holding the reported transcript (<projects>/<project>/<session>.jsonl), or null */
+function projectsDirOf(reportedPath: string): string | null {
+  const dir = dirname(dirname(reportedPath))
+  return basename(dir) === 'projects' ? dir : null
+}
+
+/**
+ * Where a session's transcript is now: Claude Code reports it at startup under the project of the folder the
+ * session started in, but files it under the project of a folder the session moved to. Null before the first message.
+ */
+export function locateTranscript(reportedPath: string, sessionId: string): string | null {
+  if (existsSync(reportedPath)) return reportedPath
+  const projects = projectsDirOf(reportedPath)
+  if (!projects) return null
+  let dirs: Dirent[]
+  try {
+    dirs = readdirSync(projects, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const d of dirs) {
+    const p = join(projects, d.name, `${sessionId}.jsonl`)
+    if (d.isDirectory() && existsSync(p)) return p
+  }
+  return null
+}
+
+/** locateTranscript without blocking: for looking again and again while a transcript is missing */
+export async function findTranscript(reportedPath: string, sessionId: string): Promise<string | null> {
+  const exists = (p: string): Promise<boolean> => access(p).then(() => true, () => false)
+  if (await exists(reportedPath)) return reportedPath
+  const projects = projectsDirOf(reportedPath)
+  if (!projects) return null
+  let dirs: Dirent[]
+  try {
+    dirs = await readdir(projects, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const d of dirs) {
+    const p = join(projects, d.name, `${sessionId}.jsonl`)
+    if (d.isDirectory() && (await exists(p))) return p
+  }
+  return null
+}
+
 export interface FeedImage {
   path: string
   source: ExtractedKind
@@ -74,6 +120,10 @@ export interface TranscriptFeedOptions {
   onError?(message: string): void
   /** model·effort of a subagent (from subagents/agent-<agentId>.jsonl), reported when it changes */
   onSubagentInfo?(agentId: string, info: AgentModelInfo): void
+  /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
+  locate?(): Promise<string | null>
+  /** how often locate() may run while the transcript cannot be opened */
+  locateMs?: number
   pollMs?: number
   subagentScanMs?: number
 }
@@ -94,13 +144,14 @@ export class TranscriptFeed {
   private busy = false
   private stopped = false
   private missingReported = false
+  private lastLocate = -Infinity
 
   constructor(private readonly o: TranscriptFeedOptions) {
     this.main = { tailer: new LineTailer(o.transcriptPath), parser: new TranscriptParser({ subagent: false }), agentId: null, lastInfo: null }
   }
 
   get subagentDir(): string {
-    return join(dirname(this.o.transcriptPath), this.o.sessionId, 'subagents')
+    return join(dirname(this.main.tailer.file), this.o.sessionId, 'subagents')
   }
 
   start(): void {
@@ -135,7 +186,8 @@ export class TranscriptFeed {
     this.busy = true
     try {
       try {
-        const lines = await this.main.tailer.readNew()
+        let lines = await this.main.tailer.readNew()
+        if (lines === null && (await this.relocate())) lines = await this.main.tailer.readNew()
         if (lines === null) {
           if (!this.missingReported) {
             this.missingReported = true
@@ -158,6 +210,18 @@ export class TranscriptFeed {
     } finally {
       this.busy = false
     }
+  }
+
+  /** Switches to where the transcript is now; true when it was found somewhere else */
+  private async relocate(): Promise<boolean> {
+    if (!this.o.locate) return false
+    const now = Date.now()
+    if (now - this.lastLocate < (this.o.locateMs ?? 5000)) return false
+    this.lastLocate = now
+    const p = await this.o.locate()
+    if (p === null || p === this.main.tailer.file || this.stopped) return false
+    this.main.tailer = new LineTailer(p)
+    return true
   }
 
   private report(e: unknown): void {

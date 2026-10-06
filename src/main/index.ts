@@ -38,7 +38,7 @@ import { readAgentMeta } from './transcript-agent-info'
 import { consumeUpdateMarker, writeUpdateMarker } from './update-marker'
 import { Updater } from './updater'
 import { createUpdateBackend } from './update-backend'
-import { cleanupImageCache, TranscriptFeed } from './transcript-feed'
+import { cleanupImageCache, findTranscript, locateTranscript, TranscriptFeed } from './transcript-feed'
 import { loadWindowState, trackWindowState } from './window-state'
 
 const dataDir = initDataDir()
@@ -222,6 +222,7 @@ function bootstrap(): void {
       sessionId,
       cacheRoot: imageCacheRoot,
       fileExists: existsSync,
+      locate: () => findTranscript(transcriptPath, sessionId),
       onImage: (img) => images.add(tabId, img.path, img.source, img.caption, img.at ?? undefined),
       onError: (m) => log.warn(m),
       onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info)
@@ -273,9 +274,9 @@ function bootstrap(): void {
     },
     onStateChanged: () => sessions.scheduleSave(tabs.snapshot()),
     // Claude Code writes the transcript with the first message; --resume of a conversation without one fails
-    resumable: (tabId) => {
+    resumable: (tabId, sessionId) => {
       const p = sources.get(tabId)?.transcriptPath
-      return p ? existsSync(p) : true
+      return p ? locateTranscript(p, sessionId) !== null : true
     },
     events: {
       opened: (t) => send(IPC.evTabOpened, t),

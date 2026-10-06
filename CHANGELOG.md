@@ -6,6 +6,7 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 
 ### Fixes
 
+- **Restart session resumes the conversation even after Claude moved to another folder.** When Claude changed its working folder during a session, Restart session started a new conversation instead, and the conversation's images did not reach the image panel.
 - After an update, your tabs come back by themselves even when the system clock was adjusted during the restart, as happens under WSL or with network time sync. Before, ClaudeTerm only offered to restore them.
 
 ## 0.1.8

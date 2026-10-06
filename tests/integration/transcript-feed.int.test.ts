@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { cleanupImageCache, LineTailer, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
+import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
 import { assistantLine, PNG_B64, pastedLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
 
@@ -155,6 +155,23 @@ describe('TranscriptFeed', () => {
     expect(infos.map(([, i]) => i.effort)).toEqual(['medium', 'high'])
   })
 
+  it('follows a transcript that Claude Code filed under another project folder', async () => {
+    const { root, transcriptPath, cacheRoot, images } = setup()
+    const movedDir = join(root, 'projects', 'D--moved')
+    mkdirSync(movedDir)
+    const moved = join(movedDir, `${SID}.jsonl`)
+    writeFileSync(moved, pastedLine() + '\n')
+    const feed = new TranscriptFeed({
+      transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: (i) => images.push(i),
+      locate: () => findTranscript(transcriptPath, SID), locateMs: 0
+    })
+    await feed.poll()
+    expect(images.map((i) => i.source)).toEqual(['pasted'])
+    appendFileSync(moved, pastedLine() + '\n')
+    await feed.poll()
+    expect(images).toHaveLength(2)
+  })
+
   it('reports a missing transcript once and stops after stop()', async () => {
     const { transcriptPath, images, errors, feed } = setup()
     await feed.poll()
@@ -164,6 +181,43 @@ describe('TranscriptFeed', () => {
     writeFileSync(transcriptPath, pastedLine() + '\n')
     await feed.poll()
     expect(images).toEqual([])
+  })
+})
+
+describe.each([
+  ['locateTranscript', (p: string, s: string) => Promise.resolve(locateTranscript(p, s))],
+  ['findTranscript', findTranscript]
+])('%s', (_name, locate) => {
+  it('is the reported path while the transcript is there', async () => {
+    const { transcriptPath } = setup()
+    writeFileSync(transcriptPath, '')
+    expect(await locate(transcriptPath, SID)).toBe(transcriptPath)
+  })
+
+  it('finds the transcript of a session that moved to another project folder', async () => {
+    const { root, transcriptPath } = setup()
+    mkdirSync(join(root, 'projects', 'D--moved'))
+    const moved = join(root, 'projects', 'D--moved', `${SID}.jsonl`)
+    writeFileSync(moved, '')
+    expect(await locate(transcriptPath, SID)).toBe(moved)
+  })
+
+  it('is null before the first message, when no project folder has it', async () => {
+    const { root, transcriptPath } = setup()
+    mkdirSync(join(root, 'projects', 'D--other'))
+    writeFileSync(join(root, 'projects', 'D--other', '7e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b.jsonl'), '')
+    expect(await locate(transcriptPath, SID)).toBeNull()
+  })
+
+  it('is null when the projects folder itself is missing', async () => {
+    expect(await locate(join(tmpdir(), 'ct-no-such-root', 'projects', 'D--x', `${SID}.jsonl`), SID)).toBeNull()
+  })
+
+  it('searches only Claude Code\'s projects folder, never the folder around some other path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ct-feed-'))
+    mkdirSync(join(root, 'elsewhere', 'b'), { recursive: true })
+    writeFileSync(join(root, 'elsewhere', 'b', `${SID}.jsonl`), '')
+    expect(await locate(join(root, 'elsewhere', 'a', `${SID}.jsonl`), SID)).toBeNull()
   })
 })
 
