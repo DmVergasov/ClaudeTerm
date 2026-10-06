@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## Next
+
+### Fixes
+
+- After an update, your tabs come back by themselves even when the system clock was adjusted during the restart, as happens under WSL or with network time sync. Before, ClaudeTerm only offered to restore them.
+
 ## 0.1.8
 
 ### New

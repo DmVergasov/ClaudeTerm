@@ -4,6 +4,8 @@ import { join } from 'node:path'
 /** Written right before restarting into an update, so the next start reopens the tabs by itself. */
 export const UPDATE_MARKER = 'update-restart.json'
 export const MARKER_MAX_AGE_MS = 10 * 60 * 1000
+/** How far ahead of now a marker may be: the clock can be stepped back between quit and restart (WSL, NTP) */
+export const MARKER_CLOCK_SLACK_MS = 60 * 1000
 
 export function writeUpdateMarker(dir: string, now: number): boolean {
   try {
@@ -28,5 +30,5 @@ export function consumeUpdateMarker(dir: string, now: number): boolean {
   } catch {
     // a marker we cannot delete is ignored next time by its age
   }
-  return typeof at === 'number' && now >= at && now - at <= MARKER_MAX_AGE_MS
+  return typeof at === 'number' && now - at >= -MARKER_CLOCK_SLACK_MS && now - at <= MARKER_MAX_AGE_MS
 }

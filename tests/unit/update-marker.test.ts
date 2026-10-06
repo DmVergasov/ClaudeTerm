@@ -28,8 +28,14 @@ describe('update marker', () => {
     writeFileSync(join(d, UPDATE_MARKER), '{not json')
     expect(consumeUpdateMarker(d, 1000)).toBe(false)
     expect(existsSync(join(d, UPDATE_MARKER))).toBe(false)
-    writeUpdateMarker(d, 5000)
+    writeUpdateMarker(d, 1000 + 60 * 60_000)
     expect(consumeUpdateMarker(d, 1000)).toBe(false)
+  })
+
+  it('a marker a moment ahead of now still restores: the clock can be stepped back between quit and restart', () => {
+    const d = dir()
+    writeUpdateMarker(d, 10_000)
+    expect(consumeUpdateMarker(d, 10_000 - 700)).toBe(true)
   })
 
   it('writing into a missing folder fails softly', () => {
