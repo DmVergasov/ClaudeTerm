@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildClaudeCommandLine, buildLaunch, canHostClaude, detectProfiles, filterAvailable, mergeProfiles, parseWslList,
-  pickClaudeProfile, pickProfile, quoteForShell, shellFamily, type DetectDeps
+  pickClaudeProfile, pickProfile, profileResolver, quoteForShell, shellFamily, type DetectDeps
 } from '../../src/main/profiles'
 import type { ProfileDef } from '../../src/shared/types'
 
@@ -144,5 +144,19 @@ describe('parseWslList', () => {
 
   it('decodes UTF-8 output', () => {
     expect(parseWslList(Buffer.from('Ubuntu\nkali-linux\n', 'utf8'))).toEqual(['Ubuntu', 'kali-linux'])
+  })
+})
+
+describe('profileResolver', () => {
+  it('detects the installed shells once, however often the settings are applied', () => {
+    let detections = 0
+    const detected: ProfileDef = { name: 'PowerShell 7', command: 'pwsh.exe', args: [] }
+    const mine: ProfileDef = { name: 'Mine', command: 'C:\\x\\sh.exe', args: [] }
+    const gone: ProfileDef = { name: 'Gone', command: 'C:\\gone\\sh.exe', args: [] }
+    const resolve = profileResolver(() => { detections++; return [detected] }, (p) => p !== gone.command)
+    expect(resolve([mine, gone])).toEqual({ profiles: [detected, mine], notices: ['Profile "Gone" not found: C:\\gone\\sh.exe'] })
+    resolve([])
+    expect(resolve([mine]).profiles).toEqual([detected, mine])
+    expect(detections).toBe(1)
   })
 })

@@ -36,8 +36,9 @@ const showAll = (): void => { for (const c of controls) c.show(view) }
 /** saves one setting; on failure the message goes under the field and the controls go back to the saved values */
 async function save(key: SettingKey, value: SettingValue, error: ShowError): Promise<boolean> {
   const r = await ct.setSetting(key, value)
-  error(r.ok ? null : r.error)
+  // put the controls back first: a text field left with Tab clears its message when it is shown again
   if (!r.ok) showAll()
+  error(r.ok ? null : r.error)
   return r.ok
 }
 

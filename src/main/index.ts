@@ -20,7 +20,7 @@ import { handleImgProtocol, registerImgScheme } from './img-protocol'
 import { createLogger } from './log'
 import { ensureMcpRegistered, execRunner, resolveClaude, type ClaudeCli } from './mcp-registrar'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
-import { buildLaunch, detectProfiles, filterAvailable, mergeProfiles, pickClaudeProfile, pickProfile, systemDetectDeps } from './profiles'
+import { buildLaunch, detectProfiles, pickClaudeProfile, pickProfile, profileResolver, systemDetectDeps } from './profiles'
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
@@ -86,13 +86,9 @@ function bootstrap(): void {
     else startupNotices.push(message)
   }
 
-  const computeProfiles = (s: Settings): { profiles: ProfileDef[]; notices: string[] } => {
-    const { available, missing } = filterAvailable(s.profiles, existsSync)
-    return {
-      profiles: mergeProfiles(detectProfiles(systemDetectDeps()), available),
-      notices: missing.map((p) => `Profile "${p.name}" not found: ${p.command}`)
-    }
-  }
+  // a settings change (every click in the settings window) must not start the shell detection again
+  const resolveProfiles = profileResolver(() => detectProfiles(systemDetectDeps()), existsSync)
+  const computeProfiles = (s: Settings): { profiles: ProfileDef[]; notices: string[] } => resolveProfiles(s.profiles)
 
   const loaded = loadSettingsSafe(settingsPath)
   let settings: Settings = loaded.settings
@@ -532,7 +528,8 @@ function bootstrap(): void {
     } catch (e) {
       return { ok: false, error: `Cannot save settings.json: ${(e as Error).message}` }
     }
-    // apply now; the watcher reloads the same file a moment later and changes nothing
+    appliedText = edited.text
+    // apply now; the watcher sees the same text a moment later and leaves it
     reloadSettings()
     return { ok: true }
   })
@@ -566,6 +563,15 @@ function bootstrap(): void {
     problems: lastLoad.errors,
     locked: Boolean(lastLoad.failed || lastLoad.broken)
   })
+  /** the text the settings in use came from, when the app wrote it or the watcher read it */
+  let appliedText: string | null = null
+  const readSettingsText = (): string | null => {
+    try {
+      return readFileSync(settingsPath, 'utf8')
+    } catch {
+      return null
+    }
+  }
   const reloadSettings = (): void => {
     const next = loadSettingsSafe(settingsPath)
     lastLoad = next
@@ -586,7 +592,13 @@ function bootstrap(): void {
   const settingsWatcher = watch(dataDir, (_event, file) => {
     if (file !== 'settings.json') return
     if (reloadTimer) clearTimeout(reloadTimer)
-    reloadTimer = setTimeout(reloadSettings, 300)
+    reloadTimer = setTimeout(() => {
+      // the echo of the app's own save: those settings are already in use
+      const text = readSettingsText()
+      if (text !== null && text === appliedText) return
+      appliedText = text
+      reloadSettings()
+    }, 300)
   })
   settingsWatcher.on('error', (e) => {
     log.warn(`settings watcher stopped: ${e.message}`)

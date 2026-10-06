@@ -44,6 +44,19 @@ export function mergeProfiles(detected: ProfileDef[], user: ProfileDef[]): Profi
 }
 
 /**
+ * The settings' profiles merged with the shells installed on this machine, and a notice for each profile whose
+ * program is missing. The installed shells are detected once: detection starts processes (where.exe, wsl.exe).
+ */
+export function profileResolver(detect: () => ProfileDef[], exists: (p: string) => boolean): (custom: ProfileDef[]) => { profiles: ProfileDef[]; notices: string[] } {
+  let detected: ProfileDef[] | null = null
+  return (custom) => {
+    detected ??= detect()
+    const { available, missing } = filterAvailable(custom, exists)
+    return { profiles: mergeProfiles(detected, available), notices: missing.map((p) => `Profile "${p.name}" not found: ${p.command}`) }
+  }
+}
+
+/**
  * Splits profiles into those usable and those whose executable path is not on disk.
  * Only path-like commands are checked; bare names (pwsh.exe, wsl.exe) are resolved via PATH by the OS.
  */

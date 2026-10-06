@@ -1,5 +1,5 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab } from './helpers'
@@ -246,5 +246,40 @@ test('Browse saves the picked .wav; Windows default goes back to the system soun
   await win.locator('[data-key="notifications.sound"][value="system"]').check()
   await expect.poll(() => readSettings(dataDir).notifications?.sound).toBe('system')
   await expect(win.locator('.sound-path')).toHaveValue('')
+  await app.close()
+})
+
+test('a save from the app reloads once; the watcher does not reload the same file again, a hand edit after it still does', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await page.evaluate(() => {
+    ;(window as unknown as { views: number }).views = 0
+    window.ct.onSettingsView(() => { (window as unknown as { views: number }).views++ })
+  })
+  const views = (): Promise<number> => page.evaluate(() => (window as unknown as { views: number }).views)
+  expect(await page.evaluate(() => window.ct.setSetting('autoUpdate', false))).toEqual({ ok: true })
+  await page.waitForTimeout(1000)
+  expect(await views()).toBe(1)
+  writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ...QUIET, scrollback: 777 }))
+  await expect.poll(() => page.evaluate(() => window.ct.getSettingsView().then((v) => v.settings.scrollback))).toBe(777)
+  expect(await views()).toBe(2)
+  await app.close()
+})
+
+test('a save that cannot be written shows its error under the field, also when the field was left with Tab', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  const file = join(dataDir, 'settings.json')
+  chmodSync(file, 0o444)
+  try {
+    const font = win.locator('[data-key="font.family"]')
+    await font.fill('Consolas')
+    await font.press('Tab')
+    await expect(win.locator('.field-error', { hasText: 'Cannot save settings.json' })).toBeVisible()
+    await expect(font).toHaveClass(/\binvalid\b/)
+  } finally {
+    chmodSync(file, 0o666)
+  }
   await app.close()
 })
