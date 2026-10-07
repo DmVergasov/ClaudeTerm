@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/hero.png" alt="ClaudeTerm: a Claude Code session with the image panel and the status bar">
+  <img src="docs/images/demo.gif" alt="ClaudeTerm: Open Claude Code here from Explorer, charts appearing in the image panel, subagents in the status bar, the full-size viewer, a tab waiting for permission and recent sessions">
   <br>
   <sub>Screenshots use demo data.</sub>
 </p>
