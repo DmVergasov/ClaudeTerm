@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathKey } from './path-key'
 
@@ -64,7 +64,17 @@ export async function repoRoot(run: GitRun, cwd: string): Promise<string | null>
   if (!existsSync(cwd)) return null
   const r = await run(['rev-parse', '--show-toplevel'], cwd)
   const out = r.stdout.toString('utf8').trim()
-  return r.code === 0 && out ? resolve(out) : null
+  if (r.code !== 0 || !out) return null
+  const root = resolve(out)
+  // git answers with the real path; Claude names files the way its folder was given (a junction, a short 8.3 name),
+  // so the root takes that form too, or no file of the view would lie inside it
+  try {
+    const up = relative(realpathSync.native(cwd), root)
+    if (up === '' || up.split(sep).every((s) => s === '..')) return resolve(cwd, up)
+  } catch {
+    // the folder went away meanwhile: git's own answer
+  }
+  return root
 }
 
 /** the commit a revision names; GitError "unknown revision: <ref>" when there is none */

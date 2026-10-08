@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -23,11 +23,19 @@ describe('git source', () => {
   it('finds the root from a subfolder, and null outside a repository', async () => {
     const dir = repo()
     mkdirSync(join(dir, 'src'))
-    // git answers with the long path; a temp folder can be a short 8.3 one (C:\Users\RUNNER~1 on CI)
-    expect(await repoRoot(execGit, join(dir, 'src'))).toBe(realpathSync.native(dir))
+    expect(await repoRoot(execGit, join(dir, 'src'))).toBe(dir)
     const outside = mkdtempSync(join(tmpdir(), 'ct-nogit-'))
     expect(await repoRoot(execGit, outside)).toBeNull()
     expect(await repoRoot(execGit, join(outside, 'missing'))).toBeNull()
+  })
+
+  it('gives the root in the form the folder was asked in, as Claude names its files: through a junction too', async () => {
+    const dir = repo()
+    mkdirSync(join(dir, 'src'))
+    const link = join(mkdtempSync(join(tmpdir(), 'ct-link-')), 'project')
+    symlinkSync(dir, link, 'junction')
+    expect(await repoRoot(execGit, join(link, 'src'))).toBe(link)
+    expect(await repoRoot(execGit, realpathSync.native(join(dir, 'src')))).toBe(realpathSync.native(dir))
   })
 
   it('lists modified, added, untracked and deleted files against HEAD', async () => {
