@@ -56,6 +56,8 @@ The original design notes and implementation plans are in [`docs/superpowers`](d
 
 ## Making a change
 
+The rules every change is held to, for people and coding agents alike, are in [AGENTS.md](AGENTS.md): above all, a bug fix comes with a test that fails without it, and a feature comes with tests that cover what it does.
+
 1. Fork the repository and create a branch from `master`.
 2. Write a failing test first, then the code that makes it pass. Pure logic gets a unit test; anything that crosses a process boundary (the pipe, the hook script, transcripts on disk) gets an integration test; visible behaviour gets an e2e test.
 3. Keep `npm run typecheck`, `npm test` and `npm run test:e2e` green.
