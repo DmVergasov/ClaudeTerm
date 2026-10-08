@@ -2,6 +2,18 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.2.0
+
+### New
+
+- **Review Claude's changes next to the conversation.** Press `Ctrl+Shift+D`, or click the new **Changes** button in the tab bar or the changes counter in the status bar, to open the Changes panel beside a Claude tab. **Uncommitted** shows everything not committed yet, untracked files included. **Last turn** shows what Claude changed in its latest turn with edits, and **Session** shows everything it changed in this conversation. Last turn and Session work without git too, and show only the files inside the tab's folder: Claude's own memory, other projects and temporary files stay out.
+- **Comment on lines and send the comments to Claude.** Hover a line and click **+**, or drag along the margin for several lines. **Send to Claude** writes all your comments as one message, with the file, the line and the quoted code, and the diff updates while Claude works on them. **Viewed** folds the files you are done with; a file Claude changes again unfolds.
+- **Claude can open a diff for you** with the new `show_diff` tool: ask for "the diff of the last three commits, only src/main" and it appears in the panel.
+- Right-click a line to open the file at that line in your editor: VS Code by default, or your own command in **Settings → Review → Editor**, for example `rider64 --line {line} {file}` for Rider.
+- **A changes counter in the status bar** shows how many files and lines changed: uncommitted changes in a git repository, this session's edits outside one. **Settings → Review** can hide it.
+- **Hide files git ignores** (on by default, in **Settings → Review**): Last turn and Session leave out build output and other ignored files, and the panel says how many it left out.
+- To show a file as it was before Claude's edit, ClaudeTerm keeps a copy of it in `%APPDATA%\ClaudeTerm\review` (`~/.config/ClaudeTerm/review` on Linux). Copies of a conversation untouched for a week are deleted.
+
 ## 0.1.9
 
 ### Fixes
