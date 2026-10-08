@@ -5,3 +5,4 @@ resources/mcp/*.js
 resources/hook/*.js
 test-results/
 playwright-report/
+.superpowers/
