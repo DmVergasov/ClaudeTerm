@@ -78,6 +78,8 @@ export interface Settings {
   imageWatch: { enabled: boolean; extensions: string[]; ignore: string[]; maxDepth: number }
   imagePanel: { autoOpen: boolean; width: number; maxItems: number }
   notifications: NotificationSettings
+  /** the Changes panel */
+  review: { editor: string | null; statusBar: boolean; hideIgnored: boolean; width: number }
   /** check GitHub for new versions in the background */
   autoUpdate: boolean
 }

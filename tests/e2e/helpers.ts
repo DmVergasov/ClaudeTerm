@@ -76,10 +76,23 @@ export function bufferText(page: Page, tabId?: string): Promise<string> {
   return page.evaluate((id) => window.__ct!.bufferText(id ?? undefined), tabId ?? null)
 }
 
-export async function launchClaudeTab(settings: object = FAKE_CLAUDE_SETTINGS): Promise<Launched & { work: string; tabId: string }> {
-  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+export async function launchClaudeTab(settings: object = FAKE_CLAUDE_SETTINGS, work: string = mkdtempSync(join(tmpdir(), 'ct-work-'))): Promise<Launched & { work: string; tabId: string }> {
   const launched = await launchApp({ settings, args: ['--claude', work] })
   await launched.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await launched.page.evaluate(() => window.__ct!.activeTabId()))!
   return { ...launched, work, tabId }
+}
+
+/** a git repository with one commit: a.ts = "one\ntwo\nthree\n" */
+export function gitRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ct-repo-'))
+  const git = (...args: string[]): void => { execFileSync('git', args, { cwd: dir, stdio: 'ignore' }) }
+  git('init', '-q')
+  git('config', 'user.email', 't@example.com')
+  git('config', 'user.name', 'T')
+  git('config', 'core.autocrlf', 'false')
+  writeFileSync(join(dir, 'a.ts'), 'one\ntwo\nthree\n')
+  git('add', '-A')
+  git('commit', '-qm', 'one')
+  return dir
 }

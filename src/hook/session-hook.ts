@@ -1,10 +1,14 @@
 import { userInfo } from 'node:os'
+import { isAbsolute, resolve } from 'node:path'
 import { type AttentionReason, defaultPipeName, isUuid, type PipeMessage, type PipeResponse } from '../shared/protocol'
 import { statusFromStatusLine } from './status-line'
 
 export type Sender = (pipeName: string, msg: PipeMessage) => Promise<PipeResponse>
 
 type Obj = Record<string, unknown>
+
+const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 function parseInput(stdinText: string): Obj | null {
   try {
@@ -43,7 +47,19 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
     }
   }
   if (event === 'SessionEnd') return { v: 1, type: 'session_end', tabId, sessionId }
-  const attention = (reason: AttentionReason): PipeMessage => ({ v: 1, type: 'attention', tabId, sessionId, reason })
+  if (event === 'UserPromptSubmit') {
+    return { v: 1, type: 'turn', tabId, sessionId, cwd: typeof input.cwd === 'string' && isAbsolute(input.cwd) ? input.cwd : null }
+  }
+  if (event === 'PreToolUse' && typeof input.tool_name === 'string' && EDIT_TOOLS.has(input.tool_name)) {
+    const ti = isObj(input.tool_input) ? input.tool_input : {}
+    const p = typeof ti.file_path === 'string' ? ti.file_path : typeof ti.notebook_path === 'string' ? ti.notebook_path : null
+    if (!p || typeof input.tool_use_id !== 'string' || input.tool_use_id === '') return null
+    const cwd = typeof input.cwd === 'string' && isAbsolute(input.cwd) ? input.cwd : null
+    const path = isAbsolute(p) ? p : cwd ? resolve(cwd, p) : null
+    return path ? { v: 1, type: 'edit_before', tabId, sessionId, toolUseId: input.tool_use_id, path } : null
+  }
+  const agentId = typeof input.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null
+  const attention = (reason: AttentionReason): PipeMessage => ({ v: 1, type: 'attention', tabId, sessionId, reason, ...(agentId ? { agentId } : {}) })
   if (event === 'PermissionRequest') return attention('permission')
   if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') return attention('question')
   if (event === 'Stop') return attention('done')

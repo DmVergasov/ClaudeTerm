@@ -42,6 +42,13 @@ const api: CtApi = {
   getUpdateState: () => ipcRenderer.invoke(IPC.updateGet),
   openExternal: (url) => ipcRenderer.send(IPC.openExternal, url),
   pathForFile: (file) => webUtils.getPathForFile(file),
+  setReviewScope: (tabId, scope) => ipcRenderer.send(IPC.reviewSetScope, tabId, scope),
+  clearReviewRequest: (tabId) => ipcRenderer.send(IPC.reviewClearRequest, tabId),
+  refreshReview: (tabId) => ipcRenderer.send(IPC.reviewRefresh, tabId),
+  setReviewViewed: (tabId, path, hash, viewed) => ipcRenderer.send(IPC.reviewSetViewed, tabId, path, hash, viewed),
+  showReviewFile: (tabId, path) => ipcRenderer.send(IPC.reviewShowFile, tabId, path),
+  openInEditor: (tabId, path, line) => ipcRenderer.send(IPC.reviewOpenEditor, tabId, path, line),
+  reviewCanSend: (tabId) => ipcRenderer.invoke(IPC.reviewCanSend, tabId),
   onTabOpened: (cb) => on(IPC.evTabOpened, cb),
   onTabUpdated: (cb) => on(IPC.evTabUpdated, cb),
   onTabClosed: (cb) => on(IPC.evTabClosed, cb),
@@ -57,7 +64,8 @@ const api: CtApi = {
   onRestore: (cb) => on(IPC.evRestore, cb),
   onStatus: (cb) => on(IPC.evStatus, cb),
   onAttention: (cb) => on(IPC.evAttention, cb),
-  onUpdate: (cb) => on(IPC.evUpdate, cb)
+  onUpdate: (cb) => on(IPC.evUpdate, cb),
+  onReview: (cb) => on(IPC.evReview, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

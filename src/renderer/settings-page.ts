@@ -2,7 +2,7 @@ import './settings.css'
 import type { SettingsView } from '../shared/ipc'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
-import { checkNumber, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions, type Checked, type Option } from './settings-form'
+import { checkNumber, checkOptionalText, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions, type Checked, type Option } from './settings-form'
 
 const ct = window.ct
 
@@ -202,9 +202,14 @@ root.append(
   section('Images', 'applies to new tabs',
     checkboxField('imageWatch.enabled', 'Show new images from the session scratchpad', (v) => v.settings.imageWatch.enabled),
     checkboxField('imagePanel.autoOpen', 'Open the image panel when a new image arrives', (v) => v.settings.imagePanel.autoOpen)),
+  section('Review', 'the Changes panel',
+    textField('Editor', 'review.editor', 'text', (v) => v.settings.review.editor ?? '', checkOptionalText,
+      'empty: VS Code if installed, else the file is shown in its folder · {file} and {line} are filled in'),
+    checkboxField('review.statusBar', 'Show the changes counter in the status bar', (v) => v.settings.review.statusBar),
+    checkboxField('review.hideIgnored', 'Hide files git ignores', (v) => v.settings.review.hideIgnored)),
   section('Updates', null,
     checkboxField('autoUpdate', 'Check for updates automatically', (v) => v.settings.autoUpdate)),
-  el('footer', { className: 'settings-footer' }, el('span', { textContent: 'Profiles, image types, ignored folders, a custom theme and the image panel size are set in settings.json' }), openFile())
+  el('footer', { className: 'settings-footer' }, el('span', { textContent: 'Profiles, image types, ignored folders, a custom theme and the image and Changes panel widths are set in settings.json' }), openFile())
 )
 
 function render(v: SettingsView): void {

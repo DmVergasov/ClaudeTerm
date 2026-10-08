@@ -96,3 +96,43 @@ describe('runStatusLine', () => {
     await expect(runStatusLine(input, ENV, async () => { throw new Error('no pipe') })).resolves.toBe(false)
   })
 })
+
+describe('runSessionHook: review events', () => {
+  const CWD = process.platform === 'win32' ? 'D:\\proj' : '/proj'
+  const ABS = process.platform === 'win32' ? 'D:\\proj\\src\\a.ts' : '/proj/src/a.ts'
+
+  it('maps UserPromptSubmit to a turn with the cwd', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'UserPromptSubmit', prompt: 'fix it', cwd: CWD }), ENV, send)
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'turn', tabId: TAB, sessionId: SID, cwd: CWD })
+  })
+
+  it('maps PreToolUse of Edit, Write, MultiEdit and NotebookEdit to edit_before', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    const pre = (tool_name: string, tool_input: object, tool_use_id = 'toolu_1') =>
+      runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name, tool_input, tool_use_id, cwd: CWD }), ENV, send)
+    await pre('Edit', { file_path: ABS, old_string: 'a', new_string: 'b' })
+    await pre('Write', { file_path: 'src/a.ts', content: 'x' }, 'toolu_2')
+    await pre('MultiEdit', { file_path: ABS, edits: [] }, 'toolu_3')
+    await pre('NotebookEdit', { notebook_path: ABS, new_source: '' }, 'toolu_4')
+    const msg = (toolUseId: string) => ({ v: 1, type: 'edit_before', tabId: TAB, sessionId: SID, toolUseId, path: ABS })
+    expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', msg('toolu_1'))
+    expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', msg('toolu_2'))
+    expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', msg('toolu_3'))
+    expect(send).toHaveBeenNthCalledWith(4, '\\\\.\\pipe\\x', msg('toolu_4'))
+  })
+
+  it('ignores PreToolUse of other tools and edits without a path or a tool use id', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 't' }), ENV, send)
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: {}, tool_use_id: 't' }), ENV, send)
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: ABS } }), ENV, send)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('puts the subagent id on a permission prompt from a subagent', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PermissionRequest', tool_name: 'Bash', agent_id: AGENT }), ENV, send)
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'permission', agentId: AGENT })
+  })
+})

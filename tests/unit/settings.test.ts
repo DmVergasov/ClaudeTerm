@@ -212,3 +212,17 @@ describe('applySettingEdit', () => {
     expect(JSON.parse(edit('{"attention":{"sound":"none"}}', 'autoUpdate', false))).toEqual({ attention: { sound: 'none' }, autoUpdate: false })
   })
 })
+
+describe('review settings', () => {
+  it('defaults: no editor, the counter on, 640 px, ignored files hidden', () => {
+    expect(parseSettings('{}').settings.review).toEqual({ editor: null, statusBar: true, hideIgnored: true, width: 640 })
+  })
+
+  it('takes valid values and reports invalid ones', () => {
+    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, width: 900 } })).settings.review)
+      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, width: 900 })
+    const bad = parseSettings(JSON.stringify({ review: { editor: 5, hideIgnored: 'yes', width: 10 } }))
+    expect(bad.settings.review).toEqual({ editor: null, statusBar: true, hideIgnored: true, width: 640 })
+    expect(bad.errors).toEqual(['settings.json: invalid value for "review.editor", using default', 'settings.json: invalid value for "review.hideIgnored", using default', 'settings.json: invalid value for "review.width", using default'])
+  })
+})

@@ -25,7 +25,7 @@ Promise.resolve()
   .then((text) =>
     statusLine
       ? runStatusLine(text, process.env, (pipe, msg) => sendPipeMessage(pipe, msg, 1000))
-      : runSessionHook(text, process.env, (pipe, msg) => sendPipeMessage(pipe, msg, 2000))
+      : runSessionHook(text, process.env, (pipe, msg) => sendPipeMessage(pipe, msg, msg.type === 'edit_before' ? 8000 : 2000))
   )
   .catch(() => false)
   .finally(() => process.exit(0))

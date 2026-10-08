@@ -37,7 +37,13 @@ export function claudeTabSettingsJson(hookPath: string): string {
         // the moments Claude waits for the user. PermissionRequest fires as the dialog opens, while
         // Notification(permission_prompt) only comes after ~6 s without an answer
         PermissionRequest: hook,
-        PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [run] }],
+        // a turn starts: Last turn compares with the files as they were before it
+        UserPromptSubmit: hook,
+        PreToolUse: [
+          { matcher: 'AskUserQuestion', hooks: [run] },
+          // ClaudeTerm keeps each file as it was before Claude's first change in the turn and in the session
+          { matcher: 'Edit|MultiEdit|Write|NotebookEdit', hooks: [run] }
+        ],
         Stop: hook
       }
     },

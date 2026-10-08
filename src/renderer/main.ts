@@ -1,13 +1,16 @@
 import './styles.css'
 import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
+import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { Settings, TabInfo } from '../shared/types'
 import { ImagePanel } from './image-panel'
+import { SidePanel } from './side-panel'
 import { Lightbox } from './lightbox'
 import { RecentSessionsWindow } from './recent-sessions'
 import { imagePasteInput, mapKey, type KeyAction } from './keymap'
 import { SearchBar } from './search'
 import { showMenu, type MenuItem } from './menu'
 import { RestoreBanner } from './restore-banner'
+import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
 import { UpdateBanner } from './update-banner'
 import { TabBar } from './tabbar'
@@ -38,6 +41,13 @@ let toggleImagePanel = (): void => {}
 let restoreInfo: RestoreInfo | null = null
 let banner: RestoreBanner
 let imagePanel: ImagePanel
+let sidePanel: SidePanel
+let reviewPanel: ReviewPanel
+const reviewUpdates = new Map<string, ReviewUpdate>()
+/** tabs whose show_diff should open Changes when they come to the front */
+const pendingReveal = new Set<string>()
+/** what each tab was sent, in test runs: the e2e tests read what Send wrote */
+const inputLog = new Map<string, string>()
 let lightbox: Lightbox
 let sessionsWindow: RecentSessionsWindow
 const imageUpdates = new Map<string, ImagesUpdate>()
@@ -53,23 +63,63 @@ function renderTabs(): void {
     return t ? [{ id, title: titleOf(t), kind: t.info.kind, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited }] : []
   })
   tabBar.render(items, activeId)
-  if (imagePanel) refreshImageButton()
+  if (imagePanel) refreshPanelButtons()
   const active = activeId ? tabs.get(activeId) : undefined
   document.title = active ? `${titleOf(active)} — ClaudeTerm` : 'ClaudeTerm'
 }
 
-function refreshImageButton(): void {
-  tabBar.setImages(imagePanel.visible, activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0)
+/** the Images and Changes buttons in the tab bar: which panel is shown, the badges, Changes only for a Claude tab */
+function refreshPanelButtons(): void {
+  const unseen = activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0
+  tabBar.setImages(sidePanel.isShowing('images'), unseen)
+  const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
+  tabBar.setChanges(claude, sidePanel.isShowing('changes'), claude && activeId ? reviewUpdates.get(activeId)?.unviewed ?? 0 : 0)
+}
+
+function logInput(tabId: string, data: string): void {
+  if (appInfo.test) inputLog.set(tabId, (inputLog.get(tabId) ?? '') + data)
 }
 
 function handleInput(tabId: string, data: string): void {
   const t = tabs.get(tabId)
   if (!t) return
+  logInput(tabId, data)
   if (t.info.exited) {
     if (data === '\r') ct.restartTab(tabId)
     return
   }
   ct.writePty(tabId, data)
+}
+
+/** the status bar counter for a tab, unless review.statusBar turned it off */
+function counterOf(tabId: string | null): ReviewCounter | null {
+  return tabId && settings.review.statusBar ? reviewUpdates.get(tabId)?.counter ?? null : null
+}
+
+/** why Send may not write into the tab now, or null */
+async function sendRefusal(tabId: string): Promise<string | null> {
+  const state = await ct.reviewCanSend(tabId)
+  if (!state.ok) return state.reason
+  const t = tabs.get(tabId)
+  return !t || t.info.exited ? NOT_RUNNING : null
+}
+
+/**
+ * Send: the same path as pasting text (bracketed when Claude Code asked for it), then Enter on its own. Everything is
+ * checked again before the Enter: a dialog may have opened or the session ended meanwhile (the text stays in the prompt).
+ * The Enter goes straight to the terminal: Enter in an exited tab would restart the session.
+ */
+async function sendToClaude(tabId: string, message: string): Promise<string | null> {
+  const before = await sendRefusal(tabId)
+  if (before !== null) return before
+  tabs.get(tabId)?.view.term.paste(message)
+  await new Promise((r) => setTimeout(r, 50))
+  const refusal = await sendRefusal(tabId)
+  if (refusal !== null) return refusal
+  logInput(tabId, '\r')
+  ct.writePty(tabId, '\r')
+  if (tabId === activeId) tabs.get(tabId)?.view.term.focus()
+  return null
 }
 
 function setFontSize(size: number): void {
@@ -118,6 +168,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'send': if (tabId) handleInput(tabId, a.data); break
     case 'find': searchBar.open(); break
     case 'toggleImages': toggleImagePanel(); break
+    case 'toggleChanges': if (t?.info.kind === 'claude') sidePanel.toggle('changes'); break
     case 'zoomIn': setFontSize(fontSize + 1); break
     case 'zoomOut': setFontSize(fontSize - 1); break
     case 'zoomReset': setFontSize(settings.font.size); break
@@ -190,7 +241,8 @@ function addTab(info: TabInfo): void {
 
 function activate(tabId: string): void {
   activeId = tabId
-  const focus = !(document.activeElement instanceof HTMLInputElement)
+  const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
+  const focus = !busy
   for (const [id, t] of tabs) t.view.show(id === tabId, focus)
   const t = tabs.get(tabId)
   if (t) {
@@ -198,8 +250,13 @@ function activate(tabId: string): void {
     t.attention = false
   }
   renderTabs()
+  const claude = t?.info.kind === 'claude'
+  reviewPanel.show(claude ? reviewUpdates.get(tabId) ?? null : null)
+  // the images first: setAvailable can switch a shown Changes panel to Images and fire onChange, which must find this tab's images
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
-  statusBar.render(statusUpdates.get(tabId) ?? null)
+  sidePanel.setAvailable('changes', claude)
+  if (pendingReveal.delete(tabId)) sidePanel.open('changes')
+  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId))
 }
 
 function newTabMenu(anchor: HTMLElement): void {
@@ -242,6 +299,7 @@ function applySettings(s: Settings): void {
     const theme = resolveTheme(s.theme)
     for (const t of tabs.values()) t.view.setTheme(theme)
   }
+  if (activeId) statusBar.render(statusUpdates.get(activeId) ?? null, counterOf(activeId))
 }
 
 async function boot(): Promise<void> {
@@ -259,6 +317,10 @@ async function boot(): Promise<void> {
     toggleImages: () => {
       runAction({ type: 'toggleImages' }, activeId)
       if (activeId) tabs.get(activeId)?.view.term.focus()
+    },
+    toggleChanges: () => {
+      runAction({ type: 'toggleChanges' }, activeId)
+      if (activeId) tabs.get(activeId)?.view.term.focus()
     }
   })
   searchBar = new SearchBar(
@@ -268,7 +330,7 @@ async function boot(): Promise<void> {
   )
   document.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement | null
-    if (target?.closest('.xterm') || target?.tagName === 'INPUT') return
+    if (target?.closest('.xterm') || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return
     const a = mapKey(e)
     if (!a || a.type === 'send' || a.type === 'copyOrInterrupt' || a.type === 'smartPaste' || a.type === 'paste' || a.type === 'copy') return
     e.preventDefault()
@@ -283,13 +345,13 @@ async function boot(): Promise<void> {
     open: (id) => ct.openSession(id),
     closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
   })
-  statusBar = new StatusBar(document.getElementById('statusbar')!)
+  statusBar = new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'))
   updateBanner = new UpdateBanner(document.getElementById('update-banner')!, () => ct.installUpdate())
   ct.onUpdate((s) => updateBanner.update(s))
   void ct.getUpdateState().then((s) => updateBanner.update(s))
   ct.onStatus((u) => {
     statusUpdates.set(u.tabId, u)
-    if (u.tabId === activeId) statusBar.render(u)
+    if (u.tabId === activeId) statusBar.render(u, counterOf(u.tabId))
   })
   ct.onAttention((tabId, reason) => {
     const t = tabs.get(tabId)
@@ -298,8 +360,10 @@ async function boot(): Promise<void> {
     else t.attention = true
     renderTabs()
   })
+  sidePanel = new SidePanel(document.getElementById('image-panel')!, { images: settings.imagePanel.width, changes: settings.review.width })
   imagePanel = new ImagePanel(
-    document.getElementById('image-panel')!,
+    sidePanel.bodies.images,
+    sidePanel,
     {
       action: (id, action) => ct.imageAction(id, action),
       insertPath: (p) => {
@@ -310,12 +374,39 @@ async function boot(): Promise<void> {
       open: (cards, index) => lightbox.open(cards, index),
       markSeen: (tabId) => ct.markImagesSeen(tabId)
     },
-    settings.imagePanel.width,
     () => settings.imagePanel.autoOpen
   )
   toggleImagePanel = () => imagePanel.toggle()
-  imagePanel.onVisibilityChange = refreshImageButton
-  refreshImageButton()
+  reviewPanel = new ReviewPanel(
+    sidePanel.bodies.changes,
+    sidePanel,
+    {
+      setScope: (id, scope) => ct.setReviewScope(id, scope),
+      clearRequest: (id) => ct.clearReviewRequest(id),
+      refresh: (id) => ct.refreshReview(id),
+      setViewed: (id, path, hash, viewed) => ct.setReviewViewed(id, path, hash, viewed),
+      showFile: (id, path) => ct.showReviewFile(id, path),
+      openEditor: (id, path, line) => ct.openInEditor(id, path, line),
+      copyText: (text) => ct.writeClipboardText(text),
+      send: (id, message) => sendToClaude(id, message)
+    },
+    ct.platform
+  )
+  sidePanel.onChange = () => {
+    imagePanel.panelChanged()
+    reviewPanel.panelChanged()
+    refreshPanelButtons()
+  }
+  ct.onReview((u) => {
+    reviewUpdates.set(u.tabId, u)
+    if (u.reveal) pendingReveal.add(u.tabId)
+    if (u.tabId !== activeId) return
+    reviewPanel.show(u)
+    refreshPanelButtons()
+    if (pendingReveal.delete(u.tabId)) sidePanel.open('changes')
+    statusBar.render(statusUpdates.get(u.tabId) ?? null, counterOf(u.tabId))
+  })
+  refreshPanelButtons()
   ct.onImages((u) => {
     imageUpdates.set(u.tabId, u)
     const t = tabs.get(u.tabId)
@@ -324,7 +415,7 @@ async function boot(): Promise<void> {
       renderTabs()
     }
     if (u.tabId === activeId) imagePanel.show(u)
-    refreshImageButton()
+    refreshPanelButtons()
   })
   ct.onTabOpened(addTab)
   ct.onTabUpdated((info) => {
@@ -340,6 +431,10 @@ async function boot(): Promise<void> {
     tabs.delete(id)
     imageUpdates.delete(id)
     statusUpdates.delete(id)
+    reviewUpdates.delete(id)
+    reviewPanel.dropTab(id)
+    pendingReveal.delete(id)
+    inputLog.delete(id)
     order = order.filter((x) => x !== id)
     if (activeId === id) {
       activeId = null
@@ -368,6 +463,7 @@ async function boot(): Promise<void> {
   ct.onSettings(applySettings)
   window.addEventListener('focus', () => {
     if (sessionsWindow.isOpen) return
+    if (document.activeElement?.closest('#image-panel')) return
     const t = activeId ? tabs.get(activeId) : undefined
     t?.view.term.focus()
   })
@@ -388,6 +484,7 @@ async function boot(): Promise<void> {
         const t = tabs.get(id)
         return t ? titleOf(t) : null
       },
+      ptyInput: (id) => inputLog.get(id ?? activeId ?? '') ?? '',
       bufferText: (id) => tabs.get(id ?? activeId ?? '')?.view.bufferText() ?? '',
       themeBackground: () => (activeId ? tabs.get(activeId)?.view.term.options.theme?.background ?? null : null)
     }

@@ -12,6 +12,7 @@ export type KeyAction =
   | { type: 'send'; data: string }
   | { type: 'find' }
   | { type: 'toggleImages' }
+  | { type: 'toggleChanges' }
   | { type: 'zoomIn' }
   | { type: 'zoomOut' }
   | { type: 'zoomReset' }
@@ -46,6 +47,7 @@ export function mapKey(e: KeyLike): KeyAction | null {
       case 'KeyV': return { type: 'paste' }
       case 'KeyF': return { type: 'find' }
       case 'KeyI': return { type: 'toggleImages' }
+      case 'KeyD': return { type: 'toggleChanges' }
       case 'KeyH': return { type: 'recentSessions' }
       case 'Tab': return { type: 'prevTab' }
     }

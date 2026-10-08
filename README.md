@@ -34,6 +34,8 @@
 <p align="center">
   <img src="docs/images/demo.gif" alt="ClaudeTerm: Open Claude Code here from Explorer, charts appearing in the image panel, subagents in the status bar, the full-size viewer, a tab waiting for permission and recent sessions">
   <br>
+  <img src="docs/images/review.gif" alt="The Changes panel: Claude edits two files, a comment on a changed line goes to Claude with Send to Claude, and the diff updates as Claude fixes it">
+  <br>
   <sub>Screenshots use demo data.</sub>
 </p>
 
@@ -62,6 +64,18 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 ### 🔔 Know when Claude is waiting for you
 
 When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
+
+### 🔍 Review Claude's changes next to the conversation
+
+Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −) in the tab bar or the changes counter in the status bar — to open **Changes** beside a Claude tab:
+
+- **Uncommitted** — everything not committed yet, untracked files included. **Last turn** — what Claude changed in its latest turn with edits. **Session** — everything it changed in this conversation. Last turn and Session show the files inside the tab's folder (Claude's edits elsewhere are counted, not shown) and work without git too: ClaudeTerm keeps each file as it was right before Claude's first change.
+- **Comment on lines** — hover a line and click **+**, or drag along the margin for several lines. **Send to Claude** writes all your comments as one message — file, line and the quoted code — and sends it. The diff updates while Claude works on them.
+- **Viewed** folds the files you are done with; a file Claude changes again unfolds.
+- **Ask in words** — "show me the diff of the last three commits, only src/main": Claude opens it in the panel with the bundled `show_diff` tool.
+- Right-click a line to open the file at that line in your editor (VS Code by default, or your own command in `review.editor`).
+
+<p align="center"><img src="docs/images/review-panel.png" width="820" alt="The Changes panel: the uncommitted diff of two files beside the conversation, with a comment for Claude under a changed line"></p>
 
 ### 🗂️ A real terminal, with tabs
 
@@ -96,7 +110,7 @@ Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the
 
 From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — check for updates** to check right away.
 
-On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image` tool) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux, remove the registration yourself after `sudo apt remove claudeterm`: `claude mcp remove --scope user claudeterm`.
+On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image` and `show_diff` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux, remove the registration yourself after `sudo apt remove claudeterm`: `claude mcp remove --scope user claudeterm`.
 
 **Requirements:** Windows 10 or 11 (x64), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code.
 
@@ -115,6 +129,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | New line in the Claude prompt | `Shift+Enter` |
 | Find in scrollback | `Ctrl+Shift+F` |
 | Show / hide the image panel | `Ctrl+Shift+I` |
+| Show / hide the Changes panel | `Ctrl+Shift+D` |
 | Recent sessions | `Ctrl+Shift+H` |
 | Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Open settings | `Ctrl+,` |
@@ -129,7 +144,7 @@ Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notific
 
 ![Settings window](docs/images/settings.png)
 
-Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeTerm/settings.json` on Linux). Profiles, image types, ignored folders, a custom theme and the image panel size are set only there — the window's **Open settings.json** button opens it, and changes to the file apply as soon as you save it. When the window saves a change, it rewrites the file as plain JSON with two-space indentation.
+Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeTerm/settings.json` on Linux). Profiles, image types, ignored folders, a custom theme and the image and Changes panel widths are set only there — the window's **Open settings.json** button opens it, and changes to the file apply as soon as you save it. When the window saves a change, it rewrites the file as plain JSON with two-space indentation.
 
 ```jsonc
 {
@@ -158,6 +173,12 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeT
     "done":       { "sound": true,  "flash": true, "tab": true },   // Claude finished its turn
     "bell":       { "sound": false, "flash": true, "tab": true }    // a terminal bell (BEL) from any program
   },                               // flash: the taskbar button; tab: highlight the tab (a dot for the bell)
+  "review": {                      // the Changes panel
+    "editor": null,                // e.g. "code --goto {file}:{line}" or "rider64 --line {line} {file}"; null = VS Code if installed, else the file is shown in its folder
+    "statusBar": true,             // the changes counter in the status bar
+    "hideIgnored": true,           // hide files git ignores in Last turn and Session
+    "width": 640                   // the panel's width when it opens, in px
+  },
   "autoUpdate": true               // check GitHub for new versions in the background
 }
 ```
@@ -166,8 +187,9 @@ Logs are in `%APPDATA%\ClaudeTerm\logs` (`~/.config/ClaudeTerm/logs` on Linux).
 
 ### Good to know
 
-- Claude tabs start `claude` with `--settings` pointing at a file ClaudeTerm generates. It adds `SessionStart`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `PermissionRequest`, `PreToolUse` (only for `AskUserQuestion`) and `Stop` hooks and a `statusLine` command — that is how session restore, the image panel, the status bar and the waiting signal know what is going on. These hooks never print anything, so they don't change what Claude does. Inside ClaudeTerm's Claude tabs this replaces a custom `statusLine` from your own Claude Code settings, and Claude Code hides its footer key hints.
+- Claude tabs start `claude` with `--settings` pointing at a file ClaudeTerm generates. It adds `SessionStart`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `PermissionRequest`, `UserPromptSubmit`, `PreToolUse` (for `AskUserQuestion` and the edit tools `Edit`, `MultiEdit`, `Write`, `NotebookEdit`) and `Stop` hooks and a `statusLine` command — that is how session restore, the image panel, the Changes panel, the status bar and the waiting signal know what is going on. These hooks never print anything, so they don't change what Claude does. Inside ClaudeTerm's Claude tabs this replaces a custom `statusLine` from your own Claude Code settings, and Claude Code hides its footer key hints.
 - `claude` started by hand in a regular shell tab gets `show_image`, but not session restore, the transcript images or the status bar.
+- Before Claude edits a file, ClaudeTerm keeps a copy of it in `%APPDATA%\ClaudeTerm\review` (`~/.config/ClaudeTerm/review` on Linux), so Last turn and Session know the file before the edit; copies of a conversation untouched for a week are deleted.
 
 ## How it works
 

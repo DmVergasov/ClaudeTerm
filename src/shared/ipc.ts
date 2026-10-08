@@ -1,3 +1,4 @@
+import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
 import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, RecentSession, Settings, TabInfo, UpdateState } from './types'
 
@@ -34,6 +35,13 @@ export const IPC = {
   updateInstall: 'update:install',
   updateGet: 'update:get',
   openExternal: 'shell:open-external',
+  reviewSetScope: 'review:set-scope',
+  reviewClearRequest: 'review:clear-request',
+  reviewRefresh: 'review:refresh',
+  reviewSetViewed: 'review:set-viewed',
+  reviewShowFile: 'review:show-file',
+  reviewOpenEditor: 'review:open-editor',
+  reviewCanSend: 'review:can-send',
   evTabOpened: 'ev:tab-opened',
   evTabUpdated: 'ev:tab-updated',
   evTabClosed: 'ev:tab-closed',
@@ -49,7 +57,8 @@ export const IPC = {
   evRestore: 'ev:restore',
   evStatus: 'ev:status',
   evAttention: 'ev:attention',
-  evUpdate: 'ev:update'
+  evUpdate: 'ev:update',
+  evReview: 'ev:review'
 } as const
 
 export interface AppInfo {
@@ -147,6 +156,17 @@ export interface CtApi {
   getUpdateState(): Promise<UpdateState>
   openExternal(url: string): void
   pathForFile(file: File): string
+  setReviewScope(tabId: string, scope: ReviewScope): void
+  /** back from a show_diff request to the scope chosen before */
+  clearReviewRequest(tabId: string): void
+  refreshReview(tabId: string): void
+  setReviewViewed(tabId: string, path: string, hash: string, viewed: boolean): void
+  /** "show anyway" for a too large file */
+  showReviewFile(tabId: string, path: string): void
+  /** opens a file of that tab's Changes view in review.editor; main ignores a file the view does not show */
+  openInEditor(tabId: string, path: string, line: number): void
+  /** whether Send may write into the tab now */
+  reviewCanSend(tabId: string): Promise<ReviewSendState>
   onTabOpened(cb: (tab: TabInfo) => void): Unsubscribe
   onTabUpdated(cb: (tab: TabInfo) => void): Unsubscribe
   onTabClosed(cb: (tabId: string) => void): Unsubscribe
@@ -164,4 +184,5 @@ export interface CtApi {
   /** mark that tab: the bell dot for 'bell', the pulse for the Claude cases */
   onAttention(cb: (tabId: string, reason: NotificationCase) => void): Unsubscribe
   onUpdate(cb: (state: UpdateState) => void): Unsubscribe
+  onReview(cb: (update: ReviewUpdate) => void): Unsubscribe
 }

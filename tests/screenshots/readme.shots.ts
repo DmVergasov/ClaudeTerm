@@ -1,5 +1,6 @@
 // Generates the README screenshots in docs/images from demo data: `npm run screenshots`.
 import { expect, test, type Page } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -283,5 +284,91 @@ test('settings window screenshot', async () => {
   await expect.poll(() => win.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true)
   await win.mouse.move(630, 10)
   await win.screenshot({ path: join(OUT, 'settings.png') })
+  await app.close()
+})
+
+const REVENUE_BEFORE = `import { monthlyRevenue } from '../data/sales'
+
+export function revenueByMonth(year: number): number[] {
+  const rows = monthlyRevenue(year)
+  return rows.map((r) => r.total)
+}
+
+export function growth(current: number[], previous: number[]): number[] {
+  return current.map((v, i) => v / previous[i] - 1)
+}
+`
+const REVENUE_AFTER = `import { monthlyRevenue } from '../data/sales'
+
+export function revenueByMonth(year: number): number[] {
+  const rows = monthlyRevenue(year)
+  return rows.map((r) => Math.round(r.total / 1000))
+}
+
+export function growth(current: number[], previous: number[]): number[] {
+  return current.map((v, i) => (previous[i] ? v / previous[i] - 1 : 0))
+}
+`
+const YOY = `import { growth, revenueByMonth } from './revenue'
+
+export function yearOverYear(year: number): number[] {
+  return growth(revenueByMonth(year), revenueByMonth(year - 1))
+}
+`
+
+test('review panel screenshot', async () => {
+  test.setTimeout(120_000)
+  mkdirSync(OUT, { recursive: true })
+  const root = mkdtempSync(join(tmpdir(), 'ct-shots-review-'))
+  const project = join(root, 'acme-dashboard')
+  mkdirSync(join(project, 'src', 'charts'), { recursive: true })
+  copyFileSync(DEMO_CLAUDE, join(project, 'demo-claude.mjs'))
+  const git = (...a: string[]): void => { execFileSync('git', a, { cwd: project, stdio: 'ignore' }) }
+  git('init', '-q')
+  git('config', 'user.email', 'demo@example.com')
+  git('config', 'user.name', 'Demo')
+  git('config', 'core.autocrlf', 'false')
+  writeFileSync(join(project, '.gitignore'), 'demo-claude.mjs\n')
+  writeFileSync(join(project, 'src', 'charts', 'revenue.ts'), REVENUE_BEFORE)
+  git('add', '-A')
+  git('commit', '-qm', 'charts')
+  writeFileSync(join(project, 'src', 'charts', 'revenue.ts'), REVENUE_AFTER)
+  writeFileSync(join(project, 'src', 'charts', 'yoy.ts'), YOY)
+
+  // like the hero shot: a Claude config and a temp folder of its own, so nothing of the real machine shows
+  const temp = join(root, 'temp')
+  mkdirSync(temp)
+  const settings = { claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' }, defaultProfile: 'Windows PowerShell' }
+  const { app, page, pipeName } = await launchApp({
+    settings, args: ['--claude', project], env: { CLAUDE_CONFIG_DIR: join(root, 'claude-config'), TEMP: temp, TMP: temp }
+  })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false })
+  await expect.poll(() => bufferText(page, tabId), { timeout: 20_000 }).toContain('North America leads Q3')
+
+  const projects = join(root, 'claude-projects', 'D--work-acme-dashboard')
+  mkdirSync(projects, { recursive: true })
+  const transcriptPath = join(projects, `${SID}.jsonl`)
+  writeFileSync(transcriptPath, '')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, {
+    v: 1, type: 'status', tabId, sessionId: SID, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'high',
+    context: { usedTokens: 54_210, size: 200_000, usedPct: 27.1 }, fiveHour: { usedPct: 18.2, resetsAt: Math.floor(Date.now() / 1000) + 3 * 3600 }, sevenDay: null
+  })).toEqual({ ok: true })
+
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press('Control+Shift+KeyD')
+  const revenue = page.locator('.review-file[data-path="src/charts/revenue.ts"]')
+  await expect(revenue.locator('.review-line.add')).toHaveCount(2)
+  const row = revenue.locator('.review-line.add').first()
+  await row.hover()
+  await row.locator('.review-plus').click()
+  await page.locator('.review-comment-input').fill('Keep the raw totals here and round only in the chart labels — the CSV export reads this too.')
+  await page.locator('.review-btn.primary').click()
+  await expect(page.locator('.review-count')).toHaveText('1 comment')
+  await page.mouse.move(300, 300)
+  await page.screenshot({ path: join(OUT, 'review-panel.png') })
   await app.close()
 })

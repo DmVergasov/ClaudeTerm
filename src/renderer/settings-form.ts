@@ -26,6 +26,12 @@ export function checkText(text: string): Checked<string> {
   return v === '' ? { ok: false, error: 'Cannot be empty' } : { ok: true, value: v }
 }
 
+/** text that may be left empty: empty means null (the automatic choice) */
+export function checkOptionalText(text: string): Checked<string | null> {
+  const v = text.trim()
+  return { ok: true, value: v === '' ? null : v }
+}
+
 const plain = (names: string[]): Option[] => names.map((n) => ({ value: n, label: n }))
 
 export function themeOptions(theme: Settings['theme']): { options: Option[]; selected: string } {

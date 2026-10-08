@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
-import { assistantLine, PNG_B64, pastedLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
+import { assistantLine, editResultLine, interruptLine, PNG_B64, pastedLine, promptLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -94,6 +94,36 @@ describe('TranscriptFeed resilience', () => {
 })
 
 describe('TranscriptFeed', () => {
+  it('reports turn starts, edits and assistant entries, subagents included', async () => {
+    const { projectDir, transcriptPath, cacheRoot } = setup()
+    writeFileSync(transcriptPath, [promptLine('go', { uuid: 'p1' }), editResultLine({ toolUseId: 't1', filePath: '/p/a.ts' }), assistantLine('claude-opus-5-5')].join('\n') + '\n')
+    const subagents = join(projectDir, SID, 'subagents')
+    mkdirSync(subagents, { recursive: true })
+    writeFileSync(join(subagents, 'agent-a1.jsonl'), [editResultLine({ toolUseId: 't2', filePath: '/p/b.ts' }), assistantLine('claude-opus-5-5')].join('\n') + '\n')
+    const events: string[] = []
+    const feed = new TranscriptFeed({
+      transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {},
+      onEditEvent: (ev) => events.push(ev.kind === 'prompt' ? 'prompt' : `edit:${ev.toolUseId}`),
+      onAssistant: (agentId) => events.push(`assistant:${agentId ?? 'main'}`)
+    })
+    feed.scanSubagents()
+    await feed.poll()
+    expect(events).toEqual(['prompt', 'edit:t1', 'assistant:main', 'edit:t2', 'assistant:a1'])
+  })
+
+  it('reports a turn the user interrupted, in the main transcript and in a subagent\'s', async () => {
+    const { projectDir, transcriptPath, cacheRoot } = setup()
+    writeFileSync(transcriptPath, [promptLine('go', { uuid: 'p1' }), interruptLine({ forToolUse: true, timestamp: '2026-10-08T10:00:07.000Z' })].join('\n') + '\n')
+    const subagents = join(projectDir, SID, 'subagents')
+    mkdirSync(subagents, { recursive: true })
+    writeFileSync(join(subagents, 'agent-a1.jsonl'), interruptLine({ timestamp: '2026-10-08T10:00:09.000Z' }) + '\n')
+    const events: [string | null, number][] = []
+    const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, onInterrupt: (agentId, at) => events.push([agentId, at]) })
+    feed.scanSubagents()
+    await feed.poll()
+    expect(events).toEqual([[null, Date.parse('2026-10-08T10:00:07.000Z')], ['a1', Date.parse('2026-10-08T10:00:09.000Z')]])
+  })
+
   it('reads history from the start and caches tool screenshots', async () => {
     const { transcriptPath, cacheRoot, images, feed } = setup()
     writeFileSync(transcriptPath, [textLine, toolUseLine('toolu_s1', 'mcp__claude-in-chrome__computer', { action: 'screenshot' }), toolResultLine('toolu_s1', { mirror: true }), ''].join('\n'))

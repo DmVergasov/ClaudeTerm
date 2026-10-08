@@ -13,7 +13,12 @@ import { autoUpdater } from 'electron-updater'
 import { writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isId, isIdList, isImageAction, isOptionalTitle, isPtyData, isPtySize, isUserInput } from './ipc-guards'
+import { isAbsPath, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPtyData, isPtySize, isReviewScope, isUserInput } from './ipc-guards'
+import { NOT_RUNNING } from '../shared/review'
+import { EditLedger } from './edit-ledger'
+import { launchEditor, spawnDetached } from './editor-launch'
+import { ReviewHub } from './review-hub'
+import { createSources, nodeIo } from './review-sources'
 import { checkImageFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
 import { ImageHub } from './image-hub'
 import { claudeTempRoot, sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
@@ -192,8 +197,21 @@ function bootstrap(): void {
     return handle
   }
 
+  const reviewRoot = join(dataDir, 'review')
+  // Claude's edits of sessions untouched for a week go, like the image cache
+  cleanupImageCache(reviewRoot, 7 * 24 * 60 * 60 * 1000)
+  const review = new ReviewHub({
+    sources: createSources(nodeIo),
+    ledgerFor: (sessionId) => new EditLedger({ dir: join(reviewRoot, sessionId), now: () => Date.now(), onError: (m) => log.warn(m) }),
+    activeTabId: () => tabs.activeTabId(),
+    publish: (u) => send(IPC.evReview, u),
+    onError: (m) => log.warn(m),
+    hideIgnored: () => settings.review.hideIgnored
+  })
+
   const startTabImages = (tab: TabInfo): void => {
     images.addTab(tab.id, tab.cwd)
+    review.addTab(tab.id, tab.cwd, tab.kind === 'claude')
     sources.set(tab.id, { tempWatcher: null, feed: null, transcriptPath: null })
   }
 
@@ -225,7 +243,10 @@ function bootstrap(): void {
       locate: () => findTranscript(transcriptPath, sessionId),
       onImage: (img) => images.add(tabId, img.path, img.source, img.caption, img.at ?? undefined),
       onError: (m) => log.warn(m),
-      onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info)
+      onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info),
+      onEditEvent: (ev) => review.transcriptEvent(tabId, ev),
+      onAssistant: (agentId, at) => review.assistantEntry(tabId, agentId, at),
+      onInterrupt: (agentId, at) => review.interrupted(tabId, agentId, at)
     })
     // images there, also ones Claude reads, are shown by their path inside it (scratchpad\plot.png)
     const temp = sessionTempDir(transcriptPath, sessionId, claudeRoot)
@@ -256,6 +277,7 @@ function bootstrap(): void {
       stopTabImages(tabId)
       stopTabStatus(tabId)
       attention.removeTab(tabId)
+      review.removeTab(tabId)
     },
     spawn: spawnPty,
     pipeName,
@@ -282,7 +304,7 @@ function bootstrap(): void {
       opened: (t) => send(IPC.evTabOpened, t),
       updated: (t) => send(IPC.evTabUpdated, t),
       closed: (id) => send(IPC.evTabClosed, id),
-      activated: (id) => send(IPC.evTabActivated, id),
+      activated: (id) => { send(IPC.evTabActivated, id); review.activated(id) },
       order: (ids) => send(IPC.evTabsOrder, ids),
       data: (id, d) => send(IPC.evPtyData, id, d),
       exit: (id, code) => send(IPC.evPtyExit, id, code),
@@ -401,6 +423,8 @@ function bootstrap(): void {
       log.info(`session ${msg.source} tab=${msg.tabId} id=${msg.sessionId} transcript=${msg.transcriptPath ?? '-'}`)
       if (!tabs.setClaudeSession(msg.tabId, msg.sessionId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
+      // compact keeps the open dialogs: the conversation goes on
+      review.sessionStarted(msg.tabId, msg.sessionId, msg.source)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
       return { ok: true }
     },
@@ -413,20 +437,39 @@ function bootstrap(): void {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       log.info(`subagent ${msg.event} tab=${msg.tabId} id=${msg.agentId} type=${msg.agentType}`)
       statusHub.subagent(msg)
+      // an interrupted subagent never writes again: its end closes a dialog it left open
+      if (msg.event === 'stop') review.subagentStopped(msg.tabId, msg.agentId)
       return { ok: true }
     },
     sessionEnd: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       log.info(`session end tab=${msg.tabId} id=${msg.sessionId}`)
       statusHub.sessionEnd(msg.tabId, msg.sessionId)
+      // a late SessionEnd of the session before /clear leaves the new one running
+      review.sessionEnded(msg.tabId, msg.sessionId)
       return { ok: true }
     },
     attention: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
+      if (msg.reason === 'done') review.turnEnded(msg.tabId)
+      else review.dialogOpened(msg.tabId, msg.agentId ?? null)
       const signalled = attention.notify(msg.tabId, msg.reason)
       log.info(`attention ${msg.reason} tab=${msg.tabId}${signalled ? '' : ' (seen)'}`)
       return { ok: true }
-    }
+    },
+    turn: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      review.turn(msg.tabId, msg.sessionId, msg.cwd)
+      return { ok: true }
+    },
+    editBefore: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      // the reply lets the edit go ahead: the file is read before it
+      review.recordBefore(msg.tabId, msg.sessionId, msg.toolUseId, msg.path)
+      return { ok: true }
+    },
+    showDiff: (msg) => review.showRequest(msg.tabId, { cwd: msg.cwd, scope: msg.scope, from: msg.from, to: msg.to, paths: msg.paths, title: msg.title })
   })
     .then((h) => { pipe = h })
     .catch((e: unknown) => log.error(`pipe server failed: ${String(e)}`))
@@ -486,6 +529,19 @@ function bootstrap(): void {
     if (isId(id) && isPtySize(cols, rows)) tabs.resize(id, cols as number, rows as number)
   })
   ipcMain.handle(IPC.imagesList, (_e, tabId: unknown): ImagesUpdate => (isId(tabId) ? imagesUpdate(tabId) : { tabId: '', cards: [], unseen: 0, notice: null }))
+  ipcMain.on(IPC.reviewSetScope, (_e, tabId: unknown, scope: unknown) => { if (isId(tabId) && isReviewScope(scope)) review.setScope(tabId, scope) })
+  ipcMain.on(IPC.reviewClearRequest, (_e, tabId: unknown) => { if (isId(tabId)) review.clearRequest(tabId) })
+  ipcMain.on(IPC.reviewRefresh, (_e, tabId: unknown) => { if (isId(tabId)) review.refresh(tabId) })
+  ipcMain.on(IPC.reviewSetViewed, (_e, tabId: unknown, path: unknown, hash: unknown, viewed: unknown) => {
+    if (isId(tabId) && isAbsPath(path) && isHash(hash) && typeof viewed === 'boolean') review.setViewed(tabId, path, hash, viewed)
+  })
+  ipcMain.on(IPC.reviewShowFile, (_e, tabId: unknown, path: unknown) => { if (isId(tabId) && isAbsPath(path)) review.showFile(tabId, path) })
+  // only a file the tab's view shows; without an editor the file is shown in its folder, never opened: that could run it
+  ipcMain.on(IPC.reviewOpenEditor, (_e, tabId: unknown, path: unknown, line: unknown) => {
+    if (!isId(tabId) || !isAbsPath(path) || !isLineNo(line) || !review.hasFile(tabId, path)) return
+    launchEditor(settings.review.editor, path, line, { spawn: spawnDetached, reveal: (p) => shell.showItemInFolder(p), onError: toast })
+  })
+  ipcMain.handle(IPC.reviewCanSend, (_e, tabId: unknown) => (isId(tabId) ? review.canSend(tabId) : { ok: false, reason: NOT_RUNNING }))
   ipcMain.on(IPC.imagesMarkSeen, (_e, tabId: unknown) => { if (isId(tabId)) images.markSeen(tabId) })
   ipcMain.on(IPC.imagesAction, (_e, cardId: unknown, action: unknown) => {
     if (!isId(cardId) || !isImageAction(action)) return
@@ -592,11 +648,15 @@ function bootstrap(): void {
     let notices = next.errors
     // a file that cannot be read keeps the current settings
     if (!next.failed) {
+      const hideIgnored = settings.review.hideIgnored
       settings = next.settings
       const computed = computeProfiles(settings)
       profiles = computed.profiles
       notices = [...notices, ...computed.notices]
       send(IPC.evSettings, settings)
+      // the active tab's Last turn and Session views list other files now
+      const active = tabs.activeTabId()
+      if (hideIgnored !== settings.review.hideIgnored && active) review.refresh(active)
     }
     for (const n of notices) if (!lastNotices.includes(n)) toast(n)
     lastNotices = notices
@@ -637,7 +697,11 @@ function bootstrap(): void {
   trackWindowState(win, windowStatePath)
   win.on('close', () => sessions.flush())
   win.once('ready-to-show', () => win?.show())
-  win.on('focus', () => win?.flashFrame(false))
+  win.on('focus', () => {
+    win?.flashFrame(false)
+    const id = tabs.activeTabId()
+    if (id) review.trigger(id)
+  })
   win.on('closed', () => { win = null })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
@@ -657,6 +721,7 @@ function bootstrap(): void {
     for (const t of imageTimers.values()) clearTimeout(t)
     imageTimers.clear()
     tabs.disposeAll()
+    review.dispose()
     settingsWatcher.close()
     void pipe?.close()
     // Quitting while ConPTY sessions are still shutting down keeps the process alive for seconds after the

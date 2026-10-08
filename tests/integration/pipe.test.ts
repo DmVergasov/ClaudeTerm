@@ -15,7 +15,10 @@ const okHandlers: PipeHandlers = {
   status: () => ({ ok: true }),
   subagent: () => ({ ok: true }),
   sessionEnd: () => ({ ok: true }),
-  attention: () => ({ ok: true })
+  attention: () => ({ ok: true }),
+  turn: () => ({ ok: true }),
+  editBefore: () => ({ ok: true }),
+  showDiff: async () => ({ ok: true })
 }
 
 let server: PipeServerHandle | null = null
@@ -137,5 +140,21 @@ describe('pipe server + client', () => {
     const lines = await collectUntilClose(pipe, ['a'.repeat(70 * 1024) + '\n' + valid + valid], 80)
     expect(lines.map((l) => JSON.parse(l))).toEqual([{ ok: false, error: 'message too large' }])
     expect(calls).toBe(0)
+  })
+
+  it('routes edit_before and passes show_diff replies through, info included', async () => {
+    const pipe = newPipe()
+    const FILE = WIN ? 'C:\\x\\a.ts' : '/x/a.ts'
+    const got: string[] = []
+    server = await startPipeServer(pipe, {
+      ...okHandlers,
+      editBefore: (m) => { got.push(m.path); return { ok: true } },
+      showDiff: async () => ({ ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' })
+    })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'edit_before', tabId: TAB, sessionId: SID, toolUseId: 'toolu_1', path: FILE })).toEqual({ ok: true })
+    expect(got).toEqual([FILE])
+    const cwd = WIN ? 'C:\\x' : '/x'
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'show_diff', tabId: TAB, cwd, scope: null, from: null, to: null, paths: [], title: null }))
+      .toEqual({ ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' })
   })
 })

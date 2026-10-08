@@ -1,4 +1,6 @@
+import { isAbsolute } from 'node:path'
 import type { ImageAction } from '../shared/ipc'
+import { REVIEW_SCOPES, type ReviewScope } from '../shared/review'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
@@ -14,6 +16,14 @@ export const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.eve
 const IMAGE_ACTIONS: readonly string[] = ['open', 'reveal', 'copy-image', 'copy-path', 'remove']
 
 export const isImageAction = (v: unknown): v is ImageAction => typeof v === 'string' && IMAGE_ACTIONS.includes(v)
+
+export const isReviewScope = (v: unknown): v is ReviewScope => typeof v === 'string' && (REVIEW_SCOPES as readonly string[]).includes(v)
+
+export const isAbsPath = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && isAbsolute(v)
+
+export const isLineNo = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10_000_000
+
+export const isHash = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64
 
 export function isPtySize(cols: unknown, rows: unknown): boolean {
   return (

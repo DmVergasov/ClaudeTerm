@@ -24,6 +24,7 @@ export interface TabBarCallbacks {
   openMenu(anchor: HTMLElement): void
   tabMenu(id: string, at: { x: number; y: number }): void
   toggleImages(): void
+  toggleChanges(): void
 }
 
 function button(text: string, cls: string, title: string, onClick: (e: MouseEvent) => void): HTMLButtonElement {
@@ -42,9 +43,24 @@ export class TabBar {
   private activeId: string | null = null
   private imagesVisible = false
   private imagesUnseen = 0
-  private imagesButton: HTMLButtonElement | null = null
+  private readonly imagesButton: HTMLButtonElement
+  private changesAvailable = false
+  private changesVisible = false
+  private changesUnviewed = 0
+  private readonly changesButton: HTMLButtonElement
+  private list = document.createElement('div')
 
-  constructor(private readonly root: HTMLElement, private readonly cb: TabBarCallbacks) {}
+  /** the buttons are built once: a re-render (a busy Claude retitles its tab every second) must not drop a click or a tooltip */
+  constructor(root: HTMLElement, private readonly cb: TabBarCallbacks) {
+    this.list.className = 'tabs'
+    const plus = button('+', 'tab-new', 'New tab (Ctrl+Shift+T)', () => this.cb.newTab())
+    const more = button('▾', 'tab-menu', 'Profiles', (e) => this.cb.openMenu(e.currentTarget as HTMLElement))
+    this.imagesButton = this.createImagesButton()
+    this.changesButton = this.createChangesButton()
+    this.updateImagesButton()
+    this.updateChangesButton()
+    root.replaceChildren(this.list, plus, more, this.changesButton, this.imagesButton)
+  }
 
   render(items: TabBarItem[], activeId: string | null): void {
     this.items = items
@@ -53,11 +69,16 @@ export class TabBar {
     const list = document.createElement('div')
     list.className = 'tabs'
     for (const item of items) list.append(this.renderTab(item, item.id === activeId))
-    const plus = button('+', 'tab-new', 'New tab (Ctrl+Shift+T)', () => this.cb.newTab())
-    const more = button('▾', 'tab-menu', 'Profiles', (e) => this.cb.openMenu(e.currentTarget as HTMLElement))
-    this.imagesButton = this.createImagesButton()
-    this.updateImagesButton()
-    this.root.replaceChildren(list, plus, more, this.imagesButton)
+    this.list.replaceWith(list)
+    this.list = list
+  }
+
+  /** the Changes button exists only for Claude tabs; it shows the files not yet viewed */
+  setChanges(available: boolean, visible: boolean, unviewed: number): void {
+    this.changesAvailable = available
+    this.changesVisible = visible
+    this.changesUnviewed = unviewed
+    this.updateChangesButton()
   }
 
   setImages(visible: boolean, unseen: number): void {
@@ -67,26 +88,47 @@ export class TabBar {
   }
 
   private createImagesButton(): HTMLButtonElement {
+    return this.createToggle('tab-images-toggle', 'Images (Ctrl+Shift+I)', () => this.cb.toggleImages(),
+      '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="1.65" y="2.65" width="12.7" height="10.7" rx="1.5"/><circle cx="5.3" cy="6.2" r="1.1"/><path d="M2 12l3.7-3.7 2.6 2.6 2-2L14 12.5"/></svg>')
+  }
+
+  private createChangesButton(): HTMLButtonElement {
+    return this.createToggle('tab-changes-toggle', 'Changes (Ctrl+Shift+D)', () => this.cb.toggleChanges(),
+      '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M3.65 1.65h6.2l2.5 2.5v10.2h-8.7z"/><path d="M5.5 6.5h4M7.5 4.5v4"/><path d="M5.5 11.5h4"/></svg>')
+  }
+
+  private createToggle(cls: string, title: string, onClick: () => void, icon: string): HTMLButtonElement {
     const b = document.createElement('button')
-    b.className = 'tab-images-toggle'
-    b.title = 'Images (Ctrl+Shift+I)'
-    b.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
-      '<rect x="1.65" y="2.65" width="12.7" height="10.7" rx="1.5"/><circle cx="5.3" cy="6.2" r="1.1"/><path d="M2 12l3.7-3.7 2.6 2.6 2-2L14 12.5"/></svg>'
+    b.className = cls
+    b.title = title
+    b.innerHTML = icon
     const badge = document.createElement('span')
     badge.className = 'badge'
     b.append(badge)
-    b.addEventListener('click', () => this.cb.toggleImages())
+    b.addEventListener('click', onClick)
     return b
+  }
+
+  private updateChangesButton(): void {
+    const b = this.changesButton
+    b.hidden = !this.changesAvailable
+    b.classList.toggle('active', this.changesVisible)
+    this.setBadge(b, this.changesUnviewed)
+  }
+
+  private setBadge(b: HTMLElement, n: number): void {
+    const badge = b.querySelector<HTMLElement>('.badge')!
+    const text = formatBadge(n)
+    badge.textContent = text
+    badge.hidden = text === ''
   }
 
   private updateImagesButton(): void {
     const b = this.imagesButton
-    if (!b) return
     b.classList.toggle('active', this.imagesVisible)
-    const badge = b.querySelector<HTMLElement>('.badge')!
-    const text = formatBadge(this.imagesUnseen)
-    badge.textContent = text
-    badge.hidden = text === ''
+    this.setBadge(b, this.imagesUnseen)
   }
 
   private renderTab(item: TabBarItem, active: boolean): HTMLElement {

@@ -23,6 +23,11 @@ describe('mapKey', () => {
     expect(mapKey(k('KeyH', cs, 'Р'))).toEqual({ type: 'recentSessions' })
   })
 
+  it('maps Ctrl+Shift+D to the Changes panel, in any layout', () => {
+    expect(mapKey(k('KeyD', cs, 'D'))).toEqual({ type: 'toggleChanges' })
+    expect(mapKey(k('KeyD', cs, 'В'))).toEqual({ type: 'toggleChanges' })
+  })
+
   it('Shift+Enter sends ESC CR for a newline in the claude prompt', () => {
     expect(mapKey(k('Enter', { shiftKey: true }))).toEqual({ type: 'send', data: '\x1b\r' })
     expect(mapKey(k('NumpadEnter', { shiftKey: true }))).toEqual({ type: 'send', data: '\x1b\r' })

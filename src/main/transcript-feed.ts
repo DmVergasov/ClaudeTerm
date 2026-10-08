@@ -4,6 +4,7 @@ import { access, open, readdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { assistantInfo, type AgentModelInfo } from './transcript-agent-info'
+import { assistantTime, interruptTime, parseEditEvents, type TranscriptEditEvent } from './transcript-edits'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
 
 const CHUNK_BYTES = 4 * 1024 * 1024
@@ -120,6 +121,12 @@ export interface TranscriptFeedOptions {
   onError?(message: string): void
   /** model·effort of a subagent (from subagents/agent-<agentId>.jsonl), reported when it changes */
   onSubagentInfo?(agentId: string, info: AgentModelInfo): void
+  /** turn starts (main transcript) and file edits (all transcripts), for the Changes panel */
+  onEditEvent?(ev: TranscriptEditEvent): void
+  /** an assistant entry: null for the main conversation, else the subagent's id; `at` is its transcript timestamp (0 when it has none) */
+  onAssistant?(agentId: string | null, at: number): void
+  /** the user interrupted that agent's turn (Esc, a denied permission prompt); `agentId` and `at` as for onAssistant */
+  onInterrupt?(agentId: string | null, at: number): void
   /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
   locate?(): Promise<string | null>
   /** how often locate() may run while the transcript cannot be opened */
@@ -236,6 +243,7 @@ export class TranscriptFeed {
     for (const line of lines) {
       if (this.stopped) return
       this.reportInfo(src, line)
+      this.reportReview(src, line)
       try {
         for (const img of src.parser.parseLine(line)) {
           if (this.stopped) return
@@ -245,6 +253,18 @@ export class TranscriptFeed {
       } catch (e) {
         this.report(e)
       }
+    }
+  }
+
+  private reportReview(src: Source, line: string): void {
+    try {
+      if (this.o.onEditEvent) for (const ev of parseEditEvents(line, { main: src.agentId === null })) this.o.onEditEvent(ev)
+      const at = this.o.onAssistant ? assistantTime(line) : null
+      if (at !== null) this.o.onAssistant?.(src.agentId, at)
+      const stopped = this.o.onInterrupt ? interruptTime(line) : null
+      if (stopped !== null) this.o.onInterrupt?.(src.agentId, stopped)
+    } catch (e) {
+      this.report(e)
     }
   }
 

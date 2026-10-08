@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startPipeServer, type PipeServerHandle } from '../../src/main/pipe-server'
-import type { ShowImageMessage } from '../../src/shared/protocol'
+import type { ShowDiffMessage, ShowImageMessage } from '../../src/shared/protocol'
 import { testPipeName } from '../fixtures/platform'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
@@ -14,11 +14,12 @@ const work = mkdtempSync(join(tmpdir(), 'ct-mcpint-'))
 const bundle = join(work, 'show-image-server.js')
 const pipe = testPipeName('test')
 const got: ShowImageMessage[] = []
+const diffs: ShowDiffMessage[] = []
 let server: PipeServerHandle
 
 beforeAll(async () => {
   await build({ entryPoints: [resolve(__dirname, '../../src/mcp/show-image-server.ts')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', target: 'node20', logLevel: 'silent' })
-  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }) })
+  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), editBefore: () => ({ ok: true }), showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } } })
   mkdirSync(join(work, 'out'))
   writeFileSync(join(work, 'out', 'plot.png'), Buffer.from([1, 2, 3]))
 })
@@ -36,11 +37,27 @@ describe('show_image MCP server', () => {
     const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name)).toEqual(['show_image'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['show_diff', 'show_image'])
     const res = await client.callTool({ name: 'show_image', arguments: { path: 'out/plot.png', caption: 'Plot' } })
     expect(res.isError).toBeFalsy()
     expect(res.content).toEqual([{ type: 'text', text: `Shown in ClaudeTerm: ${join(work, 'out', 'plot.png')}` }])
     expect(got).toEqual([{ v: 1, type: 'show_image', tabId: TAB, path: join(work, 'out', 'plot.png'), caption: 'Plot' }])
+    await client.close()
+  })
+
+  it('forwards show_diff with paths resolved against its folder', async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [bundle],
+      cwd: work,
+      env: { ...(process.env as Record<string, string>), CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
+    })
+    const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
+    await client.connect(transport)
+    const res = await client.callTool({ name: 'show_diff', arguments: { from: 'HEAD~1', paths: ['out'] } })
+    expect(res.isError).toBeFalsy()
+    expect(res.content).toEqual([{ type: 'text', text: 'Opened 1 file (+1 −0) in the Changes panel.' }])
+    expect(diffs).toEqual([{ v: 1, type: 'show_diff', tabId: TAB, cwd: work, scope: null, from: 'HEAD~1', to: null, paths: [join(work, 'out')], title: null }])
     await client.close()
   })
 })

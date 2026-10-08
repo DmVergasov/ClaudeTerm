@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isId, isIdList, isImageAction, isOptionalTitle, isPtyData, isPtySize, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPtyData, isPtySize, isReviewScope, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -58,5 +58,19 @@ describe('ipc guards', () => {
     expect(isImageAction('rm')).toBe(false)
     expect(isImageAction(undefined)).toBe(false)
     expect(isImageAction(1)).toBe(false)
+  })
+})
+
+describe('review guards', () => {
+  it('checks scopes, absolute paths, line numbers and hashes', () => {
+    expect(isReviewScope('last_turn')).toBe(true)
+    expect(isReviewScope('week')).toBe(false)
+    expect(isAbsPath(process.platform === 'win32' ? 'D:\\p\\a.ts' : '/p/a.ts')).toBe(true)
+    expect(isAbsPath('a.ts')).toBe(false)
+    expect(isLineNo(1)).toBe(true)
+    expect(isLineNo(0)).toBe(false)
+    expect(isLineNo(1.5)).toBe(false)
+    expect(isHash('0123456789abcdef0123456789abcdef01234567')).toBe(true)
+    expect(isHash('x'.repeat(65))).toBe(false)
   })
 })

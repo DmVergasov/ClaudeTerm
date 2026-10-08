@@ -1,10 +1,11 @@
 import type { StatusUpdate } from '../shared/ipc'
+import type { ReviewCounter } from '../shared/review'
 import type { AgentStatus } from '../shared/types'
 
 export type Level = 'normal' | 'warn' | 'crit'
 
 export interface Segment {
-  key: 'model' | 'context' | 'limit' | 'week' | 'agents'
+  key: 'model' | 'context' | 'limit' | 'week' | 'agents' | 'changes'
   text: string
   title: string
   level: Level
@@ -78,11 +79,20 @@ export function statusSegments(u: StatusUpdate, now: number): Segment[] {
   return segments
 }
 
-export class StatusBar {
-  constructor(private readonly el: HTMLElement) {}
+/** the Changes counter: not part of Claude's status, so it shows before the first statusLine and after the session ends too */
+export function changesSegment(c: ReviewCounter): Segment {
+  return { key: 'changes', text: `± ${c.files} file${c.files === 1 ? '' : 's'} +${c.additions} −${c.deletions}`, title: c.title, level: 'normal' }
+}
 
-  render(u: StatusUpdate | null, now = Date.now()): void {
-    const segments = u ? statusSegments(u, now) : []
+export class StatusBar {
+  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}) {
+    el.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('.status-changes')) onChangesClick()
+    })
+  }
+
+  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, now = Date.now()): void {
+    const segments = [...(u ? statusSegments(u, now) : []), ...(changes ? [changesSegment(changes)] : [])]
     this.el.hidden = segments.length === 0
     // statusLine refreshes every few seconds: update the same spans in place, because replacing the span
     // under the mouse would close its tooltip (the subagent list)

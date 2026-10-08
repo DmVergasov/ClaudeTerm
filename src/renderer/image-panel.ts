@@ -2,6 +2,7 @@ import type { ImageAction, ImagesUpdate } from '../shared/ipc'
 import type { ImageCard, ImageSource } from '../shared/types'
 import { imageUrl } from './image-url'
 import { showMenu } from './menu'
+import type { SidePanel } from './side-panel'
 
 export interface ImagePanelCallbacks {
   action(cardId: string, action: ImageAction): void
@@ -13,58 +14,42 @@ export interface ImagePanelCallbacks {
 const SOURCE_LABEL: Record<ImageSource, string> = { created: 'created', shown: 'show_image', read: 'read', tool: 'tool', pasted: 'you' }
 
 export class ImagePanel {
-  private collapsed = true
   private current: ImagesUpdate | null = null
   private readonly autoOpened = new Set<string>()
   private readonly list: HTMLElement
   private readonly noticeEl: HTMLElement
-  onVisibilityChange: () => void = () => {}
 
-  constructor(private readonly root: HTMLElement, private readonly cb: ImagePanelCallbacks, private width: number, private readonly autoOpen: () => boolean) {
-    const handle = document.createElement('div')
-    handle.className = 'panel-resize'
-    const header = document.createElement('div')
-    header.className = 'panel-header'
-    const title = document.createElement('span')
-    title.textContent = 'Images'
-    const hide = document.createElement('button')
-    hide.textContent = '–'
-    hide.title = 'Hide (Ctrl+Shift+I)'
-    hide.addEventListener('click', () => this.setCollapsed(true))
-    header.append(title, hide)
+  constructor(root: HTMLElement, private readonly panel: SidePanel, private readonly cb: ImagePanelCallbacks, private readonly autoOpen: () => boolean) {
     this.noticeEl = document.createElement('div')
     this.noticeEl.className = 'panel-notice'
     this.list = document.createElement('div')
     this.list.className = 'panel-list'
-    root.replaceChildren(handle, header, this.noticeEl, this.list)
-    this.setupResize(handle)
-    this.root.style.width = `${this.width}px`
-    this.setCollapsed(true)
+    root.replaceChildren(this.noticeEl, this.list)
   }
 
+  /** Images is shown */
   get visible(): boolean {
-    return !this.collapsed
+    return this.panel.isShowing('images')
   }
 
   toggle(): void {
-    this.setCollapsed(!this.collapsed)
+    this.panel.toggle('images')
   }
 
-  setCollapsed(collapsed: boolean): void {
-    this.collapsed = collapsed
-    this.root.classList.toggle('collapsed', collapsed)
-    this.onVisibilityChange()
-    if (!collapsed && this.current && this.current.unseen > 0) this.cb.markSeen(this.current.tabId)
+  /** the side panel was shown, hidden or switched */
+  panelChanged(): void {
+    if (this.visible && this.current && this.current.unseen > 0) this.cb.markSeen(this.current.tabId)
   }
 
   show(update: ImagesUpdate): void {
     this.current = update
-    if (update.cards.length > 0 && this.collapsed && this.autoOpen() && !this.autoOpened.has(update.tabId)) {
+    // a new image opens the panel only when it is closed: it never takes the place of Changes
+    if (update.cards.length > 0 && !this.panel.visible && this.autoOpen() && !this.autoOpened.has(update.tabId)) {
       this.autoOpened.add(update.tabId)
-      this.setCollapsed(false)
+      this.panel.open('images')
     }
     this.renderList()
-    if (!this.collapsed && update.unseen > 0) this.cb.markSeen(update.tabId)
+    if (this.visible && update.unseen > 0) this.cb.markSeen(update.tabId)
   }
 
   private renderList(): void {
@@ -123,23 +108,5 @@ export class ImagePanel {
       ])
     })
     return el
-  }
-
-  private setupResize(handle: HTMLElement): void {
-    handle.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      const startX = e.clientX
-      const startW = this.width
-      const move = (ev: MouseEvent): void => {
-        this.width = Math.min(Math.max(startW + (startX - ev.clientX), 180), Math.round(window.innerWidth * 0.7))
-        this.root.style.width = `${this.width}px`
-      }
-      const up = (): void => {
-        document.removeEventListener('mousemove', move)
-        document.removeEventListener('mouseup', up)
-      }
-      document.addEventListener('mousemove', move)
-      document.addEventListener('mouseup', up)
-    })
   }
 }

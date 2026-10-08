@@ -143,3 +143,48 @@ describe('status, subagent and session_end messages', () => {
     expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'attention', reason: 'done', tabId: 'x' })).ok).toBe(false)
   })
 })
+
+describe('parsePipeMessage: review messages', () => {
+  const ids = { v: 1, tabId: TAB, sessionId: SID }
+  const FILE = WIN ? 'D:\\proj\\src\\a.ts' : '/proj/src/a.ts'
+  const CWD = WIN ? 'D:\\proj' : '/proj'
+
+  it('accepts a turn with or without a usable cwd', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn', cwd: CWD }))).toEqual({ ok: true, message: { ...ids, type: 'turn', cwd: CWD } })
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn', cwd: 'relative' }))).toEqual({ ok: true, message: { ...ids, type: 'turn', cwd: null } })
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn', tabId: 'x' })).ok).toBe(false)
+  })
+
+  it('accepts edit_before with a tool use id and an absolute path', () => {
+    const m = { ...ids, type: 'edit_before', toolUseId: 'toolu_01AbC-d_9', path: FILE }
+    expect(parsePipeMessage(JSON.stringify(m))).toEqual({ ok: true, message: m })
+    expect(parsePipeMessage(JSON.stringify({ ...m, path: 'src/a.ts' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...m, toolUseId: 'a b' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...m, toolUseId: '' })).ok).toBe(false)
+  })
+
+  it('accepts show_diff and cuts the title to 100 characters', () => {
+    const m = { v: 1, type: 'show_diff', tabId: TAB, cwd: CWD, scope: null, from: 'HEAD~3', to: null, paths: [FILE], title: 'x'.repeat(150) }
+    const r = parsePipeMessage(JSON.stringify(m))
+    expect(r).toEqual({ ok: true, message: { ...m, title: 'x'.repeat(100) } })
+    const scoped = { ...m, scope: 'last_turn', from: null, paths: [], title: null }
+    expect(parsePipeMessage(JSON.stringify(scoped))).toEqual({ ok: true, message: scoped })
+    expect(parsePipeMessage(JSON.stringify({ ...m, tabId: null }))).toMatchObject({ ok: true, message: { tabId: null } })
+  })
+
+  it('rejects show_diff with a ref that starts with "-", a relative path or an unknown scope', () => {
+    const m = { v: 1, type: 'show_diff', tabId: TAB, cwd: CWD, scope: null, from: null, to: null, paths: [], title: null }
+    expect(parsePipeMessage(JSON.stringify({ ...m, from: '--output=x' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...m, to: '-x' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...m, paths: ['src'] })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...m, scope: 'week' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...m, cwd: 'proj' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...m, paths: Array.from({ length: 101 }, () => FILE) })).ok).toBe(false)
+  })
+
+  it('keeps a valid agentId on attention and drops a bad one', () => {
+    const a = { ...ids, type: 'attention', reason: 'permission' }
+    expect(parsePipeMessage(JSON.stringify({ ...a, agentId: 'a40a10c1d655cf759' }))).toEqual({ ok: true, message: { ...a, agentId: 'a40a10c1d655cf759' } })
+    expect(parsePipeMessage(JSON.stringify({ ...a, agentId: '../x' }))).toEqual({ ok: true, message: a })
+  })
+})

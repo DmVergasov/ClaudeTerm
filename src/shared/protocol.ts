@@ -1,4 +1,5 @@
 import { isAbsolute, posix } from 'node:path'
+import { REVIEW_SCOPES, type ReviewScope } from './review'
 import type { MainStatus } from './types'
 
 export const PROTOCOL_VERSION = 1
@@ -6,6 +7,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const MAX_CAPTION = 500
 const AGENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 const MAX_LABEL = 100
+const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,200}$/
+const MAX_REF = 200
+const MAX_PATHS = 100
 const ATTENTION_REASONS: readonly string[] = ['permission', 'question', 'done'] satisfies AttentionReason[]
 
 export interface ShowImageMessage {
@@ -58,10 +62,47 @@ export interface AttentionMessage {
   tabId: string
   sessionId: string
   reason: AttentionReason
+  /** the subagent whose dialog it is; absent for the main conversation */
+  agentId?: string
 }
 
-export type PipeMessage = ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
-export type PipeResponse = { ok: true } | { ok: false; error: string }
+/** Claude Code took a prompt (UserPromptSubmit): a turn starts. */
+export interface TurnMessage {
+  v: 1
+  type: 'turn'
+  tabId: string
+  sessionId: string
+  cwd: string | null
+}
+
+/** Claude is about to change a file (PreToolUse of an edit tool). ClaudeTerm reads the file before it replies. */
+export interface EditBeforeMessage {
+  v: 1
+  type: 'edit_before'
+  tabId: string
+  sessionId: string
+  toolUseId: string
+  path: string
+}
+
+/** show_diff from the MCP server: open a diff in the tab's Changes panel. */
+export interface ShowDiffMessage {
+  v: 1
+  type: 'show_diff'
+  tabId: string | null
+  /** where Claude runs: relative paths and the repository come from here */
+  cwd: string
+  scope: ReviewScope | null
+  from: string | null
+  to: string | null
+  paths: string[]
+  title: string | null
+}
+
+export type PipeMessage =
+  | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
+  | TurnMessage | EditBeforeMessage | ShowDiffMessage
+export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
 export function isUuid(value: unknown): value is string {
@@ -145,6 +186,37 @@ export function parsePipeMessage(line: string): ParseResult {
     }
   }
 
+  if (m.type === 'turn' || m.type === 'edit_before') {
+    if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
+    if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
+    if (m.type === 'turn') {
+      const cwd = typeof m.cwd === 'string' && isAbsolute(m.cwd) ? m.cwd : null
+      return { ok: true, message: { v: 1, type: 'turn', tabId: m.tabId, sessionId: m.sessionId, cwd } }
+    }
+    if (typeof m.toolUseId !== 'string' || !TOOL_USE_ID_RE.test(m.toolUseId)) return { ok: false, error: 'toolUseId must match [A-Za-z0-9_-]{1,200}' }
+    if (typeof m.path !== 'string' || !isAbsolute(m.path)) return { ok: false, error: 'path must be an absolute path' }
+    return { ok: true, message: { v: 1, type: 'edit_before', tabId: m.tabId, sessionId: m.sessionId, toolUseId: m.toolUseId, path: m.path } }
+  }
+
+  if (m.type === 'show_diff') {
+    const tabId = m.tabId === null || m.tabId === undefined ? null : isUuid(m.tabId) ? m.tabId : undefined
+    if (tabId === undefined) return { ok: false, error: 'tabId must be a UUID or null' }
+    if (typeof m.cwd !== 'string' || !isAbsolute(m.cwd)) return { ok: false, error: 'cwd must be an absolute path' }
+    const scope = m.scope === null || m.scope === undefined ? null : REVIEW_SCOPES.find((s) => s === m.scope)
+    if (scope === undefined) return { ok: false, error: 'scope must be "uncommitted", "last_turn", "session" or null' }
+    const ref = (v: unknown): string | null | undefined =>
+      v === null || v === undefined ? null : typeof v === 'string' && v.length > 0 && v.length <= MAX_REF && !v.startsWith('-') ? v : undefined
+    const from = ref(m.from)
+    const to = ref(m.to)
+    if (from === undefined || to === undefined) return { ok: false, error: 'from and to must be git revisions that do not start with "-"' }
+    const paths = m.paths ?? []
+    if (!Array.isArray(paths) || paths.length > MAX_PATHS || !paths.every((p): p is string => typeof p === 'string' && isAbsolute(p))) {
+      return { ok: false, error: `paths must be at most ${MAX_PATHS} absolute paths` }
+    }
+    if (m.title !== null && m.title !== undefined && typeof m.title !== 'string') return { ok: false, error: 'title must be a string or null' }
+    return { ok: true, message: { v: 1, type: 'show_diff', tabId, cwd: m.cwd, scope, from, to, paths, title: label(m.title) } }
+  }
+
   if (m.type === 'status' || m.type === 'subagent' || m.type === 'session_end' || m.type === 'attention') {
     if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
     if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
@@ -152,7 +224,8 @@ export function parsePipeMessage(line: string): ParseResult {
     if (m.type === 'session_end') return { ok: true, message: { v: 1, type: 'session_end', ...ids } }
     if (m.type === 'attention') {
       if (typeof m.reason !== 'string' || !ATTENTION_REASONS.includes(m.reason)) return { ok: false, error: 'reason must be "permission", "question" or "done"' }
-      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason } }
+      const agent = typeof m.agentId === 'string' && AGENT_ID_RE.test(m.agentId) ? { agentId: m.agentId } : {}
+      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent } }
     }
     if (m.type === 'subagent') {
       if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }

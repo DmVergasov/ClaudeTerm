@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AUTOMATIC, checkNumber, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions } from '../../src/renderer/settings-form'
+import { AUTOMATIC, checkNumber, checkOptionalText, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions } from '../../src/renderer/settings-form'
 
 describe('settings form', () => {
   it('checkNumber: font size 6–72, fractions allowed', () => {
@@ -47,5 +47,12 @@ describe('settings form', () => {
   it('soundChoice', () => {
     expect(soundChoice('system')).toEqual({ custom: false, path: '' })
     expect(soundChoice('D:\\s\\ding.wav')).toEqual({ custom: true, path: 'D:\\s\\ding.wav' })
+  })
+})
+
+describe('checkOptionalText', () => {
+  it('takes empty text as null and trims the rest', () => {
+    expect(checkOptionalText('   ')).toEqual({ ok: true, value: null })
+    expect(checkOptionalText(' code --goto {file}:{line} ')).toEqual({ ok: true, value: 'code --goto {file}:{line}' })
   })
 })

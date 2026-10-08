@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
     done: { sound: true, flash: true, tab: true },
     bell: { sound: false, flash: true, tab: true }
   },
+  review: { editor: null, statusBar: true, hideIgnored: true, width: 640 },
   autoUpdate: true
 }
 
@@ -76,6 +77,7 @@ export function parseSettings(text: string | null): ParsedSettings {
   const font = obj(raw.font)
   const iw = obj(raw.imageWatch)
   const ip = obj(raw.imagePanel)
+  const rv = obj(raw.review)
 
   const profiles: ProfileDef[] = take('profiles', raw.profiles, isProfiles, []).map((p) => ({ name: p.name, command: p.command, args: p.args ?? [] }))
 
@@ -121,6 +123,12 @@ export function parseSettings(text: string | null): ParsedSettings {
       maxItems: take('imagePanel.maxItems', ip.maxItems, numIn(1, 10_000), d.imagePanel.maxItems)
     },
     notifications,
+    review: {
+      editor: take('review.editor', rv.editor, isNullableStr, d.review.editor),
+      statusBar: take('review.statusBar', rv.statusBar, isBool, d.review.statusBar),
+      hideIgnored: take('review.hideIgnored', rv.hideIgnored, isBool, d.review.hideIgnored),
+      width: take('review.width', rv.width, numIn(240, 4000), d.review.width)
+    },
     autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)
   }
   return { settings, errors }

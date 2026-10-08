@@ -46,7 +46,8 @@ describe('hook files', () => {
         SubagentStop: hook,
         SessionEnd: hook,
         PermissionRequest: hook,
-        PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [run] }],
+        UserPromptSubmit: hook,
+        PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [run] }, { matcher: 'Edit|MultiEdit|Write|NotebookEdit', hooks: [run] }],
         Stop: hook
       }
     })
