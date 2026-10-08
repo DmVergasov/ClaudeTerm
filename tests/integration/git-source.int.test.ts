@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -23,7 +23,8 @@ describe('git source', () => {
   it('finds the root from a subfolder, and null outside a repository', async () => {
     const dir = repo()
     mkdirSync(join(dir, 'src'))
-    expect(await repoRoot(execGit, join(dir, 'src'))).toBe(dir)
+    // git answers with the long path; a temp folder can be a short 8.3 one (C:\Users\RUNNER~1 on CI)
+    expect(await repoRoot(execGit, join(dir, 'src'))).toBe(realpathSync.native(dir))
     const outside = mkdtempSync(join(tmpdir(), 'ct-nogit-'))
     expect(await repoRoot(execGit, outside)).toBeNull()
     expect(await repoRoot(execGit, join(outside, 'missing'))).toBeNull()
