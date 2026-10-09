@@ -42,6 +42,53 @@ describe('gitInputs', () => {
     expect(r.inputs.every((i) => i.before.kind === 'skipped')).toBe(true)
   })
 
+  it('leaves out the files the exclusion names: listed, never read, and not counted against the limit', async () => {
+    const dir = repo()
+    mkdirSync(join(dir, 'tests'))
+    for (let i = 0; i < 503; i++) writeFileSync(join(dir, 'tests', `t${String(i).padStart(3, '0')}.ts`), 'x\n')
+    writeFileSync(join(dir, 'a.ts'), 'two\n')
+    const read: string[] = []
+    const io = { ...nodeIo, readDisk: (p: string) => { read.push(p); return nodeIo.readDisk(p) } }
+    const r = await gitInputs(io, dir, 'HEAD', null, [], () => false, (rel) => rel.startsWith('tests/'))
+    expect(r.tooMany).toBe(false)
+    expect(r.inputs.map((i) => i.relPath)).toEqual(['a.ts'])
+    expect(r.excluded).toHaveLength(503)
+    expect(r.excluded![0]).toBe(join(dir, 'tests', 't000.ts'))
+    expect(read).toEqual([join(dir, 'a.ts')])
+  })
+
+  it('asks the exclusion once per file, with the path inside the repository (/ separators), whatever folders hold the repository', async () => {
+    // the repository itself lives in a folder named "tests"
+    const dir = join(mkdtempSync(join(tmpdir(), 'ct-rsrc-')), 'tests', 'app')
+    mkdirSync(dir, { recursive: true })
+    const git = (...a: string[]): void => { execFileSync('git', a, { cwd: dir, stdio: 'ignore' }) }
+    git('init', '-q')
+    git('config', 'user.email', 't@example.com')
+    git('config', 'user.name', 'T')
+    writeFileSync(join(dir, 'a.ts'), 'one\n')
+    git('add', '-A')
+    git('commit', '-qm', 'one')
+    mkdirSync(join(dir, 'src', 'deep'), { recursive: true })
+    writeFileSync(join(dir, 'a.ts'), 'two\n')
+    writeFileSync(join(dir, 'src', 'deep', 'b.ts'), 'b\n')
+    const asked: string[] = []
+    const r = await gitInputs(nodeIo, dir, 'HEAD', null, [], () => false, (rel) => { asked.push(rel); return false })
+    expect(asked.sort()).toEqual(['a.ts', 'src/deep/b.ts'])
+    expect(r.inputs).toHaveLength(2)
+  })
+
+  it('leaves them out of a commit range as well', async () => {
+    const dir = repo()
+    mkdirSync(join(dir, 'tests'))
+    writeFileSync(join(dir, 'tests', 'a.test.ts'), 'x\n')
+    writeFileSync(join(dir, 'b.ts'), 'y\n')
+    execFileSync('git', ['add', '-A'], { cwd: dir })
+    execFileSync('git', ['commit', '-qm', 'two'], { cwd: dir })
+    const r = await gitInputs(nodeIo, dir, 'HEAD~1', 'HEAD', [], () => false, (rel) => rel.startsWith('tests/'))
+    expect(r.inputs.map((i) => i.relPath)).toEqual(['b.ts'])
+    expect(r.excluded).toEqual([join(dir, 'tests', 'a.test.ts')])
+  })
+
   it('gitTotals counts the uncommitted changes like the Uncommitted view', async () => {
     const dir = repo()
     writeFileSync(join(dir, 'a.ts'), 'two\nthree\n')

@@ -2,6 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
 import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, TEST_SHELL } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -281,5 +282,42 @@ test('a save that cannot be written shows its error under the field, also when t
   } finally {
     chmodSync(file, 0o666)
   }
+  await app.close()
+})
+
+test('Hide test files and the Test files field save to settings.json; Restore defaults puts the default list back', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  const hide = win.locator('[data-key="review.hideTests"]')
+  const patterns = win.locator('[data-key="review.testPatterns"]')
+  await expect(hide).not.toBeChecked()
+  await expect(patterns).toHaveValue(DEFAULT_TEST_PATTERNS.join('\n'))
+  await expect(win.locator('.hint', { hasText: 'One pattern per line, matched against the path inside the project: * and ? within a name, ** across folders; a pattern without / matches the file name in any folder. Case-sensitive.' })).toBeVisible()
+  await hide.check()
+  await expect.poll(() => readSettings(dataDir).review?.hideTests).toBe(true)
+  await patterns.fill('**/mytests/**\n\n  *.check.*  \n')
+  await patterns.blur()
+  await expect.poll(() => readSettings(dataDir).review?.testPatterns).toEqual(['**/mytests/**', '*.check.*'])
+  await win.locator('[data-restore="review.testPatterns"]').click()
+  await expect.poll(() => readSettings(dataDir).review?.testPatterns).toEqual([...DEFAULT_TEST_PATTERNS])
+  await expect(patterns).toHaveValue(DEFAULT_TEST_PATTERNS.join('\n'))
+  // an empty field means no file counts as a test
+  await patterns.fill('')
+  await patterns.blur()
+  await expect.poll(() => readSettings(dataDir).review?.testPatterns).toEqual([])
+  await app.close()
+})
+
+test('the Test files field refuses more than 200 patterns and keeps the saved list', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: { ...QUIET, review: { testPatterns: ['keep/**'] } } })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  const patterns = win.locator('[data-key="review.testPatterns"]')
+  await expect(patterns).toHaveValue('keep/**')
+  await patterns.fill(Array(201).fill('a').join('\n'))
+  await patterns.blur()
+  await expect(win.locator('.field-error', { hasText: 'At most 200 patterns' })).toBeVisible()
+  expect(readSettings(dataDir).review?.testPatterns).toEqual(['keep/**'])
   await app.close()
 })

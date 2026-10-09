@@ -1,4 +1,5 @@
 import { NUMBER_LIMITS } from '../shared/settings-keys'
+import { MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
 import type { Settings } from '../shared/types'
 import { THEMES } from './themes'
 
@@ -30,6 +31,14 @@ export function checkText(text: string): Checked<string> {
 export function checkOptionalText(text: string): Checked<string | null> {
   const v = text.trim()
   return { ok: true, value: v === '' ? null : v }
+}
+
+/** a list of patterns, one per line: blank lines are dropped, an empty field is an empty list */
+export function checkPatterns(text: string): Checked<string[]> {
+  const list = text.split('\n').map((l) => l.trim()).filter((l) => l !== '')
+  if (list.length > MAX_TEST_PATTERNS) return { ok: false, error: `At most ${MAX_TEST_PATTERNS} patterns` }
+  if (list.some((l) => l.length > MAX_TEST_PATTERN_LENGTH)) return { ok: false, error: `A pattern is longer than ${MAX_TEST_PATTERN_LENGTH} characters` }
+  return { ok: true, value: list }
 }
 
 const plain = (names: string[]): Option[] => names.map((n) => ({ value: n, label: n }))

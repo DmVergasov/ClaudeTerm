@@ -1,8 +1,9 @@
 import './settings.css'
 import type { SettingsView } from '../shared/ipc'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, type SettingKey, type SettingValue } from '../shared/settings-keys'
+import { DEFAULT_TEST_PATTERNS } from '../shared/test-files'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
-import { checkNumber, checkOptionalText, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions, type Checked, type Option } from './settings-form'
+import { checkNumber, checkOptionalText, checkPatterns, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions, type Checked, type Option } from './settings-form'
 
 const ct = window.ct
 
@@ -16,7 +17,7 @@ const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sou
 
 /** one control: shows its part of the view; its inputs are disabled while settings.json is locked */
 interface Control {
-  inputs: (HTMLInputElement | HTMLSelectElement | HTMLButtonElement)[]
+  inputs: (HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement)[]
   show(view: SettingsView): void
 }
 
@@ -83,6 +84,35 @@ function textField(label: string, key: SettingKey, type: 'text' | 'number', get:
       // the field being typed in keeps what is typed
       if (document.activeElement === input) return
       input.value = String(get(v))
+      error(null)
+    }
+  })
+  return f.row
+}
+
+/** a list, one entry per line; saved when the field loses focus, and Restore defaults puts the default list back */
+function listField(label: string, key: SettingKey, get: (v: SettingsView) => string[], defaults: readonly string[], hint: string): HTMLElement {
+  const area = el('textarea', { spellcheck: false, className: 'text-input list-input', rows: 8, wrap: 'off' })
+  area.dataset.key = key
+  const restore = el('button', { type: 'button', textContent: 'Restore defaults' })
+  restore.dataset.restore = key
+  const f = field(label, area, el('div', { className: 'list-line' }, restore, ...hintOf(hint)))
+  const error: ShowError = (m) => {
+    f.error(m)
+    area.classList.toggle('invalid', m !== null)
+  }
+  area.addEventListener('change', () => {
+    const c = checkPatterns(area.value)
+    if (c.ok) void save(key, c.value, error)
+    else error(c.error)
+  })
+  restore.addEventListener('click', () => void save(key, [...defaults], error))
+  controls.push({
+    inputs: [area, restore],
+    show: (v) => {
+      // the field being typed in keeps what is typed
+      if (document.activeElement === area) return
+      area.value = get(v).join('\n')
       error(null)
     }
   })
@@ -206,7 +236,10 @@ root.append(
     textField('Editor', 'review.editor', 'text', (v) => v.settings.review.editor ?? '', checkOptionalText,
       'empty: VS Code if installed, else the file is shown in its folder · {file} and {line} are filled in'),
     checkboxField('review.statusBar', 'Show the changes counter in the status bar', (v) => v.settings.review.statusBar),
-    checkboxField('review.hideIgnored', 'Hide files git ignores', (v) => v.settings.review.hideIgnored)),
+    checkboxField('review.hideIgnored', 'Hide files git ignores', (v) => v.settings.review.hideIgnored),
+    checkboxField('review.hideTests', 'Hide test files', (v) => v.settings.review.hideTests),
+    listField('Test files', 'review.testPatterns', (v) => v.settings.review.testPatterns, DEFAULT_TEST_PATTERNS,
+      'One pattern per line, matched against the path inside the project: * and ? within a name, ** across folders; a pattern without / matches the file name in any folder. Case-sensitive.')),
   section('Updates', null,
     checkboxField('autoUpdate', 'Check for updates automatically', (v) => v.settings.autoUpdate)),
   el('footer', { className: 'settings-footer' }, el('span', { textContent: 'Profiles, image types, ignored folders, a custom theme and the image and Changes panel widths are set in settings.json' }), openFile())

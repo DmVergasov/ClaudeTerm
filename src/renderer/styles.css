@@ -88,6 +88,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .session-top { display: flex; gap: 8px; align-items: baseline; }
 .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-open { color: var(--accent); font-size: 12px; white-space: nowrap; }
+.session-star { color: var(--muted); cursor: pointer; line-height: 1; padding: 0 2px; }
+.session-star:hover, .session-star.starred { color: var(--accent); }
+.sessions-divider { height: 1px; margin: 4px 14px; background: var(--border); }
 .session-meta, .session-last { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-last { opacity: 0.75; }
 .sessions-empty { padding: 12px 14px; color: var(--muted); }
@@ -103,7 +106,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .review-summary { margin-left: auto; white-space: nowrap; }
 .review-add { color: #7ee2a8; }
 .review-del { color: #ff9b94; }
-.review-ignored, .review-hidden-outside { opacity: 0.65; }
+.review-ignored, .review-hidden-outside, .review-tests-hidden { opacity: 0.65; }
+.review-hide-tests { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; white-space: nowrap; cursor: pointer; }
+.review-hide-tests input { margin: 0; accent-color: var(--accent); }
 .review-outside { padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .review-outside[hidden] { display: none; }
 .review-outside-title { margin-bottom: 4px; color: var(--muted); font-size: 12px; }
@@ -131,6 +136,16 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .review-plus { position: absolute; left: 2px; top: 2px; width: 15px; height: 15px; border-radius: 3px; background: var(--accent); color: #111; font: bold 12px/15px sans-serif; text-align: center; cursor: pointer; visibility: hidden; }
 .review-line:hover .review-plus { visibility: visible; }
 .review-code { padding: 0 8px 0 6px; }
+.panel-body:focus, .review-files:focus { outline: none; }
+.review-find { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.review-find[hidden] { display: none; }
+.review-find-input { flex: 1; min-width: 0; padding: 3px 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; font: inherit; }
+.review-find-input:focus { outline: none; border-color: var(--accent); }
+.review-find-count { min-width: 56px; text-align: right; color: var(--muted); white-space: nowrap; }
+.review-find-prev, .review-find-next, .review-find-close { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 2px 6px; }
+.review-find-prev:hover, .review-find-next:hover, .review-find-close:hover { color: var(--fg); }
+.review-match { background: rgba(229, 192, 123, 0.35); color: inherit; border-radius: 2px; }
+.review-match.current { background: #e5c07b; color: #111; }
 .review-comment, .review-comment-box { margin: 4px 8px 6px 52px; padding: 6px 8px; max-width: 560px; border: 1px solid var(--accent); border-radius: 5px; background: #261b17; font: 12px "Segoe UI", system-ui, sans-serif; white-space: normal; }
 .review-outside .review-comment, .review-outside .review-comment-box { margin-left: 0; }
 .review-comment.outdated { border-style: dashed; }

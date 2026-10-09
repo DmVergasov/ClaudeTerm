@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsPath, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPtyData, isPtySize, isReviewScope, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPtyData, isPtySize, isFlag, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -72,5 +72,23 @@ describe('review guards', () => {
     expect(isLineNo(1.5)).toBe(false)
     expect(isHash('0123456789abcdef0123456789abcdef01234567')).toBe(true)
     expect(isHash('x'.repeat(65))).toBe(false)
+  })
+
+  it('isSessionId accepts a session id (UUID) only', () => {
+    expect(isSessionId('5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8')).toBe(true)
+    expect(isSessionId('')).toBe(false)
+    expect(isSessionId('../../etc/passwd')).toBe(false)
+    expect(isSessionId('C:/Users/me/x.jsonl')).toBe(false)
+    expect(isSessionId(7)).toBe(false)
+    expect(isSessionId(null)).toBe(false)
+    expect(isSessionId('5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'.repeat(20))).toBe(false)
+  })
+
+  it('isFlag accepts booleans only', () => {
+    expect(isFlag(true)).toBe(true)
+    expect(isFlag(false)).toBe(true)
+    expect(isFlag('yes')).toBe(false)
+    expect(isFlag(1)).toBe(false)
+    expect(isFlag(undefined)).toBe(false)
   })
 })

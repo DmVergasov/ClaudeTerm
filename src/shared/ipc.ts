@@ -31,6 +31,8 @@ export const IPC = {
   restoreRun: 'restore:run',
   sessionsList: 'sessions:list',
   sessionsOpen: 'sessions:open',
+  sessionsStar: 'sessions:star',
+  sessionsStarred: 'sessions:starred',
   updateCheck: 'update:check',
   updateInstall: 'update:install',
   updateGet: 'update:get',
@@ -41,6 +43,7 @@ export const IPC = {
   reviewSetViewed: 'review:set-viewed',
   reviewShowFile: 'review:show-file',
   reviewOpenEditor: 'review:open-editor',
+  reviewReveal: 'review:reveal',
   reviewCanSend: 'review:can-send',
   evTabOpened: 'ev:tab-opened',
   evTabUpdated: 'ev:tab-updated',
@@ -147,10 +150,14 @@ export interface CtApi {
   imageAction(cardId: string, action: ImageAction): void
   getRestoreInfo(): Promise<RestoreInfo | null>
   runRestore(): void
-  /** the most recent Claude Code sessions, newest first */
+  /** the most recent Claude Code sessions, newest first, and every starred one */
   listSessions(): Promise<RecentSession[]>
   /** go to the tab in that conversation, or resume it in a new Claude tab */
   openSession(id: string): void
+  /** star or unstar a session; answers when the change is saved */
+  setSessionStarred(id: string, starred: boolean): Promise<void>
+  /** the ids of all starred sessions */
+  getStarredSessions(): Promise<string[]>
   checkForUpdates(): void
   installUpdate(): void
   getUpdateState(): Promise<UpdateState>
@@ -165,6 +172,8 @@ export interface CtApi {
   showReviewFile(tabId: string, path: string): void
   /** opens a file of that tab's Changes view in review.editor; main ignores a file the view does not show */
   openInEditor(tabId: string, path: string, line: number): void
+  /** shows a file of that tab's Changes view in the file manager; main ignores a file the view does not show */
+  revealFile(tabId: string, path: string): void
   /** whether Send may write into the tab now */
   reviewCanSend(tabId: string): Promise<ReviewSendState>
   onTabOpened(cb: (tab: TabInfo) => void): Unsubscribe

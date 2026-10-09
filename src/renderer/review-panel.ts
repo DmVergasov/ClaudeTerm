@@ -4,6 +4,7 @@ import {
   anchorOf, attemptSend, describeLines, draftAfterSend, formatSendMessage, locate, moveAnchor, reanchorComment, sendErrorAfter, viewKeyOf,
   type CommentAnchor, type Located, type ReviewComment
 } from './review-comments'
+import { findMatches, type SearchMatch } from './review-search'
 import type { SidePanel } from './side-panel'
 
 export interface ReviewPanelCallbacks {
@@ -13,7 +14,10 @@ export interface ReviewPanelCallbacks {
   setViewed(tabId: string, path: string, hash: string, viewed: boolean): void
   showFile(tabId: string, path: string): void
   openEditor(tabId: string, path: string, line: number): void
+  reveal(tabId: string, path: string): void
   copyText(text: string): void
+  /** saves review.hideTests; resolves to whether it was saved */
+  setHideTests(on: boolean): Promise<boolean>
   /** writes the message into Claude's prompt and presses Enter; resolves to null, or to why it was not sent */
   send(tabId: string, message: string): Promise<string | null>
 }
@@ -43,6 +47,19 @@ interface Draft {
   editing: string | null
 }
 
+/** a match to highlight: its range in the text, and its number among all matches of the view */
+interface Mark {
+  start: number
+  end: number
+  index: number
+}
+
+/** the marks of one file: in its path and in its lines ("hunk:line") */
+interface FileMarks {
+  path: Mark[]
+  lines: Map<string, Mark[]>
+}
+
 interface TabComments {
   comments: ReviewComment[]
   draft: Draft | null
@@ -68,6 +85,25 @@ const firstLine = (f: ReviewFile): number => (f.hunks[0] ? editorLine(f.hunks[0]
 
 let nextId = 1
 
+/** text with the marked ranges wrapped in <mark>; `base` is where the text starts in the string the ranges are counted in */
+function appendMarked(parent: HTMLElement, text: string, base: number, marks: Mark[] | undefined, current: number): void {
+  let pos = 0
+  for (const m of marks ?? []) {
+    const start = Math.max(m.start - base, pos)
+    const end = Math.min(m.end - base, text.length)
+    if (end <= start) continue
+    if (start > pos) parent.append(text.slice(pos, start))
+    const mark = el('mark', `review-match${m.index === current ? ' current' : ''}`, text.slice(start, end))
+    mark.dataset.match = String(m.index)
+    parent.append(mark)
+    pos = end
+  }
+  if (pos < text.length) parent.append(text.slice(pos))
+}
+
+/** a typed find query takes effect after this long without a key */
+const QUERY_DELAY_MS = 150
+
 /** the longest a panel waits for the view after a click */
 const LOADING_MAX_MS = 10_000
 
@@ -83,6 +119,18 @@ export class ReviewPanel {
   private readonly countEl = el('span', 'review-count')
   private readonly sendBtn = el('button', 'review-send', 'Send to Claude')
   private readonly expandBtn = el('button', 'review-expand', '⤢')
+  private readonly findRow = el('div', 'review-find')
+  private readonly findInput = el('input', 'review-find-input')
+  private readonly findCount = el('span', 'review-find-count')
+  private readonly findBtn = el('button', 'review-find-btn', '⌕')
+  private findOpen = false
+  /** the matches of the open find row's query in the current view, and which one is current */
+  private matches: SearchMatch[] = []
+  private matchesFor: { files: ReviewFile[]; query: string } | null = null
+  /** more matches than the search keeps */
+  private matchesCapped = false
+  private current = 0
+  private queryTimer: ReturnType<typeof setTimeout> | null = null
   private draftArea: HTMLTextAreaElement | null = null
   private drag: { file: number; hunk: number; from: number; to: number } | null = null
   private sending = false
@@ -104,12 +152,170 @@ export class ReviewPanel {
     })
     this.expandBtn.title = 'Expand'
     this.expandBtn.addEventListener('click', () => this.panel.setExpanded(!this.panel.expanded))
-    panel.tools.append(refresh, this.expandBtn)
+    this.findBtn.title = 'Find (Ctrl+F)'
+    this.findBtn.addEventListener('click', () => this.openFind())
+    panel.tools.append(this.findBtn, refresh, this.expandBtn)
+    this.setupFind()
     this.sendBtn.addEventListener('click', () => void this.sendAll())
     this.footer.append(this.countEl, this.sendBtn)
-    root.replaceChildren(this.scopeBar, this.noticeEl, this.outsideEl, this.filesEl, this.footer)
+    root.replaceChildren(this.scopeBar, this.findRow, this.noticeEl, this.outsideEl, this.filesEl, this.footer)
     document.addEventListener('mouseup', () => this.endDrag())
+    // a click in the diff gives the panel the focus, so that Ctrl+F finds in it and not in the terminal
+    root.tabIndex = -1
+    // the scroller takes the focus of a click in the diff, so that PageDown and the arrows scroll it
+    this.filesEl.tabIndex = -1
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyF' && this.panel.isShowing('changes') && root.parentElement?.contains(document.activeElement)) {
+        e.preventDefault()
+        this.openFind()
+      }
+    })
     this.render()
+  }
+
+  private setupFind(): void {
+    this.findInput.type = 'text'
+    this.findInput.placeholder = 'Find in changes'
+    this.findInput.spellcheck = false
+    const prev = el('button', 'review-find-prev', '↑')
+    prev.title = 'Previous (Shift+Enter)'
+    const next = el('button', 'review-find-next', '↓')
+    next.title = 'Next (Enter)'
+    const close = el('button', 'review-find-close', '✕')
+    close.title = 'Close (Esc)'
+    prev.addEventListener('click', () => this.step(-1))
+    next.addEventListener('click', () => this.step(1))
+    close.addEventListener('click', () => this.closeFind())
+    // one render per query, not per key
+    this.findInput.addEventListener('input', () => {
+      if (this.queryTimer) clearTimeout(this.queryTimer)
+      this.queryTimer = setTimeout(() => this.applyQuery(), QUERY_DELAY_MS)
+    })
+    this.findInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        this.step(e.shiftKey ? -1 : 1)
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        this.closeFind()
+      }
+    })
+    this.findRow.hidden = true
+    this.findRow.append(this.findInput, this.findCount, prev, next, close)
+  }
+
+  private openFind(): void {
+    if (!this.findOpen) {
+      this.findOpen = true
+      this.findRow.hidden = false
+      this.findBtn.classList.add('active')
+      if (this.findInput.value !== '') this.render()
+    }
+    this.findInput.focus()
+    this.findInput.select()
+  }
+
+  private closeFind(): void {
+    if (!this.findOpen) return
+    this.findOpen = false
+    this.findRow.hidden = true
+    this.findBtn.classList.remove('active')
+    if (this.queryTimer) clearTimeout(this.queryTimer)
+    this.queryTimer = null
+    this.render()
+    this.filesEl.focus({ preventScroll: true })
+  }
+
+  /** the typed query takes effect: from the first match, which is shown */
+  private applyQuery(): void {
+    this.queryTimer = null
+    this.current = 0
+    this.render()
+    this.reveal()
+  }
+
+  /** the matches of the open find row in this view, computed once per view and query */
+  private computeMatches(u: ReviewUpdate | null): void {
+    const query = this.findInput.value
+    if (!this.findOpen || !u || query === '') {
+      this.matches = []
+      this.matchesCapped = false
+      this.matchesFor = null
+    } else if (this.matchesFor?.files !== u.files || this.matchesFor?.query !== query) {
+      const found = findMatches(u.files, query)
+      this.matches = found.matches
+      this.matchesCapped = found.capped
+      this.matchesFor = { files: u.files, query }
+    }
+    if (this.current >= this.matches.length) this.current = Math.max(this.matches.length - 1, 0)
+    this.findCount.textContent = !this.findOpen || query === '' ? '' : this.counterText()
+  }
+
+  private counterText(): string {
+    return this.matches.length === 0 ? 'No results' : `${this.current + 1} / ${this.matches.length}${this.matchesCapped ? '+' : ''}`
+  }
+
+  private marksByFile(): Map<number, FileMarks> {
+    const byFile = new Map<number, FileMarks>()
+    this.matches.forEach((m, index) => {
+      let fm = byFile.get(m.fileIndex)
+      if (!fm) {
+        fm = { path: [], lines: new Map() }
+        byFile.set(m.fileIndex, fm)
+      }
+      const mark = { start: m.start, end: m.end, index }
+      if (m.where === 'path') fm.path.push(mark)
+      else {
+        const key = `${m.where.hunk}:${m.where.line}`
+        const list = fm.lines.get(key)
+        if (list) list.push(mark)
+        else fm.lines.set(key, [mark])
+      }
+    })
+    return byFile
+  }
+
+  private isFolded(s: TabComments, f: ReviewFile): boolean {
+    return s.folds.get(f.path) ?? (f.viewed || f.additions + f.deletions > FOLD_LINES)
+  }
+
+  /** Enter / Shift+Enter: the next or previous match, around the ends */
+  private step(delta: number): void {
+    if (this.queryTimer) {
+      clearTimeout(this.queryTimer)
+      this.applyQuery()
+    }
+    const n = this.matches.length
+    if (n === 0) return
+    this.current = (this.current + delta + n) % n
+    this.reveal()
+  }
+
+  /** shows the current match: its file unfolds if it is folded, the match gets `current` and is scrolled to */
+  private reveal(): void {
+    const u = this.update
+    const m = this.matches[this.current]
+    if (!u || !m) return
+    const f = u.files[m.fileIndex]!
+    const s = this.state(u.tabId)
+    if (m.where !== 'path' && this.isFolded(s, f)) {
+      // the file unfolds, as if its arrow were clicked
+      s.folds.set(f.path, false)
+      this.render()
+    } else {
+      for (const old of this.filesEl.querySelectorAll('.review-match.current')) old.classList.remove('current')
+      for (const mark of this.filesEl.querySelectorAll(`.review-match[data-match="${this.current}"]`)) mark.classList.add('current')
+      this.findCount.textContent = this.counterText()
+    }
+    this.scrollToCurrent()
+  }
+
+  private scrollToCurrent(): void {
+    const mark = this.filesEl.querySelector(`.review-match[data-match="${this.current}"]`)
+    if (!mark) return
+    // a path match sits in the sticky, ellipsized file header: bring the file in, not the mark
+    if (this.matches[this.current]?.where === 'path') mark.closest('.review-file')?.scrollIntoView({ block: 'nearest' })
+    else mark.scrollIntoView({ block: 'center' })
   }
 
   /** the active tab's review; null for a shell tab. While Changes is hidden it is only kept: the rows are built when it shows */
@@ -185,6 +391,7 @@ export class ReviewPanel {
     const caret = prev !== null && document.activeElement === prev ? ([prev.selectionStart, prev.selectionEnd] as const) : null
     this.draftArea = null
     this.root.classList.toggle('review-loading', this.loading !== null)
+    this.computeMatches(u)
     if (!u) {
       this.scopeBar.replaceChildren()
       this.noticeEl.hidden = true
@@ -210,9 +417,10 @@ export class ReviewPanel {
       placed.set(key, [...(placed.get(key) ?? []), c])
     }
     const draftAt = s.draft ? locate(s.draft.anchor, u.files, this.samePath) : null
+    const marks = this.marksByFile()
     this.renderOutside(u, s, outside, s.draft !== null && draftAt === null)
     this.filesEl.replaceChildren(
-      ...(u.files.length === 0 ? [el('div', 'panel-empty', 'No changes in this view')] : u.files.map((f, i) => this.renderFile(u, s, f, i, placed, draftAt)))
+      ...(u.files.length === 0 ? [el('div', 'panel-empty', 'No changes in this view')] : u.files.map((f, i) => this.renderFile(u, s, f, i, placed, draftAt, marks.get(i))))
     )
     this.renderFooter(u, s)
     if (caret) this.focusDraft(caret)
@@ -267,7 +475,24 @@ export class ReviewPanel {
       hidden.title = 'Files git ignores are hidden (review.hideIgnored)'
       summary.append(hidden)
     }
-    this.scopeBar.replaceChildren(...parts, summary)
+    if (u.testsHidden > 0) {
+      const n = u.testsHidden
+      const hidden = el('span', 'review-tests-hidden', ` · ${n} test${n === 1 ? '' : 's'} hidden`)
+      const more = n - u.testsSample.length
+      hidden.title = ['Test files are hidden (review.hideTests):', ...u.testsSample, ...(more > 0 ? [`…and ${more} more`] : [])].join('\n')
+      summary.append(hidden)
+    }
+    const hide = el('label', 'review-hide-tests')
+    hide.title = 'Hide test files (review.hideTests)'
+    const box = el('input', '')
+    box.type = 'checkbox'
+    box.checked = u.hideTests
+    box.addEventListener('change', () => {
+      // a refusal (a settings.json that cannot be edited) puts the box back to the saved setting
+      void this.cb.setHideTests(box.checked).then((ok) => { if (!ok) this.render() }, () => this.render())
+    })
+    hide.append(box, ' Hide tests')
+    this.scopeBar.replaceChildren(...parts, summary, hide)
   }
 
   private renderOutside(u: ReviewUpdate, s: TabComments, outside: ReviewComment[], draftHere: boolean): void {
@@ -281,10 +506,10 @@ export class ReviewPanel {
     this.outsideEl.hidden = items.length === 0
   }
 
-  private renderFile(u: ReviewUpdate, s: TabComments, f: ReviewFile, fi: number, placed: Map<string, ReviewComment[]>, draftAt: Located | null): HTMLElement {
+  private renderFile(u: ReviewUpdate, s: TabComments, f: ReviewFile, fi: number, placed: Map<string, ReviewComment[]>, draftAt: Located | null, marks?: FileMarks): HTMLElement {
     const box = el('div', `review-file${f.viewed ? ' viewed' : ''}`)
     box.dataset.path = f.relPath
-    const folded = s.folds.get(f.path) ?? (f.viewed || f.additions + f.deletions > FOLD_LINES)
+    const folded = this.isFolded(s, f)
     const head = el('div', 'review-file-head')
     const viewed = el('input', 'review-viewed')
     viewed.type = 'checkbox'
@@ -297,7 +522,10 @@ export class ReviewPanel {
     })
     const slash = f.relPath.lastIndexOf('/')
     const name = el('span', 'review-name')
-    name.append(el('span', 'review-dir', slash >= 0 ? f.relPath.slice(0, slash + 1) : ''), f.relPath.slice(slash + 1))
+    const dir = el('span', 'review-dir')
+    appendMarked(dir, f.relPath.slice(0, slash + 1), 0, marks?.path, this.current)
+    name.append(dir)
+    appendMarked(name, f.relPath.slice(slash + 1), slash + 1, marks?.path, this.current)
     name.title = f.path
     const counts = el('span', 'review-counts')
     counts.append(el('span', 'review-add', `+${f.additions}`), ' ', el('span', 'review-del', `−${f.deletions}`))
@@ -308,6 +536,7 @@ export class ReviewPanel {
       const r = more.getBoundingClientRect()
       showMenu({ x: r.left, y: r.bottom }, [
         { label: 'Open in editor', action: () => this.cb.openEditor(u.tabId, f.path, firstLine(f)) },
+        { label: 'Show in Explorer', action: () => this.cb.reveal(u.tabId, f.path) },
         { label: 'Copy path', action: () => this.cb.copyText(f.path) }
       ])
     })
@@ -328,11 +557,11 @@ export class ReviewPanel {
       box.append(row)
       return box
     }
-    f.hunks.forEach((h, hi) => box.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt)))
+    f.hunks.forEach((h, hi) => box.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt, marks)))
     return box
   }
 
-  private renderHunk(u: ReviewUpdate, s: TabComments, f: ReviewFile, fi: number, h: ReviewHunk, hi: number, placed: Map<string, ReviewComment[]>, draftAt: Located | null): HTMLElement {
+  private renderHunk(u: ReviewUpdate, s: TabComments, f: ReviewFile, fi: number, h: ReviewHunk, hi: number, placed: Map<string, ReviewComment[]>, draftAt: Located | null, marks?: FileMarks): HTMLElement {
     const box = el('div', 'review-hunk')
     box.append(el('div', 'review-hunk-head', h.header))
     h.lines.forEach((line: ReviewLine, li) => {
@@ -357,7 +586,9 @@ export class ReviewPanel {
           this.markDrag()
         }
       })
-      row.append(gutter, el('span', 'review-code', line.text))
+      const code = el('span', 'review-code')
+      appendMarked(code, line.text, 0, marks?.lines.get(`${hi}:${li}`), this.current)
+      row.append(gutter, code)
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault()
         const at = editorLine(h, li)

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
@@ -271,5 +271,322 @@ test('Changes and Images have their own buttons and replace each other', async (
   await page.locator(`[data-tab-id="${tabId}"]`).click()
   await expect(changesTab(page)).toBeVisible()
   await expect(changesTab(page)).not.toHaveClass(/active/)
+  await app.close()
+})
+
+const findRow = (page: Page) => page.locator('.review-find')
+const findInput = (page: Page) => page.locator('.review-find-input')
+const findCount = (page: Page) => page.locator('.review-find-count')
+const matches = (page: Page) => page.locator('.review-files .review-match')
+const currentMark = (page: Page) => page.locator('.review-files .review-match.current')
+const needles = (repo: string): void => {
+  writeFileSync(join(repo, 'a.ts'), 'one\nNeedle two\nthree needle\n')
+  writeFileSync(join(repo, 'b.ts'), 'a needle in b\n')
+}
+/** the panel has the focus after a click in its diff; Ctrl+F then opens the find row */
+async function openFind(page: Page): Promise<void> {
+  await page.keyboard.press('Control+Shift+KeyD')
+  await expect(added(page, 'a.ts').first()).toBeVisible()
+  await added(page, 'a.ts').first().click()
+  await page.keyboard.press('Control+KeyF')
+  await expect(findRow(page)).toBeVisible()
+  await expect(findInput(page)).toBeFocused()
+}
+
+test('Ctrl+F in the Changes panel finds text in the diff, highlights it and steps through the matches', async () => {
+  const { app, page } = await reviewTab(needles)
+  await openFind(page)
+  await expect(findInput(page)).toHaveAttribute('placeholder', 'Find in changes')
+  await expect(findCount(page)).toHaveText('')
+  await page.keyboard.type('NEEDLE')
+  await expect(findCount(page)).toHaveText('1 / 3')
+  await expect(matches(page)).toHaveCount(3)
+  await expect(currentMark(page)).toHaveCount(1)
+  await expect(currentMark(page)).toHaveText('Needle')
+  await page.keyboard.press('Enter')
+  await expect(findCount(page)).toHaveText('2 / 3')
+  await expect(currentMark(page)).toHaveText('needle')
+  await expect(file(page, 'a.ts').locator('.review-match.current')).toHaveCount(1)
+  await page.keyboard.press('Enter')
+  await expect(findCount(page)).toHaveText('3 / 3')
+  await expect(file(page, 'b.ts').locator('.review-match.current')).toHaveCount(1)
+  await page.keyboard.press('Enter')
+  await expect(findCount(page)).toHaveText('1 / 3')
+  await page.keyboard.press('Shift+Enter')
+  await expect(findCount(page)).toHaveText('3 / 3')
+  await page.locator('.review-find-prev').click()
+  await expect(findCount(page)).toHaveText('2 / 3')
+  await page.locator('.review-find-next').click()
+  await expect(findCount(page)).toHaveText('3 / 3')
+  await findInput(page).fill('zzz')
+  await expect(findCount(page)).toHaveText('No results')
+  await expect(matches(page)).toHaveCount(0)
+  await app.close()
+})
+
+test('the find button in the panel header opens the find row; a file path matches too', async () => {
+  const { app, page } = await reviewTab(needles)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await expect(findRow(page)).toBeHidden()
+  await expect(page.locator('.panel-tools .review-find-btn')).toHaveAttribute('title', 'Find (Ctrl+F)')
+  await page.locator('.review-find-btn').click()
+  await expect(findInput(page)).toBeFocused()
+  await page.keyboard.type('b.ts')
+  await expect(findCount(page)).toHaveText('1 / 1')
+  await expect(file(page, 'b.ts').locator('.review-file-head .review-match.current')).toHaveText('b.ts')
+  await app.close()
+})
+
+test('going to a match in a folded file unfolds it', async () => {
+  const { app, page } = await reviewTab(needles)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await file(page, 'b.ts').locator('.review-viewed').check()
+  await expect(file(page, 'b.ts').locator('.review-line')).toHaveCount(0)
+  await file(page, 'a.ts').locator('.review-code').first().click()
+  await page.keyboard.press('Control+KeyF')
+  await page.keyboard.type('needle')
+  await expect(findCount(page)).toHaveText('1 / 3')
+  await expect(file(page, 'b.ts').locator('.review-line')).toHaveCount(0)
+  await page.keyboard.press('Shift+Enter')
+  await expect(findCount(page)).toHaveText('3 / 3')
+  await expect(file(page, 'b.ts').locator('.review-line')).toHaveCount(1)
+  await expect(file(page, 'b.ts').locator('.review-match.current')).toHaveCount(1)
+  await app.close()
+})
+
+test('Esc closes the find row, removes the highlights and gives the focus back to the panel', async () => {
+  const { app, page } = await reviewTab(needles)
+  await openFind(page)
+  await page.keyboard.type('needle')
+  await expect(matches(page)).toHaveCount(3)
+  await page.keyboard.press('Escape')
+  await expect(findRow(page)).toBeHidden()
+  await expect(matches(page)).toHaveCount(0)
+  await expect(panel(page)).not.toHaveClass(/collapsed/)
+  expect(await page.evaluate(() => document.activeElement?.classList.contains('review-files'))).toBe(true)
+  await page.keyboard.press('Control+KeyF')
+  await expect(findInput(page)).toBeFocused()
+  await app.close()
+})
+
+test('Ctrl+F in the terminal still goes to the terminal, not to the Changes panel', async () => {
+  const { app, page, tabId } = await reviewTab(needles)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await expect(added(page, 'a.ts').first()).toBeVisible()
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press('Control+KeyF')
+  await expect(findRow(page)).toBeHidden()
+  await expect.poll(() => page.evaluate((id) => window.__ct!.ptyInput!(id), tabId)).toContain('\x06')
+  await app.close()
+})
+
+test('the find row keeps its query and recomputes the matches when the view updates', async () => {
+  const { app, page, tabId, pipeName, a } = await reviewTab(needles)
+  await openFind(page)
+  await page.keyboard.type('needle')
+  await page.keyboard.press('Enter')
+  await expect(findCount(page)).toHaveText('2 / 3')
+  writeFileSync(a, 'one\nNeedle two\nthree needle\nfour needle\n')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(findCount(page)).toHaveText('2 / 4')
+  await expect(matches(page)).toHaveCount(4)
+  await expect(findInput(page)).toHaveValue('needle')
+  writeFileSync(a, 'one\nnothing\n')
+  writeFileSync(join(a, '..', 'b.ts'), 'b\n')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(findCount(page)).toHaveText('No results')
+  await app.close()
+})
+
+/** a.ts with a long diff; `at` are the numbers of the lines that hold the word */
+const longDiff = (at: number[]) => (repo: string): void => {
+  const lines = Array.from({ length: 300 }, (_, i) => (at.includes(i + 1) ? `row ${i + 1} needle` : `row ${i + 1}`))
+  writeFileSync(join(repo, 'a.ts'), 'one\ntwo\nthree\n' + lines.join('\n') + '\n')
+}
+
+test('typing a query whose first match is in a folded file unfolds it and shows the match', async () => {
+  const { app, page } = await reviewTab(needles)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await file(page, 'a.ts').locator('.review-viewed').check()
+  await expect(file(page, 'a.ts').locator('.review-line')).toHaveCount(0)
+  await file(page, 'b.ts').locator('.review-code').first().click()
+  await page.keyboard.press('Control+KeyF')
+  await page.keyboard.type('needle')
+  await expect(findCount(page)).toHaveText('1 / 3')
+  await expect(file(page, 'a.ts').locator('.review-line').first()).toBeVisible()
+  await expect(currentMark(page)).toHaveCount(1)
+  await expect(currentMark(page)).toBeVisible()
+  await expect(file(page, 'a.ts').locator('.review-match.current')).toHaveCount(1)
+  await app.close()
+})
+
+test('after a click in a long diff the keyboard still scrolls it', async () => {
+  const { app, page } = await reviewTab(longDiff([]))
+  await page.keyboard.press('Control+Shift+KeyD')
+  await expect(added(page, 'a.ts').nth(100)).toBeAttached()
+  await added(page, 'a.ts').nth(5).click()
+  await page.keyboard.press('PageDown')
+  await expect.poll(() => page.locator('.review-files').evaluate((e) => e.scrollTop)).toBeGreaterThan(0)
+  await app.close()
+})
+
+test('the current match is scrolled into view', async () => {
+  const { app, page } = await reviewTab(longDiff([5, 280]))
+  await openFind(page)
+  await page.keyboard.type('needle')
+  await expect(findCount(page)).toHaveText('1 / 2')
+  await expect(currentMark(page)).toBeInViewport()
+  await page.keyboard.press('Enter')
+  await expect(findCount(page)).toHaveText('2 / 2')
+  await expect(currentMark(page)).toBeInViewport()
+  await page.keyboard.press('Shift+Enter')
+  await expect(currentMark(page)).toBeInViewport()
+  await app.close()
+})
+
+test('the current match is clamped to the last one when a view update removes the later matches', async () => {
+  const { app, page, tabId, pipeName, a } = await reviewTab(needles)
+  await openFind(page)
+  await page.keyboard.type('needle')
+  await page.keyboard.press('Shift+Enter')
+  await expect(findCount(page)).toHaveText('3 / 3')
+  writeFileSync(join(a, '..', 'b.ts'), 'b\n')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(findCount(page)).toHaveText('2 / 2')
+  await expect(currentMark(page)).toHaveText('needle')
+  await app.close()
+})
+
+test('app shortcuts still work while the find input has the focus', async () => {
+  const { app, page } = await reviewTab(needles)
+  await openFind(page)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await expect(panel(page)).toHaveClass(/collapsed/)
+  await app.close()
+})
+
+// the shell is stubbed in the main process: no Explorer window opens in a test
+type App = Awaited<ReturnType<typeof reviewTab>>['app']
+async function stubShell(app: App): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const calls: string[] = []
+    ;(globalThis as Record<string, unknown>).__shellCalls = calls
+    shell.showItemInFolder = (p: string) => { calls.push('show ' + p) }
+    shell.openPath = (p: string) => { calls.push('open ' + p); return Promise.resolve('') }
+  })
+}
+const shellCalls = (app: App) => app.evaluate(() => (globalThis as Record<string, unknown>).__shellCalls as string[])
+
+test('the file menu offers Show in Explorer after Open in editor; it shows the file, and refuses a file the view does not show', async () => {
+  const { app, page, a } = await reviewTab(upper)
+  await stubShell(app)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await file(page, 'a.ts').locator('.review-more').click()
+  await expect(page.locator('.menu .menu-item')).toHaveText(['Open in editor', 'Show in Explorer', 'Copy path'])
+  await page.locator('.menu .menu-item', { hasText: 'Show in Explorer' }).click()
+  await expect.poll(() => shellCalls(app)).toEqual(['show ' + a])
+  // a path outside the view is ignored
+  await page.evaluate((p) => window.ct.revealFile(window.__ct!.activeTabId()!, p), join(dirname(a), 'other.ts'))
+  await page.evaluate(() => window.ct.revealFile(window.__ct!.activeTabId()!, 'relative.ts'))
+  await page.waitForTimeout(300)
+  expect(await shellCalls(app)).toEqual(['show ' + a])
+  await app.close()
+})
+
+function withTests(repo: string): void {
+  upper(repo)
+  mkdirSync(join(repo, 'tests'), { recursive: true })
+  writeFileSync(join(repo, 'tests', 'a.test.ts'), 'it()\n')
+  writeFileSync(join(repo, 'VehicleTest.cpp'), 'x\n')
+  writeFileSync(join(repo, 'Contest.cpp'), 'y\n')
+}
+
+test('the Hide tests checkbox hides test files in the view, says how many, and shows them again', async () => {
+  const { app, page, dataDir } = await reviewTab(withTests)
+  await page.keyboard.press('Control+Shift+KeyD')
+  const box = page.locator('.review-hide-tests input[type="checkbox"]')
+  await expect(page.locator('.review-hide-tests')).toHaveText('Hide tests')
+  await expect(page.locator('.review-hide-tests')).toHaveAttribute('title', 'Hide test files (review.hideTests)')
+  // tests are shown by default
+  await expect(box).not.toBeChecked()
+  await expect(page.locator('.review-file')).toHaveCount(4)
+  await expect(page.locator('.review-tests-hidden')).toHaveCount(0)
+  await box.check()
+  await expect(page.locator('.review-file')).toHaveCount(2)
+  await expect(file(page, 'a.ts')).toHaveCount(1)
+  await expect(file(page, 'Contest.cpp')).toHaveCount(1)
+  await expect(file(page, 'tests/a.test.ts')).toHaveCount(0)
+  await expect(box).toBeChecked()
+  const hidden = page.locator('.review-tests-hidden')
+  await expect(hidden).toHaveText('· 2 tests hidden')
+  expect(await hidden.getAttribute('title')).toBe('Test files are hidden (review.hideTests):\nVehicleTest.cpp\ntests/a.test.ts')
+  // saved like any other setting
+  await expect.poll(() => (JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')) as { review?: { hideTests?: boolean } }).review?.hideTests).toBe(true)
+  // the status bar keeps counting all the changes
+  await expect(page.locator('#statusbar .status-changes')).toContainText('4 files')
+  await box.uncheck()
+  await expect(page.locator('.review-file')).toHaveCount(4)
+  await expect(page.locator('.review-tests-hidden')).toHaveCount(0)
+  await app.close()
+})
+
+test('Hide tests applies to Last turn and Session, and to a show_diff request', async () => {
+  const { app, page, tabId, pipeName, transcriptPath, repo, a } = await reviewTab()
+  const spec = join(repo, 'tests', 'a.test.ts')
+  mkdirSync(join(repo, 'tests'), { recursive: true })
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: repo })).toEqual({ ok: true })
+  for (const [id, path] of [['toolu_1', a], ['toolu_2', spec]] as const) {
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'edit_before', tabId, sessionId: SID, toolUseId: id, path })).toEqual({ ok: true })
+  }
+  writeFileSync(a, 'one\ntwo\nthree\nfour\n')
+  writeFileSync(spec, 'it()\n')
+  appendFileSync(transcriptPath, editResultLine({ toolUseId: 'toolu_1', filePath: a }) + '\n' + editResultLine({ toolUseId: 'toolu_2', filePath: spec }) + '\n')
+  await page.keyboard.press('Control+Shift+KeyD')
+  const box = page.locator('.review-hide-tests input[type="checkbox"]')
+  await page.locator('.review-seg-btn[data-scope="session"]').click()
+  await expect(page.locator('.review-file')).toHaveCount(2)
+  await box.check()
+  await expect(page.locator('.review-file')).toHaveCount(1)
+  await expect(page.locator('.review-tests-hidden')).toHaveText('· 1 test hidden')
+  await page.locator('.review-seg-btn[data-scope="last_turn"]').click()
+  await expect(page.locator('.review-seg-btn.active')).toHaveText('Last turn')
+  await expect(page.locator('.review-file')).toHaveCount(1)
+  await expect(page.locator('.review-tests-hidden')).toHaveText('· 1 test hidden')
+  const msg = { v: 1 as const, type: 'show_diff' as const, tabId, cwd: repo, scope: null, from: 'HEAD', to: null, paths: [], title: null }
+  const r = await sendPipeMessage(pipeName, msg)
+  expect(r).toMatchObject({ ok: true })
+  expect((r as { info: string }).info).toContain('(1 test file is hidden: review.hideTests)')
+  await expect(page.locator('.review-chip-text')).toHaveText('HEAD → working tree')
+  await expect(page.locator('.review-tests-hidden')).toHaveText('· 1 test hidden')
+  await app.close()
+})
+
+test('changing review.testPatterns while Hide tests is on changes the view without a refresh', async () => {
+  const { app, page } = await reviewTab(withTests)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await page.locator('.review-hide-tests input[type="checkbox"]').check()
+  await expect(page.locator('.review-file')).toHaveCount(2)
+  await expect(page.locator('.review-tests-hidden')).toHaveText('· 2 tests hidden')
+  // only *.cpp files are tests now: the spec file comes back, the two .cpp files go
+  await page.evaluate(() => window.ct.setSetting('review.testPatterns', ['*.cpp']))
+  await expect(file(page, 'tests/a.test.ts')).toHaveCount(1)
+  await expect(file(page, 'VehicleTest.cpp')).toHaveCount(0)
+  await expect(file(page, 'Contest.cpp')).toHaveCount(0)
+  await expect(page.locator('.review-tests-hidden')).toHaveText('· 2 tests hidden')
+  await page.evaluate(() => window.ct.setSetting('review.testPatterns', []))
+  await expect(page.locator('.review-file')).toHaveCount(4)
+  await expect(page.locator('.review-tests-hidden')).toHaveCount(0)
+  await app.close()
+})
+
+test('a refused save from the Hide tests checkbox puts the box back and says why', async () => {
+  const { app, page, dataDir } = await reviewTab(withTests)
+  await page.keyboard.press('Control+Shift+KeyD')
+  writeFileSync(join(dataDir, 'settings.json'), '{ not json')
+  const box = page.locator('.review-hide-tests input[type="checkbox"]')
+  await box.click()
+  await expect(page.locator('.toast', { hasText: "can't be used" })).toBeVisible()
+  await expect(box).not.toBeChecked()
+  await expect(page.locator('.review-file')).toHaveCount(4)
   await app.close()
 })

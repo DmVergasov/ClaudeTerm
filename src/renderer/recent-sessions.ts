@@ -35,9 +35,29 @@ export function filterSessions(list: RecentSession[], query: string): RecentSess
   })
 }
 
+export interface ArrangedSessions {
+  /** starred sessions first, then the others; newest first in each group */
+  shown: RecentSession[]
+  /** where the divider goes (the number of starred ones), null when one of the groups is empty */
+  dividerAt: number | null
+}
+
+/** The filtered sessions in the order the window shows them. */
+export function arrangeSessions(list: RecentSession[], query: string): ArrangedSessions {
+  const newestFirst = (a: RecentSession, b: RecentSession): number => b.modifiedAt - a.modifiedAt
+  const matching = filterSessions(list, query)
+  const starred = matching.filter((s) => s.starred).sort(newestFirst)
+  const others = matching.filter((s) => !s.starred).sort(newestFirst)
+  return { shown: [...starred, ...others], dividerAt: starred.length > 0 && others.length > 0 ? starred.length : null }
+}
+
 export interface RecentSessionsCallbacks {
   load(): Promise<RecentSession[]>
   open(id: string): void
+  /** the window is about to show: a context menu left open would stay above it */
+  opening(): void
+  /** the star was toggled; the window shows the new state right away */
+  setStarred(id: string, starred: boolean): void
   /** the window closed without opening anything, or before opening: give the keyboard back */
   closed(): void
 }
@@ -46,6 +66,7 @@ export interface RecentSessionsCallbacks {
 export class RecentSessionsWindow {
   private sessions: RecentSession[] = []
   private shown: RecentSession[] = []
+  private dividerAt: number | null = null
   private selected = 0
   private loading = false
   private loadId = 0
@@ -72,7 +93,8 @@ export class RecentSessionsWindow {
       this.render()
     })
     this.input.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown') this.move(1)
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyD') this.toggleStar(this.shown[this.selected])
+      else if (e.key === 'ArrowDown') this.move(1)
       else if (e.key === 'ArrowUp') this.move(-1)
       else if (e.key === 'Enter') this.choose(this.shown[this.selected])
       else if (e.key === 'Escape') this.close()
@@ -90,6 +112,7 @@ export class RecentSessionsWindow {
 
   async open(): Promise<void> {
     const id = ++this.loadId
+    this.cb.opening()
     this.root.hidden = false
     this.input.value = ''
     this.selected = 0
@@ -102,7 +125,9 @@ export class RecentSessionsWindow {
     if (id !== this.loadId) return
     this.sessions = list
     this.loading = false
-    this.render()
+    // Enter right away resumes the latest conversation, as it did before stars: it may sit below the divider
+    const latest = this.input.value === '' ? list.reduce<RecentSession | undefined>((a, b) => (!a || b.modifiedAt > a.modifiedAt ? b : a), undefined) : undefined
+    this.render(latest?.id)
   }
 
   close(): void {
@@ -118,14 +143,27 @@ export class RecentSessionsWindow {
     this.render()
   }
 
+  /** the row stays selected where it moves to */
+  private toggleStar(s: RecentSession | undefined): void {
+    if (!s) return
+    const keep = this.shown[this.selected]?.id
+    this.sessions = this.sessions.map((x) => (x.id === s.id ? { ...x, starred: !x.starred } : x))
+    this.cb.setStarred(s.id, !s.starred)
+    this.render(keep)
+  }
+
   private choose(s: RecentSession | undefined): void {
     if (!s) return
     this.close()
     this.cb.open(s.id)
   }
 
-  private render(): void {
-    this.shown = filterSessions(this.sessions, this.input.value)
+  private render(keepSelected?: string): void {
+    const arranged = arrangeSessions(this.sessions, this.input.value)
+    this.shown = arranged.shown
+    this.dividerAt = arranged.dividerAt
+    const kept = keepSelected === undefined ? -1 : this.shown.findIndex((x) => x.id === keepSelected)
+    if (kept >= 0) this.selected = kept
     if (this.shown.length === 0) {
       const empty = document.createElement('div')
       empty.className = 'sessions-empty'
@@ -134,7 +172,13 @@ export class RecentSessionsWindow {
       return
     }
     const now = Date.now()
-    this.rows.replaceChildren(...this.shown.map((s, i) => this.row(s, i === this.selected, now)))
+    const rows = this.shown.map((s, i) => this.row(s, i === this.selected, now))
+    if (this.dividerAt !== null) {
+      const divider = document.createElement('div')
+      divider.className = 'sessions-divider'
+      rows.splice(this.dividerAt, 0, divider)
+    }
+    this.rows.replaceChildren(...rows)
     this.rows.querySelector('.session-row.selected')?.scrollIntoView({ block: 'nearest' })
   }
 
@@ -154,6 +198,15 @@ export class RecentSessionsWindow {
       open.textContent = '● open'
       top.append(open)
     }
+    const star = document.createElement('span')
+    star.className = `session-star${s.starred ? ' starred' : ''}`
+    star.textContent = s.starred ? '★' : '☆'
+    star.title = s.starred ? 'Unstar (Ctrl+D)' : 'Star (Ctrl+D)'
+    star.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.toggleStar(s)
+    })
+    top.append(star)
     const meta = document.createElement('div')
     meta.className = 'session-meta'
     const folder = document.createElement('span')
@@ -167,7 +220,8 @@ export class RecentSessionsWindow {
       last.textContent = s.lastPrompt
       row.append(last)
     }
-    row.addEventListener('click', () => this.choose(s))
+    // the second click of a double-click can land on another row, which moved under the pointer
+    row.addEventListener('click', (e) => { if (e.detail <= 1) this.choose(s) })
     return row
   }
 }

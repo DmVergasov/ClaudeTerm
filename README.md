@@ -72,8 +72,10 @@ Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −)
 - **Uncommitted** — everything not committed yet, untracked files included. **Last turn** — what Claude changed in its latest turn with edits. **Session** — everything it changed in this conversation. Last turn and Session show the files inside the tab's folder (Claude's edits elsewhere are counted, not shown) and work without git too: ClaudeTerm keeps each file as it was right before Claude's first change.
 - **Comment on lines** — hover a line and click **+**, or drag along the margin for several lines. **Send to Claude** writes all your comments as one message — file, line and the quoted code — and sends it. The diff updates while Claude works on them.
 - **Viewed** folds the files you are done with; a file Claude changes again unfolds.
+- **Hide tests** — the checkbox in the panel leaves test files out of every view and says how many it hid; which files count as tests is a list of patterns in the settings.
+- **Find** — `Ctrl+F` finds text in the diff (and in the file names), highlights every match and steps through them with `Enter`.
 - **Ask in words** — "show me the diff of the last three commits, only src/main": Claude opens it in the panel with the bundled `show_diff` tool.
-- Right-click a line to open the file at that line in your editor (VS Code by default, or your own command in `review.editor`).
+- Right-click a line to open the file at that line in your editor (VS Code by default, or your own command in `review.editor`), or show it in Explorer from the file's ⋯ menu.
 
 <p align="center"><img src="docs/images/review-panel.png" width="820" alt="The Changes panel: the uncommitted diff of two files beside the conversation, with a comment for Claude under a changed line"></p>
 
@@ -94,7 +96,7 @@ Right-click any folder (or the background of a folder) in Explorer → **Open Cl
 
 Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the same tabs, and **each Claude tab resumes its own conversation** (`claude --resume <session>`), even when several of them ran in the same folder or you used `/clear` in between.
 
-**Recent sessions** (`Ctrl+Shift+H`, or **Recent sessions…** in the ▾ menu) lists your latest Claude Code conversations from every project — also ones started outside ClaudeTerm — with their titles, folders and last messages. Type to filter, Enter to continue one: ClaudeTerm opens a Claude tab in that folder with `claude --resume`, or switches to the tab that already has it.
+**Recent sessions** (`Ctrl+Shift+H`, or **Recent sessions…** in the ▾ menu) lists your latest Claude Code conversations from every project — also ones started outside ClaudeTerm — with their titles, folders and last messages. Type to filter, Enter to continue one: ClaudeTerm opens a Claude tab in that folder with `claude --resume`, or switches to the tab that already has it. Click the ☆ of a session (or press `Ctrl+D`) to star it: starred sessions stay on top of the list, however old. **Star session** in a Claude tab's right-click menu stars that tab's conversation.
 
 <p align="center"><img src="docs/images/recent-sessions.png" width="560" alt="Recent sessions window: titles, folders, ages and last messages, with a search field"></p>
 
@@ -130,7 +132,9 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Find in scrollback | `Ctrl+Shift+F` |
 | Show / hide the image panel | `Ctrl+Shift+I` |
 | Show / hide the Changes panel | `Ctrl+Shift+D` |
+| Find in the Changes panel | `Ctrl+F` (when the panel has the focus) |
 | Recent sessions | `Ctrl+Shift+H` |
+| Star / unstar the selected session | `Ctrl+D` (in the Recent sessions window) |
 | Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Open settings | `Ctrl+,` |
 
@@ -177,6 +181,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeT
     "editor": null,                // e.g. "code --goto {file}:{line}" or "rider64 --line {line} {file}"; null = VS Code if installed, else the file is shown in its folder
     "statusBar": true,             // the changes counter in the status bar
     "hideIgnored": true,           // hide files git ignores in Last turn and Session
+    "hideTests": false,            // leave test files out of every view (the Hide tests checkbox in the panel)
+    "testPatterns": ["**/tests/**", "*.test.*", "*Test.*"],  // which files are tests, matched against the path in the project (the default list is in the Settings window)
     "width": 640                   // the panel's width when it opens, in px
   },
   "autoUpdate": true               // check GitHub for new versions in the background

@@ -1,4 +1,6 @@
 import crossSpawn from 'cross-spawn'
+import { existsSync, statSync } from 'node:fs'
+import { dirname } from 'node:path'
 
 /** what launchEditor needs of a started process */
 export interface Launched {
@@ -67,6 +69,42 @@ export function launchEditor(template: string | null, file: string, line: number
   }
   child.on('error', failed)
   child.unref()
+}
+
+export interface RevealDeps {
+  /** a file or a folder is there */
+  exists(p: string): boolean
+  isDirectory(p: string): boolean
+  /** opens the file manager with the file selected */
+  showItem(file: string): void
+  /** opens a folder in the file manager */
+  openFolder(dir: string): void
+}
+
+/** Shows the file in its folder; when the file is gone, its folder (never the file: opening it could run it). */
+export function revealInFolder(file: string, d: RevealDeps): void {
+  if (d.exists(file)) {
+    d.showItem(file)
+    return
+  }
+  const dir = dirname(file)
+  if (d.isDirectory(dir)) d.openFolder(dir)
+}
+
+/** the file manager calls on the real file system */
+export function nodeRevealDeps(showItem: (file: string) => void, openFolder: (dir: string) => void): RevealDeps {
+  return {
+    exists: existsSync,
+    isDirectory: (p) => {
+      try {
+        return statSync(p).isDirectory()
+      } catch {
+        return false
+      }
+    },
+    showItem,
+    openFolder
+  }
 }
 
 /** cross-spawn finds code.cmd through PATHEXT and quotes the arguments for cmd.exe; the editor runs on its own */

@@ -262,6 +262,9 @@ test('README screenshots', async () => {
   await page.locator('.menu-item', { hasText: 'Recent sessions…' }).click()
   const sessionsBox = page.locator('#sessions .sessions-box')
   await expect(sessionsBox.locator('.session-row')).toHaveCount(6)
+  // one starred conversation, so the image shows the star and the divider
+  await sessionsBox.locator('.session-row').nth(2).locator('.session-star').click()
+  await expect(sessionsBox.locator('.sessions-divider')).toHaveCount(1)
   await page.mouse.move(1270, 790)
   const box = (await sessionsBox.boundingBox())!
   await page.screenshot({ path: join(OUT, 'recent-sessions.png'), clip: { x: box.x - 24, y: box.y - 24, width: box.width + 48, height: box.height + 48 } })

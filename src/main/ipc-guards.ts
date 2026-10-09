@@ -1,11 +1,17 @@
 import { isAbsolute } from 'node:path'
 import type { ImageAction } from '../shared/ipc'
+import { isUuid } from '../shared/protocol'
 import { REVIEW_SCOPES, type ReviewScope } from '../shared/review'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
 
 export const isId = (v: unknown): v is string => typeof v === 'string'
+
+/** a Claude Code session id */
+export const isSessionId = isUuid
+
+export const isFlag = (v: unknown): v is boolean => typeof v === 'boolean'
 
 export const isPtyData = (v: unknown): v is string => typeof v === 'string'
 

@@ -13,10 +13,10 @@ import { autoUpdater } from 'electron-updater'
 import { writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPtyData, isPtySize, isReviewScope, isUserInput } from './ipc-guards'
+import { isAbsPath, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
-import { launchEditor, spawnDetached } from './editor-launch'
+import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
 import { ReviewHub } from './review-hub'
 import { createSources, nodeIo } from './review-sources'
 import { checkImageFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
@@ -35,6 +35,7 @@ import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './setti
 import { SettingsWindow } from './settings-window'
 import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
+import { StarredSessions } from './starred-sessions'
 import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
@@ -114,6 +115,7 @@ function bootstrap(): void {
   const restoreAfterUpdate = consumeUpdateMarker(dataDir, Date.now())
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
   const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
+  const starred = new StarredSessions(dataDir, toast)
   // what the window was last shown; opening looks the id up here, so the renderer only passes an id
   let listedSessions = new Map<string, SessionSummary>()
   const restoreInfo = (): RestoreInfo | null =>
@@ -206,7 +208,8 @@ function bootstrap(): void {
     activeTabId: () => tabs.activeTabId(),
     publish: (u) => send(IPC.evReview, u),
     onError: (m) => log.warn(m),
-    hideIgnored: () => settings.review.hideIgnored
+    hideIgnored: () => settings.review.hideIgnored,
+    testPatterns: () => (settings.review.hideTests ? settings.review.testPatterns : null)
   })
 
   const startTabImages = (tab: TabInfo): void => {
@@ -489,11 +492,15 @@ function bootstrap(): void {
   ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) attention.notify(tabId, 'bell') })
   ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => openTab(req))
   ipcMain.handle(IPC.sessionsList, async (): Promise<RecentSession[]> => {
-    const list = await history.list(100)
+    const list = await history.list(100, starred.ids())
     listedSessions = new Map(list.map((s) => [s.id, s]))
     const open = new Set(tabs.list().map((t) => t.claudeSessionId))
-    return list.map((s) => ({ ...s, open: open.has(s.id) }))
+    return list.map((s) => ({ ...s, open: open.has(s.id), starred: starred.ids().has(s.id) }))
   })
+  ipcMain.handle(IPC.sessionsStar, (_e, id: unknown, on: unknown): void => {
+    if (isSessionId(id) && isFlag(on)) starred.set(id, on)
+  })
+  ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
   ipcMain.on(IPC.sessionsOpen, (_e, id: unknown) => {
     const s = isId(id) ? listedSessions.get(id) : undefined
     if (!s) return
@@ -540,6 +547,11 @@ function bootstrap(): void {
   ipcMain.on(IPC.reviewOpenEditor, (_e, tabId: unknown, path: unknown, line: unknown) => {
     if (!isId(tabId) || !isAbsPath(path) || !isLineNo(line) || !review.hasFile(tabId, path)) return
     launchEditor(settings.review.editor, path, line, { spawn: spawnDetached, reveal: (p) => shell.showItemInFolder(p), onError: toast })
+  })
+  // only a file the tab's view shows; a file gone from the disk opens its folder
+  ipcMain.on(IPC.reviewReveal, (_e, tabId: unknown, path: unknown) => {
+    if (!isId(tabId) || !isAbsPath(path) || !review.hasFile(tabId, path)) return
+    revealInFolder(path, nodeRevealDeps((p) => shell.showItemInFolder(p), (d) => void shell.openPath(d)))
   })
   ipcMain.handle(IPC.reviewCanSend, (_e, tabId: unknown) => (isId(tabId) ? review.canSend(tabId) : { ok: false, reason: NOT_RUNNING }))
   ipcMain.on(IPC.imagesMarkSeen, (_e, tabId: unknown) => { if (isId(tabId)) images.markSeen(tabId) })
@@ -649,6 +661,7 @@ function bootstrap(): void {
     // a file that cannot be read keeps the current settings
     if (!next.failed) {
       const hideIgnored = settings.review.hideIgnored
+      const testsBefore = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
       settings = next.settings
       const computed = computeProfiles(settings)
       profiles = computed.profiles
@@ -656,7 +669,8 @@ function bootstrap(): void {
       send(IPC.evSettings, settings)
       // the active tab's Last turn and Session views list other files now
       const active = tabs.activeTabId()
-      if (hideIgnored !== settings.review.hideIgnored && active) review.refresh(active)
+      const testsNow = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
+      if ((hideIgnored !== settings.review.hideIgnored || testsBefore !== testsNow) && active) review.refresh(active)
     }
     for (const n of notices) if (!lastNotices.includes(n)) toast(n)
     lastNotices = notices

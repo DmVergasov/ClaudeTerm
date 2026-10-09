@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { applySettingEdit, DEFAULT_SETTINGS, loadSettingsFile, loadSettingsSafe, parseSettings } from '../../src/main/settings'
+import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
 
 describe('parseSettings', () => {
   it('returns defaults for null or empty text', () => {
@@ -214,15 +215,43 @@ describe('applySettingEdit', () => {
 })
 
 describe('review settings', () => {
-  it('defaults: no editor, the counter on, 640 px, ignored files hidden', () => {
-    expect(parseSettings('{}').settings.review).toEqual({ editor: null, statusBar: true, hideIgnored: true, width: 640 })
+  const defaults = { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640 }
+
+  it('defaults: no editor, the counter on, 640 px, ignored files hidden, tests shown, the default test patterns', () => {
+    expect(parseSettings('{}').settings.review).toEqual(defaults)
+    expect(defaults.testPatterns).toContain('**/tests/**')
+    expect(defaults.testPatterns).toContain('*Test.*')
   })
 
   it('takes valid values and reports invalid ones', () => {
-    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, width: 900 } })).settings.review)
-      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, width: 900 })
+    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900 } })).settings.review)
+      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900 })
     const bad = parseSettings(JSON.stringify({ review: { editor: 5, hideIgnored: 'yes', width: 10 } }))
-    expect(bad.settings.review).toEqual({ editor: null, statusBar: true, hideIgnored: true, width: 640 })
+    expect(bad.settings.review).toEqual(defaults)
     expect(bad.errors).toEqual(['settings.json: invalid value for "review.editor", using default', 'settings.json: invalid value for "review.hideIgnored", using default', 'settings.json: invalid value for "review.width", using default'])
+  })
+
+  it('hideTests must be a boolean; testPatterns a list of at most 200 non-empty strings of at most 200 characters, and an empty list is valid', () => {
+    expect(parseSettings(JSON.stringify({ review: { testPatterns: [] } })).settings.review.testPatterns).toEqual([])
+    const bad = (review: unknown) => parseSettings(JSON.stringify({ review }))
+    const hide = bad({ hideTests: 'yes' })
+    expect(hide.settings.review.hideTests).toBe(false)
+    expect(hide.errors).toEqual(['settings.json: invalid value for "review.hideTests", using default'])
+    for (const testPatterns of ['*.test.*', [1], [''], ['ok', ''], Array(201).fill('a'), ['x'.repeat(201)]]) {
+      const r = bad({ testPatterns })
+      expect(r.settings.review.testPatterns).toEqual([...DEFAULT_TEST_PATTERNS])
+      expect(r.errors).toEqual(['settings.json: invalid value for "review.testPatterns", using default'])
+    }
+    expect(bad({ testPatterns: Array(200).fill('a') }).errors).toEqual([])
+    expect(bad({ testPatterns: ['x'.repeat(200)] }).errors).toEqual([])
+  })
+
+  it('the settings window can edit both keys', () => {
+    const on = applySettingEdit('{}', 'review.hideTests', true)
+    expect(on.ok && JSON.parse(on.text)).toEqual({ review: { hideTests: true } })
+    const list = applySettingEdit('{}', 'review.testPatterns', ['a/**'])
+    expect(list.ok && JSON.parse(list.text)).toEqual({ review: { testPatterns: ['a/**'] } })
+    expect(applySettingEdit('{}', 'review.testPatterns', [''])).toEqual({ ok: false, error: 'Invalid value for review.testPatterns' })
+    expect(applySettingEdit('{}', 'review.hideTests', 'yes')).toEqual({ ok: false, error: 'Invalid value for review.hideTests' })
   })
 })

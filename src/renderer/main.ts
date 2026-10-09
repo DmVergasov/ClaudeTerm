@@ -8,7 +8,7 @@ import { Lightbox } from './lightbox'
 import { RecentSessionsWindow } from './recent-sessions'
 import { imagePasteInput, mapKey, type KeyAction } from './keymap'
 import { SearchBar } from './search'
-import { showMenu, type MenuItem } from './menu'
+import { closeMenu, showMenu, type MenuItem } from './menu'
 import { RestoreBanner } from './restore-banner'
 import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
@@ -277,14 +277,25 @@ function newTabMenu(anchor: HTMLElement): void {
   })
 }
 
+// the latest right-click wins when the star lookups of two of them overlap
+let tabMenuSeq = 0
+
 function tabMenu(id: string, at: { x: number; y: number }): void {
   const t = tabs.get(id)
   if (!t) return
-  showMenu(at, [
-    { label: t.info.kind === 'claude' ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
-    { label: '', separator: true },
-    { label: 'Close tab', action: () => ct.closeTab(id) }
-  ])
+  const seq = ++tabMenuSeq
+  const sessionId = t.info.kind === 'claude' ? t.info.claudeSessionId : null
+  // the star lives in main: ask before showing, so the item says what the click does
+  void (sessionId ? ct.getStarredSessions().catch(() => [] as string[]) : Promise.resolve([] as string[])).then((starred) => {
+    if (seq !== tabMenuSeq || !tabs.has(id)) return
+    const isStarred = sessionId !== null && starred.includes(sessionId)
+    showMenu(at, [
+      { label: t.info.kind === 'claude' ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
+      ...(sessionId ? [{ label: isStarred ? 'Unstar session' : 'Star session', action: () => void ct.setSessionStarred(sessionId, !isStarred) }] : []),
+      { label: '', separator: true },
+      { label: 'Close tab', action: () => ct.closeTab(id) }
+    ])
+  })
 }
 
 function applySettings(s: Settings): void {
@@ -330,7 +341,7 @@ async function boot(): Promise<void> {
   )
   document.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement | null
-    if (target?.closest('.xterm') || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return
+    if (target?.closest('.xterm') || (target?.tagName === 'INPUT' && !target.classList.contains('review-find-input')) || target?.tagName === 'TEXTAREA') return
     const a = mapKey(e)
     if (!a || a.type === 'send' || a.type === 'copyOrInterrupt' || a.type === 'smartPaste' || a.type === 'paste' || a.type === 'copy') return
     e.preventDefault()
@@ -343,6 +354,8 @@ async function boot(): Promise<void> {
   sessionsWindow = new RecentSessionsWindow(document.getElementById('sessions')!, {
     load: () => ct.listSessions(),
     open: (id) => ct.openSession(id),
+    opening: closeMenu,
+    setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
     closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
   })
   statusBar = new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'))
@@ -387,7 +400,18 @@ async function boot(): Promise<void> {
       setViewed: (id, path, hash, viewed) => ct.setReviewViewed(id, path, hash, viewed),
       showFile: (id, path) => ct.showReviewFile(id, path),
       openEditor: (id, path, line) => ct.openInEditor(id, path, line),
+      reveal: (id, path) => ct.revealFile(id, path),
       copyText: (text) => ct.writeClipboardText(text),
+      setHideTests: async (on) => {
+        try {
+          const r = await ct.setSetting('review.hideTests', on)
+          if (!r.ok) showToast(r.error)
+          return r.ok
+        } catch (e) {
+          showToast(`Cannot save review.hideTests: ${String(e)}`)
+          return false
+        }
+      },
       send: (id, message) => sendToClaude(id, message)
     },
     ct.platform

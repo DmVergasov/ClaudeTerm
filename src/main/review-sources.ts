@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs'
-import { isAbsolute, relative, sep } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { historyBaseline, type HistoryEdit } from './baselines'
 import { contentSha, isBinary, MAX_SNAPSHOT_BYTES, type FileRead, type Snapshot } from './edit-ledger'
 import { changedFiles, checkIgnored, execGit, headOrEmpty, numstat, readBlobs, repoRoot, revisionInfo, untrackedFiles, verifyRef, type GitChange, type GitRun, type RevInfo } from './git-source'
@@ -58,6 +58,8 @@ export interface Inputs {
   inputs: DiffInput[]
   /** some files were not read, or not listed: the view is over its limits */
   tooMany: boolean
+  /** files a view left out by name (absolute), never read: the hub counts them */
+  excluded?: string[]
 }
 
 /** what the status bar counter shows */
@@ -72,7 +74,7 @@ export interface ReviewSources {
   root(cwd: string): Promise<{ root: string } | { root: null; problem: string }>
   verify(root: string, ref: string): Promise<void>
   head(root: string): Promise<string>
-  git(root: string, from: string, to: string | null, paths: string[], forced: (path: string) => boolean): Promise<Inputs>
+  git(root: string, from: string, to: string | null, paths: string[], forced: (path: string) => boolean, exclude: (relPath: string) => boolean): Promise<Inputs>
   /** the files a ledger view would list, before any is read */
   ledgerPaths(ledger: LedgerView, log: TranscriptLog, scope: 'last_turn' | 'session'): string[]
   ledger(ledger: LedgerView, log: TranscriptLog, scope: 'last_turn' | 'session', base: string, forced: (path: string) => boolean, exclude: (path: string) => boolean): Inputs
@@ -134,11 +136,22 @@ function diskSide(io: SourceIo, path: string, forced: boolean, budget: Budget): 
 
 const byPath = <T extends { path: string }>(a: T, b: T): number => a.path.localeCompare(b.path)
 
-export async function gitInputs(io: SourceIo, root: string, from: string, to: string | null, paths: string[], forced: (path: string) => boolean): Promise<Inputs> {
-  const changes = (await changedFiles(io.git, root, from, to, paths)).sort(byPath)
+/** `exclude` takes a file's path inside the repository (with /) and names the files left out of the view: listed in `excluded`, not read, not counted against the limits */
+export async function gitInputs(
+  io: SourceIo, root: string, from: string, to: string | null, paths: string[], forced: (path: string) => boolean, exclude: (relPath: string) => boolean = () => false
+): Promise<Inputs> {
+  const listed = (await changedFiles(io.git, root, from, to, paths)).sort(byPath)
+  // every path is the root and git's relative path: no path.relative per file
+  const prefix = resolve(root).length
+  const changes: GitChange[] = []
+  const excluded: string[] = []
+  for (const c of listed) {
+    if (exclude(c.path.slice(prefix).replace(/^[\\/]+/, '').replaceAll(sep, '/'))) excluded.push(c.path)
+    else changes.push(c)
+  }
   const skipped = (c: GitChange): DiffInput => ({ path: c.path, relPath: relPathFor(root, c.path), before: { kind: 'skipped' }, after: { kind: 'skipped' }, forced: false, status: c.status })
   // an untracked node_modules is tens of thousands of files: the first ones are listed, the rest left out
-  if (changes.length > MAX_FILES) return { inputs: changes.slice(0, MAX_FILES).map(skipped), tooMany: true }
+  if (changes.length > MAX_FILES) return { inputs: changes.slice(0, MAX_FILES).map(skipped), tooMany: true, excluded }
   const all = changes.map((c) => c.path)
   const before = await revisionInfo(io.git, root, from, all)
   const after = to === null ? null : await revisionInfo(io.git, root, to, all)
@@ -161,7 +174,8 @@ export async function gitInputs(io: SourceIo, root: string, from: string, to: st
   const side = (p: Planned): Side => (p.kind === 'blob' ? { kind: 'data', data: blobs.get(p.id) ?? Buffer.alloc(0) } : p)
   return {
     inputs: planned.map(({ c, f, b, a }) => ({ path: c.path, relPath: relPathFor(root, c.path), before: side(b), after: side(a), forced: f, status: c.status })),
-    tooMany: budget.exhausted
+    tooMany: budget.exhausted,
+    excluded
   }
 }
 
@@ -330,7 +344,7 @@ export function createSources(io: SourceIo): ReviewSources {
       await verifyRef(io.git, root, ref)
     },
     head: (root) => headOrEmpty(io.git, root),
-    git: (root, from, to, paths, forced) => gitInputs(io, root, from, to, paths, forced),
+    git: (root, from, to, paths, forced, exclude) => gitInputs(io, root, from, to, paths, forced, exclude),
     ledgerPaths,
     ledger: (ledger, log, scope, base, forced, exclude) => ledgerInputs(io, ledger, log, scope, base, forced, exclude),
     ignored: (root, paths) => checkIgnored(io.git, root, paths),

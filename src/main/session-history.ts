@@ -170,14 +170,22 @@ export class SessionHistory {
 
   constructor(private readonly projectsDir: string, private readonly fs: HistoryFs = nodeHistoryFs) {}
 
-  async list(limit: number): Promise<SessionSummary[]> {
+  /**
+   * The latest `limit` sessions, newest first, plus every starred one however old. Starred sessions do not
+   * count against the limit; the transcripts left out are not read.
+   */
+  async list(limit: number, starred: ReadonlySet<string> = new Set()): Promise<SessionSummary[]> {
     const files = await this.transcripts()
     files.sort((a, b) => b.mtimeMs - a.mtimeMs)
     const out: SessionSummary[] = []
+    let others = 0
     for (const f of files) {
-      if (out.length >= limit) break
+      const isStarred = starred.has(f.id)
+      if (!isStarred && others >= limit) continue
       const s = await this.summary(f)
-      if (s) out.push(s)
+      if (!s) continue
+      out.push(s)
+      if (!isStarred) others++
     }
     return out
   }

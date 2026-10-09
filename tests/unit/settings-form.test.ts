@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { AUTOMATIC, checkNumber, checkOptionalText, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions } from '../../src/renderer/settings-form'
+import { AUTOMATIC, checkNumber, checkOptionalText, checkPatterns, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions } from '../../src/renderer/settings-form'
 
 describe('settings form', () => {
+  it('checkPatterns: one pattern per line, trimmed, empty lines dropped; an empty field is an empty list', () => {
+    expect(checkPatterns('**/tests/**\n  *.spec.*  \r\n\n*Test.*\n')).toEqual({ ok: true, value: ['**/tests/**', '*.spec.*', '*Test.*'] })
+    expect(checkPatterns('')).toEqual({ ok: true, value: [] })
+    expect(checkPatterns(' \n \n')).toEqual({ ok: true, value: [] })
+  })
+
+  it('checkPatterns: at most 200 patterns of at most 200 characters', () => {
+    expect(checkPatterns(Array(200).fill('a').join('\n'))).toMatchObject({ ok: true })
+    expect(checkPatterns(Array(201).fill('a').join('\n'))).toEqual({ ok: false, error: 'At most 200 patterns' })
+    expect(checkPatterns('x'.repeat(200))).toMatchObject({ ok: true })
+    expect(checkPatterns('ok\n' + 'x'.repeat(201))).toEqual({ ok: false, error: 'A pattern is longer than 200 characters' })
+  })
+
   it('checkNumber: font size 6–72, fractions allowed', () => {
     expect(checkNumber('font.size', '12')).toEqual({ ok: true, value: 12 })
     expect(checkNumber('font.size', ' 10.5 ')).toEqual({ ok: true, value: 10.5 })

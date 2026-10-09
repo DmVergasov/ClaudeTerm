@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { displayTitle, filterSessions, formatAge } from '../../src/renderer/recent-sessions'
+import { arrangeSessions, displayTitle, filterSessions, formatAge } from '../../src/renderer/recent-sessions'
 import type { RecentSession } from '../../src/shared/types'
 
-const s = (over: Partial<RecentSession>): RecentSession => ({ id: 'x', cwd: 'D:\\Workspace\\Offroad', title: null, firstPrompt: null, lastPrompt: null, modifiedAt: 0, open: false, ...over })
+const s = (over: Partial<RecentSession>): RecentSession => ({ id: 'x', cwd: 'D:\\Workspace\\Offroad', title: null, firstPrompt: null, lastPrompt: null, modifiedAt: 0, open: false, starred: false, ...over })
 
 describe('formatAge', () => {
   const now = new Date(2026, 9, 6, 12, 0).getTime()
@@ -37,5 +37,39 @@ describe('displayTitle', () => {
     expect(displayTitle(s({ title: 'T', firstPrompt: 'f' }))).toBe('T')
     expect(displayTitle(s({ firstPrompt: 'f' }))).toBe('f')
     expect(displayTitle(s({}))).toBe('(untitled)')
+  })
+})
+
+describe('arrangeSessions', () => {
+  const list = [
+    s({ id: '1', title: 'Fix the login bug', modifiedAt: 50 }),
+    s({ id: '2', title: 'Payments', modifiedAt: 40, starred: true }),
+    s({ id: '3', title: 'Login page', modifiedAt: 30 }),
+    s({ id: '4', title: 'Old login idea', modifiedAt: 5, starred: true }),
+    s({ id: '5', title: 'Docs', modifiedAt: 20, starred: true })
+  ]
+  it('starred sessions first, newest first in each group, the divider after the starred ones', () => {
+    const a = arrangeSessions(list, '')
+    expect(a.shown.map((x) => x.id)).toEqual(['2', '5', '4', '1', '3'])
+    expect(a.dividerAt).toBe(3)
+  })
+
+  it('newest first inside a group even when the list comes in another order', () => {
+    const a = arrangeSessions([list[3], list[1], list[2], list[0]], '')
+    expect(a.shown.map((x) => x.id)).toEqual(['2', '4', '1', '3'])
+  })
+
+  it('the filter applies to both groups and starred matches stay on top', () => {
+    const a = arrangeSessions(list, 'login')
+    expect(a.shown.map((x) => x.id)).toEqual(['4', '1', '3'])
+    expect(a.dividerAt).toBe(1)
+  })
+
+  it('no divider when only one group is left', () => {
+    expect(arrangeSessions(list, 'payments')).toMatchObject({ dividerAt: null })
+    expect(arrangeSessions(list, 'docs').dividerAt).toBeNull()
+    expect(arrangeSessions(list.filter((x) => !x.starred), '').dividerAt).toBeNull()
+    expect(arrangeSessions(list.filter((x) => x.starred), '').dividerAt).toBeNull()
+    expect(arrangeSessions([], '')).toEqual({ shown: [], dividerAt: null })
   })
 })

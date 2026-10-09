@@ -1,8 +1,8 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, makeDataDir } from './helpers'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const SID_B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -158,5 +158,194 @@ test('the window keeps the keyboard: Tab and clicks inside it leave typing in th
   await page.keyboard.press('Escape')
   await expect(win).toBeHidden()
   expect(await bufferText(page, id)).not.toContain('login')
+  await app.close()
+})
+
+const stars = (win: Locator): Promise<string[][]> =>
+  win.locator('.session-row').evaluateAll((rows) => rows.map((r) => [r.querySelector('.session-title')!.textContent!, r.querySelector('.session-star')!.textContent!]))
+
+test('the star puts a session on top of the list under a divider, without opening it, and survives closing the window and a restart', async () => {
+  const { config } = makeConfig()
+  const first = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  const { app, page, dataDir } = first
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press('Control+Shift+KeyH')
+  const win = page.locator('#sessions')
+  await expect(win.locator('.session-row')).toHaveCount(2)
+  expect(await stars(win)).toEqual([['Payments', '☆'], ['Fix the login bug', '☆']])
+  await expect(win.locator('.sessions-divider')).toHaveCount(0)
+  await expect(win.locator('.session-star').first()).toHaveAttribute('title', 'Star (Ctrl+D)')
+
+  const older = win.locator('.session-row', { hasText: 'Fix the login bug' })
+  await older.locator('.session-star').click()
+  expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
+  await expect(older.locator('.session-star')).toHaveClass(/starred/)
+  await expect(older.locator('.session-star')).toHaveAttribute('title', 'Unstar (Ctrl+D)')
+  await expect(win.locator('.sessions-divider')).toHaveCount(1)
+  // the divider sits between the starred row and the rest
+  expect(await win.locator('.sessions-list').evaluate((l) => [...l.children].map((c) => c.className.split(' ')[0]))).toEqual(['session-row', 'sessions-divider', 'session-row'])
+  // the click toggled the star only: no tab was opened, the window is still there
+  await expect(win).toBeVisible()
+  expect(await page.evaluate(() => window.__ct!.tabIds().length)).toBe(1)
+  expect((await page.evaluate(() => window.ct.listSessions())).map((s) => [s.id, s.starred])).toEqual([[SID_B, false], [SID_A, true]])
+
+  await page.keyboard.press('Escape')
+  await expect(win).toBeHidden()
+  await page.keyboard.press('Control+Shift+KeyH')
+  await expect(win.locator('.session-row')).toHaveCount(2)
+  expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
+  await app.close()
+
+  const second = await launchApp({ dataDir, settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await second.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await second.page.locator('.terminal-host:visible .xterm').click()
+  await second.page.keyboard.press('Control+Shift+KeyH')
+  const win2 = second.page.locator('#sessions')
+  await expect(win2.locator('.session-row')).toHaveCount(2)
+  expect(await stars(win2)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
+  // a click on the star again takes it off
+  await win2.locator('.session-row').first().locator('.session-star').click()
+  expect(await stars(win2)).toEqual([['Payments', '☆'], ['Fix the login bug', '☆']])
+  await expect(win2.locator('.sessions-divider')).toHaveCount(0)
+  await second.app.close()
+})
+
+test('Ctrl+D stars the selected row while typing in the search; the selection stays on that session; the filter keeps starred on top', async () => {
+  const { config } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press('Control+Shift+KeyH')
+  const win = page.locator('#sessions')
+  await expect(win.locator('.session-row')).toHaveCount(2)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Control+KeyD')
+  // the older row moved to the top and is still the selected one
+  expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
+  await expect(win.locator('.session-row.selected .session-title')).toHaveText('Fix the login bug')
+  await expect(win.locator('.sessions-search')).toHaveValue('')
+  // typing goes on in the field
+  await page.keyboard.type('login')
+  expect(await stars(win)).toEqual([['Fix the login bug', '★']])
+  await page.keyboard.press('Control+KeyD')
+  expect(await stars(win)).toEqual([['Fix the login bug', '☆']])
+  await expect(win.locator('.sessions-divider')).toHaveCount(0)
+  expect(await page.evaluate(() => window.__ct!.tabIds().length)).toBe(1)
+  await app.close()
+})
+
+test('a starred session older than the latest 100 is still listed', async () => {
+  const { config, workA } = makeConfig()
+  for (let i = 0; i < 100; i++) {
+    const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+    writeSession(config, workA, id, [user(workA, `filler ${i}`)], 10 + i)
+  }
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  expect((await page.evaluate(() => window.ct.listSessions())).map((s) => s.id)).not.toContain(SID_A)
+  await page.evaluate((id) => window.ct.setSessionStarred(id, true), SID_A)
+  const list = await page.evaluate(() => window.ct.listSessions())
+  expect(list).toHaveLength(101)
+  expect(list.find((s) => s.id === SID_A)?.starred).toBe(true)
+  await app.close()
+})
+
+test('the tab menu stars the session of a Claude tab; a shell tab has no such item; the window shows the change', async () => {
+  const { config } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.locator('.tab').first().click({ button: 'right' })
+  await expect(page.locator('.menu-item', { hasText: 'Restart shell' })).toBeVisible()
+  await expect(page.locator('.menu-item', { hasText: /star session/i })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await page.mouse.click(300, 300)
+
+  await page.evaluate(() => window.ct.listSessions())
+  await page.evaluate((id) => window.ct.openSession(id), SID_A)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  await page.locator('.tab').nth(1).click({ button: 'right' })
+  await page.locator('.menu-item', { hasText: 'Star session' }).click()
+  await expect.poll(async () => (await page.evaluate(() => window.ct.listSessions())).find((s) => s.id === SID_A)?.starred).toBe(true)
+
+  await page.keyboard.press('Control+Shift+KeyH')
+  const win = page.locator('#sessions')
+  await expect(win.locator('.session-row')).toHaveCount(2)
+  expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
+
+  await page.keyboard.press('Escape')
+  await page.locator('.tab').nth(1).click({ button: 'right' })
+  await page.locator('.menu-item', { hasText: 'Unstar session' }).click()
+  await expect.poll(async () => (await page.evaluate(() => window.ct.listSessions())).find((s) => s.id === SID_A)?.starred).toBe(false)
+  await app.close()
+})
+
+test('a double-click on a star does not open a session', async () => {
+  const { config } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press('Control+Shift+KeyH')
+  const win = page.locator('#sessions')
+  await expect(win.locator('.session-row')).toHaveCount(2)
+  // the first click moves the row, so the second lands on another one
+  await win.locator('.session-row', { hasText: 'Fix the login bug' }).locator('.session-star').dblclick()
+  await expect(win).toBeVisible()
+  await page.waitForTimeout(500)
+  expect(await page.evaluate(() => window.__ct!.tabIds().length)).toBe(1)
+  // the second click of a double-click can land on the body of another row: that never opens it
+  await win.locator('.session-row').last().evaluate((row) => row.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 })))
+  await page.waitForTimeout(500)
+  await expect(win).toBeVisible()
+  expect(await page.evaluate(() => window.__ct!.tabIds().length)).toBe(1)
+  await app.close()
+})
+
+test('Enter right after opening the window resumes the latest session, even when an older one is starred', async () => {
+  const { config } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.evaluate((id) => window.ct.setSessionStarred(id, true), SID_A)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press('Control+Shift+KeyH')
+  const win = page.locator('#sessions')
+  await expect(win.locator('.session-row')).toHaveCount(2)
+  expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
+  await expect(win.locator('.session-row.selected .session-title')).toHaveText('Payments')
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const id = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`--resume ${SID_B}`)
+  await app.close()
+})
+
+test('a menu left open does not stay above the window; bad star requests are ignored', async () => {
+  const { config } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.evaluate(() => window.ct.listSessions())
+  await page.evaluate((id) => window.ct.openSession(id), SID_A)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  await page.locator('.tab').nth(1).click({ button: 'right' })
+  await expect(page.locator('.menu-item', { hasText: 'Star session' })).toBeVisible()
+  await page.keyboard.press('Control+Shift+KeyH')
+  await expect(page.locator('#sessions')).toBeVisible()
+  await expect(page.locator('.menu')).toHaveCount(0)
+
+  await page.evaluate(() => window.ct.setSessionStarred('not-a-session', true))
+  await page.evaluate((id) => window.ct.setSessionStarred(id, 'yes' as unknown as boolean), SID_A)
+  expect(await page.evaluate(() => window.ct.getStarredSessions())).toEqual([])
+  await app.close()
+})
+
+test('a star that cannot be saved says so', async () => {
+  const { config } = makeConfig()
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  // a folder where the file should be: reading and renaming over it both fail
+  mkdirSync(join(dataDir, 'starred-sessions.json'))
+  const { app, page } = await launchApp({ dataDir, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.evaluate((id) => window.ct.setSessionStarred(id, true), SID_A)
+  await expect(page.locator('.toast', { hasText: 'cannot save' })).toBeVisible()
   await app.close()
 })

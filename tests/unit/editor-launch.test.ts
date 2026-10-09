@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { fillTemplate, launchEditor, splitCommand } from '../../src/main/editor-launch'
+import { fillTemplate, launchEditor, revealInFolder, splitCommand } from '../../src/main/editor-launch'
 
 function child(fail?: Error) {
   const c = Object.assign(new EventEmitter(), { unref: vi.fn() })
@@ -54,5 +54,35 @@ describe('launchEditor', () => {
     expect(reveal).not.toHaveBeenCalled()
     launchEditor('  ', '/p/a.ts', 1, { spawn: vi.fn(), reveal, onError })
     expect(onError).toHaveBeenLastCalledWith('review.editor is empty')
+  })
+})
+
+describe('revealInFolder', () => {
+  const deps = (files: string[], dirs: string[]) => ({
+    exists: (p: string) => files.includes(p),
+    isDirectory: (p: string) => dirs.includes(p),
+    showItem: vi.fn(),
+    openFolder: vi.fn()
+  })
+
+  it('shows an existing file selected in its folder', () => {
+    const d = deps(['/p/src/a.ts'], ['/p/src'])
+    revealInFolder('/p/src/a.ts', d)
+    expect(d.showItem).toHaveBeenCalledWith('/p/src/a.ts')
+    expect(d.openFolder).not.toHaveBeenCalled()
+  })
+
+  it('opens the folder of a file that is gone, never the file', () => {
+    const d = deps([], ['/p/src'])
+    revealInFolder('/p/src/gone.ts', d)
+    expect(d.openFolder).toHaveBeenCalledWith('/p/src')
+    expect(d.showItem).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when the folder is gone too', () => {
+    const d = deps([], [])
+    revealInFolder('/p/src/gone.ts', d)
+    expect(d.openFolder).not.toHaveBeenCalled()
+    expect(d.showItem).not.toHaveBeenCalled()
   })
 })

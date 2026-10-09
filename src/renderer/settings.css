@@ -23,6 +23,8 @@ section { margin-top: 18px; }
 .text-input.invalid { border-color: #e06c75; }
 input[type="text"].text-input { width: 300px; }
 input[type="number"].text-input { width: 100px; }
+textarea.list-input { width: 100%; resize: vertical; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; white-space: pre; }
+.list-line { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; }
 .sound-line { display: flex; align-items: center; gap: 8px; width: 100%; }
 input[type="text"].sound-path { flex: 1; width: auto; color: var(--muted); }
 button { padding: 4px 12px; background: var(--chrome-2); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font: inherit; cursor: pointer; }

@@ -79,7 +79,7 @@ export interface Settings {
   imagePanel: { autoOpen: boolean; width: number; maxItems: number }
   notifications: NotificationSettings
   /** the Changes panel */
-  review: { editor: string | null; statusBar: boolean; hideIgnored: boolean; width: number }
+  review: { editor: string | null; statusBar: boolean; hideIgnored: boolean; hideTests: boolean; testPatterns: string[]; width: number }
   /** check GitHub for new versions in the background */
   autoUpdate: boolean
 }
@@ -118,4 +118,6 @@ export interface SessionSummary {
 export interface RecentSession extends SessionSummary {
   /** a ClaudeTerm tab is in this conversation */
   open: boolean
+  /** the user starred it: the Recent sessions window keeps it on top */
+  starred: boolean
 }

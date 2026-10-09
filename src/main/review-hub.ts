@@ -4,6 +4,7 @@ import { IN_DIALOG, NOT_RUNNING, SCOPE_LABELS, type ReviewCounter, type ReviewFi
 import type { EditLedger } from './edit-ledger'
 import { pathKey } from './path-key'
 import { buildFiles, type DiffInput } from './review-diff'
+import { testMatcher } from '../shared/test-files'
 import { EMPTY_LEDGER, relPathFor, type Inputs, type ReviewSources, type Totals, type TranscriptLog } from './review-sources'
 import type { TranscriptEditEvent } from './transcript-edits'
 
@@ -25,6 +26,8 @@ export interface ReviewHubDeps {
   onError(message: string): void
   /** review.hideIgnored: Last turn and Session leave out the files git ignores */
   hideIgnored(): boolean
+  /** review.hideTests: the patterns of the files every view leaves out; null while the setting is off */
+  testPatterns(): string[] | null
   debounceMs?: number
   /** the clock of a view's diff time limit; Date.now when absent */
   now?(): number
@@ -33,6 +36,8 @@ export interface ReviewHubDeps {
 export const TOO_MANY_NOTICE = 'Too many changes to show at once — narrow the view with a smaller scope or paths'
 /** how many outside paths the panel's tooltip lists */
 const OUTSIDE_SAMPLE = 10
+/** how many hidden test paths the panel's tooltip lists */
+const TESTS_SAMPLE = 10
 
 interface TabState {
   tabId: string
@@ -300,8 +305,10 @@ export class ReviewHub {
     // Claude must not take a hidden file for an unchanged one
     const n0 = update.ignored
     const n1 = update.outside
+    const n2 = update.testsHidden
     const hidden = (n0 > 0 ? ` (${n0} file${n0 === 1 ? '' : 's'} git ignores ${n0 === 1 ? 'is' : 'are'} hidden: review.hideIgnored)` : '')
       + (n1 > 0 ? ` (${n1} file${n1 === 1 ? '' : 's'} outside the session folder ${n1 === 1 ? 'is' : 'are'} not shown)` : '')
+      + (n2 > 0 ? ` (${n2} test file${n2 === 1 ? '' : 's'} ${n2 === 1 ? 'is' : 'are'} hidden: review.hideTests)` : '')
     if (update.files.length === 0 && req.paths.length > 0) return { ok: false, error: `nothing in the view for paths: ${req.paths.join(', ')}${hidden}` }
     t.request = req
     t.forced.clear()
@@ -383,9 +390,12 @@ export class ReviewHub {
     if (t.scope === null) t.scope = scope
     const base = root ?? cwd
     const forced = (p: string): boolean => forcedKeys.has(pathKey(p))
-    const view = await this.inputs(t, request, scope, root, problem, base, forced)
+    // the setting is read once: the view and what it says about the setting agree
+    const patterns = this.d.testPatterns()
+    const view = await this.inputs(t, request, scope, root, problem, base, forced, patterns)
     const { files, tooMany } = await buildFiles(view.inputs, this.d.now)
-    const own = !request && scope === (root ? 'uncommitted' : 'session')
+    // the status bar counts all the changes: a view that left test files out cannot give the counter
+    const own = !request && scope === (root ? 'uncommitted' : 'session') && view.tests.length === 0
     const update: ReviewUpdate = {
       tabId: t.tabId,
       view: request ? { kind: 'request' } : { kind: 'scope', scope },
@@ -396,6 +406,9 @@ export class ReviewHub {
       deletions: total(files, 'deletions'),
       unviewed: files.length,
       ignored: view.ignored,
+      hideTests: patterns !== null,
+      testsHidden: view.tests.length,
+      testsSample: [...view.tests].sort().slice(0, TESTS_SAMPLE),
       outside: view.outside,
       outsideSample: view.outsideSample,
       folder: t.folder,
@@ -447,13 +460,16 @@ export class ReviewHub {
   }
 
   private async inputs(
-    t: TabState, request: ReviewRequest | null, scope: ReviewScope, root: string | null, problem: string, base: string, forced: (p: string) => boolean
-  ): Promise<{ inputs: DiffInput[]; notice: string | null; ignored: number; outside: number; outsideSample: string[] }> {
+    t: TabState, request: ReviewRequest | null, scope: ReviewScope, root: string | null, problem: string, base: string, forced: (p: string) => boolean,
+    patterns: string[] | null
+  ): Promise<{ inputs: DiffInput[]; notice: string | null; ignored: number; outside: number; outsideSample: string[]; tests: string[] }> {
     const s = this.d.sources
     const wanted: ReviewScope | null = request ? (request.from !== null ? null : request.scope ?? 'uncommitted') : scope
     const paths = request?.paths ?? []
     let ignored = 0
     let outside: string[] = []
+    let tests: string[] = []
+    const isTest = patterns ? testMatcher(patterns) : null
     try {
       let r: Inputs
       if (wanted === 'last_turn' || wanted === 'session') {
@@ -465,16 +481,22 @@ export class ReviewHub {
         const inside = candidates.filter((p) => !outsideKeys.has(pathKey(p)))
         const hidden = root && this.d.hideIgnored() ? await this.ignoredFiles(root, inside) : new Set<string>()
         ignored = hidden.size
-        r = s.ledger(ledger, t.log, wanted, base, forced, (p) => hidden.has(pathKey(p)) || outsideKeys.has(pathKey(p)))
+        // test files are told by their names alone, before anything is read; a file git ignores is counted as ignored. Every file is
+        // inside the tab folder, and the folder is what the patterns are relative to (the folder Claude is in now may be a different one)
+        const testPaths = isTest ? inside.filter((p) => !hidden.has(pathKey(p)) && isTest(relPathFor(t.folder, p))) : []
+        tests = testPaths.map((p) => relPathFor(t.folder, p))
+        const testKeys = new Set(testPaths.map((p) => pathKey(p)))
+        r = s.ledger(ledger, t.log, wanted, base, forced, (p) => hidden.has(pathKey(p)) || outsideKeys.has(pathKey(p)) || testKeys.has(pathKey(p)))
         if (paths.length > 0) r = { ...r, inputs: r.inputs.filter((i) => paths.some((p) => within(p, i.path))) }
       } else {
-        if (!root) return { inputs: [], notice: problem, ignored, outside: 0, outsideSample: [] }
+        if (!root) return { inputs: [], notice: problem, ignored, outside: 0, outsideSample: [], tests: [] }
         const from = request?.from ?? (await s.head(root))
-        r = await s.git(root, from, request?.to ?? null, paths, forced)
+        r = await s.git(root, from, request?.to ?? null, paths, forced, isTest ?? (() => false))
+        tests = (r.excluded ?? []).map((p) => relPathFor(root, p))
       }
-      return { inputs: r.inputs, notice: r.tooMany ? TOO_MANY_NOTICE : null, ignored, outside: outside.length, outsideSample: [...outside].sort().slice(0, OUTSIDE_SAMPLE) }
+      return { inputs: r.inputs, notice: r.tooMany ? TOO_MANY_NOTICE : null, ignored, outside: outside.length, outsideSample: [...outside].sort().slice(0, OUTSIDE_SAMPLE), tests }
     } catch (e) {
-      return { inputs: [], notice: message(e), ignored: 0, outside: 0, outsideSample: [] }
+      return { inputs: [], notice: message(e), ignored: 0, outside: 0, outsideSample: [], tests: [] }
     }
   }
 
@@ -498,7 +520,7 @@ export class ReviewHub {
   /** the counter when the panel shows another scope: git counts Uncommitted without a diff, and outside git the session is built */
   private async otherCounter(t: TabState, root: string | null, base: string): Promise<ReviewCounter | null> {
     if (root) return this.counterOf(root, await this.d.sources.totals(root))
-    const session = await this.inputs(t, null, 'session', null, '', base, () => false)
+    const session = await this.inputs(t, null, 'session', null, '', base, () => false, null)
     return this.counterOf(root, totalsOf((await buildFiles(session.inputs, this.d.now)).files))
   }
 

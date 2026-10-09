@@ -160,6 +160,27 @@ describe('SessionHistory', () => {
     expect((await new SessionHistory(ROOT, fs).list(1)).map((s) => s.id)).toEqual([SID2])
   })
 
+  it('starred sessions are listed even beyond the limit; the limit counts the others', async () => {
+    const { fs, reads } = memFs({
+      [file('D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'old')), mtimeMs: 1000 },
+      [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\a', 'mid')), mtimeMs: 2000 },
+      [file('D--a', `${SID3}.jsonl`)]: { text: jsonl(user('D:\\a', 'new')), mtimeMs: 3000 }
+    })
+    const h = new SessionHistory(ROOT, fs)
+    expect((await h.list(1, new Set([SID1]))).map((s) => s.id)).toEqual([SID3, SID1])
+    expect((await h.list(1)).map((s) => s.id)).toEqual([SID3])
+    // the one left out is never read
+    expect(reads.filter((r) => r.includes(SID2))).toEqual([])
+  })
+
+  it('a starred id with no transcript, or with a claude -p one, is just not listed', async () => {
+    const { fs } = memFs({
+      [file('D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'one')), mtimeMs: 1000 },
+      [file('D--a', `${SID3}.jsonl`)]: { text: jsonl(user('D:\\a', 'p', { entrypoint: 'sdk-cli' })), mtimeMs: 3000 }
+    })
+    expect((await new SessionHistory(ROOT, fs).list(10, new Set([SID2, SID3]))).map((s) => s.id)).toEqual([SID1])
+  })
+
   it('reads the last 2 MB once when the last 256 KB hold no title or message', async () => {
     const filler = Array.from({ length: 400 }, () => attachment('D:\\a', 1000))
     const text = jsonl(user('D:\\a', 'start'), { type: 'ai-title', aiTitle: 'Deep' }, ...filler)

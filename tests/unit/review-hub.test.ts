@@ -18,7 +18,7 @@ const input = (rel: string, before: string | null, after: string | null): DiffIn
 })
 const result = (...inputs: DiffInput[]): Inputs => ({ inputs, tooMany: false })
 
-function setup(o: Partial<ReviewSources> = {}, active: string | null = TAB, now?: () => number, hideIgnored = false) {
+function setup(o: Partial<ReviewSources> = {}, active: string | null = TAB, now?: () => number, hideIgnored = false, testPatterns: string[] | null | (() => string[] | null) = null) {
   const published: ReviewUpdate[] = []
   const errors: string[] = []
   const git = vi.fn(async () => result(input('a.ts', 'a\n', 'b\n')))
@@ -46,6 +46,7 @@ function setup(o: Partial<ReviewSources> = {}, active: string | null = TAB, now?
     publish: (u) => published.push(u),
     onError: (m) => errors.push(m),
     hideIgnored: () => hideIgnored,
+    testPatterns: () => (typeof testPatterns === 'function' ? testPatterns() : testPatterns),
     now
   })
   hub.addTab(TAB, ROOT, true)
@@ -722,5 +723,184 @@ describe('ReviewHub counter does not delay the view', () => {
     h.release()
     await vi.advanceTimersByTimeAsync(0)
     expect(last()).toMatchObject({ view: { kind: 'request' }, counter: { files: 7 } })
+  })
+})
+
+describe('ReviewHub hide tests', () => {
+  const PATTERNS = ['**/tests/**', '*.test.*']
+  const spec = input('tests/a.test.ts', 'a\n', 'b\n')
+  const src = input('src/a.ts', 'a\n', 'b\n')
+  const all = [spec, src]
+  /** a git source that honors the exclusion the way the real one does: the hidden files are listed, not built */
+  const gitSource = (): Partial<ReviewSources> => ({
+    git: vi.fn(async (_root: string, _from: string, _to: string | null, _paths: string[], _forced: (p: string) => boolean, exclude: (p: string) => boolean) => ({
+      // the exclusion gets the path inside the repository, like the real source
+      inputs: all.filter((i) => !exclude(i.relPath)), tooMany: false, excluded: all.filter((i) => exclude(i.relPath)).map((i) => i.path)
+    })) as unknown as ReviewSources['git']
+  })
+  const ledgerSource = (): Partial<ReviewSources> => ({
+    ledgerPaths: () => all.map((i) => i.path),
+    ledger: vi.fn((_l, _g, _s, _b, _f, exclude) => result(...all.filter((i) => !exclude(i.path))))
+  })
+  const req = (o: Partial<ReviewRequest> = {}): ReviewRequest => ({ cwd: ROOT, scope: 'session', from: null, to: null, paths: [], title: null, ...o })
+
+  it('Uncommitted leaves out the test files, counts them and lists them', async () => {
+    const { hub, last } = setup(gitSource(), TAB, undefined, false, PATTERNS)
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last().files.map((f) => f.relPath)).toEqual(['src/a.ts'])
+    expect(last()).toMatchObject({ hideTests: true, testsHidden: 1, testsSample: ['tests/a.test.ts'] })
+  })
+
+  it('the status bar counter keeps counting all the changes', async () => {
+    const { hub, last, totals } = setup(gitSource(), TAB, undefined, false, PATTERNS)
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(totals).toHaveBeenCalledWith(ROOT)
+    expect(last().counter).toMatchObject({ files: 7, additions: 70, deletions: 3 })
+  })
+
+  it('Session and Last turn leave them out before anything is read', async () => {
+    const o = ledgerSource()
+    const { hub, last } = setup(o, TAB, undefined, false, PATTERNS)
+    hub.setScope(TAB, 'session')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last().files.map((f) => f.relPath)).toEqual(['src/a.ts'])
+    expect(last()).toMatchObject({ testsHidden: 1, testsSample: ['tests/a.test.ts'] })
+    const exclude = (o.ledger as ReturnType<typeof vi.fn>).mock.calls[0]![5] as (p: string) => boolean
+    expect(exclude(spec.path)).toBe(true)
+    expect(exclude(src.path)).toBe(false)
+    hub.setScope(TAB, 'last_turn')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last()).toMatchObject({ label: 'last turn', testsHidden: 1, files: [{ relPath: 'src/a.ts' }] })
+  })
+
+  it('a show_diff request hides them too, a commit range included, and says so to Claude', async () => {
+    const { hub, last } = setup(gitSource(), TAB, undefined, false, PATTERNS)
+    const r = await hub.showRequest(TAB, req({ scope: null, from: 'HEAD~1' }))
+    expect(r).toEqual({ ok: true, info: 'Opened 1 file (+1 −1) in the Changes panel. (1 test file is hidden: review.hideTests)' })
+    expect(last()).toMatchObject({ testsHidden: 1, files: [{ relPath: 'src/a.ts' }] })
+    const s = setup(ledgerSource(), TAB, undefined, false, ['**/*'])
+    expect(await s.hub.showRequest(TAB, req())).toEqual({ ok: true, info: 'No changes in this view. (2 test files are hidden: review.hideTests)' })
+  })
+
+  it('a request for paths that are all tests says that tests are hidden', async () => {
+    const { hub } = setup(ledgerSource(), TAB, undefined, false, PATTERNS)
+    expect(await hub.showRequest(TAB, req({ paths: [spec.path] }))).toEqual({
+      ok: false, error: `nothing in the view for paths: ${spec.path} (1 test file is hidden: review.hideTests)`
+    })
+  })
+
+  it('shows everything when the setting is off', async () => {
+    const { hub, last } = setup(gitSource(), TAB, undefined, false, null)
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last().files.map((f) => f.relPath)).toEqual(['tests/a.test.ts', 'src/a.ts'])
+    expect(last()).toMatchObject({ hideTests: false, testsHidden: 0, testsSample: [] })
+  })
+
+  it('no patterns hide nothing', async () => {
+    const { hub, last } = setup(gitSource(), TAB, undefined, false, [])
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last()).toMatchObject({ hideTests: true, testsHidden: 0, testsSample: [] })
+    expect(last().files).toHaveLength(2)
+  })
+
+  it('lists up to 10 hidden paths, sorted', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => input(`tests/t${String(i).padStart(2, '0')}.ts`, 'a\n', 'b\n'))
+    const { hub, last } = setup({ ledgerPaths: () => many.map((i) => i.path), ledger: () => result() }, TAB, undefined, false, PATTERNS)
+    hub.setScope(TAB, 'session')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last().testsHidden).toBe(12)
+    expect(last().testsSample).toEqual(many.slice(0, 10).map((i) => i.relPath))
+  })
+
+  it('matches the path relative to the view root, not the absolute path', async () => {
+    // the repository itself lives in a folder named "tests"
+    const root = join(ROOT, 'tests')
+    const inner = { ...input('src/a.ts', 'a\n', 'b\n'), path: join(root, 'src', 'a.ts') }
+    const { hub, last } = setup({ root: async () => ({ root }), ledgerPaths: () => [inner.path], ledger: () => result(inner) }, TAB, undefined, false, PATTERNS)
+    hub.addTab('t2', root, true)
+    await hub.showRequest('t2', req({ cwd: root }))
+    expect(last().testsHidden).toBe(0)
+  })
+})
+
+describe('ReviewHub hide tests, edge cases', () => {
+  const PATTERNS = ['**/test/**', '**/tests/**', '*.test.*']
+  const req = (o: Partial<ReviewRequest> = {}): ReviewRequest => ({ cwd: ROOT, scope: 'session', from: null, to: null, paths: [], title: null, ...o })
+  const at = (base: string, rel: string): DiffInput => ({ ...input(rel, 'a\n', 'b\n'), path: join(base, rel) })
+
+  it('Last turn and Session match the path inside the tab folder, also for a file outside the folder Claude is in now', async () => {
+    // a project in a folder called "test", Claude has moved into its api folder
+    const folder = join(ROOT, 'test', 'app')
+    const web = at(folder, 'web/x.ts')
+    const spec = at(folder, 'web/y.test.ts')
+    const { hub, last } = setup({
+      root: async () => ({ root: null, problem: 'Not a git repository' }),
+      ledgerPaths: () => [web.path, spec.path],
+      ledger: vi.fn((_l, _g, _s, _b, _f, exclude) => result(...[web, spec].filter((i) => !exclude(i.path))))
+    }, TAB, undefined, false, PATTERNS)
+    hub.addTab('sub', folder, true)
+    hub.turn('sub', SID, join(folder, 'api'))
+    expect(await hub.showRequest('sub', req({ cwd: join(folder, 'api') }))).toMatchObject({ ok: true })
+    expect(last().files.map((f) => f.path)).toEqual([web.path])
+    expect(last().testsHidden).toBe(1)
+    expect(last().testsSample).toEqual(['web/y.test.ts'])
+  })
+
+  it('a file git ignores that is also a test counts as ignored only, once', async () => {
+    const ign = at(ROOT, 'tests/gen.test.ts')
+    const src = at(ROOT, 'src/a.ts')
+    const ignored = vi.fn(async (_r: string, paths: string[]) => paths.filter((p) => p === ign.path))
+    const { hub, last } = setup({
+      ledgerPaths: () => [ign.path, src.path],
+      ledger: vi.fn((_l, _g, _s, _b, _f, exclude) => result(...[ign, src].filter((i) => !exclude(i.path)))),
+      ignored
+    }, TAB, undefined, true, PATTERNS)
+    hub.setScope(TAB, 'session')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last()).toMatchObject({ ignored: 1, testsHidden: 0, testsSample: [], files: [{ relPath: 'src/a.ts' }] })
+  })
+
+  it('show_diff paths limit what is counted as hidden tests', async () => {
+    const a = at(ROOT, 'src/tests/a.ts')
+    const b = at(ROOT, 'lib/tests/b.ts')
+    const ok = at(ROOT, 'src/ok.ts')
+    const s = setup({
+      ledgerPaths: () => [a.path, b.path, ok.path],
+      ledger: vi.fn((_l, _g, _s, _b, _f, exclude) => result(...[a, b, ok].filter((i) => !exclude(i.path))))
+    }, TAB, undefined, false, PATTERNS)
+    await s.hub.showRequest(TAB, req({ paths: [join(ROOT, 'src')] }))
+    expect(s.last().testsHidden).toBe(1)
+    expect(s.last().testsSample).toEqual(['src/tests/a.ts'])
+  })
+
+  it('the sample is sorted', async () => {
+    const files = ['tests/c.ts', 'tests/a.ts', 'tests/b.ts'].map((r) => at(ROOT, r))
+    const { hub, last } = setup({ ledgerPaths: () => files.map((i) => i.path), ledger: () => result() }, TAB, undefined, false, PATTERNS)
+    hub.setScope(TAB, 'session')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last().testsSample).toEqual(['tests/a.ts', 'tests/b.ts', 'tests/c.ts'])
+  })
+
+  it('one build uses one reading of the setting: a view built with tests hidden says so even if the setting changed meanwhile', async () => {
+    let patterns: string[] | null = PATTERNS
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const spec = at(ROOT, 'tests/a.test.ts')
+    const git = vi.fn(async (_r: string, _f: string, _t: string | null, _p: string[], _fo: (p: string) => boolean, exclude: (p: string) => boolean) => {
+      const hidden = exclude(spec.relPath)
+      await gate
+      return { inputs: hidden ? [] : [spec], tooMany: false, excluded: hidden ? [spec.path] : [] }
+    }) as unknown as ReviewSources['git']
+    const { hub, published } = setup({ git }, TAB, undefined, false, () => patterns)
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    patterns = null
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(published[0]).toMatchObject({ hideTests: true, testsHidden: 1 })
   })
 })

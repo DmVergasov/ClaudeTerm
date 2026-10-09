@@ -70,6 +70,11 @@ export interface ReviewUpdate {
   unviewed: number
   /** files review.hideIgnored left out of this view */
   ignored: number
+  /** review.hideTests is on: the Hide tests checkbox shows it */
+  hideTests: boolean
+  /** test files review.hideTests left out of this view, and up to 10 of their paths (relative to the view's root, sorted) */
+  testsHidden: number
+  testsSample: string[]
   /** files outside the tab's folder that Last turn and Session leave out, and up to 10 of their paths (sorted) */
   outside: number
   outsideSample: string[]

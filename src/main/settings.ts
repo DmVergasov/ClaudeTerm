@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, win32 } from 'node:path'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS, type SettingKey, type SettingValue } from '../shared/settings-keys'
+import { DEFAULT_TEST_PATTERNS, MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
 import type { NotificationSettings, ProfileDef, Settings } from '../shared/types'
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -24,7 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
     done: { sound: true, flash: true, tab: true },
     bell: { sound: false, flash: true, tab: true }
   },
-  review: { editor: null, statusBar: true, hideIgnored: true, width: 640 },
+  review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640 },
   autoUpdate: true
 }
 
@@ -44,6 +45,7 @@ const isStr: Guard<string> = (v): v is string => typeof v === 'string' && v.leng
 const isNullableStr: Guard<string | null> = (v): v is string | null => v === null || isStr(v)
 const isBool: Guard<boolean> = (v): v is boolean => typeof v === 'boolean'
 const isStrArr: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.every(isStr)
+const isTestPatterns: Guard<string[]> = (v): v is string[] => isStrArr(v) && v.length <= MAX_TEST_PATTERNS && v.every((p) => p.length <= MAX_TEST_PATTERN_LENGTH)
 const numIn = (min: number, max: number): Guard<number> => (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
 const isPlainObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isTheme: Guard<Settings['theme']> = (v): v is Settings['theme'] => isStr(v) || (isPlainObj(v) && Object.values(v).every((x) => typeof x === 'string'))
@@ -127,6 +129,8 @@ export function parseSettings(text: string | null): ParsedSettings {
       editor: take('review.editor', rv.editor, isNullableStr, d.review.editor),
       statusBar: take('review.statusBar', rv.statusBar, isBool, d.review.statusBar),
       hideIgnored: take('review.hideIgnored', rv.hideIgnored, isBool, d.review.hideIgnored),
+      hideTests: take('review.hideTests', rv.hideTests, isBool, d.review.hideTests),
+      testPatterns: take('review.testPatterns', rv.testPatterns, isTestPatterns, d.review.testPatterns),
       width: take('review.width', rv.width, numIn(240, 4000), d.review.width)
     },
     autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)
