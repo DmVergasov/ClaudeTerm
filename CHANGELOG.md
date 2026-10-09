@@ -2,6 +2,15 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.3.0
+
+### New
+
+- **Find in the Changes panel.** Click into the diff and press `Ctrl+F`, or use the find button in the panel's header: every match in the code and the file names is highlighted, `Enter` and `Shift+Enter` step through them, and a folded file opens when a match is inside it. `Ctrl+F` in a terminal still goes to the terminal.
+- **Hide test files.** Tick **Hide tests** in the Changes panel to leave test files out of every view; the panel says how many it hid. Which files count as tests is yours to set in **Settings → Review → Test files**, one pattern per line. The defaults cover folders like `test/`, `tests/` and `__tests__/` and names like `*.test.*`, `*.spec.*` and `*Test.*`.
+- **Star your important sessions.** In **Recent sessions** (`Ctrl+Shift+H`), click ☆ or press `Ctrl+D` to star a conversation: starred ones stay at the top of the list, however old they are. A Claude tab's right-click menu has **Star session** too. `Ctrl+Shift+H` and then `Enter` still continues your latest conversation.
+- **Show in Explorer** in a changed file's ⋯ menu opens its folder with the file selected.
+
 ## 0.2.0
 
 ### New
