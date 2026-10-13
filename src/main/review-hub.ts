@@ -41,9 +41,10 @@ const TESTS_SAMPLE = 10
 
 interface TabState {
   tabId: string
-  /** Claude's current folder: follows the hook, finds the git root */
-  cwd: string
-  /** the folder the tab was opened in: Last turn and Session show the files inside it, and it never moves */
+  /**
+   * the folder the tab was opened in: it finds the git root, Last turn and Session show the files inside it, and it never moves.
+   * Not the folder Claude is in now: a Bash `cd` into another repository would show that one's changes
+   */
   folder: string
   claude: boolean
   sessionId: string | null
@@ -99,7 +100,7 @@ export class ReviewHub {
   addTab(tabId: string, cwd: string, claude: boolean): void {
     if (this.tabs.has(tabId)) return
     this.tabs.set(tabId, {
-      tabId, cwd, folder: cwd, claude, sessionId: null, ledger: null, log: { prompts: [], edits: [] }, logIds: new Set(), keptOriginal: new Set(),
+      tabId, folder: cwd, claude, sessionId: null, ledger: null, log: { prompts: [], edits: [] }, logIds: new Set(), keptOriginal: new Set(),
       scope: null, request: null, forced: new Set(), viewed: new Map(), running: false,
       dialogs: new Map(), gen: 0, computing: false, rerun: false, countJob: null, counting: false, recount: false, timer: null, last: null
     })
@@ -137,11 +138,10 @@ export class ReviewHub {
     this.publishState(t)
   }
 
-  turn(tabId: string, sessionId: string, cwd: string | null): void {
+  turn(tabId: string, sessionId: string): void {
     const t = this.tabs.get(tabId)
     if (!t) return
     this.useSession(t, sessionId)
-    if (cwd) t.cwd = cwd
     t.running = true
     t.dialogs.delete(null)
     t.ledger!.startTurn()
@@ -382,7 +382,7 @@ export class ReviewHub {
     t: TabState, request: ReviewRequest | null, forcedKeys: ReadonlySet<string>
   ): Promise<{ update: ReviewUpdate; counting: (() => Promise<ReviewCounter | null>) | null }> {
     const chosen = t.scope
-    const cwd = request?.cwd ?? t.cwd
+    const cwd = request?.cwd ?? t.folder
     const r = await this.d.sources.root(cwd)
     const root = r.root
     const problem = r.root === null ? r.problem : ''

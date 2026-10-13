@@ -358,11 +358,9 @@ describe('ReviewHub outside the folder', () => {
     expect(last()).toMatchObject({ outside: 0, outsideSample: [] })
   })
 
-  it('the folder is the one the tab was opened in, even after Claude moves to another', async () => {
+  it('the folder is the one the tab was opened in, even when Claude asks from another', async () => {
     const { hub, last } = setup(sources())
-    hub.turn(TAB, SID, join(ROOT, 'sub'))
-    hub.setScope(TAB, 'session')
-    await vi.advanceTimersByTimeAsync(10)
+    await hub.showRequest(TAB, req({ cwd: join(ROOT, 'sub') }))
     expect(last()).toMatchObject({ files: [{ relPath: 'src/a.ts' }], outside: 1, folder: ROOT })
   })
 
@@ -577,7 +575,7 @@ describe('ReviewHub edits', () => {
     const { hub } = setup({
       ledger: (l, _log, scope) => { seen.push({ scope, snaps: (scope === 'session' ? l.sessionSnapshots() : l.lastTurnSnapshots() ?? []).length }); return result() }
     })
-    hub.turn(TAB, SID, null)
+    hub.turn(TAB, SID)
     hub.recordBefore(TAB, SID, 'toolu_1', join(ROOT, 'a.ts'))
     hub.setScope(TAB, 'last_turn')
     await vi.advanceTimersByTimeAsync(0)
@@ -843,7 +841,7 @@ describe('ReviewHub hide tests, edge cases', () => {
       ledger: vi.fn((_l, _g, _s, _b, _f, exclude) => result(...[web, spec].filter((i) => !exclude(i.path))))
     }, TAB, undefined, false, PATTERNS)
     hub.addTab('sub', folder, true)
-    hub.turn('sub', SID, join(folder, 'api'))
+    hub.turn('sub', SID)
     expect(await hub.showRequest('sub', req({ cwd: join(folder, 'api') }))).toMatchObject({ ok: true })
     expect(last().files.map((f) => f.path)).toEqual([web.path])
     expect(last().testsHidden).toBe(1)

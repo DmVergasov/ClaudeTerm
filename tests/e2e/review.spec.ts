@@ -130,6 +130,28 @@ test('Session shows only the files inside the tab folder and counts the rest', a
   await app.close()
 })
 
+test('Uncommitted stays in the tab folder repository after Claude cds into another one', async () => {
+  const { app, page, tabId, pipeName, repo, a } = await reviewTab(upper)
+  const other = gitRepo()
+  writeFileSync(join(other, 'other.ts'), 'other\n')
+  /** a turn Claude starts in `cwd` that changes a.ts; its end computes the view again */
+  const turn = async (cwd: string, text: string): Promise<void> => {
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd })).toEqual({ ok: true })
+    writeFileSync(a, text)
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  }
+  await page.keyboard.press('Control+Shift+KeyD')
+  await turn(repo, 'one\nTWO\nthree\nFOUR\n')
+  // the view computed after the first turn's change: no compute started before the next turn is left
+  await expect(added(page, 'a.ts')).toHaveText(['TWO', 'FOUR'])
+  // a Bash `cd` in the first turn left Claude in the other repository: the next prompt's hook reports that folder
+  await turn(other, 'one\nTWO\nthree\nFOUR\nFIVE\n')
+  await expect(added(page, 'a.ts')).toHaveText(['TWO', 'FOUR', 'FIVE'])
+  await expect(page.locator('.review-file')).toHaveCount(1)
+  await expect(page.locator('.status-changes')).toHaveAttribute('title', `Uncommitted changes in ${repo}`)
+  await app.close()
+})
+
 test('Viewed folds a file until it changes again', async () => {
   const { app, page, a } = await reviewTab(upper)
   await page.keyboard.press('Control+Shift+KeyD')

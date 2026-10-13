@@ -463,7 +463,7 @@ function bootstrap(): void {
     },
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
-      review.turn(msg.tabId, msg.sessionId, msg.cwd)
+      review.turn(msg.tabId, msg.sessionId)
       return { ok: true }
     },
     editBefore: (msg) => {
