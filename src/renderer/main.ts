@@ -230,7 +230,8 @@ function addTab(info: TabInfo): void {
       renderTabs()
     },
     onBell: () => ct.bell(info.id),
-    onLink: (uri) => ct.openExternal(uri)
+    onLink: (uri) => ct.openExternal(uri),
+    onClipboard: (text) => ct.writeClipboardText(text)
   })
   view.show(false)
   attachTerminalMouse(info.id, view)
