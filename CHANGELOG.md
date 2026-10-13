@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.3.1
+
+### Fixes
+
+- **The Changes panel stays on your project when Claude looks into another repository.** When Claude ran a command with `cd` into another git repository, for example the engine next to your game project, **Uncommitted** and the changes counter in the status bar switched to that repository's changes from the next prompt on. They now always show the repository of the folder the tab was opened in.
+
 ## 0.3.0
 
 ### New
