@@ -5,6 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
+import { osc52Text } from './osc52'
 import { windowsPtyOption } from './util'
 
 // Font sizes are in points, like Windows Terminal; xterm.js takes CSS pixels (1pt = 96/72 px)
@@ -25,6 +26,8 @@ export interface TerminalViewOptions {
   onTitle(title: string): void
   onBell(): void
   onLink(uri: string): void
+  /** a program copied text with OSC 52, as Claude Code does with its own mouse selection */
+  onClipboard(text: string): void
   onKey?(e: KeyboardEvent): boolean
 }
 
@@ -69,6 +72,11 @@ export class TerminalView {
     this.term.onData(o.onInput)
     this.term.onTitleChange(o.onTitle)
     this.term.onBell(o.onBell)
+    this.term.parser.registerOscHandler(52, (data) => {
+      const text = osc52Text(data)
+      if (text !== null) o.onClipboard(text)
+      return true
+    })
     this.term.onResize(({ cols, rows }) => o.onResize(cols, rows))
     this.refit()
     o.onResize(this.term.cols, this.term.rows)
