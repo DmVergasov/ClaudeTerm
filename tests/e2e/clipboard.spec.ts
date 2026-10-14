@@ -6,9 +6,10 @@ type SavedClipboard = { savedClipboard?: Record<string, Blob | Electron.Clipboar
 
 /** Runs the steps, then gives the system clipboard back what it held: the tests must not change the machine they run on */
 async function keepingClipboard(app: ElectronApplication, steps: () => Promise<void>): Promise<void> {
-  // the items clipboard.read() returns read the clipboard lazily and cannot be written back: keep their data
+  // the items clipboard.read() returns read the clipboard lazily and cannot be written back: keep their data. An empty
+  // clipboard reads as one item without types, which ClipboardItem does not accept
   await app.evaluate(async ({ clipboard }) => {
-    const items = await clipboard.read()
+    const items = (await clipboard.read()).filter((item) => item.types.length)
     const savedClipboard = await Promise.all(items.map(async (item) =>
       Object.fromEntries(await Promise.all(item.types.map(async (type) => [type, await item.getType(type)] as const)))))
     Object.assign(globalThis, { savedClipboard } satisfies SavedClipboard)
