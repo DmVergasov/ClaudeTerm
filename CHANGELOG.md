@@ -2,6 +2,13 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.5.0
+
+### New
+
+- **More than one Claude subscription.** Add your other accounts in **Settings → Accounts** and move a Claude tab between them in one click: **Continue as …** in the tab's right-click menu, or a click on the account in the status bar, restarts Claude Code on the other account and continues the same conversation. Handy when one subscription runs into its limit, or to keep work and personal tabs apart, side by side. The **▾** menu opens a new Claude tab on any of your accounts, a new Claude tab takes the account of the tab you are in, and the window title names the extra account of the tab in front. Restart and **Restore previous session** keep each tab's account.
+- Your normal Claude Code login stays the **Main account**. An extra account is a token from `claude setup-token`, valid for a year: **Get a token** runs it in a tab — sign in to claude.ai with that account in the browser first, then paste the token it prints. The tokens are encrypted by the system (DPAPI on Windows, the keyring on Linux). Claude Code lets a token make model requests only, so a tab on an extra account has no claude.ai connectors and no Remote Control.
+
 ## 0.4.0
 
 ### New
