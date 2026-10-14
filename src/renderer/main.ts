@@ -60,12 +60,15 @@ const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? fol
 function renderTabs(): void {
   const items = order.flatMap((id) => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), kind: t.info.kind, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited }] : []
+    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited }] : []
   })
   tabBar.render(items, activeId)
   if (imagePanel) refreshPanelButtons()
   const active = activeId ? tabs.get(activeId) : undefined
-  document.title = active ? `${titleOf(active)} — ClaudeTerm` : 'ClaudeTerm'
+  // the folder's name tells the projects of several windows and tabs apart, in the taskbar and Alt+Tab too
+  const title = active ? titleOf(active) : null
+  const folder = active ? folderName(active.info.cwd) : null
+  document.title = title === null ? 'ClaudeTerm' : title === folder ? `${title} — ClaudeTerm` : `${title} — ${folder} — ClaudeTerm`
 }
 
 /** the Images and Changes buttons in the tab bar: which panel is shown, the badges, Changes only for a Claude tab */

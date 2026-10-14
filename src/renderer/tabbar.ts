@@ -7,6 +7,8 @@ const PULSE_CYCLE_MS = 2400
 export interface TabBarItem {
   id: string
   title: string
+  /** the folder the tab was opened in */
+  folder: string
   kind: TabKind
   bell: boolean
   /** Claude in this tab is waiting for the user */
@@ -139,7 +141,7 @@ export class TabBar {
     // second); a negative delay from one shared clock makes a rebuilt tab carry on in the same phase
     if (item.attention) el.style.animationDelay = `${-(performance.now() % PULSE_CYCLE_MS)}ms`
     el.draggable = true
-    el.title = item.title
+    el.title = `${item.title}\n${item.folder}`
     const icon = document.createElement('span')
     icon.className = 'tab-icon'
     icon.textContent = item.kind === 'claude' ? '✳' : '>'
