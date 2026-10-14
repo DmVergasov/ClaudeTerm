@@ -624,3 +624,89 @@ test('a refused save from the Hide tests checkbox puts the box back and says why
   await expect(page.locator('.review-file')).toHaveCount(4)
   await app.close()
 })
+
+/** a.ts changed and four new files in folders; hub.ts is long, so the files after it start below the fold */
+function inFolders(repo: string): void {
+  upper(repo)
+  const added: [string, string][] = [
+    ['src/main/hub.ts', Array.from({ length: 200 }, (_, i) => `hub line ${i}\n`).join('')],
+    ['src/main/pipe.ts', 'pipe\n'],
+    ['docs/guide.md', 'guide words\n'],
+    ['top.ts', 'top\n']
+  ]
+  for (const [path, text] of added) {
+    mkdirSync(dirname(join(repo, path)), { recursive: true })
+    writeFileSync(join(repo, path), text)
+  }
+}
+const treeNames = (page: Page) => page.locator('.review-tree .review-tree-name')
+const diffPaths = (page: Page) => page.locator('.review-file').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.path))
+
+test('the file tree lists the files by folder, the diffs follow its order, and a click on a folded file opens it', async () => {
+  const { app, page } = await reviewTab(inFolders)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await expect(treeNames(page)).toHaveText(['docs', 'guide.md', 'src/main', 'hub.ts', 'pipe.ts', 'a.ts', 'top.ts'])
+  expect(await diffPaths(page)).toEqual(['docs/guide.md', 'src/main/hub.ts', 'src/main/pipe.ts', 'a.ts', 'top.ts'])
+  await file(page, 'top.ts').locator('.review-file-head').click()
+  await expect(file(page, 'top.ts').locator('.review-line')).toHaveCount(0)
+  await page.locator('.review-files').evaluate((e) => { e.scrollTop = 0 })
+  await expect(file(page, 'top.ts')).not.toBeInViewport()
+  await page.locator('.review-tree-file[data-path="top.ts"]').click()
+  await expect(added(page, 'top.ts')).toHaveText('top')
+  await expect(file(page, 'top.ts')).toBeInViewport()
+  // a folder folds in the tree only
+  await page.locator('.review-tree-dir[data-path="src/main"]').click()
+  await expect(treeNames(page)).toHaveText(['docs', 'guide.md', 'src/main', 'a.ts', 'top.ts'])
+  await expect(page.locator('.review-file')).toHaveCount(5)
+  await app.close()
+})
+
+test('the file filter narrows the tree and the diffs, Find looks in the files shown only, and Esc clears it', async () => {
+  const { app, page } = await reviewTab(inFolders)
+  await page.keyboard.press('Control+Shift+KeyD')
+  const filter = page.locator('.review-tree-filter')
+  await filter.fill('MAIN')
+  await expect(treeNames(page)).toHaveText(['src/main', 'hub.ts', 'pipe.ts'])
+  expect(await diffPaths(page)).toEqual(['src/main/hub.ts', 'src/main/pipe.ts'])
+  await expect(page.locator('.review-summary')).toContainText('2 of 5 files')
+  // "guide" is only in docs/guide.md, which the filter leaves out
+  await page.locator('.review-find-btn').click()
+  await page.locator('.review-find-input').fill('guide')
+  await expect(page.locator('.review-find-count')).toHaveText('No results')
+  await page.locator('.review-find-close').click()
+  await filter.press('Escape')
+  await expect(filter).toHaveValue('')
+  await expect(page.locator('.review-file')).toHaveCount(5)
+  await expect(page.locator('.review-summary')).toContainText(/^5 files/)
+  await app.close()
+})
+
+test('Collapse all and Expand all fold and unfold every file shown', async () => {
+  const { app, page } = await reviewTab(inFolders)
+  await page.keyboard.press('Control+Shift+KeyD')
+  await expect(page.locator('.review-hunk')).toHaveCount(5)
+  await page.locator('.review-collapse-all').click()
+  await expect(page.locator('.review-file')).toHaveCount(5)
+  await expect(page.locator('.review-hunk')).toHaveCount(0)
+  await page.locator('.review-expand-all').click()
+  await expect(page.locator('.review-hunk')).toHaveCount(5)
+  await app.close()
+})
+
+test('the tree button hides the file tree with its filter, and settings.json keeps it hidden', async () => {
+  const { app, page, dataDir } = await reviewTab(inFolders)
+  await page.keyboard.press('Control+Shift+KeyD')
+  const saved = () => (JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')) as { review?: { fileTree?: boolean } }).review?.fileTree
+  await page.locator('.review-tree-filter').fill('main')
+  await expect(page.locator('.review-file')).toHaveCount(2)
+  await page.locator('.review-tree-btn').click()
+  await expect(page.locator('.review-tree')).toBeHidden()
+  // a hidden filter does not filter
+  await expect(page.locator('.review-file')).toHaveCount(5)
+  await expect.poll(saved).toBe(false)
+  await page.locator('.review-tree-btn').click()
+  await expect(page.locator('.review-tree')).toBeVisible()
+  await expect(page.locator('.review-tree-filter')).toHaveValue('')
+  await expect.poll(saved).toBe(true)
+  await app.close()
+})

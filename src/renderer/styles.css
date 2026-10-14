@@ -119,7 +119,16 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .review-outside { padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .review-outside[hidden] { display: none; }
 .review-outside-title { margin-bottom: 4px; color: var(--muted); font-size: 12px; }
-.review-files { flex: 1; overflow: auto; }
+.review-main { flex: 1; display: flex; min-height: 0; }
+.review-files { flex: 1; overflow: auto; min-width: 0; }
+.review-tree { flex: none; width: 200px; display: flex; flex-direction: column; border-right: 1px solid var(--border); font-size: 12px; }
+.review-tree-filter { margin: 6px; padding: 3px 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
+.review-tree-list { flex: 1; overflow: auto; padding-bottom: 6px; }
+.review-tree-dir, .review-tree-file { display: flex; align-items: center; gap: 4px; padding: 2px 6px; white-space: nowrap; cursor: pointer; user-select: none; }
+.review-tree-dir:hover, .review-tree-file:hover { background: #ffffff10; }
+.review-tree-dir { color: var(--muted); }
+.review-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.review-tree-file.viewed { opacity: 0.6; }
 .review-loading .review-files { opacity: 0.5; }
 .review-loading, .review-loading * { cursor: progress; }
 .review-file-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--chrome-2); border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; font-size: 12px; }

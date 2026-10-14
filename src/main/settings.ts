@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
     done: { sound: true, flash: true, tab: true },
     bell: { sound: false, flash: true, tab: true }
   },
-  review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640 },
+  review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true },
   autoUpdate: true
 }
 
@@ -131,7 +131,8 @@ export function parseSettings(text: string | null): ParsedSettings {
       hideIgnored: take('review.hideIgnored', rv.hideIgnored, isBool, d.review.hideIgnored),
       hideTests: take('review.hideTests', rv.hideTests, isBool, d.review.hideTests),
       testPatterns: take('review.testPatterns', rv.testPatterns, isTestPatterns, d.review.testPatterns),
-      width: take('review.width', rv.width, numIn(240, 4000), d.review.width)
+      width: take('review.width', rv.width, numIn(240, 4000), d.review.width),
+      fileTree: take('review.fileTree', rv.fileTree, isBool, d.review.fileTree)
     },
     autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)
   }

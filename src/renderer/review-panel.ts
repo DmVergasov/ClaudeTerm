@@ -5,6 +5,7 @@ import {
   type CommentAnchor, type Located, type ReviewComment
 } from './review-comments'
 import { findMatches, type SearchMatch } from './review-search'
+import { buildTree, filterFiles, treeOrder, type TreeNode } from './review-tree'
 import type { SidePanel } from './side-panel'
 
 export interface ReviewPanelCallbacks {
@@ -18,6 +19,8 @@ export interface ReviewPanelCallbacks {
   copyText(text: string): void
   /** saves review.hideTests; resolves to whether it was saved */
   setHideTests(on: boolean): Promise<boolean>
+  /** saves review.fileTree; the panel shows the change when the settings come back */
+  setFileTree(on: boolean): void
   /** writes the message into Claude's prompt and presses Enter; resolves to null, or to why it was not sent */
   send(tabId: string, message: string): Promise<string | null>
 }
@@ -65,6 +68,10 @@ interface TabComments {
   draft: Draft | null
   /** files folded or unfolded by hand: path → folded */
   folds: Map<string, boolean>
+  /** the folders folded in the file tree, by path */
+  dirs: Set<string>
+  /** the file filter: the files whose path holds it */
+  filter: string
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
@@ -115,6 +122,15 @@ export class ReviewPanel {
   private readonly noticeEl = el('div', 'panel-notice')
   private readonly outsideEl = el('div', 'review-outside')
   private readonly filesEl = el('div', 'review-files')
+  /** the file tree on the left of the diffs */
+  private readonly treeEl = el('div', 'review-tree')
+  private readonly treeFilter = el('input', 'review-tree-filter')
+  private readonly treeList = el('div', 'review-tree-list')
+  private readonly treeBtn = el('button', 'review-tree-btn', '☰')
+  private treeShown = true
+  private filterTimer: ReturnType<typeof setTimeout> | null = null
+  /** the files the view shows, by index, in the tree's order */
+  private shown: number[] = []
   private readonly footer = el('div', 'review-footer')
   private readonly countEl = el('span', 'review-count')
   private readonly sendBtn = el('button', 'review-send', 'Send to Claude')
@@ -126,7 +142,7 @@ export class ReviewPanel {
   private findOpen = false
   /** the matches of the open find row's query in the current view, and which one is current */
   private matches: SearchMatch[] = []
-  private matchesFor: { files: ReviewFile[]; query: string } | null = null
+  private matchesFor: { files: ReviewFile[]; query: string; shown: string } | null = null
   /** more matches than the search keeps */
   private matchesCapped = false
   private current = 0
@@ -154,11 +170,23 @@ export class ReviewPanel {
     this.expandBtn.addEventListener('click', () => this.panel.setExpanded(!this.panel.expanded))
     this.findBtn.title = 'Find (Ctrl+F)'
     this.findBtn.addEventListener('click', () => this.openFind())
-    panel.tools.append(this.findBtn, refresh, this.expandBtn)
+    const collapse = el('button', 'review-collapse-all', '⊟')
+    collapse.title = 'Collapse all files'
+    collapse.addEventListener('click', () => this.foldAll(true))
+    const expandAll = el('button', 'review-expand-all', '⊞')
+    expandAll.title = 'Expand all files'
+    expandAll.addEventListener('click', () => this.foldAll(false))
+    this.treeBtn.title = 'File tree'
+    this.treeBtn.classList.add('active')
+    this.treeBtn.addEventListener('click', () => this.cb.setFileTree(!this.treeShown))
+    panel.tools.append(this.findBtn, collapse, expandAll, this.treeBtn, refresh, this.expandBtn)
     this.setupFind()
+    this.setupTree()
     this.sendBtn.addEventListener('click', () => void this.sendAll())
     this.footer.append(this.countEl, this.sendBtn)
-    root.replaceChildren(this.scopeBar, this.findRow, this.noticeEl, this.outsideEl, this.filesEl, this.footer)
+    const main = el('div', 'review-main')
+    main.append(this.treeEl, this.filesEl)
+    root.replaceChildren(this.scopeBar, this.findRow, this.noticeEl, this.outsideEl, main, this.footer)
     document.addEventListener('mouseup', () => this.endDrag())
     // a click in the diff gives the panel the focus, so that Ctrl+F finds in it and not in the terminal
     root.tabIndex = -1
@@ -204,6 +232,102 @@ export class ReviewPanel {
     this.findRow.append(this.findInput, this.findCount, prev, next, close)
   }
 
+  private setupTree(): void {
+    this.treeFilter.type = 'text'
+    this.treeFilter.placeholder = 'Filter files'
+    this.treeFilter.spellcheck = false
+    const apply = (): void => {
+      this.filterTimer = null
+      if (!this.update) return
+      this.state(this.update.tabId).filter = this.treeFilter.value
+      this.render()
+    }
+    // one render per filter, not per key
+    this.treeFilter.addEventListener('input', () => {
+      if (this.filterTimer) clearTimeout(this.filterTimer)
+      this.filterTimer = setTimeout(apply, QUERY_DELAY_MS)
+    })
+    this.treeFilter.addEventListener('keydown', (e) => {
+      // Esc clears the filter; an empty one lets Esc go on (it ends an expanded panel)
+      if (e.key !== 'Escape' || this.treeFilter.value === '') return
+      e.preventDefault()
+      if (this.filterTimer) clearTimeout(this.filterTimer)
+      this.treeFilter.value = ''
+      apply()
+    })
+    this.treeEl.append(this.treeFilter, this.treeList)
+  }
+
+  /** review.fileTree: the tree and its filter show or hide; a hidden filter filters nothing, and is empty when it shows again */
+  setTreeShown(shown: boolean): void {
+    if (shown === this.treeShown) return
+    this.treeShown = shown
+    this.treeBtn.classList.toggle('active', shown)
+    if (!shown) {
+      if (this.filterTimer) clearTimeout(this.filterTimer)
+      this.filterTimer = null
+      this.treeFilter.value = ''
+      for (const s of this.perTab.values()) s.filter = ''
+    }
+    if (this.panel.isShowing('changes')) this.render()
+  }
+
+  /** Collapse all / Expand all: every file the view shows, as if its arrow were clicked */
+  private foldAll(folded: boolean): void {
+    const u = this.update
+    if (!u) return
+    const s = this.state(u.tabId)
+    for (const i of this.shown) s.folds.set(u.files[i]!.path, folded)
+    this.render()
+  }
+
+  /** a file clicked in the tree: it unfolds if it is folded, and its diff comes to the top */
+  private goToFile(u: ReviewUpdate, s: TabComments, f: ReviewFile): void {
+    if (this.isFolded(s, f)) {
+      s.folds.set(f.path, false)
+      this.render()
+    }
+    const box = [...this.filesEl.querySelectorAll<HTMLElement>('.review-file')].find((e) => e.dataset.path === f.relPath)
+    box?.scrollIntoView({ block: 'start' })
+  }
+
+  private renderTree(u: ReviewUpdate, s: TabComments, nodes: TreeNode[]): void {
+    const rows: HTMLElement[] = []
+    const add = (list: TreeNode[], depth: number): void => {
+      for (const n of list) {
+        if (n.kind === 'dir') {
+          const folded = s.dirs.has(n.path)
+          const row = el('div', 'review-tree-dir')
+          row.dataset.path = n.path
+          row.title = n.path
+          row.style.paddingLeft = `${6 + depth * 12}px`
+          row.append(el('span', 'review-arrow', folded ? '▸' : '▾'), el('span', 'review-tree-name', n.name))
+          // a folder folds in the tree only; its diffs stay as they are
+          row.addEventListener('click', () => {
+            if (folded) s.dirs.delete(n.path)
+            else s.dirs.add(n.path)
+            this.render()
+          })
+          rows.push(row)
+          if (!folded) add(n.children, depth + 1)
+        } else {
+          const f = u.files[n.index]!
+          const row = el('div', `review-tree-file${f.viewed ? ' viewed' : ''}`)
+          row.dataset.path = f.relPath
+          row.title = f.relPath
+          row.style.paddingLeft = `${18 + depth * 12}px`
+          const counts = el('span', 'review-counts')
+          counts.append(el('span', 'review-add', `+${f.additions}`), ' ', el('span', 'review-del', `−${f.deletions}`))
+          row.append(el('span', 'review-tree-name', n.name), el('span', `review-status ${f.status}`, STATUS[f.status]), counts)
+          row.addEventListener('click', () => this.goToFile(u, s, f))
+          rows.push(row)
+        }
+      }
+    }
+    add(nodes, 0)
+    this.treeList.replaceChildren(...rows)
+  }
+
   private openFind(): void {
     if (!this.findOpen) {
       this.findOpen = true
@@ -234,18 +358,20 @@ export class ReviewPanel {
     this.reveal()
   }
 
-  /** the matches of the open find row in this view, computed once per view and query */
+  /** the matches of the open find row in the files the view shows, in their order; computed once per view, query and filter */
   private computeMatches(u: ReviewUpdate | null): void {
     const query = this.findInput.value
+    const shown = this.shown.join(',')
     if (!this.findOpen || !u || query === '') {
       this.matches = []
       this.matchesCapped = false
       this.matchesFor = null
-    } else if (this.matchesFor?.files !== u.files || this.matchesFor?.query !== query) {
-      const found = findMatches(u.files, query)
-      this.matches = found.matches
+    } else if (this.matchesFor?.files !== u.files || this.matchesFor?.query !== query || this.matchesFor?.shown !== shown) {
+      const order = this.shown
+      const found = findMatches(order.map((i) => u.files[i]!), query)
+      this.matches = found.matches.map((m) => ({ ...m, fileIndex: order[m.fileIndex]! }))
       this.matchesCapped = found.capped
-      this.matchesFor = { files: u.files, query }
+      this.matchesFor = { files: u.files, query, shown }
     }
     if (this.current >= this.matches.length) this.current = Math.max(this.matches.length - 1, 0)
     this.findCount.textContent = !this.findOpen || query === '' ? '' : this.counterText()
@@ -367,7 +493,7 @@ export class ReviewPanel {
   private state(tabId: string): TabComments {
     let s = this.perTab.get(tabId)
     if (!s) {
-      s = { comments: [], draft: null, folds: new Map() }
+      s = { comments: [], draft: null, folds: new Map(), dirs: new Set(), filter: '' }
       this.perTab.set(tabId, s)
     }
     return s
@@ -391,18 +517,26 @@ export class ReviewPanel {
     const caret = prev !== null && document.activeElement === prev ? ([prev.selectionStart, prev.selectionEnd] as const) : null
     this.draftArea = null
     this.root.classList.toggle('review-loading', this.loading !== null)
+    // the files shown, in the tree's order: those the filter keeps while the tree shows
+    const tree = u ? buildTree(u.files, this.treeShown ? filterFiles(u.files, this.state(u.tabId).filter) : u.files.map((_, i) => i)) : []
+    this.shown = treeOrder(tree)
     this.computeMatches(u)
+    this.treeEl.hidden = !u || !this.treeShown
     if (!u) {
       this.scopeBar.replaceChildren()
       this.noticeEl.hidden = true
       this.outsideEl.replaceChildren()
       this.outsideEl.hidden = true
+      this.treeList.replaceChildren()
       this.filesEl.replaceChildren(el('div', 'panel-empty', 'No changes'))
       this.footer.hidden = true
       return
     }
     const s = this.state(u.tabId)
+    // a filter being typed keeps its text; another tab brings its own
+    if (document.activeElement !== this.treeFilter) this.treeFilter.value = s.filter
     this.renderScope(u)
+    if (this.treeShown) this.renderTree(u, s, tree)
     this.noticeEl.textContent = u.notice ?? ''
     this.noticeEl.hidden = !u.notice
     const placed = new Map<string, ReviewComment[]>()
@@ -419,8 +553,9 @@ export class ReviewPanel {
     const draftAt = s.draft ? locate(s.draft.anchor, u.files, this.samePath) : null
     const marks = this.marksByFile()
     this.renderOutside(u, s, outside, s.draft !== null && draftAt === null)
+    const empty = u.files.length === 0 ? 'No changes in this view' : this.shown.length === 0 ? 'No files match the filter' : null
     this.filesEl.replaceChildren(
-      ...(u.files.length === 0 ? [el('div', 'panel-empty', 'No changes in this view')] : u.files.map((f, i) => this.renderFile(u, s, f, i, placed, draftAt, marks.get(i))))
+      ...(empty !== null ? [el('div', 'panel-empty', empty)] : this.shown.map((i) => this.renderFile(u, s, u.files[i]!, i, placed, draftAt, marks.get(i))))
     )
     this.renderFooter(u, s)
     if (caret) this.focusDraft(caret)
@@ -462,8 +597,9 @@ export class ReviewPanel {
       parts.push(seg)
     }
     const n = u.files.length
+    const k = this.shown.length
     const summary = el('span', 'review-summary')
-    summary.append(`${n} file${n === 1 ? '' : 's'} · `, el('span', 'review-add', `+${u.additions}`), ' ', el('span', 'review-del', `−${u.deletions}`))
+    summary.append(`${k < n ? `${k} of ` : ''}${n} file${n === 1 ? '' : 's'} · `, el('span', 'review-add', `+${u.additions}`), ' ', el('span', 'review-del', `−${u.deletions}`))
     if (u.outside > 0) {
       const left = el('span', 'review-hidden-outside', ` · ${u.outside} outside the folder`)
       const more = u.outside - u.outsideSample.length

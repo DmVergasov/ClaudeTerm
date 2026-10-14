@@ -79,7 +79,7 @@ export interface Settings {
   imagePanel: { autoOpen: boolean; width: number; maxItems: number }
   notifications: NotificationSettings
   /** the Changes panel */
-  review: { editor: string | null; statusBar: boolean; hideIgnored: boolean; hideTests: boolean; testPatterns: string[]; width: number }
+  review: { editor: string | null; statusBar: boolean; hideIgnored: boolean; hideTests: boolean; testPatterns: string[]; width: number; fileTree: boolean }
   /** check GitHub for new versions in the background */
   autoUpdate: boolean
 }

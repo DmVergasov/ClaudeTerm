@@ -215,20 +215,20 @@ describe('applySettingEdit', () => {
 })
 
 describe('review settings', () => {
-  const defaults = { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640 }
+  const defaults = { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true }
 
-  it('defaults: no editor, the counter on, 640 px, ignored files hidden, tests shown, the default test patterns', () => {
+  it('defaults: no editor, the counter on, 640 px, ignored files hidden, tests shown, the default test patterns, the file tree shown', () => {
     expect(parseSettings('{}').settings.review).toEqual(defaults)
     expect(defaults.testPatterns).toContain('**/tests/**')
     expect(defaults.testPatterns).toContain('*Test.*')
   })
 
   it('takes valid values and reports invalid ones', () => {
-    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900 } })).settings.review)
-      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900 })
-    const bad = parseSettings(JSON.stringify({ review: { editor: 5, hideIgnored: 'yes', width: 10 } }))
+    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false } })).settings.review)
+      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false })
+    const bad = parseSettings(JSON.stringify({ review: { editor: 5, hideIgnored: 'yes', width: 10, fileTree: 'no' } }))
     expect(bad.settings.review).toEqual(defaults)
-    expect(bad.errors).toEqual(['settings.json: invalid value for "review.editor", using default', 'settings.json: invalid value for "review.hideIgnored", using default', 'settings.json: invalid value for "review.width", using default'])
+    expect(bad.errors).toEqual(['settings.json: invalid value for "review.editor", using default', 'settings.json: invalid value for "review.hideIgnored", using default', 'settings.json: invalid value for "review.width", using default', 'settings.json: invalid value for "review.fileTree", using default'])
   })
 
   it('hideTests must be a boolean; testPatterns a list of at most 200 non-empty strings of at most 200 characters, and an empty list is valid', () => {
@@ -244,6 +244,12 @@ describe('review settings', () => {
     }
     expect(bad({ testPatterns: Array(200).fill('a') }).errors).toEqual([])
     expect(bad({ testPatterns: ['x'.repeat(200)] }).errors).toEqual([])
+  })
+
+  it('the Changes panel saves review.fileTree, a boolean', () => {
+    const off = applySettingEdit('{}', 'review.fileTree', false)
+    expect(off.ok && JSON.parse(off.text)).toEqual({ review: { fileTree: false } })
+    expect(applySettingEdit('{}', 'review.fileTree', 'no')).toEqual({ ok: false, error: 'Invalid value for review.fileTree' })
   })
 
   it('the settings window can edit both keys', () => {

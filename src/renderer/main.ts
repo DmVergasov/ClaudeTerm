@@ -315,6 +315,7 @@ function applySettings(s: Settings): void {
     for (const t of tabs.values()) t.view.setTheme(theme)
   }
   if (activeId) statusBar.render(statusUpdates.get(activeId) ?? null, counterOf(activeId))
+  reviewPanel.setTreeShown(s.review.fileTree)
 }
 
 async function boot(): Promise<void> {
@@ -416,10 +417,14 @@ async function boot(): Promise<void> {
           return false
         }
       },
+      setFileTree: (on) => {
+        ct.setSetting('review.fileTree', on).then((r) => { if (!r.ok) showToast(r.error) }, (e: unknown) => showToast(`Cannot save review.fileTree: ${String(e)}`))
+      },
       send: (id, message) => sendToClaude(id, message)
     },
     ct.platform
   )
+  reviewPanel.setTreeShown(settings.review.fileTree)
   sidePanel.onChange = () => {
     imagePanel.panelChanged()
     reviewPanel.panelChanged()

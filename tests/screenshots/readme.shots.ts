@@ -341,14 +341,16 @@ test('review panel screenshot', async () => {
   // like the hero shot: a Claude config and a temp folder of its own, so nothing of the real machine shows
   const temp = join(root, 'temp')
   mkdirSync(temp)
-  const settings = { claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' }, defaultProfile: 'Windows PowerShell' }
+  // wide enough for the file tree and the diff next to it
+  const settings = { claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' }, defaultProfile: 'Windows PowerShell', review: { width: 800 } }
   const { app, page, pipeName } = await launchApp({
     settings, args: ['--claude', project], env: { CLAUDE_CONFIG_DIR: join(root, 'claude-config'), TEMP: temp, TMP: temp }
   })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
   const cdp = await page.context().newCDPSession(page)
-  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false })
+  // wider than the other shots: the 800 px panel holds the file tree and the diff, and the terminal keeps the 640 px it has there
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 800, deviceScaleFactor: 2, mobile: false })
   await expect.poll(() => bufferText(page, tabId), { timeout: 20_000 }).toContain('North America leads Q3')
 
   const projects = join(root, 'claude-projects', 'D--work-acme-dashboard')
@@ -371,6 +373,8 @@ test('review panel screenshot', async () => {
   await page.locator('.review-comment-input').fill('Keep the raw totals here and round only in the chart labels — the CSV export reads this too.')
   await page.locator('.review-btn.primary').click()
   await expect(page.locator('.review-count')).toHaveText('1 comment')
+  // hover() scrolls the line to the middle; the shot starts at the left edge of the code
+  await page.locator('.review-files').evaluate((e) => { e.scrollLeft = 0 })
   await page.mouse.move(300, 300)
   await page.screenshot({ path: join(OUT, 'review-panel.png') })
   await app.close()
