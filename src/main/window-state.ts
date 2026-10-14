@@ -25,11 +25,13 @@ export function loadWindowState(file: string): WindowState {
   }
 }
 
-export function trackWindowState(win: BrowserWindow, file: string): void {
+/** `added`: how much the window was widened for the side panel; the saved size leaves it out */
+export function trackWindowState(win: BrowserWindow, file: string, added: () => number = () => 0): void {
   let timer: ReturnType<typeof setTimeout> | null = null
   const save = (): void => {
     if (win.isDestroyed()) return
-    const state: WindowState = { bounds: win.getNormalBounds(), maximized: win.isMaximized() }
+    const b = win.getNormalBounds()
+    const state: WindowState = { bounds: { ...b, width: b.width - added() }, maximized: win.isMaximized() }
     try {
       writeFileSync(file, JSON.stringify(state))
     } catch {

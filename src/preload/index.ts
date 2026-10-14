@@ -52,6 +52,7 @@ const api: CtApi = {
   openInEditor: (tabId, path, line) => ipcRenderer.send(IPC.reviewOpenEditor, tabId, path, line),
   revealFile: (tabId, path) => ipcRenderer.send(IPC.reviewReveal, tabId, path),
   reviewCanSend: (tabId) => ipcRenderer.invoke(IPC.reviewCanSend, tabId),
+  setPanel: (width, resize) => ipcRenderer.invoke(IPC.panelSet, width, resize),
   onTabOpened: (cb) => on(IPC.evTabOpened, cb),
   onTabUpdated: (cb) => on(IPC.evTabUpdated, cb),
   onTabClosed: (cb) => on(IPC.evTabClosed, cb),
@@ -68,7 +69,8 @@ const api: CtApi = {
   onStatus: (cb) => on(IPC.evStatus, cb),
   onAttention: (cb) => on(IPC.evAttention, cb),
   onUpdate: (cb) => on(IPC.evUpdate, cb),
-  onReview: (cb) => on(IPC.evReview, cb)
+  onReview: (cb) => on(IPC.evReview, cb),
+  onPanelMode: (cb) => on(IPC.evPanelMode, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

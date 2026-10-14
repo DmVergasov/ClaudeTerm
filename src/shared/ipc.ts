@@ -1,6 +1,6 @@
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
-import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, RecentSession, Settings, TabInfo, UpdateState } from './types'
+import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, RecentSession, Settings, TabInfo, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -45,6 +45,7 @@ export const IPC = {
   reviewOpenEditor: 'review:open-editor',
   reviewReveal: 'review:reveal',
   reviewCanSend: 'review:can-send',
+  panelSet: 'panel:set',
   evTabOpened: 'ev:tab-opened',
   evTabUpdated: 'ev:tab-updated',
   evTabClosed: 'ev:tab-closed',
@@ -61,7 +62,8 @@ export const IPC = {
   evStatus: 'ev:status',
   evAttention: 'ev:attention',
   evUpdate: 'ev:update',
-  evReview: 'ev:review'
+  evReview: 'ev:review',
+  evPanelMode: 'ev:panel-mode'
 } as const
 
 export interface AppInfo {
@@ -176,6 +178,11 @@ export interface CtApi {
   revealFile(tabId: string, path: string): void
   /** whether Send may write into the tab now */
   reviewCanSend(tabId: string): Promise<ReviewSendState>
+  /**
+   * The side panel opened at `width` px, closed (0) or switched to a panel of another width: main widens or narrows the window
+   * for it and answers how the panel is to be shown. `resize` false: its edge was dragged, the window stays as it is.
+   */
+  setPanel(width: number, resize: boolean): Promise<PanelMode>
   onTabOpened(cb: (tab: TabInfo) => void): Unsubscribe
   onTabUpdated(cb: (tab: TabInfo) => void): Unsubscribe
   onTabClosed(cb: (tabId: string) => void): Unsubscribe
@@ -194,4 +201,6 @@ export interface CtApi {
   onAttention(cb: (tabId: string, reason: NotificationCase) => void): Unsubscribe
   onUpdate(cb: (state: UpdateState) => void): Unsubscribe
   onReview(cb: (update: ReviewUpdate) => void): Unsubscribe
+  /** the window was maximized, restored, or entered or left full screen, or sidePanel.noRoom changed */
+  onPanelMode(cb: (mode: PanelMode) => void): Unsubscribe
 }

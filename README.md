@@ -49,6 +49,8 @@ Claude Code works with images all the time — browser screenshots, charts it pl
 - **Its scratchpad** — new and changed images in the temp folder Claude Code gives each session. The project folder is not watched, so images that another session, a dev server or a test run writes there stay out of your panel; an image Claude saves in the project shows up once Claude opens it or shows it.
 - **On request** — the bundled `show_image` MCP tool lets Claude put any image in front of you with a caption.
 
+The panel opens beside the terminal, not in its place: the window widens by the panel's width, so the terminal and Claude Code's screen keep their size, and closing the panel gives the width back. The Changes panel opens the same way. A maximized window, or one with no room left on the screen, shows the panel over the right of the terminal, or narrows the terminal if you choose so in the settings.
+
 Click a card to open it full-size (wheel to zoom, drag to pan, arrows to flip); right-click to open it in a viewer, reveal it in Explorer, copy the image or its path, or insert the path into the prompt.
 
 <p align="center"><img src="docs/images/lightbox.png" width="820" alt="Full-size image viewer"></p>
@@ -187,6 +189,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeT
     "width": 640,                  // the panel's width when it opens, in px
     "fileTree": true               // the file tree on the left of the diff (the ☰ button in the panel)
   },
+  "sidePanel": { "noRoom": "overlay" },  // a maximized window, or one with no room to widen for Images or Changes: "overlay" lays the panel over the terminal, "narrow" narrows the terminal
   "autoUpdate": true               // check GitHub for new versions in the background
 }
 ```

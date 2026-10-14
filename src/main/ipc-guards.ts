@@ -29,6 +29,9 @@ export const isAbsPath = (v: unknown): v is string => typeof v === 'string' && v
 
 export const isLineNo = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10_000_000
 
+/** the side panel's width in px; 0: closed */
+export const isPanelWidth = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_DIM
+
 export const isHash = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64
 
 export function isPtySize(cols: unknown, rows: unknown): boolean {

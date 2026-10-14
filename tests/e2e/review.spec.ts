@@ -407,7 +407,8 @@ test('Ctrl+F in the terminal still goes to the terminal, not to the Changes pane
   const { app, page, tabId } = await reviewTab(needles)
   await page.keyboard.press('Control+Shift+KeyD')
   await expect(added(page, 'a.ts').first()).toBeVisible()
-  await page.locator('.terminal-host:visible .xterm').click()
+  // the left of the terminal: a panel with no room to widen the window lies over its right
+  await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
   await page.keyboard.press('Control+KeyF')
   await expect(findRow(page)).toBeHidden()
   await expect.poll(() => page.evaluate((id) => window.__ct!.ptyInput!(id), tabId)).toContain('\x06')

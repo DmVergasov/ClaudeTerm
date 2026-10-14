@@ -7,6 +7,8 @@ export interface CtTestHook {
   bufferText(id?: string): string
   /** everything written to a tab's terminal input (test runs) */
   ptyInput?(id?: string): string
+  /** every size a tab's terminal gave its process, as "colsxrows" (test runs) */
+  ptySizes?(id?: string): string[]
   images?(id?: string): { name: string; source: string; caption: string | null }[]
   restoreVisible?(): boolean
   /** the active terminal's theme background */

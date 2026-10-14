@@ -68,6 +68,14 @@ export interface NotificationChannels {
 /** sound: 'system' or an absolute path to a .wav file; then the signals each case gives */
 export type NotificationSettings = { sound: string } & Record<NotificationCase, NotificationChannels>
 
+/**
+ * How the side panel sits by the terminal: beside it in a window widened for it, or, when the window had no room, over the
+ * terminal's right side or narrowing it.
+ */
+export type PanelMode = 'beside' | 'overlay' | 'narrow'
+
+export type NoRoomMode = Exclude<PanelMode, 'beside'>
+
 export interface Settings {
   defaultProfile: string | null
   claude: { command: string; shellProfile: string | null }
@@ -80,6 +88,8 @@ export interface Settings {
   notifications: NotificationSettings
   /** the Changes panel */
   review: { editor: string | null; statusBar: boolean; hideIgnored: boolean; hideTests: boolean; testPatterns: string[]; width: number; fileTree: boolean }
+  /** where Images and Changes go when the window has no room to widen for them */
+  sidePanel: { noRoom: NoRoomMode }
   /** check GitHub for new versions in the background */
   autoUpdate: boolean
 }

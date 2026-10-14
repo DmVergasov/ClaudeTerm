@@ -1,5 +1,5 @@
 // Generates the README screenshots in docs/images from demo data: `npm run screenshots`.
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -141,6 +141,19 @@ function writeDemoSessions(config: string, sessions: DemoSession[]): void {
   }
 }
 
+/**
+ * The shots fix the page size, which a window widened for a side panel would undo: the window gets the width of the work
+ * area, so a panel finds no room to widen it and takes its room from the terminal (sidePanel.noRoom "narrow"), the way it
+ * looks beside a widened window.
+ */
+function fillWorkAreaWidth(app: ElectronApplication): Promise<void> {
+  return app.evaluate(({ BrowserWindow, screen }) => {
+    const w = BrowserWindow.getAllWindows()[0]!
+    const b = w.getBounds()
+    w.setBounds({ ...b, width: screen.getDisplayMatching(b).workArea.width })
+  })
+}
+
 test('README screenshots', async () => {
   test.setTimeout(120_000)
   mkdirSync(OUT, { recursive: true })
@@ -157,7 +170,8 @@ test('README screenshots', async () => {
 
   const settings = {
     claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' },
-    defaultProfile: 'Windows PowerShell'
+    defaultProfile: 'Windows PowerShell',
+    sidePanel: { noRoom: 'narrow' }
   }
   const claudeConfig = join(root, 'claude-config')
   writeDemoSessions(claudeConfig, [
@@ -172,6 +186,7 @@ test('README screenshots', async () => {
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
   // a 1280x800 window at 2x regardless of the monitor (a forced scale factor would not fit a 1080p screen)
+  await fillWorkAreaWidth(app)
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false })
   await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight, window.devicePixelRatio].join('x'))).toBe('1280x800x2')
@@ -342,12 +357,13 @@ test('review panel screenshot', async () => {
   const temp = join(root, 'temp')
   mkdirSync(temp)
   // wide enough for the file tree and the diff next to it
-  const settings = { claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' }, defaultProfile: 'Windows PowerShell', review: { width: 800 } }
+  const settings = { claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' }, defaultProfile: 'Windows PowerShell', review: { width: 800 }, sidePanel: { noRoom: 'narrow' } }
   const { app, page, pipeName } = await launchApp({
     settings, args: ['--claude', project], env: { CLAUDE_CONFIG_DIR: join(root, 'claude-config'), TEMP: temp, TMP: temp }
   })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await fillWorkAreaWidth(app)
   const cdp = await page.context().newCDPSession(page)
   // wider than the other shots: the 800 px panel holds the file tree and the diff, and the terminal keeps the 640 px it has there
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 800, deviceScaleFactor: 2, mobile: false })

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, win32 } from 'node:path'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import { DEFAULT_TEST_PATTERNS, MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
-import type { NotificationSettings, ProfileDef, Settings } from '../shared/types'
+import type { NoRoomMode, NotificationSettings, ProfileDef, Settings } from '../shared/types'
 
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS: Settings = {
     bell: { sound: false, flash: true, tab: true }
   },
   review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true },
+  sidePanel: { noRoom: 'overlay' },
   autoUpdate: true
 }
 
@@ -46,6 +47,7 @@ const isNullableStr: Guard<string | null> = (v): v is string | null => v === nul
 const isBool: Guard<boolean> = (v): v is boolean => typeof v === 'boolean'
 const isStrArr: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.every(isStr)
 const isTestPatterns: Guard<string[]> = (v): v is string[] => isStrArr(v) && v.length <= MAX_TEST_PATTERNS && v.every((p) => p.length <= MAX_TEST_PATTERN_LENGTH)
+const isNoRoom: Guard<NoRoomMode> = (v): v is NoRoomMode => v === 'overlay' || v === 'narrow'
 const numIn = (min: number, max: number): Guard<number> => (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
 const isPlainObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isTheme: Guard<Settings['theme']> = (v): v is Settings['theme'] => isStr(v) || (isPlainObj(v) && Object.values(v).every((x) => typeof x === 'string'))
@@ -80,6 +82,7 @@ export function parseSettings(text: string | null): ParsedSettings {
   const iw = obj(raw.imageWatch)
   const ip = obj(raw.imagePanel)
   const rv = obj(raw.review)
+  const sp = obj(raw.sidePanel)
 
   const profiles: ProfileDef[] = take('profiles', raw.profiles, isProfiles, []).map((p) => ({ name: p.name, command: p.command, args: p.args ?? [] }))
 
@@ -134,6 +137,7 @@ export function parseSettings(text: string | null): ParsedSettings {
       width: take('review.width', rv.width, numIn(240, 4000), d.review.width),
       fileTree: take('review.fileTree', rv.fileTree, isBool, d.review.fileTree)
     },
+    sidePanel: { noRoom: take('sidePanel.noRoom', sp.noRoom, isNoRoom, d.sidePanel.noRoom) },
     autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)
   }
   return { settings, errors }

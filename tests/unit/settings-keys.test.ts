@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { isSettingKey, isSettingValue, SETTING_KEYS } from '../../src/shared/settings-keys'
 
 describe('settings keys', () => {
-  it('lists the 12 notification cells, the sound and the sixteen plain settings', () => {
-    expect(SETTING_KEYS).toHaveLength(29)
+  it('lists the 12 notification cells, the sound and the seventeen plain settings', () => {
+    expect(SETTING_KEYS).toHaveLength(30)
     expect(SETTING_KEYS).toContain('notifications.bell.tab')
     expect(SETTING_KEYS).toContain('notifications.sound')
     expect(SETTING_KEYS).toContain('claude.shellProfile')
@@ -13,6 +13,7 @@ describe('settings keys', () => {
     expect(SETTING_KEYS).toContain('review.hideTests')
     expect(SETTING_KEYS).toContain('review.testPatterns')
     expect(SETTING_KEYS).toContain('review.fileTree')
+    expect(SETTING_KEYS).toContain('sidePanel.noRoom')
   })
 
   it('isSettingKey accepts listed keys only', () => {

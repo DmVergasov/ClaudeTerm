@@ -14,6 +14,7 @@ const CASE_LABELS: Record<NotificationCase, string> = {
   bell: 'Terminal bell (BEL)'
 }
 const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sound', flash: 'Taskbar flash', tab: 'Tab highlight' }
+const NO_ROOM_OPTIONS: Option[] = [{ value: 'overlay', label: 'Over the terminal' }, { value: 'narrow', label: 'Narrow the terminal' }]
 
 /** one control: shows its part of the view; its inputs are disabled while settings.json is locked */
 interface Control {
@@ -223,7 +224,9 @@ root.append(
     textField('Font', 'font.family', 'text', (v) => v.settings.font.family, checkText),
     textField('Size', 'font.size', 'number', (v) => v.settings.font.size, (t) => checkNumber('font.size', t)),
     selectField('Theme', 'theme', (v) => themeOptions(v.settings.theme), (s) => (s === CUSTOM_THEME ? undefined : s)),
-    textField('Scrollback lines', 'scrollback', 'number', (v) => v.settings.scrollback, (t) => checkNumber('scrollback', t), 'applies to new tabs')),
+    textField('Scrollback lines', 'scrollback', 'number', (v) => v.settings.scrollback, (t) => checkNumber('scrollback', t), 'applies to new tabs'),
+    selectField('Panels without room', 'sidePanel.noRoom', (v) => ({ options: NO_ROOM_OPTIONS, selected: v.settings.sidePanel.noRoom }), (s) => s,
+      'Images and Changes widen the window; maximized or at the edge of the screen it cannot widen')),
   section('Shells', null,
     selectField('Default shell', 'defaultProfile', (v) => profileOptions(v.profiles, v.settings.defaultProfile), profileValue, automaticHint)),
   section('Claude Code', 'applies to new tabs',

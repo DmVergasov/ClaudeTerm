@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsPath, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPtyData, isPtySize, isFlag, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -19,6 +19,11 @@ describe('ipc guards', () => {
     expect(isPtySize(4001, 30)).toBe(false)
     expect(isPtySize('80', 30)).toBe(false)
     expect(isPtySize(Infinity, 30)).toBe(false)
+  })
+
+  it('isPanelWidth accepts finite px in 0..4000 only', () => {
+    for (const v of [0, 320, 640.5, 4000]) expect(isPanelWidth(v)).toBe(true)
+    for (const v of [-1, 4001, NaN, Infinity, '320', null, undefined]) expect(isPanelWidth(v)).toBe(false)
   })
 
   it('isUserInput ignores terminal-generated reports', () => {

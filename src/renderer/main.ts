@@ -48,6 +48,8 @@ const reviewUpdates = new Map<string, ReviewUpdate>()
 const pendingReveal = new Set<string>()
 /** what each tab was sent, in test runs: the e2e tests read what Send wrote */
 const inputLog = new Map<string, string>()
+/** every size each tab's terminal gave its process, in test runs */
+const sizeLog = new Map<string, string[]>()
 let lightbox: Lightbox
 let sessionsWindow: RecentSessionsWindow
 const imageUpdates = new Map<string, ImagesUpdate>()
@@ -225,7 +227,10 @@ function addTab(info: TabInfo): void {
     useWebgl: !appInfo.test,
     onKey: (e) => onTerminalKey(info.id, e),
     onInput: (data) => handleInput(info.id, data),
-    onResize: (cols, rows) => ct.resizePty(info.id, cols, rows),
+    onResize: (cols, rows) => {
+      if (appInfo.test) sizeLog.set(info.id, [...sizeLog.get(info.id) ?? [], `${cols}x${rows}`])
+      ct.resizePty(info.id, cols, rows)
+    },
     onTitle: (title) => {
       const t = tabs.get(info.id)
       if (!t) return
@@ -378,7 +383,8 @@ async function boot(): Promise<void> {
     else t.attention = true
     renderTabs()
   })
-  sidePanel = new SidePanel(document.getElementById('image-panel')!, { images: settings.imagePanel.width, changes: settings.review.width })
+  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width }, (width, resize) => ct.setPanel(width, resize))
+  ct.onPanelMode((mode) => sidePanel.setMode(mode))
   imagePanel = new ImagePanel(
     sidePanel.bodies.images,
     sidePanel,
@@ -468,6 +474,7 @@ async function boot(): Promise<void> {
     reviewPanel.dropTab(id)
     pendingReveal.delete(id)
     inputLog.delete(id)
+    sizeLog.delete(id)
     order = order.filter((x) => x !== id)
     if (activeId === id) {
       activeId = null
@@ -518,6 +525,7 @@ async function boot(): Promise<void> {
         return t ? titleOf(t) : null
       },
       ptyInput: (id) => inputLog.get(id ?? activeId ?? '') ?? '',
+      ptySizes: (id) => [...sizeLog.get(id ?? activeId ?? '') ?? []],
       bufferText: (id) => tabs.get(id ?? activeId ?? '')?.view.bufferText() ?? '',
       themeBackground: () => (activeId ? tabs.get(activeId)?.view.term.options.theme?.background ?? null : null)
     }

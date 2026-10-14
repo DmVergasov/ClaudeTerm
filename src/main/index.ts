@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, screen, shell, type Rectangle } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
@@ -13,7 +13,7 @@ import { autoUpdater } from 'electron-updater'
 import { writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
+import { isAbsPath, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -24,6 +24,7 @@ import { ImageHub } from './image-hub'
 import { claudeTempRoot, sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
 import { handleImgProtocol, registerImgScheme } from './img-protocol'
 import { createLogger } from './log'
+import { PanelRoom } from './panel-room'
 import { findExecutable, isExecutableFile } from './login-env'
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
 import { pathKey } from './path-key'
@@ -77,6 +78,22 @@ if (!app.requestSingleInstanceLock({ argv: process.argv })) {
   })
 }
 
+const MIN_WIDTH = 480
+
+/** Sets the window's bounds and waits for its resize, which may come after the call, or never when a window manager keeps the size. */
+function resizeWindow(win: BrowserWindow, r: Rectangle): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer)
+      win.off('resize', done)
+      resolve()
+    }
+    const timer = setTimeout(done, 300)
+    win.on('resize', done)
+    win.setBounds(r)
+  })
+}
+
 function bootstrap(): void {
   Menu.setApplicationMenu(null)
   let win: BrowserWindow | null = null
@@ -91,6 +108,18 @@ function bootstrap(): void {
   const broadcast = (channel: string, ...args: unknown[]): void => {
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, ...args)
   }
+  const liveWin = (): BrowserWindow | null => (win && !win.isDestroyed() ? win : null)
+  const panelRoom = new PanelRoom({
+    bounds: () => liveWin()?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 },
+    setBounds: (r) => {
+      const w = liveWin()
+      return w ? resizeWindow(w, r) : Promise.resolve()
+    },
+    workArea: () => screen.getDisplayMatching(liveWin()?.getBounds() ?? { x: 0, y: 0, width: 1, height: 1 }).workArea,
+    pinned: () => Boolean(liveWin()?.isMaximized() || liveWin()?.isFullScreen()),
+    minWidth: MIN_WIDTH
+  }, () => settings.sidePanel.noRoom)
+  const refitPanel = (): void => { void panelRoom.refit().then((mode) => send(IPC.evPanelMode, mode)) }
   const toast = (message: string): void => {
     log.warn(message)
     if (rendererReady) send(IPC.evToast, message)
@@ -554,6 +583,7 @@ function bootstrap(): void {
     if (!isId(tabId) || !isAbsPath(path) || !review.hasFile(tabId, path)) return
     revealInFolder(path, nodeRevealDeps((p) => shell.showItemInFolder(p), (d) => void shell.openPath(d)))
   })
+  ipcMain.handle(IPC.panelSet, (_e, width: unknown, resize: unknown) => (liveWin() && isPanelWidth(width) && isFlag(resize) ? panelRoom.set(Math.round(width), resize) : panelRoom.mode))
   ipcMain.handle(IPC.reviewCanSend, (_e, tabId: unknown) => (isId(tabId) ? review.canSend(tabId) : { ok: false, reason: NOT_RUNNING }))
   ipcMain.on(IPC.imagesMarkSeen, (_e, tabId: unknown) => { if (isId(tabId)) images.markSeen(tabId) })
   ipcMain.on(IPC.imagesAction, (_e, cardId: unknown, action: unknown) => {
@@ -663,6 +693,7 @@ function bootstrap(): void {
     // a file that cannot be read keeps the current settings
     if (!next.failed) {
       const hideIgnored = settings.review.hideIgnored
+      const noRoom = settings.sidePanel.noRoom
       const testsBefore = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
       settings = next.settings
       const computed = computeProfiles(settings)
@@ -673,6 +704,7 @@ function bootstrap(): void {
       const active = tabs.activeTabId()
       const testsNow = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
       if ((hideIgnored !== settings.review.hideIgnored || testsBefore !== testsNow) && active) review.refresh(active)
+      if (noRoom !== settings.sidePanel.noRoom) refitPanel()
     }
     for (const n of notices) if (!lastNotices.includes(n)) toast(n)
     lastNotices = notices
@@ -699,7 +731,7 @@ function bootstrap(): void {
   const state = loadWindowState(windowStatePath)
   win = new BrowserWindow({
     ...state.bounds,
-    minWidth: 480,
+    minWidth: MIN_WIDTH,
     minHeight: 300,
     show: false,
     backgroundColor: '#0C0C0C',
@@ -710,7 +742,14 @@ function bootstrap(): void {
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   })
   if (state.maximized) win.maximize()
-  trackWindowState(win, windowStatePath)
+  trackWindowState(win, windowStatePath, () => panelRoom.added)
+  // maximized or full screen the window cannot make room for the side panel; restored, it can again (and gives back the
+  // width of a panel closed meanwhile). Deferred: the window takes its new size after the event on some systems.
+  const refitLater = (): void => { setTimeout(refitPanel, 0) }
+  win.on('maximize', refitLater)
+  win.on('unmaximize', refitLater)
+  win.on('enter-full-screen', refitLater)
+  win.on('leave-full-screen', refitLater)
   win.on('close', () => sessions.flush())
   win.once('ready-to-show', () => { if (win) showWindow(win, isTest) })
   win.on('focus', () => {

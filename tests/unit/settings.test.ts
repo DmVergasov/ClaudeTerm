@@ -111,6 +111,22 @@ describe('parseSettings', () => {
   })
 })
 
+describe('side panel settings', () => {
+  it('sidePanel.noRoom: overlay by default, narrow narrows the terminal, other values fall back', () => {
+    expect(DEFAULT_SETTINGS.sidePanel).toEqual({ noRoom: 'overlay' })
+    expect(parseSettings(JSON.stringify({ sidePanel: { noRoom: 'narrow' } })).settings.sidePanel).toEqual({ noRoom: 'narrow' })
+    const r = parseSettings(JSON.stringify({ sidePanel: { noRoom: 'beside' } }))
+    expect(r.settings.sidePanel).toEqual({ noRoom: 'overlay' })
+    expect(r.errors).toEqual(['settings.json: invalid value for "sidePanel.noRoom", using default'])
+  })
+
+  it('the settings window saves sidePanel.noRoom, overlay or narrow only', () => {
+    const narrow = applySettingEdit('{}', 'sidePanel.noRoom', 'narrow')
+    expect(narrow.ok && JSON.parse(narrow.text)).toEqual({ sidePanel: { noRoom: 'narrow' } })
+    expect(applySettingEdit('{}', 'sidePanel.noRoom', 'beside')).toEqual({ ok: false, error: 'Invalid value for sidePanel.noRoom' })
+  })
+})
+
 describe('loadSettingsSafe', () => {
   it('returns defaults and an error when the path cannot be read', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ct-set-'))

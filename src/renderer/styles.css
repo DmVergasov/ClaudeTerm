@@ -3,7 +3,7 @@
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px "Segoe UI", system-ui, sans-serif; overflow: hidden; }
 #app { display: flex; flex-direction: column; height: 100vh; }
-#workspace { flex: 1; display: flex; min-height: 0; }
+#workspace { flex: 1; display: flex; min-height: 0; position: relative; }
 #terminals { flex: 1; position: relative; min-width: 0; }
 /* No padding here: FitAddon sizes the terminal from this element's computed height/width, which with
    border-box include padding, so padding would yield one row/col too many. The gutter is the inset. */
@@ -52,8 +52,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .update-notes ul { margin: 0 0 4px; padding-left: 18px; }
 .update-notes li { padding: 2px 0; }
 
-#image-panel { position: relative; display: flex; flex-direction: column; background: var(--chrome); border-left: 1px solid var(--border); min-width: 180px; }
+/* The panel lies over the right of the workspace; the terminal gives it room with a margin, except when it is an overlay. */
+#image-panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 10; display: flex; flex-direction: column; background: var(--chrome); border-left: 1px solid var(--border); min-width: 180px; }
 #image-panel.collapsed { display: none; }
+#image-panel.overlay { box-shadow: -8px 0 24px #0008; }
 .panel-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 5; }
 .panel-header { display: flex; align-items: center; gap: 4px; padding: 0 6px; border-bottom: 1px solid var(--border); color: var(--muted); }
 .panel-title { padding: 7px 10px 7px 4px; color: var(--fg); }
