@@ -2,6 +2,23 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.4.0
+
+### New
+
+- **Images and Changes open beside the terminal, not in its place.** The window widens by the panel's width, so the terminal and Claude Code's screen keep their size, and closing the panel gives the width back. A maximized window, or one with no room left on the screen, shows the panel over the right of the terminal; **Settings → Appearance → Panels without room** can have it narrow the terminal instead.
+- **A file tree in the Changes panel.** The changed files by folder, on the left of the diff: click a file to jump to it, type in **Filter files** to show only the files whose path holds the text, and fold or unfold every file at once with ⊟ and ⊞. ☰ hides the tree.
+- **What's new in the update banner.** From the next update on, the banner that offers to restart into a new version lists what changed in every version since yours.
+
+### Changes
+
+- **The window title shows the tab's folder**, so the taskbar and Alt+Tab tell your projects apart. A tab's tooltip shows its full folder too.
+
+### Fixes
+
+- **`show_diff` shows a file git ignores when you name it.** Asking Claude for the diff of, say, a plan in an ignored `docs` folder answered that there was nothing to show; such a file now opens as a new file.
+- **Copying a selection in Claude Code's fullscreen mode reaches the clipboard.** Claude Code copies its own mouse selection with an OSC 52 sequence, which ClaudeTerm ignored, so where Claude Code's fallback through PowerShell fails (for example when a group policy restricts PowerShell) the copied text never arrived.
+
 ## 0.3.1
 
 ### Fixes
