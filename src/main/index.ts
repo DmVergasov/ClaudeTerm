@@ -45,6 +45,7 @@ import { consumeUpdateMarker, writeUpdateMarker } from './update-marker'
 import { Updater } from './updater'
 import { createUpdateBackend } from './update-backend'
 import { cleanupImageCache, findTranscript, locateTranscript, TranscriptFeed } from './transcript-feed'
+import { showWindow } from './window-show'
 import { loadWindowState, trackWindowState } from './window-state'
 
 const dataDir = initDataDir()
@@ -377,7 +378,7 @@ function bootstrap(): void {
   }
 
   const focusWindow =(): void => {
-    if (!win) return
+    if (!win || isTest) return
     if (win.isMinimized()) win.restore()
     win.show()
     // Windows foreground lock: briefly going always-on-top lets a background process bring the window forward
@@ -628,6 +629,7 @@ function bootstrap(): void {
     preload: join(__dirname, '../preload/index.js'),
     // the installed app takes its icon from ClaudeTerm.exe; dev and test runs use electron.exe's own
     icon: app.isPackaged ? undefined : join(__dirname, '..', '..', 'build', 'icon.png'),
+    offScreen: isTest,
     load: (w) => {
       if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}/settings.html`)
       else void w.loadFile(join(__dirname, '../renderer/settings.html'))
@@ -710,7 +712,7 @@ function bootstrap(): void {
   if (state.maximized) win.maximize()
   trackWindowState(win, windowStatePath)
   win.on('close', () => sessions.flush())
-  win.once('ready-to-show', () => win?.show())
+  win.once('ready-to-show', () => { if (win) showWindow(win, isTest) })
   win.on('focus', () => {
     win?.flashFrame(false)
     const id = tabs.activeTabId()

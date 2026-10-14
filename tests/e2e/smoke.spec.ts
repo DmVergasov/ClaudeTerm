@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WIN } from '../fixtures/platform'
-import { bufferText, launchApp, typeInTerminal } from './helpers'
+import { bufferText, launchApp, PROMPT, typeInTerminal, windowPlaces } from './helpers'
 
 // the typed line never holds the answer itself, so seeing the answer shows the shell ran it
 const HELLO = WIN ? "echo ('hel' + 'lo-ct')" : "echo hel''lo-ct"
@@ -13,6 +13,14 @@ test('default tab runs a shell command', async () => {
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await typeInTerminal(page, HELLO)
   await expect.poll(() => bufferText(page), { timeout: 15_000 }).toMatch(/^hello-ct$/m)
+  await app.close()
+})
+
+test('a test run shows the window off the screen and leaves the focus alone: nothing pops up in front of the person running the tests', async () => {
+  const { app, page } = await launchApp()
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await expect.poll(() => bufferText(page), { timeout: 15_000 }).toMatch(PROMPT)
+  expect(await windowPlaces(app)).toEqual([{ onScreen: false, focused: false }])
   await app.close()
 })
 

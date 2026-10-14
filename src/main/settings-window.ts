@@ -1,4 +1,5 @@
 import { BrowserWindow, screen, shell } from 'electron'
+import { showWindow } from './window-show'
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
@@ -24,6 +25,8 @@ export interface SettingsWindowDeps {
   preload: string
   /** the window icon where the app's own .exe does not supply one (dev and test runs) */
   icon?: string
+  /** shown off the screen, never brought forward (a test run) */
+  offScreen?: boolean
   load(win: BrowserWindow): void
 }
 
@@ -35,7 +38,7 @@ export class SettingsWindow {
 
   open(): void {
     if (this.win && !this.win.isDestroyed()) {
-      this.win.focus()
+      if (!this.d.offScreen) this.win.focus()
       return
     }
     const parent = this.d.parent()
@@ -57,7 +60,7 @@ export class SettingsWindow {
       webPreferences: { preload: this.d.preload, contextIsolation: true, nodeIntegration: false, sandbox: true }
     })
     win.setMenu(null)
-    win.once('ready-to-show', () => win.show())
+    win.once('ready-to-show', () => showWindow(win, this.d.offScreen ?? false))
     win.on('closed', () => { if (this.win === win) this.win = null })
     win.webContents.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url)

@@ -66,6 +66,15 @@ export async function launchApp(o: { dataDir?: string; settings?: object; args?:
   return { app, page, dataDir, pipeName }
 }
 
+/** each window of the app: whether any of it is on a display, and whether it has the focus */
+export function windowPlaces(app: ElectronApplication): Promise<{ onScreen: boolean; focused: boolean }[]> {
+  return app.evaluate(({ BrowserWindow, screen }) => BrowserWindow.getAllWindows().map((w) => {
+    const b = w.getBounds()
+    const onScreen = screen.getAllDisplays().some(({ bounds: d }) => b.x < d.x + d.width && b.x + b.width > d.x && b.y < d.y + d.height && b.y + b.height > d.y)
+    return { onScreen, focused: w.isFocused() }
+  }))
+}
+
 export async function typeInTerminal(page: Page, text: string): Promise<void> {
   await page.locator('.terminal-host:visible .xterm').click()
   await page.keyboard.type(text)
