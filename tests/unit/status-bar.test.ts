@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { changesSegment, formatTokens, levelFor, modelFamily, statusSegments } from '../../src/renderer/status-bar'
+import { accountSegment, changesSegment, formatTokens, levelFor, modelFamily, statusSegments } from '../../src/renderer/status-bar'
 import type { AgentStatus, MainStatus } from '../../src/shared/types'
 
 const main: MainStatus = {
@@ -72,5 +72,11 @@ describe('changesSegment', () => {
     expect(changesSegment({ files: 3, additions: 40, deletions: 12, title: 'Uncommitted changes in D:\\repo' }))
       .toEqual({ key: 'changes', text: '± 3 files +40 −12', title: 'Uncommitted changes in D:\\repo', level: 'normal' })
     expect(changesSegment({ files: 1, additions: 1, deletions: 0, title: 't' }).text).toBe('± 1 file +1 −0')
+  })
+})
+
+describe('accountSegment', () => {
+  it('names the tab\'s account and says a click switches it', () => {
+    expect(accountSegment('Work')).toEqual({ key: 'account', text: 'Work', title: 'The account this tab runs on — click to switch', level: 'normal' })
   })
 })

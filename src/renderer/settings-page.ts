@@ -3,6 +3,8 @@ import type { SettingsView } from '../shared/ipc'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import { DEFAULT_TEST_PATTERNS } from '../shared/test-files'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
+import { accountsSection } from './accounts-section'
+import { el, section } from './dom'
 import { checkNumber, checkOptionalText, checkPatterns, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions, type Checked, type Option } from './settings-form'
 
 const ct = window.ct
@@ -26,12 +28,6 @@ type ShowError = (message: string | null) => void
 
 const controls: Control[] = []
 let view: SettingsView
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> = {}, ...children: (Node | string)[]): HTMLElementTagNameMap[K] {
-  const e = Object.assign(document.createElement(tag), props)
-  e.append(...children)
-  return e
-}
 
 const showAll = (): void => { for (const c of controls) c.show(view) }
 
@@ -198,11 +194,6 @@ function soundField(): HTMLElement {
   return f.row
 }
 
-function section(title: string, note: string | null, ...content: HTMLElement[]): HTMLElement {
-  const h = el('h2', { className: 'section-title' }, title, ...(note ? [el('span', { className: 'section-note', textContent: note })] : []))
-  return el('section', {}, h, ...content)
-}
-
 const openFile = (): HTMLButtonElement => {
   const b = el('button', { type: 'button', textContent: 'Open settings.json' })
   b.addEventListener('click', () => ct.openSettingsFile())
@@ -232,6 +223,7 @@ root.append(
   section('Claude Code', 'applies to new tabs',
     textField('Command', 'claude.command', 'text', (v) => v.settings.claude.command, checkText),
     selectField('Shell for Claude tabs', 'claude.shellProfile', (v) => profileOptions(v.profiles, v.settings.claude.shellProfile), profileValue)),
+  accountsSection(),
   section('Images', 'applies to new tabs',
     checkboxField('imageWatch.enabled', 'Show new images from the session scratchpad', (v) => v.settings.imageWatch.enabled),
     checkboxField('imagePanel.autoOpen', 'Open the image panel when a new image arrives', (v) => v.settings.imagePanel.autoOpen)),

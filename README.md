@@ -103,6 +103,12 @@ Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the
 
 <p align="center"><img src="docs/images/recent-sessions.png" width="560" alt="Recent sessions window: titles, folders, ages and last messages, with a search field"></p>
 
+### 👥 More than one Claude subscription
+
+Hit the 5-hour limit on one subscription, or keep work and personal apart? Add your other accounts in **Settings → Accounts** and move a Claude tab between them in one click: **Continue as …** in the tab's right-click menu, or a click on the account in the status bar, restarts Claude Code on the other account and **continues the same conversation**. **▾ → Claude Code — &lt;account&gt;** opens a new tab on an account, and a new Claude tab takes the account of the tab you are in. The window title names the extra account of the tab in front.
+
+Your normal Claude Code login stays the **Main account**. An extra account is a token from `claude setup-token` (Pro, Max, Team or Enterprise, valid for a year): **Get a token** opens a tab that runs it — sign in with that account in the browser, then paste the token it prints. ClaudeTerm keeps the tokens encrypted by the system (DPAPI on Windows, the keyring on Linux) and gives each one only to the tabs on its account. Claude Code lets a token make model requests only, so a tab on an extra account has no claude.ai connectors and no Remote Control.
+
 ## Install
 
 1. Install [Claude Code](https://docs.claude.com/en/docs/claude-code) so that `claude` is on your `PATH`.
@@ -147,7 +153,7 @@ Right-click a tab → **Restart session** restarts Claude Code in the same tab a
 
 ## Settings
 
-Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notifications, font, theme, shells, Claude Code, images and updates. Changes apply at once.
+Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notifications, font, theme, shells, Claude Code, accounts, images and updates. Changes apply at once.
 
 ![Settings window](docs/images/settings.png)
 
@@ -201,6 +207,7 @@ Logs are in `%APPDATA%\ClaudeTerm\logs` (`~/.config/ClaudeTerm/logs` on Linux).
 - Claude tabs start `claude` with `--settings` pointing at a file ClaudeTerm generates. It adds `SessionStart`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `PermissionRequest`, `UserPromptSubmit`, `PreToolUse` (for `AskUserQuestion` and the edit tools `Edit`, `MultiEdit`, `Write`, `NotebookEdit`) and `Stop` hooks and a `statusLine` command — that is how session restore, the image panel, the Changes panel, the status bar and the waiting signal know what is going on. These hooks never print anything, so they don't change what Claude does. Inside ClaudeTerm's Claude tabs this replaces a custom `statusLine` from your own Claude Code settings, and Claude Code hides its footer key hints.
 - `claude` started by hand in a regular shell tab gets `show_image`, but not session restore, the transcript images or the status bar.
 - Before Claude edits a file, ClaudeTerm keeps a copy of it in `%APPDATA%\ClaudeTerm\review` (`~/.config/ClaudeTerm/review` on Linux), so Last turn and Session know the file before the edit; copies of a conversation untouched for a week are deleted.
+- Extra accounts are kept in `%APPDATA%\ClaudeTerm\accounts.json` (`~/.config/ClaudeTerm/accounts.json` on Linux), readable only by your user, with the tokens encrypted where the system has a keyring. A Claude tab on an extra account gets `CLAUDE_CODE_OAUTH_TOKEN`, and the `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` of your environment are left out of it, because Claude Code would use them first.
 
 ## How it works
 

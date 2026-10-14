@@ -1,3 +1,4 @@
+import type { AccountResult, AccountsView } from './accounts'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
 import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, RecentSession, Settings, TabInfo, UpdateState } from './types'
@@ -12,6 +13,7 @@ export const IPC = {
   tabsRename: 'tabs:rename',
   tabsReorder: 'tabs:reorder',
   tabsRestart: 'tabs:restart',
+  tabsSwitchAccount: 'tabs:switch-account',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   profilesList: 'profiles:list',
@@ -46,6 +48,12 @@ export const IPC = {
   reviewReveal: 'review:reveal',
   reviewCanSend: 'review:can-send',
   panelSet: 'panel:set',
+  accountsList: 'accounts:list',
+  accountsAdd: 'accounts:add',
+  accountsRename: 'accounts:rename',
+  accountsSetToken: 'accounts:set-token',
+  accountsRemove: 'accounts:remove',
+  accountsGetToken: 'accounts:get-token',
   evTabOpened: 'ev:tab-opened',
   evTabUpdated: 'ev:tab-updated',
   evTabClosed: 'ev:tab-closed',
@@ -63,7 +71,8 @@ export const IPC = {
   evAttention: 'ev:attention',
   evUpdate: 'ev:update',
   evReview: 'ev:review',
-  evPanelMode: 'ev:panel-mode'
+  evPanelMode: 'ev:panel-mode',
+  evAccounts: 'ev:accounts'
 } as const
 
 export interface AppInfo {
@@ -131,6 +140,8 @@ export interface CtApi {
   reorderTabs(ids: string[]): void
   /** `live` also restarts a tab whose process is still running */
   restartTab(tabId: string, live?: boolean): void
+  /** restarts a Claude tab on another account (null: the main one), resuming its conversation */
+  switchAccount(tabId: string, account: string | null): void
   writePty(tabId: string, data: string): void
   resizePty(tabId: string, cols: number, rows: number): void
   listProfiles(): Promise<string[]>
@@ -183,6 +194,16 @@ export interface CtApi {
    * for it and answers how the panel is to be shown. `resize` false: its edge was dragged, the window stays as it is.
    */
   setPanel(width: number, resize: boolean): Promise<PanelMode>
+  /** the extra accounts, without their tokens */
+  listAccounts(): Promise<AccountsView>
+  addAccount(name: string, token: string): Promise<AccountResult>
+  renameAccount(id: string, name: string): Promise<AccountResult>
+  /** tabs on the account use the new token from their next start */
+  setAccountToken(id: string, token: string): Promise<AccountResult>
+  /** tabs on the account keep running, and start on the main account next time */
+  removeAccount(id: string): Promise<AccountResult>
+  /** opens a tab running `claude setup-token` in the main window */
+  getToken(): void
   onTabOpened(cb: (tab: TabInfo) => void): Unsubscribe
   onTabUpdated(cb: (tab: TabInfo) => void): Unsubscribe
   onTabClosed(cb: (tabId: string) => void): Unsubscribe
@@ -203,4 +224,6 @@ export interface CtApi {
   onReview(cb: (update: ReviewUpdate) => void): Unsubscribe
   /** the window was maximized, restored, or entered or left full screen, or sidePanel.noRoom changed */
   onPanelMode(cb: (mode: PanelMode) => void): Unsubscribe
+  /** the extra accounts changed: every window gets the new list */
+  onAccounts(cb: (view: AccountsView) => void): Unsubscribe
 }

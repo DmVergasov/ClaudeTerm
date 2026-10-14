@@ -12,3 +12,21 @@ export function buildChildEnv(parent: NodeJS.ProcessEnv): Record<string, string>
   env.COLORTERM = 'truecolor'
   return env
 }
+
+/** variables a tab's launch removes from the environment, then sets */
+export interface EnvPatch {
+  set: Record<string, string>
+  unset: string[]
+}
+
+/**
+ * The environment with the patch applied. Names are matched ignoring case: Windows treats them so, and another
+ * spelling of a removed variable must not survive (Claude Code would still find it).
+ */
+export function applyEnvPatch(env: Record<string, string>, patch: EnvPatch | undefined): Record<string, string> {
+  if (!patch) return env
+  const drop = new Set([...patch.unset, ...Object.keys(patch.set)].map((k) => k.toUpperCase()))
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(env)) if (!drop.has(k.toUpperCase())) out[k] = v
+  return { ...out, ...patch.set }
+}

@@ -15,6 +15,9 @@ export const isFlag = (v: unknown): v is boolean => typeof v === 'boolean'
 
 export const isPtyData = (v: unknown): v is string => typeof v === 'string'
 
+/** an extra account's id, or null for the main account */
+export const isAccountRef = (v: unknown): v is string | null => v === null || (typeof v === 'string' && v.length > 0 && v.length <= 64)
+
 export const isOptionalTitle = (v: unknown): v is string | null => v === null || typeof v === 'string'
 
 export const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string')

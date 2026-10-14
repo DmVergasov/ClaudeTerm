@@ -6,8 +6,8 @@ import { parseSnapshot, SessionStore } from '../../src/main/session-store'
 import type { SessionSnapshot, SessionSnapshotTab } from '../../src/shared/types'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
-const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID }
-const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null }
+const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null }
+const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null }
 const snap = (tabs: SessionSnapshotTab[]): SessionSnapshot => ({ version: 1, savedAt: '2026-10-05T10:00:00.000Z', tabs })
 const newDir = (): string => mkdtempSync(join(tmpdir(), 'ct-sess-'))
 
@@ -23,6 +23,15 @@ describe('parseSnapshot', () => {
     expect(parseSnapshot('{')).toBeNull()
     expect(parseSnapshot(JSON.stringify({ version: 2, savedAt: 'x', tabs: [] }))).toBeNull()
     expect(parseSnapshot(JSON.stringify(snap([{ ...shellTab, kind: 'evil' as 'shell' }])))).toBeNull()
+  })
+
+  it('reads the account of a claude tab; a snapshot from before accounts restores on the main account', () => {
+    expect(parseSnapshot(JSON.stringify(snap([{ ...claudeTab, account: 'acc-1' }])))?.tabs[0].account).toBe('acc-1')
+    const old = { version: 1, savedAt: 'x', tabs: [{ kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID }] }
+    expect(parseSnapshot(JSON.stringify(old))?.tabs[0].account).toBeNull()
+    expect(parseSnapshot(JSON.stringify(snap([{ ...claudeTab, account: 5 as unknown as string }])))?.tabs[0].account).toBeNull()
+    expect(parseSnapshot(JSON.stringify(snap([{ ...claudeTab, account: 'x'.repeat(65) }])))?.tabs[0].account).toBeNull()
+    expect(parseSnapshot(JSON.stringify(snap([{ ...shellTab, account: 'acc-1' }])))?.tabs[0].account).toBeNull()
   })
 })
 

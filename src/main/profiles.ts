@@ -183,12 +183,13 @@ export function quoteForShell(family: ShellFamily, value: string): string {
 
 export interface ClaudeLaunch {
   command: string
-  settingsPath: string
+  /** null: no --settings (the Get a token tab runs `claude setup-token`) */
+  settingsPath: string | null
   resumeSessionId: string | null
 }
 
 export function buildClaudeCommandLine(family: ShellFamily, c: ClaudeLaunch): string {
-  let line = `${c.command} --settings ${quoteForShell(family, c.settingsPath)}`
+  let line = c.settingsPath === null ? c.command : `${c.command} --settings ${quoteForShell(family, c.settingsPath)}`
   if (c.resumeSessionId !== null) {
     if (!isUuid(c.resumeSessionId)) throw new Error(`invalid session id: ${c.resumeSessionId}`)
     line += ` --resume ${c.resumeSessionId}`

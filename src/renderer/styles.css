@@ -185,3 +185,5 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .review-send:disabled { opacity: 0.45; cursor: default; }
 #statusbar .status-changes { cursor: pointer; }
 #statusbar .status-changes:hover { color: var(--fg); }
+#statusbar .status-account { cursor: pointer; }
+#statusbar .status-account:hover { color: var(--fg); }

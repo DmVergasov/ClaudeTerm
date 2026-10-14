@@ -13,6 +13,9 @@ const TEST_PROFILES = [{ name: 'Test Bash', command: '/bin/bash', args: ['--norc
 /** the test shell's prompt, once it waits for input (the buffer text has no trailing spaces) */
 export const PROMPT = WIN ? /PS .*>/ : /bash-[\d.]+\$/
 
+/** Linux: safeStorage would look for a keyring, and may wait for one under xvfb; the tests use the basic store */
+const PLATFORM_ARGS = WIN ? [] : ['--password-store=basic']
+
 // "claude" prints its arguments instead of starting (on Linux also the folder it runs in, as PowerShell's prompt shows it)
 export const FAKE_CLAUDE_SETTINGS = WIN
   ? { claude: { command: 'cmd /c echo fake-claude', shellProfile: TEST_SHELL }, defaultProfile: TEST_SHELL }
@@ -60,7 +63,7 @@ export interface Launched { app: ElectronApplication; page: Page; dataDir: strin
 export async function launchApp(o: { dataDir?: string; settings?: object; args?: string[]; env?: Record<string, string> } = {}): Promise<Launched> {
   const dataDir = o.dataDir ?? makeDataDir(o.settings)
   const pipeName = testPipeName('e2e')
-  const app = await electron.launch({ args: [ROOT, ...(o.args ?? [])], env: { ...testEnv(dataDir, pipeName), ...o.env } })
+  const app = await electron.launch({ args: [ROOT, ...PLATFORM_ARGS, ...(o.args ?? [])], env: { ...testEnv(dataDir, pipeName), ...o.env } })
   const page = await app.firstWindow()
   await page.waitForFunction(() => Boolean(window.__ct))
   return { app, page, dataDir, pipeName }

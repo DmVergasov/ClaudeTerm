@@ -1,11 +1,25 @@
 import { randomUUID } from 'node:crypto'
 import type { OpenTabRequest, SessionSnapshotTab, TabInfo } from '../shared/types'
+import { applyEnvPatch, type EnvPatch } from './child-env'
 import type { LaunchSpec } from './profiles'
 import type { PtyHandle, SpawnPty } from './pty-host'
 
 export interface ResolvedLaunch {
   profileName: string
   spec: LaunchSpec
+  /** the account the tab runs on, once one that cannot be used fell back to the main account (null) */
+  account?: string | null
+  /** changes to the tab's environment, for an extra account */
+  env?: EnvPatch
+}
+
+/** what a launch is resolved from: the request with its account settled */
+export interface LaunchRequest extends OpenTabRequest {
+  account: string | null
+  /** an account that cannot be used throws instead of falling back to the main account */
+  strict?: boolean
+  /** the Get a token tab: a shell tab running `claude setup-token` */
+  setupToken?: boolean
 }
 
 export interface TabEvents {
@@ -22,7 +36,7 @@ export interface TabEvents {
 
 export interface TabManagerDeps {
   spawn: SpawnPty
-  resolveLaunch(req: OpenTabRequest): ResolvedLaunch
+  resolveLaunch(req: LaunchRequest): ResolvedLaunch
   baseEnv(): Record<string, string>
   pipeName: string
   events: TabEvents
@@ -59,8 +73,8 @@ export class TabManager {
 
   constructor(private readonly deps: TabManagerDeps) {}
 
-  open(req: OpenTabRequest, opts: { activate?: boolean } = {}): TabInfo {
-    const launch = this.deps.resolveLaunch(req)
+  open(req: OpenTabRequest, opts: { activate?: boolean; setupToken?: boolean } = {}): TabInfo {
+    const launch = this.deps.resolveLaunch({ ...req, account: this.accountFor(req), ...(opts.setupToken ? { setupToken: true } : {}) })
     const info: TabInfo = {
       id: randomUUID(),
       kind: req.kind,
@@ -68,6 +82,7 @@ export class TabManager {
       cwd: req.cwd,
       customTitle: req.title ?? null,
       claudeSessionId: req.kind === 'claude' ? req.resumeSessionId ?? null : null,
+      account: req.kind === 'claude' ? launch.account ?? null : null,
       exited: false
     }
     const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false }
@@ -129,42 +144,37 @@ export class TabManager {
   /**
    * Starts the tab's process again in the same tab. With `live`, a running process is stopped first (e.g. so
    * Claude Code picks up a newly added MCP server); otherwise only an exited tab restarts. A Claude tab resumes
-   * its current conversation.
+   * its current conversation, on its account.
    */
   async restart(tabId: string, opts: { live?: boolean } = {}): Promise<void> {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.restarting || (!rec.info.exited && !opts.live)) return
     if (rec.info.kind === 'claude') {
-      // the conversation may have changed since open (/clear), so resume the CURRENT one
-      const id = rec.info.claudeSessionId
-      const resumeSessionId = id !== null && (this.deps.resumable?.(rec.info.id, id) ?? true) ? id : null
       try {
-        rec.launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId })
+        this.setLaunch(rec, this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: this.resumeId(rec), account: rec.info.account }))
       } catch {
         // keep the previous launch
       }
     }
-    if (rec.info.exited) {
-      rec.info.exited = false
-      this.deps.events.updated({ ...rec.info })
-      this.start(rec)
-      return
+    await this.relaunch(rec)
+  }
+
+  /**
+   * Restarts a Claude tab on another account, resuming its conversation. When the launch cannot use that account the
+   * tab is left as it is and the answer is false: silently going on under another account would be worse.
+   */
+  async switchAccount(tabId: string, account: string | null): Promise<boolean> {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.info.kind !== 'claude' || rec.restarting) return false
+    let launch: ResolvedLaunch
+    try {
+      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: this.resumeId(rec), account, strict: true })
+    } catch {
+      return false
     }
-    rec.restarting = true
-    rec.gen++
-    if (rec.timer) clearTimeout(rec.timer)
-    rec.timer = null
-    rec.buffer = ''
-    const stopped = rec.stopped
-    rec.pty?.kill()
-    rec.pty = null
-    this.deps.events.reset(rec.info.id)
-    // let the old process go first, so two Claude Code processes never share one conversation
-    let timer: ReturnType<typeof setTimeout> | undefined
-    await Promise.race([stopped, new Promise<void>((r) => { timer = setTimeout(r, this.deps.restartWaitMs ?? 3000) })])
-    clearTimeout(timer)
-    rec.restarting = false
-    if (this.isLive(rec) && !this.disposed) this.start(rec)
+    this.setLaunch(rec, launch)
+    await this.relaunch(rec)
+    return true
   }
 
   write(tabId: string, data: string): void {
@@ -202,7 +212,7 @@ export class TabManager {
   snapshot(): SessionSnapshotTab[] {
     return this.order.map((id) => {
       const i = this.tabs.get(id)!.info
-      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId }
+      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account }
     })
   }
 
@@ -221,8 +231,56 @@ export class TabManager {
     if (!this.disposed) this.deps.onStateChanged?.()
   }
 
+  /** a new Claude tab's account: the one asked for, else the active Claude tab's */
+  private accountFor(req: OpenTabRequest): string | null {
+    if (req.kind !== 'claude') return null
+    if (req.account !== undefined) return req.account
+    const active = this.activeId ? this.tabs.get(this.activeId)?.info : undefined
+    return active?.kind === 'claude' ? active.account : null
+  }
+
+  /** the conversation a restart continues: the CURRENT one (it may have changed since open, /clear), once it was saved */
+  private resumeId(rec: TabRecord): string | null {
+    const id = rec.info.claudeSessionId
+    return id !== null && (this.deps.resumable?.(rec.info.id, id) ?? true) ? id : null
+  }
+
+  private setLaunch(rec: TabRecord, launch: ResolvedLaunch): void {
+    rec.launch = launch
+    const account = launch.account ?? null
+    if (rec.info.account === account) return
+    rec.info.account = account
+    this.deps.events.updated({ ...rec.info })
+    this.changed()
+  }
+
+  /** an exited tab starts again; a running one is stopped first, and the new process waits for the old one */
+  private async relaunch(rec: TabRecord): Promise<void> {
+    if (rec.info.exited) {
+      rec.info.exited = false
+      this.deps.events.updated({ ...rec.info })
+      this.start(rec)
+      return
+    }
+    rec.restarting = true
+    rec.gen++
+    if (rec.timer) clearTimeout(rec.timer)
+    rec.timer = null
+    rec.buffer = ''
+    const stopped = rec.stopped
+    rec.pty?.kill()
+    rec.pty = null
+    this.deps.events.reset(rec.info.id)
+    // let the old process go first, so two Claude Code processes never share one conversation
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([stopped, new Promise<void>((r) => { timer = setTimeout(r, this.deps.restartWaitMs ?? 3000) })])
+    clearTimeout(timer)
+    rec.restarting = false
+    if (this.isLive(rec) && !this.disposed) this.start(rec)
+  }
+
   private start(rec: TabRecord): void {
-    const env = { ...this.deps.baseEnv(), CLAUDETERM_TAB_ID: rec.info.id, CLAUDETERM_PIPE: this.deps.pipeName }
+    const env = applyEnvPatch({ ...this.deps.baseEnv(), CLAUDETERM_TAB_ID: rec.info.id, CLAUDETERM_PIPE: this.deps.pipeName }, rec.launch.env)
     const gen = ++rec.gen
     let markStopped = (): void => {}
     rec.stopped = new Promise<void>((r) => { markStopped = r })

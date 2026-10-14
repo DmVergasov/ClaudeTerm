@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsPath, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -7,6 +7,11 @@ describe('ipc guards', () => {
     expect(isId(1)).toBe(false)
     expect(isId(undefined)).toBe(false)
     expect(isId({})).toBe(false)
+  })
+
+  it('isAccountRef accepts null and a short non-empty id', () => {
+    for (const v of [null, 'acc', 'x'.repeat(64)]) expect(isAccountRef(v)).toBe(true)
+    for (const v of [undefined, '', 'x'.repeat(65), 1, {}]) expect(isAccountRef(v)).toBe(false)
   })
 
   it('isPtySize accepts integers in 1..4000 only', () => {

@@ -14,6 +14,8 @@ export interface TabInfo {
   cwd: string
   customTitle: string | null
   claudeSessionId: string | null
+  /** the extra account a Claude tab runs on; null: the main account (and every shell tab) */
+  account: string | null
   exited: boolean
 }
 
@@ -23,6 +25,8 @@ export interface OpenTabRequest {
   profile?: string | null
   title?: string | null
   resumeSessionId?: string | null
+  /** a Claude tab's account, null the main one; left out: the account of the active Claude tab */
+  account?: string | null
 }
 
 export type ImageSource = 'created' | 'shown' | 'read' | 'tool' | 'pasted'
@@ -47,6 +51,7 @@ export interface SessionSnapshotTab {
   cwd: string
   title: string | null
   claudeSessionId: string | null
+  account: string | null
 }
 
 export interface SessionSnapshot {

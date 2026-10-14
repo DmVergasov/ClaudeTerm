@@ -124,6 +124,12 @@ describe('claude launch', () => {
     expect(() => buildClaudeCommandLine('cmd', { ...claude, resumeSessionId: 'x & calc' })).toThrow()
   })
 
+  it('a command line without a settings file has no --settings: the Get a token tab', () => {
+    const setup = { command: 'claude setup-token', settingsPath: null, resumeSessionId: null }
+    expect(buildClaudeCommandLine('powershell', setup)).toBe('claude setup-token')
+    expect(buildLaunch(PS, 'claude', setup)).toEqual({ file: PS.command, args: ['-NoLogo', '-NoExit', '-Command', 'claude setup-token'] })
+  })
+
   it('buildLaunch for shell tabs uses the profile as is', () => {
     expect(buildLaunch(BASH, 'shell', null)).toEqual({ file: BASH.command, args: ['--login', '-i'] })
   })

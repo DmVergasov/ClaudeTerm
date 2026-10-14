@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PtyHandle, SpawnOptions } from '../../src/main/pty-host'
-import { TabManager, type TabEvents, type TabManagerDeps } from '../../src/main/tab-manager'
+import { TabManager, type LaunchRequest, type ResolvedLaunch, type TabEvents, type TabManagerDeps } from '../../src/main/tab-manager'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const SID_B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -193,9 +193,9 @@ describe('TabManager', () => {
     expect(tm.setClaudeSession(s.id, SID_A)).toBe(false)
     expect(tm.setClaudeSession('unknown', SID_A)).toBe(false)
     expect(tm.snapshot()).toEqual([
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A },
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B },
-      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null }
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null },
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null },
+      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null }
     ])
   })
 
@@ -296,5 +296,126 @@ describe('TabManager', () => {
     ptys[0].emitExit(0)
     await done
     expect(ptys).toHaveLength(1)
+  })
+})
+
+describe('TabManager accounts', () => {
+  const SPEC = { file: 'powershell.exe', args: ['-NoLogo'] }
+  /** knows the accounts "work" and "home" (unless gone); any other one falls back to the main account, or throws when strict */
+  function accountLaunches(gone: Set<string> = new Set()) {
+    return vi.fn((req: LaunchRequest): ResolvedLaunch => {
+      const usable = req.account !== null && ['work', 'home'].includes(req.account) && !gone.has(req.account)
+      if (req.account !== null && !usable && req.strict) throw new Error('account not available')
+      const account = usable ? req.account : null
+      return { profileName: 'Windows PowerShell', spec: SPEC, account, env: account ? { set: { CLAUDE_CODE_OAUTH_TOKEN: `token-${account}` }, unset: ['ANTHROPIC_API_KEY'] } : undefined }
+    })
+  }
+
+  it('a claude tab on an account gets its token instead of the API key; the main account keeps the environment', () => {
+    const { tm, ptys } = setup({ resolveLaunch: accountLaunches(), baseEnv: () => ({ PATH: 'C:\\Windows', ANTHROPIC_API_KEY: 'key' }) })
+    const main = tm.open({ kind: 'claude', cwd: 'D:\\x', account: null })
+    const work = tm.open({ kind: 'claude', cwd: 'D:\\x', account: 'work' })
+    expect(main.account).toBeNull()
+    expect(ptys[0].opts.env).toEqual({ PATH: 'C:\\Windows', ANTHROPIC_API_KEY: 'key', CLAUDETERM_TAB_ID: main.id, CLAUDETERM_PIPE: '\\\\.\\pipe\\test' })
+    expect(work.account).toBe('work')
+    expect(ptys[1].opts.env).toEqual({ PATH: 'C:\\Windows', CLAUDE_CODE_OAUTH_TOKEN: 'token-work', CLAUDETERM_TAB_ID: work.id, CLAUDETERM_PIPE: '\\\\.\\pipe\\test' })
+  })
+
+  it('a new claude tab takes the account of the active claude tab unless one is asked for', () => {
+    const resolveLaunch = accountLaunches()
+    const { tm } = setup({ resolveLaunch })
+    const work = tm.open({ kind: 'claude', cwd: 'D:\\x', account: 'work' })
+    expect(tm.open({ kind: 'claude', cwd: 'D:\\x' }).account).toBe('work')
+    expect(tm.open({ kind: 'claude', cwd: 'D:\\x', account: null }).account).toBeNull()
+    tm.activate(work.id)
+    expect(tm.open({ kind: 'claude', cwd: 'D:\\x', account: 'home' }).account).toBe('home')
+    // a shell tab in front: the main account
+    tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    expect(tm.open({ kind: 'claude', cwd: 'D:\\x' }).account).toBeNull()
+    expect(resolveLaunch).toHaveBeenCalledWith(expect.objectContaining({ kind: 'shell', account: null }))
+  })
+
+  it('an account that cannot be used starts the tab on the main account', () => {
+    const { tm, ptys } = setup({ resolveLaunch: accountLaunches() })
+    const t = tm.open({ kind: 'claude', cwd: 'D:\\x', account: 'gone' })
+    expect(t.account).toBeNull()
+    expect(ptys[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+  })
+
+  it('switchAccount restarts the tab on the new account and resumes the current conversation', async () => {
+    const resolveLaunch = accountLaunches()
+    const { tm, ptys, log } = setup({ resolveLaunch })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: null })
+    tm.setClaudeSession(tab.id, SID_B)
+    const done = tm.switchAccount(tab.id, 'work')
+    expect(ptys[0].killed).toBe(true)
+    expect(log).toContain(`reset:${tab.id}`)
+    ptys[0].emitExit(0)
+    expect(await done).toBe(true)
+    expect(ptys).toHaveLength(2)
+    expect(ptys[1].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('token-work')
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_B, account: 'work', strict: true }))
+    expect(tm.get(tab.id)?.account).toBe('work')
+    expect(tm.snapshot()[0]).toMatchObject({ account: 'work', claudeSessionId: SID_B })
+  })
+
+  it('switchAccount to an account that cannot be used leaves the tab running as it was', async () => {
+    const { tm, ptys, onStateChanged } = setup({ resolveLaunch: accountLaunches() })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', account: 'work' })
+    onStateChanged.mockClear()
+    expect(await tm.switchAccount(tab.id, 'gone')).toBe(false)
+    expect(ptys).toHaveLength(1)
+    expect(ptys[0].killed).toBe(false)
+    expect(tm.get(tab.id)?.account).toBe('work')
+    expect(onStateChanged).not.toHaveBeenCalled()
+  })
+
+  it('switchAccount of an exited tab starts it on the new account; a shell tab has no account to switch', async () => {
+    const { tm, ptys } = setup({ resolveLaunch: accountLaunches() })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', account: null })
+    ptys[0].emitExit(0)
+    expect(await tm.switchAccount(tab.id, 'home')).toBe(true)
+    expect(ptys).toHaveLength(2)
+    expect(tm.get(tab.id)).toMatchObject({ account: 'home', exited: false })
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    expect(await tm.switchAccount(shell.id, 'work')).toBe(false)
+    expect(ptys).toHaveLength(3)
+  })
+
+  it('a second switch while one is under way does nothing', async () => {
+    const { tm, ptys } = setup({ resolveLaunch: accountLaunches() })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', account: null })
+    const first = tm.switchAccount(tab.id, 'work')
+    const second = tm.switchAccount(tab.id, 'home')
+    ptys[0].emitExit(0)
+    expect(await Promise.all([first, second])).toEqual([true, false])
+    expect(ptys).toHaveLength(2)
+    expect(tm.get(tab.id)?.account).toBe('work')
+  })
+
+  it('restart keeps the account; an account gone meanwhile restarts the tab on the main one', async () => {
+    const gone = new Set<string>()
+    const { tm, ptys, log } = setup({ resolveLaunch: accountLaunches(gone) })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', account: 'work' })
+    const first = tm.restart(tab.id, { live: true })
+    ptys[0].emitExit(0)
+    await first
+    expect(ptys[1].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('token-work')
+    gone.add('work')
+    log.length = 0
+    const second = tm.restart(tab.id, { live: true })
+    ptys[1].emitExit(0)
+    await second
+    expect(ptys[2].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    expect(tm.get(tab.id)?.account).toBeNull()
+    expect(log).toContain(`updated:${tab.id}:false`)
+  })
+
+  it('the Get a token tab is asked for in the launch request', () => {
+    const resolveLaunch = accountLaunches()
+    const { tm } = setup({ resolveLaunch })
+    const t = tm.open({ kind: 'shell', cwd: 'D:\\x', title: 'Get a token' }, { setupToken: true })
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'shell', setupToken: true, account: null }))
+    expect(t).toMatchObject({ kind: 'shell', customTitle: 'Get a token', account: null })
   })
 })

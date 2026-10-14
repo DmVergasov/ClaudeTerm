@@ -23,7 +23,9 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       profile: x.profile,
       cwd: x.cwd,
       title: typeof x.title === 'string' ? x.title : null,
-      claudeSessionId: isUuid(x.claudeSessionId) ? x.claudeSessionId : null
+      claudeSessionId: isUuid(x.claudeSessionId) ? x.claudeSessionId : null,
+      // written before accounts existed, or by hand: the main account
+      account: x.kind === 'claude' && typeof x.account === 'string' && x.account.length > 0 && x.account.length <= 64 ? x.account : null
     })
   }
   return { version: 1, savedAt: r.savedAt, tabs }

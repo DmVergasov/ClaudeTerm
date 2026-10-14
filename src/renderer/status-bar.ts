@@ -5,7 +5,7 @@ import type { AgentStatus } from '../shared/types'
 export type Level = 'normal' | 'warn' | 'crit'
 
 export interface Segment {
-  key: 'model' | 'context' | 'limit' | 'week' | 'agents' | 'changes'
+  key: 'account' | 'model' | 'context' | 'limit' | 'week' | 'agents' | 'changes'
   text: string
   title: string
   level: Level
@@ -84,15 +84,27 @@ export function changesSegment(c: ReviewCounter): Segment {
   return { key: 'changes', text: `± ${c.files} file${c.files === 1 ? '' : 's'} +${c.additions} −${c.deletions}`, title: c.title, level: 'normal' }
 }
 
+/** the tab's account, once extra accounts exist: first, and there before Claude's first status too */
+export function accountSegment(label: string): Segment {
+  return { key: 'account', text: label, title: 'The account this tab runs on — click to switch', level: 'normal' }
+}
+
 export class StatusBar {
-  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}) {
+  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}) {
     el.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('.status-changes')) onChangesClick()
+      const target = e.target as HTMLElement
+      if (target.closest('.status-changes')) onChangesClick()
+      const account = target.closest<HTMLElement>('.status-account')
+      if (account) onAccountClick(account)
     })
   }
 
-  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, now = Date.now()): void {
-    const segments = [...(u ? statusSegments(u, now) : []), ...(changes ? [changesSegment(changes)] : [])]
+  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, account: string | null = null, now = Date.now()): void {
+    const segments = [
+      ...(account !== null ? [accountSegment(account)] : []),
+      ...(u ? statusSegments(u, now) : []),
+      ...(changes ? [changesSegment(changes)] : [])
+    ]
     this.el.hidden = segments.length === 0
     // statusLine refreshes every few seconds: update the same spans in place, because replacing the span
     // under the mouse would close its tooltip (the subagent list)

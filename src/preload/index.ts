@@ -18,6 +18,7 @@ const api: CtApi = {
   renameTab: (id, title) => ipcRenderer.send(IPC.tabsRename, id, title),
   reorderTabs: (ids) => ipcRenderer.send(IPC.tabsReorder, ids),
   restartTab: (id, live) => ipcRenderer.send(IPC.tabsRestart, id, live === true),
+  switchAccount: (id, account) => ipcRenderer.send(IPC.tabsSwitchAccount, id, account),
   writePty: (id, data) => ipcRenderer.send(IPC.ptyWrite, id, data),
   resizePty: (id, cols, rows) => ipcRenderer.send(IPC.ptyResize, id, cols, rows),
   listProfiles: () => ipcRenderer.invoke(IPC.profilesList),
@@ -53,6 +54,12 @@ const api: CtApi = {
   revealFile: (tabId, path) => ipcRenderer.send(IPC.reviewReveal, tabId, path),
   reviewCanSend: (tabId) => ipcRenderer.invoke(IPC.reviewCanSend, tabId),
   setPanel: (width, resize) => ipcRenderer.invoke(IPC.panelSet, width, resize),
+  listAccounts: () => ipcRenderer.invoke(IPC.accountsList),
+  addAccount: (name, token) => ipcRenderer.invoke(IPC.accountsAdd, name, token),
+  renameAccount: (id, name) => ipcRenderer.invoke(IPC.accountsRename, id, name),
+  setAccountToken: (id, token) => ipcRenderer.invoke(IPC.accountsSetToken, id, token),
+  removeAccount: (id) => ipcRenderer.invoke(IPC.accountsRemove, id),
+  getToken: () => ipcRenderer.send(IPC.accountsGetToken),
   onTabOpened: (cb) => on(IPC.evTabOpened, cb),
   onTabUpdated: (cb) => on(IPC.evTabUpdated, cb),
   onTabClosed: (cb) => on(IPC.evTabClosed, cb),
@@ -70,7 +77,8 @@ const api: CtApi = {
   onAttention: (cb) => on(IPC.evAttention, cb),
   onUpdate: (cb) => on(IPC.evUpdate, cb),
   onReview: (cb) => on(IPC.evReview, cb),
-  onPanelMode: (cb) => on(IPC.evPanelMode, cb)
+  onPanelMode: (cb) => on(IPC.evPanelMode, cb),
+  onAccounts: (cb) => on(IPC.evAccounts, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

@@ -1,7 +1,9 @@
 import './styles.css'
+import type { AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { Settings, TabInfo } from '../shared/types'
+import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
 import { Lightbox } from './lightbox'
@@ -56,6 +58,8 @@ const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
 let updateBanner: UpdateBanner
 const statusUpdates = new Map<string, StatusUpdate>()
+/** the extra accounts, without their tokens */
+let accounts: AccountView[] = []
 
 const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? folderName(t.info.cwd)
 
@@ -66,11 +70,21 @@ function renderTabs(): void {
   })
   tabBar.render(items, activeId)
   if (imagePanel) refreshPanelButtons()
+  renderTitle()
+}
+
+function renderTitle(): void {
   const active = activeId ? tabs.get(activeId) : undefined
+  if (!active) {
+    document.title = 'ClaudeTerm'
+    return
+  }
   // the folder's name tells the projects of several windows and tabs apart, in the taskbar and Alt+Tab too
-  const title = active ? titleOf(active) : null
-  const folder = active ? folderName(active.info.cwd) : null
-  document.title = title === null ? 'ClaudeTerm' : title === folder ? `${title} — ClaudeTerm` : `${title} — ${folder} — ClaudeTerm`
+  const title = titleOf(active)
+  const folder = folderName(active.info.cwd)
+  // and an extra account the subscription; the main account is the usual one and is left out
+  const account = active.info.kind === 'claude' && active.info.account !== null ? accountLabel(active.info.account, accounts) : null
+  document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')
 }
 
 /** the Images and Changes buttons in the tab bar: which panel is shown, the badges, Changes only for a Claude tab */
@@ -99,6 +113,23 @@ function handleInput(tabId: string, data: string): void {
 /** the status bar counter for a tab, unless review.statusBar turned it off */
 function counterOf(tabId: string | null): ReviewCounter | null {
   return tabId && settings.review.statusBar ? reviewUpdates.get(tabId)?.counter ?? null : null
+}
+
+/** the status bar's account: a Claude tab's, once extra accounts exist, or while it still runs on one deleted since */
+function accountOf(tabId: string | null): string | null {
+  const t = tabId ? tabs.get(tabId) : undefined
+  return t?.info.kind === 'claude' && (accounts.length > 0 || t.info.account !== null) ? accountLabel(t.info.account, accounts) : null
+}
+
+function renderStatus(tabId: string): void {
+  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId))
+}
+
+/** Continue as …: the tab's conversation restarts on another account */
+function continueItems(tabId: string): MenuItem[] {
+  const t = tabs.get(tabId)
+  if (t?.info.kind !== 'claude') return []
+  return switchChoices(t.info.account, accounts).map((c) => ({ label: `Continue as ${c.label}`, disabled: c.disabled, action: () => ct.switchAccount(tabId, c.account) }))
 }
 
 /** why Send may not write into the tab now, or null */
@@ -265,7 +296,7 @@ function activate(tabId: string): void {
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
   sidePanel.setAvailable('changes', claude)
   if (pendingReveal.delete(tabId)) sidePanel.open('changes')
-  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId))
+  renderStatus(tabId)
 }
 
 function newTabMenu(anchor: HTMLElement): void {
@@ -275,6 +306,11 @@ function newTabMenu(anchor: HTMLElement): void {
       ...names.map((name) => ({ label: name, action: () => void ct.openTab({ kind: 'shell', cwd: appInfo.homeDir, profile: name }) })),
       { label: '', separator: true },
       { label: 'Claude Code', action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? appInfo.homeDir }) },
+      ...accountChoices(accounts).map((c) => ({
+        label: `Claude Code — ${c.label}`,
+        disabled: c.disabled,
+        action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? appInfo.homeDir, account: c.account })
+      })),
       { label: 'Recent sessions…', action: () => void sessionsWindow.open() },
       ...(restoreInfo ? [{ label: `Restore previous session (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
       { label: '', separator: true },
@@ -298,9 +334,11 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
   void (sessionId ? ct.getStarredSessions().catch(() => [] as string[]) : Promise.resolve([] as string[])).then((starred) => {
     if (seq !== tabMenuSeq || !tabs.has(id)) return
     const isStarred = sessionId !== null && starred.includes(sessionId)
+    const switches = continueItems(id)
     showMenu(at, [
       { label: t.info.kind === 'claude' ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
       ...(sessionId ? [{ label: isStarred ? 'Unstar session' : 'Star session', action: () => void ct.setSessionStarred(sessionId, !isStarred) }] : []),
+      ...(switches.length > 0 ? [{ label: '', separator: true }, ...switches] : []),
       { label: '', separator: true },
       { label: 'Close tab', action: () => ct.closeTab(id) }
     ])
@@ -319,13 +357,15 @@ function applySettings(s: Settings): void {
     const theme = resolveTheme(s.theme)
     for (const t of tabs.values()) t.view.setTheme(theme)
   }
-  if (activeId) statusBar.render(statusUpdates.get(activeId) ?? null, counterOf(activeId))
+  if (activeId) renderStatus(activeId)
   reviewPanel.setTreeShown(s.review.fileTree)
 }
 
 async function boot(): Promise<void> {
   appInfo = await ct.appInfo()
   settings = await ct.getSettings()
+  // the window must come up even when the accounts cannot be listed
+  accounts = (await ct.listAccounts().catch(() => null))?.accounts ?? []
   fontSize = settings.font.size
   tabBar = new TabBar(document.getElementById('tabbar')!, {
     activate: (id) => ct.activateTab(id),
@@ -368,13 +408,22 @@ async function boot(): Promise<void> {
     setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
     closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
   })
-  statusBar = new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'))
+  statusBar = new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'), (anchor) => {
+    const r = anchor.getBoundingClientRect()
+    // the menu opens over the status bar, kept inside the window
+    if (activeId) showMenu({ x: r.left, y: r.top }, continueItems(activeId))
+  })
+  ct.onAccounts((v) => {
+    accounts = v.accounts
+    renderTitle()
+    if (activeId) renderStatus(activeId)
+  })
   updateBanner = new UpdateBanner(document.getElementById('update-banner')!, () => ct.installUpdate())
   ct.onUpdate((s) => updateBanner.update(s))
   void ct.getUpdateState().then((s) => updateBanner.update(s))
   ct.onStatus((u) => {
     statusUpdates.set(u.tabId, u)
-    if (u.tabId === activeId) statusBar.render(u, counterOf(u.tabId))
+    if (u.tabId === activeId) renderStatus(u.tabId)
   })
   ct.onAttention((tabId, reason) => {
     const t = tabs.get(tabId)
@@ -443,7 +492,7 @@ async function boot(): Promise<void> {
     reviewPanel.show(u)
     refreshPanelButtons()
     if (pendingReveal.delete(u.tabId)) sidePanel.open('changes')
-    statusBar.render(statusUpdates.get(u.tabId) ?? null, counterOf(u.tabId))
+    renderStatus(u.tabId)
   })
   refreshPanelButtons()
   ct.onImages((u) => {
@@ -462,6 +511,8 @@ async function boot(): Promise<void> {
     if (!t) return
     t.info = info
     renderTabs()
+    // a switch of the account shows at once
+    if (info.id === activeId) renderStatus(info.id)
   })
   ct.onTabClosed((id) => {
     const t = tabs.get(id)

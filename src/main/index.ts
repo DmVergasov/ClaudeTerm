@@ -1,19 +1,21 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, screen, shell, type Rectangle } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, shell, type Rectangle } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { AccountResult, AccountsView } from '../shared/accounts'
 import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import { socketDir } from '../shared/protocol'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
 import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo } from '../shared/types'
+import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './accounts'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
 import { autoUpdater } from 'electron-updater'
 import { writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -146,6 +148,12 @@ function bootstrap(): void {
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
   const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
   const starred = new StarredSessions(dataDir, toast)
+  const accounts = new AccountStore(nodeAccountFile(join(dataDir, 'accounts.json')), electronVault(safeStorage, process.platform), { onError: (m) => log.warn(m) })
+  /** how a message names an account */
+  const accountName = (id: string): string => {
+    const name = accounts.nameOf(id)
+    return name ? `Account "${name}"` : 'The account'
+  }
   // what the window was last shown; opening looks the id up here, so the renderer only passes an id
   let listedSessions = new Map<string, SessionSummary>()
   const restoreInfo = (): RestoreInfo | null =>
@@ -316,12 +324,19 @@ function bootstrap(): void {
     pipeName,
     baseEnv: childEnv,
     resolveLaunch: (req) => {
-      if (req.kind === 'claude') {
+      if (req.kind === 'claude' || req.setupToken) {
+        const acc = accountLaunch(req.kind === 'claude' ? req.account : null, (id) => accounts.token(id))
+        // a switch to an account that cannot be used changes nothing; a start goes on with the main account
+        if (acc.unavailable && req.strict) throw new Error(`${accountName(req.account!)} is not available`)
         if (claudeCli === null && settings.claude.command === 'claude') toast('claude not found in PATH — install Claude Code: https://claude.com/claude-code')
         const { profile, warning } = pickClaudeProfile(profiles, settings.claude.shellProfile)
         if (warning) toast(warning)
+        if (req.setupToken) {
+          return { profileName: profile.name, spec: buildLaunch(profile, 'claude', { command: `${settings.claude.command} setup-token`, settingsPath: null, resumeSessionId: null }) }
+        }
+        if (acc.unavailable) toast(`${accountName(req.account!)} is not available; the tab started on the main account`)
         const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? null }
-        return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude) }
+        return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env }
       }
       const profile = profiles.find((p) => p.name === req.profile) ?? pickProfile(profiles, settings.defaultProfile)
       if (req.profile && profile.name !== req.profile) toast(`Profile "${req.profile}" not found; using ${profile.name}`)
@@ -355,9 +370,9 @@ function bootstrap(): void {
     markTab: (tabId, reason) => send(IPC.evAttention, tabId, reason)
   })
 
-  const openTab = (req: OpenTabRequest, activate = true): TabInfo | null => {
+  const openTab = (req: OpenTabRequest, activate = true, setupToken = false): TabInfo | null => {
     try {
-      return tabs.open(req, { activate })
+      return tabs.open(req, { activate, setupToken })
     } catch (e) {
       toast(`Cannot open tab: ${(e as Error).message}`)
       return null
@@ -398,7 +413,7 @@ function bootstrap(): void {
       const { cwd, warning } = resolveLaunchDir(t.cwd, homedir(), isDirectory)
       if (warning) toast(warning)
       const opened = openTab(
-        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId: t.kind === 'claude' ? t.claudeSessionId : null },
+        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId: t.kind === 'claude' ? t.claudeSessionId : null, account: t.kind === 'claude' ? t.account : null },
         false
       )
       if (opened && first === null) first = opened.id
@@ -520,7 +535,7 @@ function bootstrap(): void {
     if (restoreAfterUpdate) runRestore()
   })
   ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) attention.notify(tabId, 'bell') })
-  ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => openTab(req))
+  ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => (req?.account === undefined || isAccountRef(req.account) ? openTab(req) : null))
   ipcMain.handle(IPC.sessionsList, async (): Promise<RecentSession[]> => {
     const list = await history.list(100, starred.ids())
     listedSessions = new Map(list.map((s) => [s.id, s]))
@@ -557,6 +572,12 @@ function bootstrap(): void {
   ipcMain.on(IPC.tabsRestart, (_e, id: unknown, live: unknown) => {
     if (isId(id)) tabs.restart(id, { live: live === true }).catch((e: Error) => log.warn(`cannot restart tab: ${e.message}`))
   })
+  ipcMain.on(IPC.tabsSwitchAccount, (_e, id: unknown, account: unknown) => {
+    if (!isId(id) || !isAccountRef(account)) return
+    tabs.switchAccount(id, account)
+      .then((ok) => { if (!ok && account !== null && accounts.token(account) === null) toast(`${accountName(account)} is not available`) })
+      .catch((e: Error) => log.warn(`cannot switch the account: ${e.message}`))
+  })
   ipcMain.on(IPC.ptyWrite, (_e, id: unknown, data: unknown) => {
     if (!isId(id) || !isPtyData(data)) return
     if (id === autoTabId && isUserInput(data)) autoTabId = null
@@ -584,6 +605,21 @@ function bootstrap(): void {
     revealInFolder(path, nodeRevealDeps((p) => shell.showItemInFolder(p), (d) => void shell.openPath(d)))
   })
   ipcMain.handle(IPC.panelSet, (_e, width: unknown, resize: unknown) => (liveWin() && isPanelWidth(width) && isFlag(resize) ? panelRoom.set(Math.round(width), resize) : panelRoom.mode))
+  const accountsView = (): AccountsView => ({ accounts: accounts.list(), keyring: accounts.keyring() })
+  /** both windows show the accounts: the settings window lists them, the main window's menus and status bar name them */
+  const accountsChanged = (r: AccountResult): AccountResult => {
+    if (r.ok) broadcast(IPC.evAccounts, accountsView())
+    return r
+  }
+  // the store checks the names, tokens and ids it is given
+  ipcMain.handle(IPC.accountsList, () => accountsView())
+  ipcMain.handle(IPC.accountsAdd, (_e, name: unknown, token: unknown) => accountsChanged(accounts.add(name, token)))
+  ipcMain.handle(IPC.accountsRename, (_e, id: unknown, name: unknown) => accountsChanged(accounts.rename(id, name)))
+  ipcMain.handle(IPC.accountsSetToken, (_e, id: unknown, token: unknown) => accountsChanged(accounts.setToken(id, token)))
+  ipcMain.handle(IPC.accountsRemove, (_e, id: unknown) => accountsChanged(accounts.remove(id)))
+  ipcMain.on(IPC.accountsGetToken, () => {
+    if (openTab({ kind: 'shell', cwd: homedir(), title: 'Get a token' }, true, true)) focusWindow()
+  })
   ipcMain.handle(IPC.reviewCanSend, (_e, tabId: unknown) => (isId(tabId) ? review.canSend(tabId) : { ok: false, reason: NOT_RUNNING }))
   ipcMain.on(IPC.imagesMarkSeen, (_e, tabId: unknown) => { if (isId(tabId)) images.markSeen(tabId) })
   ipcMain.on(IPC.imagesAction, (_e, cardId: unknown, action: unknown) => {

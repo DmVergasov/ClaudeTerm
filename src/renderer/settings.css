@@ -7,7 +7,7 @@ html, body { margin: 0; min-height: 100%; background: var(--chrome); color: var(
 .settings-heading { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
 .settings-banner { display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 8px 12px; background: #2a211d; border: 1px solid var(--accent); border-radius: 6px; }
 .settings-banner span { flex: 1; }
-.settings-notice { margin: 8px 0; padding: 8px 12px; color: #e5c07b; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+.settings-notice, .account-keyring { margin: 8px 0; padding: 8px 12px; color: #e5c07b; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
 section { margin-top: 18px; }
 .section-title { margin: 0 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .section-note { margin-left: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
@@ -37,3 +37,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .notify td { text-align: center; }
 .settings-footer { display: flex; align-items: center; gap: 12px; margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .settings-footer span { flex: 1; }
+.account-intro { display: block; margin: 0 0 6px; }
+.account-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.account-row { display: grid; grid-template-columns: 170px 1fr auto; align-items: center; gap: 4px 12px; }
+.account-row .field-error { grid-column: 1 / -1; }
+.account-row input.text-input { width: 100%; }
+.account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-actions { display: flex; gap: 6px; }
+.account-unreadable { color: #e5c07b; }
+.account-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 4px; }
+.account-add input[type="text"].text-input { width: 160px; }
+.account-add input[type="password"].text-input { width: 240px; }
