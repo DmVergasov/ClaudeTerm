@@ -3,7 +3,7 @@ import { CHECK_EVERY_MS, FIRST_CHECK_MS, Updater, type UpdaterBackend } from '..
 import type { UpdateState } from '../../src/shared/types'
 
 function fakeBackend() {
-  const h: { downloaded?: (v: string) => void; error?: (m: string) => void } = {}
+  const h: { downloaded?: (v: string, notes: unknown) => void; error?: (m: string) => void } = {}
   const b = {
     result: null as string | null,
     fail: null as string | null,
@@ -16,7 +16,7 @@ function fakeBackend() {
       if (b.hold) return new Promise((res) => { b.pending = () => res(b.result) })
       return b.fail ? Promise.reject(new Error(b.fail)) : Promise.resolve(b.result)
     },
-    onDownloaded: (cb: (v: string) => void) => { h.downloaded = cb },
+    onDownloaded: (cb: (v: string, notes: unknown) => void) => { h.downloaded = cb },
     onError: (cb: (m: string) => void) => { h.error = cb },
     quitAndInstall: () => { b.installs++ }
   }
@@ -90,19 +90,32 @@ describe('Updater', () => {
 
   it('a downloaded update becomes the ready state; a manual check then asks for a restart instead of checking', async () => {
     const { u, b, h, out, states } = setup()
-    h.downloaded!('0.1.4')
-    expect(states).toEqual([{ status: 'ready', version: '0.1.4' }])
-    expect(u.current).toEqual({ status: 'ready', version: '0.1.4' })
+    h.downloaded!('0.1.4', null)
+    expect(states).toEqual([{ status: 'ready', version: '0.1.4', notes: [] }])
+    expect(u.current).toEqual({ status: 'ready', version: '0.1.4', notes: [] })
     await u.check(true)
     expect(b.checks).toBe(0)
     expect(out).toEqual(['toast:ClaudeTerm 0.1.4 is downloaded — click Restart to install it'])
+  })
+
+  it('a downloaded update carries the notes of the versions after this one, up to it', () => {
+    const { h, states } = setup()
+    h.downloaded!('0.1.5', '## 0.1.5\n\n- **Faster tabs.** They open at once.\n\n## 0.1.4\n\n- The weekly limit.\n\n## 0.1.3\n\n- Installed.\n')
+    expect(states).toEqual([{
+      status: 'ready',
+      version: '0.1.5',
+      notes: [
+        { version: '0.1.5', items: [{ title: 'Faster tabs', text: 'Faster tabs. They open at once.' }] },
+        { version: '0.1.4', items: [{ title: 'The weekly limit', text: 'The weekly limit.' }] }
+      ]
+    }])
   })
 
   it('install saves the session before quitting into the installer, and only when ready', () => {
     const { u, b, h, out } = setup()
     u.install()
     expect(b.installs).toBe(0)
-    h.downloaded!('0.1.4')
+    h.downloaded!('0.1.4', null)
     u.install()
     expect(out).toEqual(['beforeInstall'])
     expect(b.installs).toBe(1)

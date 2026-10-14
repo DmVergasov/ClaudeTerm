@@ -101,7 +101,20 @@ export interface AgentStatus {
   startedAt: number
 }
 
-export type UpdateState = { status: 'idle' } | { status: 'ready'; version: string }
+/** an item of a release's notes: the headline the update banner lists, and the whole item for its tooltip */
+export interface ReleaseNote {
+  title: string
+  text: string
+}
+
+/** what changed in one version, as its section of CHANGELOG.md says */
+export interface ReleaseNotes {
+  version: string
+  items: ReleaseNote[]
+}
+
+/** `notes`: the versions after the installed one up to the downloaded one, newest first; none when the feed has no notes */
+export type UpdateState = { status: 'idle' } | { status: 'ready'; version: string; notes: ReleaseNotes[] }
 
 /** A Claude Code conversation found in Claude Code's transcripts. */
 export interface SessionSummary {

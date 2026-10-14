@@ -28,6 +28,10 @@ jobs:
             exit 1
           fi
 
+      # what's new for the update banner: electron-builder puts build/release-notes.md into latest-linux.yml
+      - name: Take the update notes from CHANGELOG.md
+        run: node scripts/release-notes.mjs --updater "${GITHUB_REF_NAME#v}" > build/release-notes.md
+
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -68,6 +72,11 @@ jobs:
       - name: Take the release notes from CHANGELOG.md
         shell: bash
         run: node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
+
+      # what's new for the update banner: electron-builder puts build/release-notes.md into latest.yml
+      - name: Take the update notes from CHANGELOG.md
+        shell: bash
+        run: node scripts/release-notes.mjs --updater "${GITHUB_REF_NAME#v}" > build/release-notes.md
 
       - run: npm ci
       - run: npm run typecheck

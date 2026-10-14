@@ -8,7 +8,7 @@ export interface AutoUpdaterLike {
   logger: { info(m?: unknown): void; warn(m?: unknown): void; error(m?: unknown): void; debug?(m: string): void } | null
   setFeedURL(options: { provider: 'generic'; url: string }): void
   checkForUpdates(): Promise<{ isUpdateAvailable: boolean; updateInfo: { version: string }; downloadPromise?: Promise<unknown> | null } | null>
-  on(event: 'update-downloaded', cb: (info: { version: string }) => void): unknown
+  on(event: 'update-downloaded', cb: (info: { version: string; releaseNotes?: unknown }) => void): unknown
   on(event: 'error', cb: (e: Error) => void): unknown
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void
 }
@@ -41,7 +41,8 @@ export function createUpdateBackend(u: AutoUpdaterLike, o: UpdateBackendOptions)
       r?.downloadPromise?.catch(() => {})
       return r?.isUpdateAvailable ? r.updateInfo.version : null
     },
-    onDownloaded: (cb) => { u.on('update-downloaded', (info) => cb(info.version)) },
+    // the notes latest.yml carries; electron-updater builds a list instead only with fullChangelog, which is off
+    onDownloaded: (cb) => { u.on('update-downloaded', (info) => cb(info.version, typeof info.releaseNotes === 'string' ? info.releaseNotes : null)) },
     onError: (cb) => { u.on('error', (e) => cb(e.message)) },
     quitAndInstall: () => u.quitAndInstall(true, true)
   }

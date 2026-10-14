@@ -44,6 +44,13 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .banner span { flex: 1; }
 .banner button { background: var(--accent); color: #111; border: 0; border-radius: 4px; padding: 4px 12px; cursor: pointer; font: inherit; }
 .banner .banner-close { background: none; color: var(--muted); padding: 0 6px; font-size: 16px; }
+/* What's new opens over the terminals: they keep their size, so Claude Code does not redraw */
+#update-banner { position: relative; z-index: 30; }
+.banner .banner-notes { background: none; color: var(--fg); border: 1px solid var(--border); }
+.update-notes { position: absolute; top: 100%; right: 12px; width: min(520px, calc(100vw - 24px)); max-height: 60vh; overflow-y: auto; padding: 6px 14px; background: var(--chrome-2); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px #0008; }
+.update-notes-version { margin: 6px 0 2px; color: var(--muted); font-size: 12px; }
+.update-notes ul { margin: 0 0 4px; padding-left: 18px; }
+.update-notes li { padding: 2px 0; }
 
 #image-panel { position: relative; display: flex; flex-direction: column; background: var(--chrome); border-left: 1px solid var(--border); min-width: 180px; }
 #image-panel.collapsed { display: none; }

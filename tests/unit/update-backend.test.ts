@@ -70,10 +70,21 @@ describe('createUpdateBackend', () => {
     const u = fakeUpdater(null)
     const b = createUpdateBackend(u as unknown as AutoUpdaterLike, { log })
     const got: string[] = []
-    b.onDownloaded((v) => got.push(`ready ${v}`))
+    b.onDownloaded((v, notes) => got.push(`ready ${v} ${String(notes)}`))
     b.onError((m) => got.push(`error ${m}`))
     u.emit('update-downloaded', { version: '0.1.4' })
     u.emit('error', new Error('sha512 checksum mismatch'))
-    expect(got).toEqual(['ready 0.1.4', 'error sha512 checksum mismatch'])
+    expect(got).toEqual(['ready 0.1.4 null', 'error sha512 checksum mismatch'])
+  })
+
+  it('passes on the release notes of a downloaded update when they are text', () => {
+    const u = fakeUpdater(null)
+    const b = createUpdateBackend(u as unknown as AutoUpdaterLike, { log })
+    const got: unknown[] = []
+    b.onDownloaded((_v, notes) => got.push(notes))
+    u.emit('update-downloaded', { version: '0.1.4', releaseNotes: '## 0.1.4\n\n- Fix.\n' })
+    // the list electron-updater builds with fullChangelog is not text
+    u.emit('update-downloaded', { version: '0.1.4', releaseNotes: [{ version: '0.1.4', note: 'Fix.' }] })
+    expect(got).toEqual(['## 0.1.4\n\n- Fix.\n', null])
   })
 })

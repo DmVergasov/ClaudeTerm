@@ -49,7 +49,72 @@ test('after restarting into an update a session of shell tabs comes back too', a
   await app.close()
 })
 
-const ready = (version: string) => ({ status: 'ready', version })
+const ready = (version: string, notes: { version: string; items: { title: string; text: string }[] }[] = []) => ({ status: 'ready', version, notes })
+const NOTES = [
+  { version: '9.9.9', items: [{ title: 'Find in the Changes panel', text: 'Find in the Changes panel. Click into the diff and press Ctrl+F.' }] },
+  {
+    version: '9.9.8',
+    items: [
+      { title: 'Hide test files', text: 'Hide test files. Tick Hide tests in the Changes panel.' },
+      { title: 'Star your important sessions', text: 'Star your important sessions. Starred ones stay at the top.' }
+    ]
+  }
+]
+
+test('What\'s new in the update banner lists what changed by version; Esc, the button again or a click elsewhere closes it', async () => {
+  const { app, page } = await launchApp()
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].webContents.send('ev:update', s), ready('9.9.9', NOTES))
+  const button = page.locator('#update-banner .banner-notes')
+  const list = page.locator('#update-banner .update-notes')
+  await expect(button).toHaveText("What's new ▾")
+  await expect(list).toBeHidden()
+  await button.click()
+  await expect(list.locator('.update-notes-version')).toHaveText(['9.9.9', '9.9.8'])
+  await expect(list.locator('li')).toHaveText(['Find in the Changes panel', 'Hide test files', 'Star your important sessions'])
+  await expect(list.locator('li').first()).toHaveAttribute('title', 'Find in the Changes panel. Click into the diff and press Ctrl+F.')
+  await page.keyboard.press('Escape')
+  await expect(list).toBeHidden()
+  await button.click()
+  await expect(list).toBeVisible()
+  await button.click()
+  await expect(list).toBeHidden()
+  await button.click()
+  await page.locator('.terminal-host:visible .xterm').click()
+  await expect(list).toBeHidden()
+  await app.close()
+})
+
+test('the Esc that closes What\'s new does not reach the terminal, where it would interrupt Claude', async () => {
+  const { app, page } = await launchApp()
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].webContents.send('ev:update', s), ready('9.9.9', NOTES))
+  await page.locator('.terminal-host:visible .xterm').click()
+  const keys: string[] = []
+  await page.exposeFunction('__keySeen', (k: string) => { keys.push(k) })
+  // the terminal's own input: a key that reaches it goes to the shell. xterm listens in the capture phase and stops the
+  // event there, so a listener of the bubble phase would never hear it
+  await page.locator('.terminal-host:visible .xterm textarea').evaluate((el) => el.addEventListener('keydown', (e) => (window as unknown as { __keySeen(k: string): void }).__keySeen((e as KeyboardEvent).key), true))
+  await page.locator('#update-banner .banner-notes').click()
+  await page.locator('.terminal-host:visible .xterm textarea').focus()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('#update-banner .update-notes')).toBeHidden()
+  expect(keys).toEqual([])
+  await app.close()
+})
+
+test('notes of one version need no version heading; a banner without notes has no What\'s new', async () => {
+  const { app, page } = await launchApp()
+  const push = (s: object) => app.evaluate(({ BrowserWindow }, st) => BrowserWindow.getAllWindows()[0].webContents.send('ev:update', st), s)
+  await push(ready('9.9.9', NOTES.slice(0, 1)))
+  await page.locator('#update-banner .banner-notes').click()
+  await expect(page.locator('#update-banner .update-notes li')).toHaveText(['Find in the Changes panel'])
+  await expect(page.locator('#update-banner .update-notes-version')).toHaveCount(0)
+  await push(ready('9.9.10'))
+  await expect(page.locator('#update-banner')).toContainText('ClaudeTerm 9.9.10 is ready to install.')
+  await expect(page.locator('#update-banner .banner-notes')).toHaveCount(0)
+  await app.close()
+})
 
 test('a downloaded update shows a banner whose button asks to restart into it', async () => {
   const { app, page } = await launchApp()

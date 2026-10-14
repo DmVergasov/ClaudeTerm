@@ -6,3 +6,4 @@ resources/hook/*.js
 test-results/
 playwright-report/
 .superpowers/
+build/release-notes.md

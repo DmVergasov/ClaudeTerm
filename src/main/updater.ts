@@ -1,4 +1,5 @@
 import type { UpdateState } from '../shared/types'
+import { parseUpdateNotes } from './update-notes'
 
 export const FIRST_CHECK_MS = 15_000
 export const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
@@ -6,7 +7,8 @@ export const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
 export interface UpdaterBackend {
   /** resolves the newer version that is being downloaded, or null when this build is the latest */
   check(): Promise<string | null>
-  onDownloaded(cb: (version: string) => void): void
+  /** `notes`: the release notes the feed gives for it, when they are text */
+  onDownloaded(cb: (version: string, notes: string | null) => void): void
   onError(cb: (message: string) => void): void
   quitAndInstall(): void
 }
@@ -32,8 +34,8 @@ export class Updater {
   private timer: unknown = null
 
   constructor(private readonly d: UpdaterDeps) {
-    d.backend?.onDownloaded((version) => {
-      this.state = { status: 'ready', version }
+    d.backend?.onDownloaded((version, notes) => {
+      this.state = { status: 'ready', version, notes: parseUpdateNotes(notes, d.currentVersion, version) }
       d.publish(this.state)
     })
     d.backend?.onError((m) => d.log(`update error: ${m}`))
