@@ -53,6 +53,30 @@ describe('git source', () => {
     ])
   })
 
+  it('lists the files of a path git ignores as added when the paths name it; under a named folder git does not ignore the rules hold', async () => {
+    const dir = repo()
+    mkdirSync(join(dir, 'docs', 'plans', 'deep'), { recursive: true })
+    mkdirSync(join(dir, 'src', 'dist'), { recursive: true })
+    writeFileSync(join(dir, '.gitignore'), 'docs/plans/\n*.log\ndist/\n')
+    writeFileSync(join(dir, 'src', 'a.ts'), 'a\n')
+    commitAll(dir, 'one')
+    writeFileSync(join(dir, 'docs', 'plans', 'p.md'), 'p\n')
+    writeFileSync(join(dir, 'docs', 'plans', 'deep', 'q.md'), 'q\n')
+    writeFileSync(join(dir, 'src', 'debug.log'), 'l\n')
+    writeFileSync(join(dir, 'src', 'dist', 'out.js'), 'o\n')
+    const list = async (paths: string[], to: string | null = null) => rel(dir, await changedFiles(execGit, dir, 'HEAD', to, paths.map((p) => join(dir, p))))
+    expect(await list([])).toEqual([])
+    expect(await list(['.'])).toEqual([])
+    expect(await list(['docs/plans/p.md'])).toEqual([['docs/plans/p.md', 'added']])
+    expect(await list(['docs/plans'])).toEqual([['docs/plans/deep/q.md', 'added'], ['docs/plans/p.md', 'added']])
+    expect(await list(['src/debug.log', 'src/a.ts'])).toEqual([['src/debug.log', 'added']])
+    // build output and logs under a folder that is not ignored stay out
+    expect(await list(['src'])).toEqual([])
+    expect(await list(['docs'])).toEqual([])
+    // two revisions hold no ignored file
+    expect(await list(['docs/plans/p.md'], 'HEAD')).toEqual([])
+  })
+
   it('compares two revisions and limits to paths, taking them literally', async () => {
     const dir = repo()
     mkdirSync(join(dir, 'src'))

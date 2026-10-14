@@ -234,6 +234,18 @@ test('show_diff opens a request with a chip; the chip goes back to the scopes', 
   await app.close()
 })
 
+test('show_diff opens a file git ignores when its paths name it', async () => {
+  const { app, page, tabId, pipeName, repo } = await reviewTab((r) => {
+    mkdirSync(join(r, 'docs', 'plans'), { recursive: true })
+    writeFileSync(join(r, '.gitignore'), 'docs/plans/\n')
+    writeFileSync(join(r, 'docs', 'plans', 'plan.md'), '# Plan\nstep one\n')
+  })
+  const msg = { v: 1 as const, type: 'show_diff' as const, tabId, cwd: repo, scope: null, from: null, to: null, paths: [join(repo, 'docs', 'plans', 'plan.md')], title: null }
+  expect(await sendPipeMessage(pipeName, msg)).toEqual({ ok: true, info: 'Opened 1 file (+2 −0) in the Changes panel.' })
+  await expect(added(page, 'docs/plans/plan.md')).toHaveText(['# Plan', 'step one'])
+  await app.close()
+})
+
 // no status message: the counter is not part of Claude's status line and shows before the first one
 test('the status bar counter shows the uncommitted changes without a status line, and opens the panel', async () => {
   const { app, page } = await reviewTab(upper)

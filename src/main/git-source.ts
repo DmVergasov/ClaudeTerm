@@ -127,8 +127,23 @@ export async function changedFiles(run: GitRun, root: string, from: string, to: 
     if (!code || !rel) continue
     changes.push({ path: resolve(root, rel), status: code[0] === 'A' ? 'added' : code[0] === 'D' ? 'deleted' : 'modified' })
   }
-  if (to === null) for (const path of await untrackedFiles(run, root, paths)) changes.push({ path, status: 'added' })
+  if (to === null) {
+    for (const path of await untrackedFiles(run, root, paths)) changes.push({ path, status: 'added' })
+    for (const path of await namedIgnoredFiles(run, root, paths)) changes.push({ path, status: 'added' })
+  }
   return changes
+}
+
+/**
+ * The files of the named paths that git ignores themselves (a file, or a folder git ignores), absolute: one named outright is
+ * shown like an untracked file. Under a named folder git does not ignore, the rules hold: its build output stays out.
+ */
+async function namedIgnoredFiles(run: GitRun, root: string, paths: string[]): Promise<string[]> {
+  const named = await checkIgnored(run, root, paths)
+  if (named.length === 0) return []
+  const r = await run(['--literal-pathspecs', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=traditional', '--no-renames', '--ignore-submodules=all', '--', ...toSpecs(root, named)], root)
+  if (r.code !== 0) throw new GitError(`git status failed: ${r.stderr.trim()}`)
+  return r.stdout.toString('utf8').split('\0').filter((e) => e.startsWith('!! ') && e.length > 3).map((e) => resolve(root, e.slice(3)))
 }
 
 /**

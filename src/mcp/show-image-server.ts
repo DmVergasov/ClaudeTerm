@@ -47,7 +47,7 @@ server.registerTool(
         .describe('uncommitted (default): everything not committed; last_turn: what Claude changed in its latest turn with edits; session: what Claude changed in this conversation. Ignored when from is given'),
       from: z.string().optional().describe('A git revision to compare with: HEAD~3, a branch, a tag or a commit'),
       to: z.string().optional().describe('A git revision to compare up to; default: the working tree'),
-      paths: z.array(z.string()).optional().describe('Files or folders to limit the diff to, absolute or relative to the current directory'),
+      paths: z.array(z.string()).optional().describe('Files or folders to limit the diff to, absolute or relative to the current directory. A file or folder git ignores that is named here shows as new files'),
       title: z.string().optional().describe('A short title shown above the diff')
     }
   },
