@@ -21,7 +21,10 @@ test('a test run shows the window off the screen and leaves the focus alone: not
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await expect.poll(() => bufferText(page), { timeout: 15_000 }).toMatch(PROMPT)
-  expect(await windowPlaces(app)).toEqual([{ onScreen: false, focused: false }])
+  // a failure says where the window is, and where the displays are
+  const where = await app.evaluate(({ BrowserWindow, screen }) =>
+    JSON.stringify({ windows: BrowserWindow.getAllWindows().map((w) => w.getBounds()), displays: screen.getAllDisplays().map((d) => d.bounds) }))
+  expect(await windowPlaces(app), where).toEqual([{ onScreen: false, focused: false }])
   await app.close()
 })
 
