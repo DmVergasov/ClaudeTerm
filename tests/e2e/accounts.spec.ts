@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { WIN } from '../fixtures/platform'
+import { LINUX, WIN } from '../fixtures/platform'
 import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, makeDataDir, TEST_SHELL, type Launched, KEYS } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -130,10 +130,10 @@ test('an added account is listed without its token, and the token is encrypted o
   expect(await page.evaluate((t) => window.ct.addAccount('Personal', t), token)).toEqual({ ok: true })
   expect(await page.evaluate((t) => window.ct.addAccount('personal', t), token)).toEqual({ ok: false, error: 'An account named "personal" already exists' })
   const view = await page.evaluate(() => window.ct.listAccounts())
-  // the Linux tests run on the basic store, which encrypts nothing
-  expect(view).toMatchObject({ keyring: WIN, accounts: [{ name: 'Personal', readable: true }] })
+  // the Linux tests run on the basic store, which encrypts nothing; Windows has DPAPI, macOS the Keychain (a mock one here)
+  expect(view).toMatchObject({ keyring: !LINUX, accounts: [{ name: 'Personal', readable: true }] })
   expect(JSON.stringify(view)).not.toContain(token)
-  expect(readFileSync(join(dataDir, 'accounts.json'), 'utf8').includes(token)).toBe(!WIN)
+  expect(readFileSync(join(dataDir, 'accounts.json'), 'utf8').includes(token)).toBe(LINUX)
   await app.close()
 })
 
@@ -171,8 +171,11 @@ test('a click on the account in the status bar switches it', async () => {
   await page.locator('#statusbar .status-account').click()
   await page.locator('.menu-item', { hasText: 'Continue as Main account' }).click()
   await expect(page.locator('#statusbar .status-account')).toHaveText('Main account')
-  await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toMatch(/fake-claude token=/)
-  expect(await bufferText(page, id)).not.toContain(WORK_TOKEN)
+  // the first run's line is there until the restart clears the screen
+  await expect.poll(async () => {
+    const text = await bufferText(page, id)
+    return text.includes('fake-claude token=') && !text.includes(WORK_TOKEN)
+  }, { timeout: 15_000 }).toBe(true)
   await app.close()
 })
 
@@ -268,8 +271,8 @@ test('the Accounts section says when the tokens are not encrypted', async () => 
   // with no account the keyring is not asked, so there is nothing to say yet
   expect(await page.evaluate(() => window.ct.addAccount('Personal', 'e2e-token-personal-0000001'))).toEqual({ ok: true })
   const win = await openSettings(app, page)
-  // the Linux tests run on the basic store; Windows has DPAPI
-  if (WIN) await expect(win.locator('.account-keyring')).toBeHidden()
+  // the Linux tests run on the basic store; Windows has DPAPI, macOS the Keychain
+  if (!LINUX) await expect(win.locator('.account-keyring')).toBeHidden()
   else await expect(win.locator('.account-keyring')).toHaveText('No system keyring: tokens are stored unencrypted, readable only by your user.')
   await app.close()
 })
@@ -286,8 +289,11 @@ test('a tab on the last extra account, deleted, shows Removed account and can go
   await page.locator('.tab').nth(1).click({ button: 'right' })
   await page.locator('.menu-item', { hasText: 'Continue as Main account' }).click()
   await expect(page.locator('#statusbar .status-account')).toHaveCount(0)
-  await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toMatch(/fake-claude token=/)
-  expect(await bufferText(page, id)).not.toContain(WORK_TOKEN)
+  // the first run's line is there until the restart clears the screen
+  await expect.poll(async () => {
+    const text = await bufferText(page, id)
+    return text.includes('fake-claude token=') && !text.includes(WORK_TOKEN)
+  }, { timeout: 15_000 }).toBe(true)
   await app.close()
 })
 

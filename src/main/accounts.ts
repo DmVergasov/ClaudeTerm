@@ -272,8 +272,9 @@ export interface SafeStorageLike {
 }
 
 /**
- * Electron's safeStorage: DPAPI on Windows, the keyring on Linux. Linux without a keyring has only the "basic_text"
- * store, whose key is the same on every machine — no protection at all, so the tokens are then kept as they are.
+ * Electron's safeStorage: DPAPI on Windows, the Keychain on macOS, the keyring on Linux. Linux without a keyring has
+ * only the "basic_text" store, whose key is the same on every machine — no protection at all, so the tokens are then
+ * kept as they are.
  */
 export function electronVault(s: SafeStorageLike, platform: string): Vault {
   return {
