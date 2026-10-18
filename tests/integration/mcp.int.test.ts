@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { build } from 'esbuild'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -10,7 +10,8 @@ import type { ShowDiffMessage, ShowImageMessage } from '../../src/shared/protoco
 import { testPipeName } from '../fixtures/platform'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
-const work = mkdtempSync(join(tmpdir(), 'ct-mcpint-'))
+// by its real path, the server's working folder (macOS's temp folder is in /var, a link to /private/var)
+const work = realpathSync(mkdtempSync(join(tmpdir(), 'ct-mcpint-')))
 const bundle = join(work, 'show-image-server.js')
 const pipe = testPipeName('test')
 const got: ShowImageMessage[] = []

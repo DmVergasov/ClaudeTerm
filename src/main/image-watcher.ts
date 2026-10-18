@@ -141,7 +141,8 @@ interface Pending {
  * Watches a folder tree for new, changed and deleted images with one recursive fs.watch: no scan of the tree and one
  * handle however big it is, and subfolders deleted and created again keep working. Linux has no recursive watch of its
  * own: there a TreeWatcher watches each folder.
- * The OS drops events when many arrive at once (a nameless event); the tree is then searched for recent images.
+ * The OS drops events when many arrive at once (a nameless event); the tree is then searched for recent images. So it
+ * is once on macOS right after watching starts: FSEvents only starts reporting a moment later.
  */
 export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): ImageWatcherHandle {
   const toPath = imagePathFilter(dir, cfg)
@@ -152,7 +153,8 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
   let watcher: FSWatcher | TreeWatcher | null = null
   let retry: ReturnType<typeof setTimeout> | null = null
   let closed = false
-  let lostSince: number | null = null
+  /** the tree is to be searched for images written since then: their events were lost */
+  let rescanSince: number | null = null
   let rescanTimer: ReturnType<typeof setTimeout> | null = null
   let rescanning = false
   let lastRescan = 0
@@ -209,13 +211,13 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
 
   const rescan = async (): Promise<void> => {
     rescanTimer = null
-    if (closed || lostSince === null) return
+    if (closed || rescanSince === null) return
     if (rescanning || Date.now() - lastRescan < RESCAN_MIN_INTERVAL_MS) {
       rescanTimer = setTimeout(() => void rescan(), RESCAN_MIN_INTERVAL_MS)
       return
     }
-    const since = lostSince - RESCAN_SLACK_MS
-    lostSince = null
+    const since = rescanSince
+    rescanSince = null
     rescanning = true
     try {
       for (const p of await recentImages(dir, cfg, since, () => closed)) if (!closed) track(p)
@@ -225,13 +227,18 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
     }
   }
 
+  /** the events of images written since `since` may be lost: the tree is searched once they stop coming */
+  const lost = (since: number): void => {
+    rescanSince = Math.min(rescanSince ?? since, since)
+    if (rescanTimer) clearTimeout(rescanTimer)
+    rescanTimer = setTimeout(() => void rescan(), RESCAN_QUIET_MS)
+  }
+
   const onEvent = (_event: string, filename: string | Buffer | null): void => {
     const name = filename === null ? null : String(filename)
     if (name === null) {
       // events were dropped
-      lostSince ??= Date.now()
-      if (rescanTimer) clearTimeout(rescanTimer)
-      rescanTimer = setTimeout(() => void rescan(), RESCAN_QUIET_MS)
+      lost(Date.now() - RESCAN_SLACK_MS)
       return
     }
     if (isRootGoneEvent(name)) {
@@ -261,8 +268,10 @@ export function watchImages(dir: string, cfg: WatchConfig, h: WatchHandlers): Im
   }
 
   function open(): void {
+    const openedAt = Date.now()
     try {
-      watcher = process.platform === 'win32' ? watch(dir, { recursive: true }, onEvent) : new TreeWatcher(dir, onEvent, cfg)
+      watcher = process.platform === 'linux' ? new TreeWatcher(dir, onEvent, cfg) : watch(dir, { recursive: true }, onEvent)
+      if (process.platform === 'darwin') lost(openedAt - CLOCK_SLACK_MS)
     } catch (err) {
       if (!existsSync(dir)) scheduleRetry()
       else h.error(err instanceof Error ? err : new Error(String(err)))

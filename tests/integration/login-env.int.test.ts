@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { loginShellPath } from '../../src/main/login-env'
 import { execRunner, type Runner } from '../../src/main/mcp-registrar'
-import { WIN } from '../fixtures/platform'
+import { MAC, WIN } from '../fixtures/platform'
 
 describe.runIf(!WIN)('loginShellPath with a real bash', () => {
   it('a startup file that prints and waits for input: the PATH it sets still comes back, quickly', async () => {
@@ -37,7 +37,9 @@ describe.runIf(!WIN)('loginShellPath with a real bash', () => {
     writeFileSync(join(work, '.bashrc'), '')
     // an interactive shell on a terminal (script gives it one) runs the probe as a background job
     const job = `'${process.execPath}' '${probe}' '${out}' '${pidFile}' & wait`
-    const term = spawn('script', ['-qec', `bash --norc -i -c "${job}"`, '/dev/null'], { env: { ...process.env, HOME: work }, stdio: 'ignore', detached: true })
+    // util-linux script takes the command as one string, macOS's (BSD) as the arguments after the log file
+    const args = MAC ? ['-q', '/dev/null', 'bash', '--norc', '-i', '-c', job] : ['-qec', `bash --norc -i -c "${job}"`, '/dev/null']
+    const term = spawn('script', args, { env: { ...process.env, HOME: work }, stdio: 'ignore', detached: true })
     try {
       await vi.waitFor(() => expect(existsSync(out)).toBe(true), { timeout: 8000, interval: 200 })
       expect(readFileSync(out, 'utf8')).toContain('/')

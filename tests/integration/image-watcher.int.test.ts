@@ -62,6 +62,15 @@ describe('watchImages', () => {
     expect(events).not.toContain(`add:${png}`)
   })
 
+  it('reports an image written the moment watching starts, before the OS reports anything (FSEvents on macOS)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ct-watch-'))
+    const png = join(root, 'early.png')
+    const events = watch(root)
+    writeFileSync(png, 'x')
+    await vi.waitFor(() => expect(events).toContain(`add:${png}`), { timeout: 5000 })
+    expect(events).toEqual([`add:${png}`])
+  })
+
   it('reports every image of a burst too big for the OS to report one by one', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ct-watch-'))
     mkdirSync(join(root, 'shots'))
