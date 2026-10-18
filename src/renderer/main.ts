@@ -359,6 +359,8 @@ function applySettings(s: Settings): void {
   }
   if (activeId) renderStatus(activeId)
   reviewPanel.setTreeShown(s.review.fileTree)
+  // only a change of the setting itself: another one must not undo a drag of the tree's edge
+  if (s.review.treeWidth !== prev.review.treeWidth) reviewPanel.setTreeWidth(s.review.treeWidth)
 }
 
 async function boot(): Promise<void> {
@@ -480,6 +482,7 @@ async function boot(): Promise<void> {
     ct.platform
   )
   reviewPanel.setTreeShown(settings.review.fileTree)
+  reviewPanel.setTreeWidth(settings.review.treeWidth)
   sidePanel.onChange = () => {
     imagePanel.panelChanged()
     reviewPanel.panelChanged()

@@ -235,20 +235,21 @@ describe('applySettingEdit', () => {
 })
 
 describe('review settings', () => {
-  const defaults = { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true }
+  const defaults = { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200 }
 
-  it('defaults: no editor, the counter on, 640 px, ignored files hidden, tests shown, the default test patterns, the file tree shown', () => {
+  it('defaults: no editor, the counter on, 640 px, ignored files hidden, tests shown, the default test patterns, the file tree shown 200 px wide', () => {
     expect(parseSettings('{}').settings.review).toEqual(defaults)
     expect(defaults.testPatterns).toContain('**/tests/**')
     expect(defaults.testPatterns).toContain('*Test.*')
   })
 
   it('takes valid values and reports invalid ones', () => {
-    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false } })).settings.review)
-      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false })
-    const bad = parseSettings(JSON.stringify({ review: { editor: 5, hideIgnored: 'yes', width: 10, fileTree: 'no' } }))
+    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false, treeWidth: 320 } })).settings.review)
+      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false, treeWidth: 320 })
+    const bad = parseSettings(JSON.stringify({ review: { editor: 5, hideIgnored: 'yes', width: 10, fileTree: 'no', treeWidth: 50 } }))
     expect(bad.settings.review).toEqual(defaults)
-    expect(bad.errors).toEqual(['settings.json: invalid value for "review.editor", using default', 'settings.json: invalid value for "review.hideIgnored", using default', 'settings.json: invalid value for "review.width", using default', 'settings.json: invalid value for "review.fileTree", using default'])
+    expect(bad.errors).toEqual(['settings.json: invalid value for "review.editor", using default', 'settings.json: invalid value for "review.hideIgnored", using default', 'settings.json: invalid value for "review.width", using default', 'settings.json: invalid value for "review.fileTree", using default', 'settings.json: invalid value for "review.treeWidth", using default'])
+    expect(defaults.treeWidth).toBe(200)
   })
 
   it('hideTests must be a boolean; testPatterns a list of at most 200 non-empty strings of at most 200 characters, and an empty list is valid', () => {

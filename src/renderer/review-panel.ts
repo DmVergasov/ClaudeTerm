@@ -115,6 +115,9 @@ const QUERY_DELAY_MS = 150
 /** the longest a panel waits for the view after a click */
 const LOADING_MAX_MS = 10_000
 
+/** the narrowest the file tree drags to, and the least it leaves the diffs */
+const TREE_MIN_WIDTH = 120
+
 /** The Changes panel: scopes, files, hunks, comments and Send. */
 export class ReviewPanel {
   private update: ReviewUpdate | null = null
@@ -258,7 +261,34 @@ export class ReviewPanel {
       this.treeFilter.value = ''
       apply()
     })
-    this.treeEl.append(this.treeFilter, this.treeList)
+    const edge = el('div', 'review-tree-resize')
+    edge.title = 'Drag to resize'
+    this.setupTreeResize(edge)
+    this.treeEl.append(this.treeFilter, this.treeList, edge)
+  }
+
+  /** review.treeWidth: the tree's width until its edge is dragged */
+  setTreeWidth(px: number): void {
+    this.treeEl.style.width = `${px}px`
+  }
+
+  /** the tree's right edge drags its width, from TREE_MIN_WIDTH up to what leaves the diffs TREE_MIN_WIDTH as well */
+  private setupTreeResize(edge: HTMLElement): void {
+    edge.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startW = this.treeEl.getBoundingClientRect().width
+      const max = Math.max(TREE_MIN_WIDTH, (this.treeEl.parentElement?.getBoundingClientRect().width ?? 0) - TREE_MIN_WIDTH)
+      const move = (ev: MouseEvent): void => {
+        this.setTreeWidth(Math.round(Math.min(Math.max(startW + ev.clientX - startX, TREE_MIN_WIDTH), max)))
+      }
+      const up = (): void => {
+        document.removeEventListener('mousemove', move)
+        document.removeEventListener('mouseup', up)
+      }
+      document.addEventListener('mousemove', move)
+      document.addEventListener('mouseup', up)
+    })
   }
 
   /** review.fileTree: the tree and its filter show or hide; a hidden filter filters nothing, and is empty when it shows again */

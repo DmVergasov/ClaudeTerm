@@ -205,7 +205,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "hideTests": false,            // leave test files out of every view (the Hide tests checkbox in the panel)
     "testPatterns": ["**/tests/**", "*.test.*", "*Test.*"],  // which files are tests, matched against the path in the project (the default list is in the Settings window)
     "width": 640,                  // the panel's width when it opens, in px
-    "fileTree": true               // the file tree on the left of the diff (the ☰ button in the panel)
+    "fileTree": true,              // the file tree on the left of the diff (the ☰ button in the panel)
+    "treeWidth": 200               // the file tree's width in px; dragging its right edge changes it until the next start
   },
   "sidePanel": { "noRoom": "overlay" },  // a maximized window, or one with no room to widen for Images or Changes: "overlay" lays the panel over the terminal, "narrow" narrows the terminal
   "autoUpdate": true               // check GitHub for new versions in the background

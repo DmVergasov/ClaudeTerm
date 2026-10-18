@@ -9,10 +9,10 @@ import { FAKE_CLAUDE_SETTINGS, gitRepo, launchApp, launchClaudeTab, KEYS, KEY_LA
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
 /** a Claude tab in a fresh repository whose session ClaudeTerm knows, with an empty transcript; `edit` changes files first */
-async function reviewTab(edit?: (repo: string) => void) {
+async function reviewTab(edit?: (repo: string) => void, settings: object = FAKE_CLAUDE_SETTINGS) {
   const repo = gitRepo()
   edit?.(repo)
-  const launched = await launchClaudeTab(FAKE_CLAUDE_SETTINGS, repo)
+  const launched = await launchClaudeTab(settings, repo)
   const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
   mkdirSync(projectDir, { recursive: true })
   const transcriptPath = join(projectDir, `${SID}.jsonl`)
@@ -667,6 +667,40 @@ test('the file tree lists the files by folder, the diffs follow its order, and a
   await page.locator('.review-tree-dir[data-path="src/main"]').click()
   await expect(treeNames(page)).toHaveText(['docs', 'guide.md', 'src/main', 'a.ts', 'top.ts'])
   await expect(page.locator('.review-file')).toHaveCount(5)
+  await app.close()
+})
+
+const treeWidth = async (page: Page): Promise<number> => Math.round((await page.locator('.review-tree').boundingBox())!.width)
+
+/** drags the tree's right edge by dx pixels */
+async function dragTreeEdge(page: Page, dx: number): Promise<void> {
+  const h = (await page.locator('.review-tree-resize').boundingBox())!
+  const x = h.x + h.width / 2
+  const y = h.y + h.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + dx, y, { steps: 5 })
+  await page.mouse.up()
+}
+
+test('the right edge of the file tree drags to widen or narrow it, and stops at its minimum', async () => {
+  const { app, page } = await reviewTab(inFolders)
+  await page.keyboard.press(KEYS.changes)
+  await expect(treeNames(page).first()).toBeVisible()
+  expect(await treeWidth(page)).toBe(200)
+  await dragTreeEdge(page, 80)
+  expect(await treeWidth(page)).toBe(280)
+  await expect(page.locator('.review-files')).toBeVisible()
+  await dragTreeEdge(page, -400)
+  expect(await treeWidth(page)).toBe(120)
+  await app.close()
+})
+
+test('review.treeWidth in settings.json sets the width of the file tree', async () => {
+  const { app, page } = await reviewTab(inFolders, { ...FAKE_CLAUDE_SETTINGS, review: { treeWidth: 320 } })
+  await page.keyboard.press(KEYS.changes)
+  await expect(treeNames(page).first()).toBeVisible()
+  expect(await treeWidth(page)).toBe(320)
   await app.close()
 })
 
