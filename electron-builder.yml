@@ -53,7 +53,7 @@ mac:
   hardenedRuntime: false
   gatekeeperAssess: false
   notarize: false
+  # the zip's name: the dmg has one of its own
+  artifactName: ClaudeTerm-${version}-${arch}-mac.${ext}
 dmg:
   artifactName: ClaudeTerm-${version}-${arch}.${ext}
-zip:
-  artifactName: ClaudeTerm-${version}-${arch}-mac.${ext}

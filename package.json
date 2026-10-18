@@ -16,6 +16,7 @@
   },
   "main": "out/main/index.js",
   "scripts": {
+    "postinstall": "node scripts/node-pty-helper.mjs",
     "build:resources": "node scripts/build-resources.mjs",
     "dev": "npm run build:resources && electron-vite dev",
     "build": "npm run build:resources && electron-vite build",
