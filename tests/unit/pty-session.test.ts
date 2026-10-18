@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseStat, sessionAlive, sessionAliveByPgrep, waitSessionGone } from '../../src/main/pty-session'
+import { descendantsOf, parseStat, processAlive, sessionAlive, sessionPrograms, waitSessionGone } from '../../src/main/pty-session'
 
 const stat = (pid: number, comm: string, state: string, session: number): string => `${pid} (${comm}) ${state} 1 ${pid} ${session} 34816 0 -1 4194560`
 
@@ -32,15 +32,35 @@ describe('sessionAlive', () => {
   })
 })
 
-describe('sessionAliveByPgrep', () => {
-  it('asks pgrep for the session (macOS has no /proc): exit code 0 is alive, anything else or a failure is not', async () => {
+describe('descendantsOf', () => {
+  it('finds the programs a process started and the ones they started, not its siblings or parent', () => {
+    const ps = ['    1     0', '   40     1', '   41    40', '   42    41', '   43    42', '   50     1', '   51    50', ''].join('\n')
+    expect(descendantsOf(40, ps).sort()).toEqual([41, 42, 43])
+    expect(descendantsOf(43, ps)).toEqual([])
+    expect(descendantsOf(40, 'garbage\n')).toEqual([])
+  })
+})
+
+describe('sessionPrograms', () => {
+  it('asks ps for every process with its parent (macOS has no /proc, and its pgrep no -s); a failure finds none', async () => {
     const calls: string[][] = []
-    const run = (code: number) => async (file: string, args: string[]) => { calls.push([file, ...args]); return code }
-    expect(await sessionAliveByPgrep(40, run(0))).toBe(true)
-    expect(await sessionAliveByPgrep(40, run(1))).toBe(false)
-    expect(await sessionAliveByPgrep(40, run(2))).toBe(false)
-    expect(await sessionAliveByPgrep(40, () => Promise.reject(new Error('ENOENT')))).toBe(false)
-    expect(calls[0]).toEqual(['pgrep', '-s', '40'])
+    const run = async (file: string, args: string[]): Promise<string> => {
+      calls.push([file, ...args])
+      return '40 1\n41 40\n42 41\n'
+    }
+    expect(await sessionPrograms(40, run)).toEqual([41, 42])
+    expect(calls).toEqual([['ps', '-A', '-o', 'pid=,ppid=']])
+    expect(await sessionPrograms(40, () => Promise.reject(new Error('ENOENT')))).toEqual([])
+  })
+})
+
+describe('processAlive', () => {
+  it('a process another user owns is there too; one that does not exist is not', () => {
+    const fails = (code: string) => (): void => { throw Object.assign(new Error(code), { code }) }
+    expect(processAlive(41, () => {})).toBe(true)
+    expect(processAlive(41, fails('EPERM'))).toBe(true)
+    expect(processAlive(41, fails('ESRCH'))).toBe(false)
+    expect(processAlive(process.pid)).toBe(true)
   })
 })
 
@@ -52,11 +72,5 @@ describe('waitSessionGone', () => {
     const started = Date.now()
     await waitSessionGone(1, 100, () => true, 10)
     expect(Date.now() - started).toBeGreaterThanOrEqual(90)
-  })
-
-  it('takes a check that answers later, as pgrep does', async () => {
-    let checks = 0
-    await waitSessionGone(1, 5000, async () => ++checks < 3, 10)
-    expect(checks).toBe(3)
   })
 })

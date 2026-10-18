@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TreeWatcher } from '../../src/main/tree-watcher'
-import { WIN } from '../fixtures/platform'
+import { LINUX } from '../fixtures/platform'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 let watcher: TreeWatcher | null = null
@@ -19,7 +19,8 @@ function watch(root: string, maxDepth = 8): string[] {
   return names
 }
 
-describe.runIf(!WIN)('TreeWatcher', () => {
+// only Linux watches a tree this way: Windows and macOS have a recursive fs.watch of their own
+describe.runIf(LINUX)('TreeWatcher', () => {
   it('names files relative to the root, in folders made after it started too', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ct-tree-'))
     const names = watch(root)

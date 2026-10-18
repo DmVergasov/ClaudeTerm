@@ -2,15 +2,11 @@ import { execFile } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-/** runs a program and resolves its exit code */
-export type ExitCodeRunner = (file: string, args: string[]) => Promise<number>
+/** runs a program and resolves what it prints */
+export type OutputRunner = (file: string, args: string[]) => Promise<string>
 
-const exitCode: ExitCodeRunner = (file, args) => new Promise((resolve, reject) => {
-  execFile(file, args, { timeout: 1000 }, (e) => {
-    if (!e) resolve(0)
-    else if (typeof e.code === 'number') resolve(e.code)
-    else reject(e)
-  })
+const output: OutputRunner = (file, args) => new Promise((resolve, reject) => {
+  execFile(file, args, { timeout: 1000, maxBuffer: 16 * 1024 * 1024 }, (e, stdout) => (e ? reject(e) : resolve(stdout)))
 })
 
 /** State and session id from a /proc/<pid>/stat line; the program name in parentheses may hold spaces and ')'. */
@@ -45,20 +41,49 @@ export function sessionAlive(sid: number, proc = '/proc'): boolean {
   return false
 }
 
-/** Where there is no /proc (macOS): whether pgrep finds a process of the session. It exits with 1 when it finds none; a failure counts as none. */
-export async function sessionAliveByPgrep(sid: number, run: ExitCodeRunner = exitCode): Promise<boolean> {
+/** The processes `pid` started and the ones they started, from the lines "pid ppid" that `ps -A -o pid=,ppid=` prints. */
+export function descendantsOf(pid: number, ps: string): number[] {
+  const children = new Map<number, number[]>()
+  for (const line of ps.split('\n')) {
+    const [child, parent] = line.trim().split(/\s+/).map(Number)
+    if (Number.isInteger(child) && Number.isInteger(parent)) children.set(parent!, [...(children.get(parent!) ?? []), child!])
+  }
+  const found = new Set<number>()
+  const queue = [pid]
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    for (const c of children.get(next) ?? []) {
+      if (found.has(c)) continue
+      found.add(c)
+      queue.push(c)
+    }
+  }
+  return [...found]
+}
+
+/**
+ * Where there is no /proc (macOS, whose pgrep cannot select by session either): the programs a PTY's shell started,
+ * by who started them. They are noted before the shell is hung up: once it exits, launchd adopts them. None when ps fails.
+ */
+export async function sessionPrograms(pid: number, run: OutputRunner = output): Promise<number[]> {
   try {
-    return (await run('pgrep', ['-s', String(sid)])) === 0
+    return descendantsOf(pid, await run('ps', ['-A', '-o', 'pid=,ppid=']))
   } catch {
-    return false
+    return []
   }
 }
 
-/** /proc on Linux, pgrep elsewhere */
-export const sessionAliveHere = (sid: number): boolean | Promise<boolean> => (process.platform === 'linux' ? sessionAlive(sid) : sessionAliveByPgrep(sid))
+/** whether a process is still there; a zombie is until its parent collects it, which launchd and init do at once */
+export function processAlive(pid: number, signal: (pid: number, sig: number) => void = process.kill): boolean {
+  try {
+    signal(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
 
 /** Resolves once the session has no live process, or after timeoutMs. */
-export async function waitSessionGone(sid: number, timeoutMs: number, alive: (sid: number) => boolean | Promise<boolean> = sessionAliveHere, stepMs = 100): Promise<void> {
+export async function waitSessionGone(sid: number, timeoutMs: number, alive: (sid: number) => boolean = sessionAlive, stepMs = 100): Promise<void> {
   const until = Date.now() + timeoutMs
-  while ((await alive(sid)) && Date.now() < until) await new Promise((r) => setTimeout(r, stepMs))
+  while (alive(sid) && Date.now() < until) await new Promise((r) => setTimeout(r, stepMs))
 }

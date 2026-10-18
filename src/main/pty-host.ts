@@ -1,5 +1,5 @@
 import * as pty from 'node-pty'
-import { waitSessionGone } from './pty-session'
+import { processAlive, sessionAlive, sessionPrograms, waitSessionGone } from './pty-session'
 
 /** how long a killed tab's programs get to quit after SIGHUP before its PTY counts as exited (not Windows) */
 export const SESSION_EXIT_WAIT_MS = 2000
@@ -42,6 +42,8 @@ export const spawnPty: SpawnPty = (o) => {
   })
   let alive = true
   let killed = false
+  /** macOS: the programs of the session when it was hung up, as it has no /proc to find them by session */
+  let programs: number[] | null = null
   let markExited = (): void => {}
   const exited = new Promise<void>((r) => { markExited = r })
   running.add(exited)
@@ -55,8 +57,10 @@ export const spawnPty: SpawnPty = (o) => {
     }
     // ConPTY ends every program of the console at once. Elsewhere SIGHUP reaches the shell and the programs it ran
     // (claude) take a moment to save and quit: wait for them, so a restart never overlaps them.
-    if (killed && process.platform !== 'win32') void waitSessionGone(p.pid, SESSION_EXIT_WAIT_MS).then(report)
-    else report()
+    if (killed && process.platform !== 'win32') {
+      const left = programs
+      void waitSessionGone(p.pid, SESSION_EXIT_WAIT_MS, left ? () => left.some((c) => processAlive(c)) : sessionAlive).then(report)
+    } else report()
   })
   return {
     pid: p.pid,
@@ -66,7 +70,11 @@ export const spawnPty: SpawnPty = (o) => {
       if (!alive) return
       alive = false
       killed = true
-      try { p.kill() } catch { /* process already gone */ }
+      const hangUp = (): void => {
+        try { p.kill() } catch { /* process already gone */ }
+      }
+      if (process.platform === 'darwin') void sessionPrograms(p.pid).then((pids) => { programs = pids; hangUp() })
+      else hangUp()
     }
   }
 }
