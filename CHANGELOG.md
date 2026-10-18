@@ -2,6 +2,14 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.6.0
+
+### New
+
+- **ClaudeTerm for macOS.** A disk image for Apple Silicon and Intel Macs, macOS 12 or later. It is not signed with an Apple Developer ID, so macOS blocks its first start: after dragging ClaudeTerm to Applications, run `xattr -dr com.apple.quarantine /Applications/ClaudeTerm.app` once, or click **Open Anyway** in **System Settings → Privacy & Security**. The shortcuts use ⌘ where Windows and Linux use Ctrl+Shift — ⌘T, ⌘W, ⌘C, ⌘V, ⌘F, ⌘⇧H, ⌘1…9 — and Ctrl keys go to Claude Code, so Ctrl+C interrupts and Ctrl+V pastes an image. The README has the full table.
+- **ClaudeTerm updates itself on macOS too.** It downloads a new version, checks it and puts it in place of the old one when you click **Restart**. Where it cannot replace itself, for example when started from the disk image instead of Applications, the update banner's **Download** opens the release page.
+- **Drag the file tree's edge in the Changes panel** to make the tree wider or narrower. `review.treeWidth` in settings.json sets the width it starts with.
+
 ## 0.5.0
 
 ### New
