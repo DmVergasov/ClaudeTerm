@@ -3,7 +3,7 @@
   "productName": "ClaudeTerm",
   "version": "0.5.0",
   "private": true,
-  "description": "A terminal built for Claude Code, on Windows and Linux: tabs, a conversation image panel, a live status bar and session restore",
+  "description": "A terminal built for Claude Code, on Windows, macOS and Linux: tabs, a conversation image panel, a live status bar and session restore",
   "license": "MIT",
   "author": "Dmitry Vergasov",
   "homepage": "https://github.com/DmVergasov/ClaudeTerm#readme",
@@ -24,6 +24,7 @@
     "test:e2e": "npm run build && playwright test",
     "dist": "npm run build && electron-builder --win nsis",
     "dist:linux": "npm run build && electron-builder --linux deb",
+    "dist:mac": "npm run build && electron-builder --mac",
     "screenshots": "npm run build && playwright test -c playwright.screenshots.config.ts"
   },
   "dependencies": {

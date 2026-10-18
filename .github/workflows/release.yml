@@ -46,9 +46,53 @@ jobs:
             dist/latest-linux.yml
           if-no-files-found: error
 
+  mac:
+    name: Build the macOS packages
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check that the tag matches package.json
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ($expected)"
+            exit 1
+          fi
+
+      # what's new for the update banner: electron-builder puts build/release-notes.md into latest-mac.yml
+      - name: Take the update notes from CHANGELOG.md
+        run: node scripts/release-notes.mjs --updater "${GITHUB_REF_NAME#v}" > build/release-notes.md
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run dist:mac -- --publish never
+
+      - name: Check that the packaged spawn-helper can run
+        run: |
+          test -x dist/mac-arm64/ClaudeTerm.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper
+          test -x dist/mac/ClaudeTerm.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/darwin-x64/spawn-helper
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-packages
+          # the dmg is what people download; latest-mac.yml and the zips are what installed copies update from
+          path: |
+            dist/ClaudeTerm-*.dmg
+            dist/ClaudeTerm-*-mac.zip
+            dist/latest-mac.yml
+          if-no-files-found: error
+
   release:
     name: Build the installer and publish the release
-    needs: linux
+    needs: [linux, mac]
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -88,15 +132,21 @@ jobs:
           name: linux-package
           path: dist
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-packages
+          path: dist
+
       - name: Publish the GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        # latest.yml / latest-linux.yml are what installed copies read to find a new version (electron-updater);
-        # the blockmap lets Windows download only the changed parts
+        # latest.yml / latest-linux.yml / latest-mac.yml are what installed copies read to find a new version
+        # (electron-updater); the blockmap lets Windows download only the changed parts
         run: >
           gh release create "$GITHUB_REF_NAME"
           dist/ClaudeTerm-Setup-*.exe dist/ClaudeTerm-Setup-*.exe.blockmap dist/latest.yml
           dist/ClaudeTerm-*.deb dist/latest-linux.yml
+          dist/ClaudeTerm-*.dmg dist/ClaudeTerm-*-mac.zip dist/latest-mac.yml
           --title "ClaudeTerm ${GITHUB_REF_NAME#v}"
           --notes-file release-notes.md

@@ -49,6 +49,10 @@ export class TerminalView {
       theme: o.theme,
       scrollback: o.scrollback,
       cursorBlink: true,
+      // on macOS xterm selects the word under a right click, which the right click would then copy instead of pasting
+      rightClickSelectsWord: false,
+      // ⌥-drag selects while a program (Claude Code) has the mouse, as Shift-drag does on Windows and Linux
+      macOptionClickForcesSelection: true,
       ...windowsPtyOption(o.windowsBuild)
     })
     this.fit = new FitAddon()

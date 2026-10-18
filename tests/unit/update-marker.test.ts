@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { consumeUpdateMarker, MARKER_MAX_AGE_MS, UPDATE_MARKER, writeUpdateMarker } from '../../src/main/update-marker'
+import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, MARKER_MAX_AGE_MS, UPDATE_MARKER, writeUpdateMarker } from '../../src/main/update-marker'
 
 const dir = () => mkdtempSync(join(tmpdir(), 'ct-marker-'))
 
@@ -40,5 +40,18 @@ describe('update marker', () => {
 
   it('writing into a missing folder fails softly', () => {
     expect(writeUpdateMarker(join(dir(), 'missing', 'deeper'), 1000)).toBe(false)
+  })
+})
+
+describe('failed update marker', () => {
+  it('the version the swap script could not install, read once; anything else in the file is ignored', () => {
+    const d = dir()
+    expect(consumeFailedUpdate(d)).toBeNull()
+    writeFileSync(join(d, FAILED_UPDATE), '0.6.0')
+    expect(consumeFailedUpdate(d)).toBe('0.6.0')
+    expect(existsSync(join(d, FAILED_UPDATE))).toBe(false)
+    writeFileSync(join(d, FAILED_UPDATE), 'rm -rf /')
+    expect(consumeFailedUpdate(d)).toBeNull()
+    expect(existsSync(join(d, FAILED_UPDATE))).toBe(false)
   })
 })

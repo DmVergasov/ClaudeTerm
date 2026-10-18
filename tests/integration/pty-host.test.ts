@@ -42,7 +42,7 @@ async function startProbe(onHup: string): Promise<{ kill(): void; child: number;
   return { kill: () => h.kill(), child: Number(/child (\d+)/.exec(out)![1]), exitedAt: () => exitedAt }
 }
 
-describe.runIf(!WIN)('spawnPty on Linux', () => {
+describe.runIf(!WIN)('spawnPty on Linux and macOS', () => {
   it('runs a process and reports output and exit code', async () => {
     let out = ''
     const code = await new Promise<number>((resolve) => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { WIN } from '../fixtures/platform'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, makeDataDir, TEST_SHELL, type Launched } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, makeDataDir, TEST_SHELL, type Launched, KEYS } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const WORK = '0b6f3c2e-4d5a-4e6f-8a7b-9c0d1e2f3a4b'
@@ -61,7 +61,7 @@ test('a new Claude tab opened from a tab on an account runs on the same account'
   const { app, page, work } = await launchWithAccounts()
   await openClaude(page, work, WORK)
   await page.locator('.terminal-host:visible .xterm').click()
-  await page.keyboard.press('Control+Shift+L')
+  await page.keyboard.press(KEYS.newClaudeTab)
   await page.waitForFunction(() => window.__ct!.tabIds().length === 3)
   const id = (await page.evaluate(() => window.__ct!.activeTabId()))!
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`token=${WORK_TOKEN}`)
@@ -211,7 +211,7 @@ test('without extra accounts there is no account in the status bar or the menus'
 /** Ctrl+, in the main window; returns the settings window once its page is up */
 async function openSettings(app: ElectronApplication, page: Page): Promise<Page> {
   await page.locator('.terminal-host:visible .xterm').click()
-  const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press('Control+Comma')])
+  const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
   await win.waitForSelector('#settings .settings-heading')
   return win
 }

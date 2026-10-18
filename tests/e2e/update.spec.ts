@@ -131,6 +131,22 @@ test('a downloaded update shows a banner whose button asks to restart into it', 
   await app.close()
 })
 
+test('a version this copy cannot install itself (macOS) shows a banner whose Download button asks for its release page', async () => {
+  const { app, page } = await launchApp()
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeAllListeners('update:install')
+    ipcMain.on('update:install', () => { (globalThis as Record<string, unknown>).__installAsked = true })
+  })
+  await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].webContents.send('ev:update', s), { status: 'available', version: '9.9.9', notes: NOTES.slice(0, 1) })
+  const banner = page.locator('#update-banner')
+  await expect(banner).toContainText('ClaudeTerm 9.9.9 is available.')
+  await expect(banner.locator('.banner-restart')).toHaveCount(0)
+  await expect(banner.locator('.banner-notes')).toHaveText("What's new ▾")
+  await banner.locator('.banner-download').click()
+  await expect.poll(() => app.evaluate(() => (globalThis as Record<string, unknown>).__installAsked === true)).toBe(true)
+  await app.close()
+})
+
 test('a dismissed banner stays hidden for that version but returns for a newer one', async () => {
   const { app, page } = await launchApp()
   const push = (v: string) => app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].webContents.send('ev:update', s), ready(v))

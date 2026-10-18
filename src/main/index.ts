@@ -1,8 +1,8 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, shell, type Rectangle } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, safeStorage, screen, shell, type Rectangle } from 'electron'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { AccountResult, AccountsView } from '../shared/accounts'
 import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import { socketDir } from '../shared/protocol'
@@ -23,11 +23,13 @@ import { ReviewHub } from './review-hub'
 import { createSources, nodeIo } from './review-sources'
 import { checkImageFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
 import { ImageHub } from './image-hub'
-import { claudeTempRoot, sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
+import { claudeTempRoot, realTempRoot, sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
 import { handleImgProtocol, registerImgScheme } from './img-protocol'
 import { createLogger } from './log'
 import { PanelRoom } from './panel-room'
 import { findExecutable, isExecutableFile } from './login-env'
+import { macMenuTemplate } from './mac-menu'
+import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePage, startSwap } from './mac-update'
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
 import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
@@ -40,12 +42,12 @@ import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
 import { socketProblem } from './socket-file'
-import { createSoundPlayer, linuxSoundDeps, wavPlayer } from './sound'
+import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { TabManager } from './tab-manager'
 import { readAgentMeta } from './transcript-agent-info'
-import { consumeUpdateMarker, writeUpdateMarker } from './update-marker'
-import { Updater } from './updater'
+import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, writeUpdateMarker } from './update-marker'
+import { Updater, type UpdaterBackend } from './updater'
 import { createUpdateBackend } from './update-backend'
 import { cleanupImageCache, findTranscript, locateTranscript, TranscriptFeed } from './transcript-feed'
 import { showWindow } from './window-show'
@@ -97,7 +99,8 @@ function resizeWindow(win: BrowserWindow, r: Rectangle): Promise<void> {
 }
 
 function bootstrap(): void {
-  Menu.setApplicationMenu(null)
+  // Windows and Linux: no menu bar; macOS gets its own below, once the settings window can open
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
   let win: BrowserWindow | null = null
   let rendererReady = false
   let pipe: PipeServerHandle | null = null
@@ -160,7 +163,8 @@ function bootstrap(): void {
     previous ? { tabs: previous.tabs.length, claudeTabs: previous.tabs.filter((t) => t.kind === 'claude').length, savedAt: previous.savedAt } : null
 
   const imageCacheRoot = join(tmpdir(), 'ClaudeTerm', 'images')
-  const claudeRoot = claudeTempRoot({ platform: process.platform, env: process.env, tmpdir: tmpdir(), uid: process.getuid?.() ?? -1 })
+  const tempRoot = claudeTempRoot({ platform: process.platform, env: process.env, tmpdir: tmpdir(), uid: process.getuid?.() ?? -1 })
+  const claudeRoot = process.platform === 'win32' ? tempRoot : realTempRoot(tempRoot, realpathSync)
   cleanupImageCache(imageCacheRoot, 7 * 24 * 60 * 60 * 1000)
   const imageTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const images = new ImageHub({
@@ -203,7 +207,9 @@ function bootstrap(): void {
   const playSound = createSoundPlayer({
     ...(process.platform === 'win32'
       ? { player: (f: string) => wavPlayer(f, process.env), systemSound: null }
-      : linuxSoundDeps(process.env, (cmd) => findExecutable(cmd, process.env.PATH ?? '', isExecutableFile) !== null, existsSync)),
+      : process.platform === 'darwin'
+        ? macSoundDeps(process.env, existsSync)
+        : linuxSoundDeps(process.env, (cmd) => findExecutable(cmd, process.env.PATH ?? '', isExecutableFile) !== null, existsSync)),
     beep: () => shell.beep(),
     spawn: (p) => spawn(p.file, p.args, { env: p.env, windowsHide: true, stdio: 'ignore' }),
     warn: toast
@@ -440,8 +446,34 @@ function bootstrap(): void {
     focusWindow()
   })
 
+  const updateFeed = process.env.CLAUDETERM_UPDATE_URL
+  // macOS: the swap script could not put the downloaded version in place of this one
+  const failedUpdate = process.platform === 'darwin' ? consumeFailedUpdate(dataDir) : null
+  if (failedUpdate) toast(`ClaudeTerm ${failedUpdate} could not replace this copy: download it from its release page`)
+  const updateBackend = (): UpdaterBackend | null => {
+    if (!app.isPackaged || isTest) return null
+    if (process.platform !== 'darwin') return createUpdateBackend(autoUpdater, { testFeed: updateFeed, installOnQuit: process.platform === 'win32', log })
+    const canWrite = (p: string): boolean => {
+      try {
+        accessSync(p, constants.W_OK)
+        return true
+      } catch {
+        return false
+      }
+    }
+    return createMacUpdateBackend(autoUpdater, {
+      bundle: bundleOf(process.execPath),
+      arch: process.arch,
+      canReplace: (bundle) => canWrite(bundle) && canWrite(dirname(bundle)),
+      failedVersion: failedUpdate,
+      fileUrl: (version, name) => feedFileUrl(version, name, updateFeed),
+      fetch: (version, url, sha512) => prepareUpdate({ stagingDir: join(dataDir, 'update'), version, url, sha512, get: (u) => net.fetch(u) }),
+      swap: (bundle, next, version) => startSwap({ pid: process.pid, app: bundle, next, version, failedFile: join(dataDir, FAILED_UPDATE), relaunch: '/usr/bin/open' }),
+      quit: () => app.quit()
+    }, { testFeed: updateFeed, log })
+  }
   const updater = new Updater({
-    backend: app.isPackaged && !isTest ? createUpdateBackend(autoUpdater, { testFeed: process.env.CLAUDETERM_UPDATE_URL, installOnQuit: process.platform === 'win32', log }) : null,
+    backend: updateBackend(),
     currentVersion: app.getVersion(),
     enabled: () => settings.autoUpdate,
     publish: (s) => send(IPC.evUpdate, s),
@@ -450,6 +482,7 @@ function bootstrap(): void {
       sessions.flush()
       if (!writeUpdateMarker(dataDir, Date.now())) log.warn('cannot write the update restart marker')
     },
+    openReleasePage: (version) => void shell.openExternal(releasePage(version)),
     log: (m) => log.info(m)
   })
   updater.start()
@@ -702,6 +735,7 @@ function bootstrap(): void {
     }
   })
   ipcMain.on(IPC.settingsOpenWindow, () => settingsWindow.open())
+  if (process.platform === 'darwin') Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate(app.name, () => settingsWindow.open())))
   ipcMain.handle(IPC.clipboardRead, async (): Promise<ClipboardContent> => ({ text: await clipboard.readText(), hasImage: await clipboard.has('image/png') }))
   ipcMain.on(IPC.clipboardWriteText, (_e, text: string) => { void clipboard.writeText(text) })
   ipcMain.on(IPC.openExternal, (_e, url: string) => { if (/^https?:\/\//i.test(url)) void shell.openExternal(url) })

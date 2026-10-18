@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseStat, sessionAlive, waitSessionGone } from '../../src/main/pty-session'
+import { parseStat, sessionAlive, sessionAliveByPgrep, waitSessionGone } from '../../src/main/pty-session'
 
 const stat = (pid: number, comm: string, state: string, session: number): string => `${pid} (${comm}) ${state} 1 ${pid} ${session} 34816 0 -1 4194560`
 
@@ -32,6 +32,18 @@ describe('sessionAlive', () => {
   })
 })
 
+describe('sessionAliveByPgrep', () => {
+  it('asks pgrep for the session (macOS has no /proc): exit code 0 is alive, anything else or a failure is not', async () => {
+    const calls: string[][] = []
+    const run = (code: number) => async (file: string, args: string[]) => { calls.push([file, ...args]); return code }
+    expect(await sessionAliveByPgrep(40, run(0))).toBe(true)
+    expect(await sessionAliveByPgrep(40, run(1))).toBe(false)
+    expect(await sessionAliveByPgrep(40, run(2))).toBe(false)
+    expect(await sessionAliveByPgrep(40, () => Promise.reject(new Error('ENOENT')))).toBe(false)
+    expect(calls[0]).toEqual(['pgrep', '-s', '40'])
+  })
+})
+
 describe('waitSessionGone', () => {
   it('resolves as soon as the session is empty, or at the time limit', async () => {
     let checks = 0
@@ -40,5 +52,11 @@ describe('waitSessionGone', () => {
     const started = Date.now()
     await waitSessionGone(1, 100, () => true, 10)
     expect(Date.now() - started).toBeGreaterThanOrEqual(90)
+  })
+
+  it('takes a check that answers later, as pgrep does', async () => {
+    let checks = 0
+    await waitSessionGone(1, 5000, async () => ++checks < 3, 10)
+    expect(checks).toBe(3)
   })
 })

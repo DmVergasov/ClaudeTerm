@@ -8,7 +8,7 @@ import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
 import { Lightbox } from './lightbox'
 import { RecentSessionsWindow } from './recent-sessions'
-import { imagePasteInput, mapKey, type KeyAction } from './keymap'
+import { imagePasteInput, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar } from './search'
 import { closeMenu, showMenu, type MenuItem } from './menu'
 import { RestoreBanner } from './restore-banner'
@@ -214,7 +214,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
 }
 
 function onTerminalKey(tabId: string, e: KeyboardEvent): boolean {
-  const action = mapKey(e)
+  const action = mapKey(e, ct.platform)
   if (!action) return true
   if (action.type === 'copyOrInterrupt') {
     const t = tabs.get(tabId)
@@ -383,7 +383,7 @@ async function boot(): Promise<void> {
       runAction({ type: 'toggleChanges' }, activeId)
       if (activeId) tabs.get(activeId)?.view.term.focus()
     }
-  })
+  }, ct.platform)
   searchBar = new SearchBar(
     document.getElementById('search')!,
     () => (activeId ? tabs.get(activeId)?.view.search ?? null : null),
@@ -392,7 +392,7 @@ async function boot(): Promise<void> {
   document.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement | null
     if (target?.closest('.xterm') || (target?.tagName === 'INPUT' && !target.classList.contains('review-find-input')) || target?.tagName === 'TEXTAREA') return
-    const a = mapKey(e)
+    const a = mapKey(e, ct.platform)
     if (!a || a.type === 'send' || a.type === 'copyOrInterrupt' || a.type === 'smartPaste' || a.type === 'paste' || a.type === 'copy') return
     e.preventDefault()
     runAction(a, activeId)
@@ -407,8 +407,8 @@ async function boot(): Promise<void> {
     opening: closeMenu,
     setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
     closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
-  })
-  statusBar = new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'), (anchor) => {
+  }, ct.platform)
+  statusBar =new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'), (anchor) => {
     const r = anchor.getBoundingClientRect()
     // the menu opens over the status bar, kept inside the window
     if (activeId) showMenu({ x: r.left, y: r.top }, continueItems(activeId))
@@ -549,7 +549,7 @@ async function boot(): Promise<void> {
     t.attention = false
     renderTabs()
   })
-  ct.onPtyExit((id, code) => tabs.get(id)?.view.write(`\r\n\x1b[90m[process exited with code ${code}] Enter — restart, Ctrl+Shift+W — close\x1b[0m\r\n`))
+  ct.onPtyExit((id, code) => tabs.get(id)?.view.write(`\r\n\x1b[90m[process exited with code ${code}] Enter — restart, ${shortcutLabel('closeTab', ct.platform)} — close\x1b[0m\r\n`))
   ct.onToast((m) => showToast(m))
   ct.onSettings(applySettings)
   window.addEventListener('focus', () => {

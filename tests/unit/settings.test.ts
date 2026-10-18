@@ -11,6 +11,10 @@ describe('parseSettings', () => {
     expect(parseSettings('  ')).toEqual({ settings: DEFAULT_SETTINGS, errors: [] })
   })
 
+  it('the default font has a monospace font of each system: Cascadia Mono or Consolas on Windows, Menlo on macOS', () => {
+    expect(DEFAULT_SETTINGS.font.family).toBe('Cascadia Mono, Consolas, Menlo, monospace')
+  })
+
   it('merges partial overrides', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])

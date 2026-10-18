@@ -86,3 +86,11 @@ export function linuxSoundDeps(env: NodeJS.ProcessEnv, has: (cmd: string) => boo
   }
   return { player: (f) => linuxPlayer(f, cached, env), systemSound: exists(FREEDESKTOP_SOUND) ? FREEDESKTOP_SOUND : null }
 }
+
+/** One of the alert sounds every Mac has */
+export const MAC_SOUND = '/System/Library/Sounds/Glass.aiff'
+
+/** afplay, part of macOS, plays .wav and .aiff. The path is an argument, never shell text. */
+export function macSoundDeps(env: NodeJS.ProcessEnv, exists: (path: string) => boolean): Pick<SoundPlayerDeps, 'player' | 'systemSound'> {
+  return { player: (f) => ({ file: '/usr/bin/afplay', args: [f], env }), systemSound: exists(MAC_SOUND) ? MAC_SOUND : null }
+}

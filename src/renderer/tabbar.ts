@@ -1,5 +1,6 @@
 import type { TabKind } from '../shared/types'
 import { formatBadge } from './badge'
+import { shortcutLabel } from './keymap'
 
 /** one full fade in and out of the attention pulse: 2 × the 1.2 s alternate animation in styles.css */
 const PULSE_CYCLE_MS = 2400
@@ -53,9 +54,9 @@ export class TabBar {
   private list = document.createElement('div')
 
   /** the buttons are built once: a re-render (a busy Claude retitles its tab every second) must not drop a click or a tooltip */
-  constructor(root: HTMLElement, private readonly cb: TabBarCallbacks) {
+  constructor(root: HTMLElement, private readonly cb: TabBarCallbacks, private readonly platform: string) {
     this.list.className = 'tabs'
-    const plus = button('+', 'tab-new', 'New tab (Ctrl+Shift+T)', () => this.cb.newTab())
+    const plus = button('+', 'tab-new', `New tab (${shortcutLabel('newTab', platform)})`, () => this.cb.newTab())
     const more = button('▾', 'tab-menu', 'Profiles', (e) => this.cb.openMenu(e.currentTarget as HTMLElement))
     this.imagesButton = this.createImagesButton()
     this.changesButton = this.createChangesButton()
@@ -90,13 +91,13 @@ export class TabBar {
   }
 
   private createImagesButton(): HTMLButtonElement {
-    return this.createToggle('tab-images-toggle', 'Images (Ctrl+Shift+I)', () => this.cb.toggleImages(),
+    return this.createToggle('tab-images-toggle', `Images (${shortcutLabel('toggleImages', this.platform)})`,() => this.cb.toggleImages(),
       '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
       '<rect x="1.65" y="2.65" width="12.7" height="10.7" rx="1.5"/><circle cx="5.3" cy="6.2" r="1.1"/><path d="M2 12l3.7-3.7 2.6 2.6 2-2L14 12.5"/></svg>')
   }
 
   private createChangesButton(): HTMLButtonElement {
-    return this.createToggle('tab-changes-toggle', 'Changes (Ctrl+Shift+D)', () => this.cb.toggleChanges(),
+    return this.createToggle('tab-changes-toggle', `Changes (${shortcutLabel('toggleChanges', this.platform)})`,() => this.cb.toggleChanges(),
       '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
       '<path d="M3.65 1.65h6.2l2.5 2.5v10.2h-8.7z"/><path d="M5.5 6.5h4M7.5 4.5v4"/><path d="M5.5 11.5h4"/></svg>')
   }
@@ -161,7 +162,7 @@ export class TabBar {
       b.textContent = `🖼${item.images}`
       el.append(b)
     }
-    el.append(button('×', 'tab-close', 'Close (Ctrl+Shift+W)', (e) => {
+    el.append(button('×', 'tab-close', `Close (${shortcutLabel('closeTab', this.platform)})`,(e) => {
       e.stopPropagation()
       this.cb.close(item.id)
     }))

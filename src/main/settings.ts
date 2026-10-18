@@ -8,7 +8,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   claude: { command: 'claude', shellProfile: null },
   profiles: [],
-  font: { family: 'Cascadia Mono, Consolas, monospace', size: 12 },
+  font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
   theme: 'Campbell',
   scrollback: 10000,
   imageWatch: {

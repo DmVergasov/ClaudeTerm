@@ -6,7 +6,7 @@ file is the rulebook every change is held to.
 
 ## Project
 
-ClaudeTerm is a terminal built for Claude Code, on Windows 10/11 and Linux: Electron 44, TypeScript, xterm.js and
+ClaudeTerm is a terminal built for Claude Code, on Windows 10/11, macOS and Linux: Electron 44, TypeScript, xterm.js and
 node-pty (ConPTY on Windows). It runs shell tabs and Claude tabs, and gives Claude tabs an image panel, a Changes
 (code review) panel, a status bar and session restore. It learns what Claude does only from Claude Code's own
 hooks, `statusLine` and transcript files — it never patches Claude Code.
@@ -35,8 +35,8 @@ npm run test:e2e      # builds, then end-to-end tests against the real Electron 
 npm run screenshots   # regenerates the README images
 ```
 
-CI runs typecheck, `npm test`, the build and the e2e suite on **both `windows-latest` and `ubuntu-latest`**, and
-a change is done only when both are green. On Linux without a display the e2e tests run under `xvfb-run -a`, with
+CI runs typecheck, `npm test`, the build and the e2e suite on **`windows-latest`, `ubuntu-latest` and `macos-latest`**,
+and a change is done only when all three are green. On Linux without a display the e2e tests run under `xvfb-run -a`, with
 `ELECTRON_DISABLE_SANDBOX=1` where there is no setuid sandbox helper (Ubuntu 24.04, WSL).
 
 ## Bug fixes need a proving test
@@ -108,5 +108,6 @@ for the real user, or read or write the real `~/.claude` or `%APPDATA%\ClaudeTer
   (New / Changes / Fixes) — never a list of commits. The Release workflow stops when the section is missing.
 - Versions: a release with a new feature bumps the middle number (`0.1.9` → `0.2.0`); fixes and small updates bump
   the last one (`0.2.0` → `0.2.1`).
-- Push a tag `vX.Y.Z` matching `package.json` once CI is green on both systems; the Release workflow builds the
-  Windows installer and the Linux package and publishes the GitHub release.
+- Push a tag `vX.Y.Z` matching `package.json` once CI is green on all three systems; the Release workflow builds the
+  Windows installer, the Linux package and the macOS disk images and publishes the GitHub release. The macOS build
+  has no Developer ID: it is signed ad hoc, and updates itself without Squirrel.Mac (`src/main/mac-update.ts`).

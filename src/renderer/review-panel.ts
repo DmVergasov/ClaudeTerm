@@ -1,4 +1,5 @@
 import type { ReviewFile, ReviewFileNote, ReviewHunk, ReviewLine, ReviewScope, ReviewUpdate } from '../shared/review'
+import { isPrimaryKey, shortcutLabel } from './keymap'
 import { showMenu } from './menu'
 import {
   anchorOf, attemptSend, describeLines, draftAfterSend, formatSendMessage, locate, moveAnchor, reanchorComment, sendErrorAfter, viewKeyOf,
@@ -157,7 +158,7 @@ export class ReviewPanel {
   private loadingTimer: ReturnType<typeof setTimeout> | null = null
   private readonly samePath: (a: string, b: string) => boolean
 
-  constructor(private readonly root: HTMLElement, private readonly panel: SidePanel, private readonly cb: ReviewPanelCallbacks, platform: string) {
+  constructor(private readonly root: HTMLElement, private readonly panel: SidePanel, private readonly cb: ReviewPanelCallbacks, private readonly platform: string) {
     this.samePath = platform === 'win32' ? (a, b) => a.toLowerCase() === b.toLowerCase() : (a, b) => a === b
     const refresh = el('button', 'review-refresh', '⟳')
     refresh.title = 'Refresh'
@@ -168,7 +169,7 @@ export class ReviewPanel {
     })
     this.expandBtn.title = 'Expand'
     this.expandBtn.addEventListener('click', () => this.panel.setExpanded(!this.panel.expanded))
-    this.findBtn.title = 'Find (Ctrl+F)'
+    this.findBtn.title = `Find (${shortcutLabel('panelFind', platform)})`
     this.findBtn.addEventListener('click', () => this.openFind())
     const collapse = el('button', 'review-collapse-all', '⊟')
     collapse.title = 'Collapse all files'
@@ -192,12 +193,14 @@ export class ReviewPanel {
     root.tabIndex = -1
     // the scroller takes the focus of a click in the diff, so that PageDown and the arrows scroll it
     this.filesEl.tabIndex = -1
+    // capture phase, stopped there: on macOS ⌘F is also the window's find in the terminal
     document.addEventListener('keydown', (e) => {
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyF' && this.panel.isShowing('changes') && root.parentElement?.contains(document.activeElement)) {
+      if (isPrimaryKey(e, platform) && e.code === 'KeyF' && this.panel.isShowing('changes') && root.parentElement?.contains(document.activeElement)) {
         e.preventDefault()
+        e.stopPropagation()
         this.openFind()
       }
-    })
+    }, true)
     this.render()
   }
 
@@ -776,7 +779,7 @@ export class ReviewPanel {
     area.placeholder = 'Comment for Claude'
     area.addEventListener('input', () => { d.text = area.value })
     area.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.ctrlKey) {
+      if (e.key === 'Enter' && (this.platform === 'darwin' ? e.metaKey : e.ctrlKey)) {
         e.preventDefault()
         this.saveDraft(u.tabId)
       } else if (e.key === 'Escape') {

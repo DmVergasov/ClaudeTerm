@@ -3,7 +3,7 @@ import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
-import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, TEST_SHELL, windowPlaces } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, TEST_SHELL, windowPlaces, KEYS } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -19,7 +19,7 @@ const readSettings = (dataDir: string): Record<string, any> => JSON.parse(readFi
 /** Ctrl+, in the main window; returns the settings window once its page is up */
 async function openSettings(app: ElectronApplication, page: Page): Promise<Page> {
   await page.locator('.terminal-host:visible .xterm').click()
-  const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press('Control+Comma')])
+  const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
   await win.waitForSelector('#settings .settings-heading')
   return win
 }
@@ -62,7 +62,7 @@ test('zoom survives a change to another setting; a font change resets it', async
   const { app, page } = await launchApp({ settings: QUIET })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await page.locator('.terminal-host:visible .xterm').click()
-  await page.keyboard.press('Control+Equal')
+  await page.keyboard.press(KEYS.zoomIn)
   await expect.poll(() => renderedFontSize(page)).not.toBe('16px')
   const zoomed = await renderedFontSize(page)
   expect(await page.evaluate(() => window.ct.setSetting('notifications.done.sound', false))).toEqual({ ok: true })
@@ -110,7 +110,7 @@ test('Ctrl+, opens one settings window; Esc closes it', async () => {
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   const win = await openSettings(app, page)
   expect(await win.title()).toBe('ClaudeTerm Settings')
-  await page.keyboard.press('Control+Comma')
+  await page.keyboard.press(KEYS.settings)
   await page.waitForTimeout(500)
   expect(app.windows()).toHaveLength(2)
   // a test run shows both windows off the screen, and bringing the open one forward does not take the focus

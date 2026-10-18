@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { assistantLine, editResultLine } from '../fixtures/transcript'
-import { FAKE_CLAUDE_SETTINGS, gitRepo, launchApp, launchClaudeTab } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, gitRepo, launchApp, launchClaudeTab, KEYS, KEY_LABELS } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -40,7 +40,7 @@ async function addComment(page: Page, rel: string, text: string): Promise<void> 
 
 test('Ctrl+Shift+D opens Changes with the uncommitted diff; scopes switch', async () => {
   const { app, page } = await reviewTab(upper)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   await expect(changesTab(page)).toHaveClass(/active/)
   await expect(file(page, 'a.ts').locator('.review-status')).toHaveText('M')
@@ -68,7 +68,7 @@ test('Last turn and Session compare with the files before Claude changed them', 
   expect(await before('toolu_1')).toEqual({ ok: true })
   writeFileSync(a, 'one\ntwo\nthree\nfour\n')
   appendFileSync(transcriptPath, editResultLine({ toolUseId: 'toolu_1', filePath: a }) + '\n')
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await page.locator('.review-seg-btn[data-scope="last_turn"]').click()
   // Uncommitted would show 'four' too: the active button proves the view is Last turn
   await expect(page.locator('.review-seg-btn.active')).toHaveText('Last turn')
@@ -95,7 +95,7 @@ test('Last turn leaves out the files git ignores and says how many', async () =>
   }
   writeFileSync(a, 'one\ntwo\nthree\nfour\n')
   writeFileSync(out, 'built\n')
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await page.locator('.review-seg-btn[data-scope="last_turn"]').click()
   await expect(page.locator('.review-seg-btn.active')).toHaveText('Last turn')
   await expect(added(page, 'a.ts')).toHaveText('four')
@@ -120,7 +120,7 @@ test('Session shows only the files inside the tab folder and counts the rest', a
   writeFileSync(a, 'one\ntwo\nthree\nfour\n')
   writeFileSync(elsewhere, 'new\n')
   writeFileSync(out, 'built\n')
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await page.locator('.review-seg-btn[data-scope="session"]').click()
   await expect(page.locator('.review-seg-btn.active')).toHaveText('Session')
   await expect(added(page, 'a.ts')).toHaveText('four')
@@ -140,7 +140,7 @@ test('Uncommitted stays in the tab folder repository after Claude cds into anoth
     writeFileSync(a, text)
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
   }
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await turn(repo, 'one\nTWO\nthree\nFOUR\n')
   // the view computed after the first turn's change: no compute started before the next turn is left
   await expect(added(page, 'a.ts')).toHaveText(['TWO', 'FOUR'])
@@ -154,7 +154,7 @@ test('Uncommitted stays in the tab folder repository after Claude cds into anoth
 
 test('Viewed folds a file until it changes again', async () => {
   const { app, page, a } = await reviewTab(upper)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(changesTab(page).locator('.badge')).toHaveText('1')
   await file(page, 'a.ts').locator('.review-viewed').check()
   await expect(file(page, 'a.ts')).toHaveClass(/viewed/)
@@ -169,7 +169,7 @@ test('Viewed folds a file until it changes again', async () => {
 
 test('a comment is sent to Claude as one message followed by Enter', async () => {
   const { app, page, tabId } = await reviewTab(upper)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await addComment(page, 'a.ts', 'Why upper case?')
   await expect(page.locator('.review-count')).toHaveText('1 comment')
   await page.locator('.review-send').click()
@@ -182,7 +182,7 @@ test('a comment is sent to Claude as one message followed by Enter', async () =>
 
 test('Send waits while Claude shows a permission prompt, until the agent that asked goes on', async () => {
   const { app, page, tabId, pipeName, transcriptPath, a } = await reviewTab(upper)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await addComment(page, 'a.ts', 'Hm')
   const sendBtn = page.locator('.review-send')
   await expect(sendBtn).toBeEnabled()
@@ -204,7 +204,7 @@ test('Send waits while Claude shows a permission prompt, until the agent that as
 
 test('a draft survives an update of the panel', async () => {
   const { app, page, tabId, pipeName, a } = await reviewTab(upper)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   const row = file(page, 'a.ts').locator('.review-line.add').first()
   await row.hover()
   await row.locator('.review-plus').click()
@@ -263,17 +263,17 @@ test('the status bar counter shows the uncommitted changes without a status line
 test('a shell tab has no Changes button', async () => {
   const { app, page } = await launchApp()
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   await expect(changesTab(page)).toBeHidden()
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(imagesTab(page)).toHaveClass(/active/)
   await app.close()
 })
 
 test('Changes and Images have their own buttons and replace each other', async () => {
   const { app, page, tabId } = await reviewTab(upper)
-  await expect(changesTab(page)).toHaveAttribute('title', 'Changes (Ctrl+Shift+D)')
+  await expect(changesTab(page)).toHaveAttribute('title', `Changes (${KEY_LABELS.changes})`)
   await changesTab(page).click()
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   await expect(changesTab(page)).toHaveClass(/active/)
@@ -297,7 +297,7 @@ test('Changes and Images have their own buttons and replace each other', async (
   // a shell tab has no Changes button; coming to the front while Changes is shown, it shows Images in its place
   await changesTab(page).click()
   await expect(panelTitle(page)).toHaveText('Changes')
-  await page.keyboard.press('Control+Shift+KeyT')
+  await page.keyboard.press(KEYS.newTab)
   await expect(changesTab(page)).toBeHidden()
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   await expect(imagesTab(page)).toHaveClass(/active/)
@@ -319,10 +319,10 @@ const needles = (repo: string): void => {
 }
 /** the panel has the focus after a click in its diff; Ctrl+F then opens the find row */
 async function openFind(page: Page): Promise<void> {
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(added(page, 'a.ts').first()).toBeVisible()
   await added(page, 'a.ts').first().click()
-  await page.keyboard.press('Control+KeyF')
+  await page.keyboard.press(KEYS.panelFind)
   await expect(findRow(page)).toBeVisible()
   await expect(findInput(page)).toBeFocused()
 }
@@ -360,9 +360,9 @@ test('Ctrl+F in the Changes panel finds text in the diff, highlights it and step
 
 test('the find button in the panel header opens the find row; a file path matches too', async () => {
   const { app, page } = await reviewTab(needles)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(findRow(page)).toBeHidden()
-  await expect(page.locator('.panel-tools .review-find-btn')).toHaveAttribute('title', 'Find (Ctrl+F)')
+  await expect(page.locator('.panel-tools .review-find-btn')).toHaveAttribute('title', `Find (${KEY_LABELS.panelFind})`)
   await page.locator('.review-find-btn').click()
   await expect(findInput(page)).toBeFocused()
   await page.keyboard.type('b.ts')
@@ -373,11 +373,11 @@ test('the find button in the panel header opens the find row; a file path matche
 
 test('going to a match in a folded file unfolds it', async () => {
   const { app, page } = await reviewTab(needles)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await file(page, 'b.ts').locator('.review-viewed').check()
   await expect(file(page, 'b.ts').locator('.review-line')).toHaveCount(0)
   await file(page, 'a.ts').locator('.review-code').first().click()
-  await page.keyboard.press('Control+KeyF')
+  await page.keyboard.press(KEYS.panelFind)
   await page.keyboard.type('needle')
   await expect(findCount(page)).toHaveText('1 / 3')
   await expect(file(page, 'b.ts').locator('.review-line')).toHaveCount(0)
@@ -398,20 +398,28 @@ test('Esc closes the find row, removes the highlights and gives the focus back t
   await expect(matches(page)).toHaveCount(0)
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   expect(await page.evaluate(() => document.activeElement?.classList.contains('review-files'))).toBe(true)
-  await page.keyboard.press('Control+KeyF')
+  await page.keyboard.press(KEYS.panelFind)
   await expect(findInput(page)).toBeFocused()
   await app.close()
 })
 
 test('Ctrl+F in the terminal still goes to the terminal, not to the Changes panel', async () => {
   const { app, page, tabId } = await reviewTab(needles)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(added(page, 'a.ts').first()).toBeVisible()
   // the left of the terminal: a panel with no room to widen the window lies over its right
   await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
+  // Ctrl+F is the terminal's on every system: on macOS the panel's key is ⌘F
   await page.keyboard.press('Control+KeyF')
   await expect(findRow(page)).toBeHidden()
   await expect.poll(() => page.evaluate((id) => window.__ct!.ptyInput!(id), tabId)).toContain('\x06')
+  await app.close()
+})
+
+test('the find key in the Changes panel opens its find row only, not the terminal\'s find as well', async () => {
+  const { app, page } = await reviewTab(needles)
+  await openFind(page)
+  await expect(page.locator('#search')).toBeHidden()
   await app.close()
 })
 
@@ -441,11 +449,11 @@ const longDiff = (at: number[]) => (repo: string): void => {
 
 test('typing a query whose first match is in a folded file unfolds it and shows the match', async () => {
   const { app, page } = await reviewTab(needles)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await file(page, 'a.ts').locator('.review-viewed').check()
   await expect(file(page, 'a.ts').locator('.review-line')).toHaveCount(0)
   await file(page, 'b.ts').locator('.review-code').first().click()
-  await page.keyboard.press('Control+KeyF')
+  await page.keyboard.press(KEYS.panelFind)
   await page.keyboard.type('needle')
   await expect(findCount(page)).toHaveText('1 / 3')
   await expect(file(page, 'a.ts').locator('.review-line').first()).toBeVisible()
@@ -457,7 +465,7 @@ test('typing a query whose first match is in a folded file unfolds it and shows 
 
 test('after a click in a long diff the keyboard still scrolls it', async () => {
   const { app, page } = await reviewTab(longDiff([]))
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(added(page, 'a.ts').nth(100)).toBeAttached()
   await added(page, 'a.ts').nth(5).click()
   await page.keyboard.press('PageDown')
@@ -495,7 +503,7 @@ test('the current match is clamped to the last one when a view update removes th
 test('app shortcuts still work while the find input has the focus', async () => {
   const { app, page } = await reviewTab(needles)
   await openFind(page)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(panel(page)).toHaveClass(/collapsed/)
   await app.close()
 })
@@ -515,7 +523,7 @@ const shellCalls = (app: App) => app.evaluate(() => (globalThis as Record<string
 test('the file menu offers Show in Explorer after Open in editor; it shows the file, and refuses a file the view does not show', async () => {
   const { app, page, a } = await reviewTab(upper)
   await stubShell(app)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await file(page, 'a.ts').locator('.review-more').click()
   await expect(page.locator('.menu .menu-item')).toHaveText(['Open in editor', 'Show in Explorer', 'Copy path'])
   await page.locator('.menu .menu-item', { hasText: 'Show in Explorer' }).click()
@@ -538,7 +546,7 @@ function withTests(repo: string): void {
 
 test('the Hide tests checkbox hides test files in the view, says how many, and shows them again', async () => {
   const { app, page, dataDir } = await reviewTab(withTests)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   const box = page.locator('.review-hide-tests input[type="checkbox"]')
   await expect(page.locator('.review-hide-tests')).toHaveText('Hide tests')
   await expect(page.locator('.review-hide-tests')).toHaveAttribute('title', 'Hide test files (review.hideTests)')
@@ -576,7 +584,7 @@ test('Hide tests applies to Last turn and Session, and to a show_diff request', 
   writeFileSync(a, 'one\ntwo\nthree\nfour\n')
   writeFileSync(spec, 'it()\n')
   appendFileSync(transcriptPath, editResultLine({ toolUseId: 'toolu_1', filePath: a }) + '\n' + editResultLine({ toolUseId: 'toolu_2', filePath: spec }) + '\n')
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   const box = page.locator('.review-hide-tests input[type="checkbox"]')
   await page.locator('.review-seg-btn[data-scope="session"]').click()
   await expect(page.locator('.review-file')).toHaveCount(2)
@@ -598,7 +606,7 @@ test('Hide tests applies to Last turn and Session, and to a show_diff request', 
 
 test('changing review.testPatterns while Hide tests is on changes the view without a refresh', async () => {
   const { app, page } = await reviewTab(withTests)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await page.locator('.review-hide-tests input[type="checkbox"]').check()
   await expect(page.locator('.review-file')).toHaveCount(2)
   await expect(page.locator('.review-tests-hidden')).toHaveText('· 2 tests hidden')
@@ -616,7 +624,7 @@ test('changing review.testPatterns while Hide tests is on changes the view witho
 
 test('a refused save from the Hide tests checkbox puts the box back and says why', async () => {
   const { app, page, dataDir } = await reviewTab(withTests)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   writeFileSync(join(dataDir, 'settings.json'), '{ not json')
   const box = page.locator('.review-hide-tests input[type="checkbox"]')
   await box.click()
@@ -645,7 +653,7 @@ const diffPaths = (page: Page) => page.locator('.review-file').evaluateAll((els)
 
 test('the file tree lists the files by folder, the diffs follow its order, and a click on a folded file opens it', async () => {
   const { app, page } = await reviewTab(inFolders)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(treeNames(page)).toHaveText(['docs', 'guide.md', 'src/main', 'hub.ts', 'pipe.ts', 'a.ts', 'top.ts'])
   expect(await diffPaths(page)).toEqual(['docs/guide.md', 'src/main/hub.ts', 'src/main/pipe.ts', 'a.ts', 'top.ts'])
   await file(page, 'top.ts').locator('.review-file-head').click()
@@ -664,7 +672,7 @@ test('the file tree lists the files by folder, the diffs follow its order, and a
 
 test('the file filter narrows the tree and the diffs, Find looks in the files shown only, and Esc clears it', async () => {
   const { app, page } = await reviewTab(inFolders)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   const filter = page.locator('.review-tree-filter')
   await filter.fill('MAIN')
   await expect(treeNames(page)).toHaveText(['src/main', 'hub.ts', 'pipe.ts'])
@@ -684,7 +692,7 @@ test('the file filter narrows the tree and the diffs, Find looks in the files sh
 
 test('Collapse all and Expand all fold and unfold every file shown', async () => {
   const { app, page } = await reviewTab(inFolders)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect(page.locator('.review-hunk')).toHaveCount(5)
   await page.locator('.review-collapse-all').click()
   await expect(page.locator('.review-file')).toHaveCount(5)
@@ -696,7 +704,7 @@ test('Collapse all and Expand all fold and unfold every file shown', async () =>
 
 test('the tree button hides the file tree with its filter, and settings.json keeps it hidden', async () => {
   const { app, page, dataDir } = await reviewTab(inFolders)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   const saved = () => (JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')) as { review?: { fileTree?: boolean } }).review?.fileTree
   await page.locator('.review-tree-filter').fill('main')
   await expect(page.locator('.review-file')).toHaveCount(2)

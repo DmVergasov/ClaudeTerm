@@ -32,3 +32,23 @@ export function consumeUpdateMarker(dir: string, now: number): boolean {
   }
   return typeof at === 'number' && now - at >= -MARKER_CLOCK_SLACK_MS && now - at <= MARKER_MAX_AGE_MS
 }
+
+/** Written by the macOS swap script with the version it could not install (see mac-update.ts) */
+export const FAILED_UPDATE = 'update-failed.txt'
+
+/** The version the last swap could not install, or null. The file is removed either way. */
+export function consumeFailedUpdate(dir: string): string | null {
+  const path = join(dir, FAILED_UPDATE)
+  let text = ''
+  try {
+    text = readFileSync(path, 'utf8').trim()
+  } catch {
+    return null
+  }
+  try {
+    rmSync(path, { force: true })
+  } catch {
+    // read again next time: the version is then offered on its release page once more
+  }
+  return /^\d+\.\d+\.\d+$/.test(text) ? text : null
+}

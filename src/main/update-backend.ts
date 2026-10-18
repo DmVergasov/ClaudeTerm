@@ -1,5 +1,12 @@
 import type { UpdaterBackend } from './updater'
 
+/** What the feed (latest.yml) says about a version: its files with their checksums, and its release notes */
+export interface UpdateInfoLike {
+  version: string
+  files?: { url: string; sha512: string }[]
+  releaseNotes?: unknown
+}
+
 /** The part of electron-updater's autoUpdater that ClaudeTerm uses. */
 export interface AutoUpdaterLike {
   autoDownload: boolean
@@ -7,7 +14,7 @@ export interface AutoUpdaterLike {
   disableWebInstaller: boolean
   logger: { info(m?: unknown): void; warn(m?: unknown): void; error(m?: unknown): void; debug?(m: string): void } | null
   setFeedURL(options: { provider: 'generic'; url: string }): void
-  checkForUpdates(): Promise<{ isUpdateAvailable: boolean; updateInfo: { version: string }; downloadPromise?: Promise<unknown> | null } | null>
+  checkForUpdates(): Promise<{ isUpdateAvailable: boolean; updateInfo: UpdateInfoLike; downloadPromise?: Promise<unknown> | null } | null>
   on(event: 'update-downloaded', cb: (info: { version: string; releaseNotes?: unknown }) => void): unknown
   on(event: 'error', cb: (e: Error) => void): unknown
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void
@@ -43,6 +50,8 @@ export function createUpdateBackend(u: AutoUpdaterLike, o: UpdateBackendOptions)
     },
     // the notes latest.yml carries; electron-updater builds a list instead only with fullChangelog, which is off
     onDownloaded: (cb) => { u.on('update-downloaded', (info) => cb(info.version, typeof info.releaseNotes === 'string' ? info.releaseNotes : null)) },
+    // here every new version downloads and installs itself
+    onOffered: () => {},
     onError: (cb) => { u.on('error', (e) => cb(e.message)) },
     quitAndInstall: () => u.quitAndInstall(true, true)
   }

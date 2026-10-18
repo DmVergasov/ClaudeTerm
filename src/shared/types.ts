@@ -128,8 +128,15 @@ export interface ReleaseNotes {
   items: ReleaseNote[]
 }
 
-/** `notes`: the versions after the installed one up to the downloaded one, newest first; none when the feed has no notes */
-export type UpdateState = { status: 'idle' } | { status: 'ready'; version: string; notes: ReleaseNotes[] }
+/**
+ * `notes`: the versions after the installed one up to the new one, newest first; none when the feed has no notes.
+ * ready: downloaded, installed by a restart. available: one this copy cannot install itself, downloaded from its
+ * release page (macOS, when the app cannot replace its own bundle).
+ */
+export type UpdateState =
+  | { status: 'idle' }
+  | { status: 'ready'; version: string; notes: ReleaseNotes[] }
+  | { status: 'available'; version: string; notes: ReleaseNotes[] }
 
 /** A Claude Code conversation found in Claude Code's transcripts. */
 export interface SessionSummary {

@@ -5,7 +5,7 @@
 <h1 align="center">ClaudeTerm</h1>
 
 <p align="center">
-  <b>A terminal built for Claude Code, on Windows and Linux.</b><br>
+  <b>A terminal built for Claude Code, on Windows, macOS and Linux.</b><br>
   Tabs for every shell, every image of the conversation in a side panel,<br>
   a live status bar for model, context, limits and subagents — and your sessions back after a reboot.
 </p>
@@ -13,12 +13,12 @@
 <p align="center">
   <a href="https://github.com/DmVergasov/ClaudeTerm/actions/workflows/ci.yml"><img src="https://github.com/DmVergasov/ClaudeTerm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/DmVergasov/ClaudeTerm/releases/latest"><img src="https://img.shields.io/github/v/release/DmVergasov/ClaudeTerm?label=release&color=d97757" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux-0078d4" alt="Windows 10 | 11 | Linux">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20macOS%20%7C%20Linux-0078d4" alt="Windows 10 | 11 | macOS | Linux">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/DmVergasov/ClaudeTerm?color=8a8a93" alt="MIT license"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/DmVergasov/ClaudeTerm/releases/latest"><b>Download for Windows or Linux</b></a>
+  <a href="https://github.com/DmVergasov/ClaudeTerm/releases/latest"><b>Download for Windows, macOS or Linux</b></a>
   ·
   <a href="#features">Features</a>
   ·
@@ -65,7 +65,7 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 ### 🔔 Know when Claude is waiting for you
 
-When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
+When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
 
 ### 🔍 Review Claude's changes next to the conversation
 
@@ -84,16 +84,16 @@ Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −)
 
 ### 🗂️ A real terminal, with tabs
 
-- **Shell profiles detected automatically** — PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and every WSL distribution, plus your own profiles. On Linux: your login shell, bash, zsh and fish.
+- **Shell profiles detected automatically** — PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and every WSL distribution, plus your own profiles. On macOS and Linux: your login shell, bash, zsh and fish.
 - **Claude tabs** — `claude` runs inside your shell of choice, and you stay in that shell when it exits.
-- **Proper terminal behaviour** — ConPTY on Windows, a real PTY on Linux, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
+- **Proper terminal behaviour** — ConPTY on Windows, a real PTY on macOS and Linux, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (`⌘C` / `⌘V` on macOS; pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
 - **Font sizes in points**, exactly like Windows Terminal — `12` looks the same in both.
 
 <p align="center"><img src="docs/images/new-tab-menu.png" width="560" alt="New tab menu with detected shell profiles"></p>
 
 ### 📂 Open Claude Code here
 
-Right-click any folder (or the background of a folder) in Explorer → **Open Claude Code here**. A Claude tab opens in the running ClaudeTerm window — or ClaudeTerm starts if it isn't running. On Windows 11 the item is under **Show more options**. Windows only; on Linux run `claudeterm --claude <folder>`.
+Right-click any folder (or the background of a folder) in Explorer → **Open Claude Code here**. A Claude tab opens in the running ClaudeTerm window — or ClaudeTerm starts if it isn't running. On Windows 11 the item is under **Show more options**. Windows only; on Linux run `claudeterm --claude <folder>`, on macOS `/Applications/ClaudeTerm.app/Contents/MacOS/ClaudeTerm --claude <folder>`.
 
 ### 🔁 Continue previous sessions
 
@@ -107,7 +107,7 @@ Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the
 
 Hit the 5-hour limit on one subscription, or keep work and personal apart? Add your other accounts in **Settings → Accounts** and move a Claude tab between them in one click: **Continue as …** in the tab's right-click menu, or a click on the account in the status bar, restarts Claude Code on the other account and **continues the same conversation**. **▾ → Claude Code — &lt;account&gt;** opens a new tab on an account, and a new Claude tab takes the account of the tab you are in. The window title names the extra account of the tab in front.
 
-Your normal Claude Code login stays the **Main account**. An extra account is a token from `claude setup-token` (Pro, Max, Team or Enterprise, valid for a year): **Get a token** opens a tab that runs it — sign in with that account in the browser, then paste the token it prints. ClaudeTerm keeps the tokens encrypted by the system (DPAPI on Windows, the keyring on Linux) and gives each one only to the tabs on its account. Claude Code lets a token make model requests only, so a tab on an extra account has no claude.ai connectors and no Remote Control.
+Your normal Claude Code login stays the **Main account**. An extra account is a token from `claude setup-token` (Pro, Max, Team or Enterprise, valid for a year): **Get a token** opens a tab that runs it — sign in with that account in the browser, then paste the token it prints. ClaudeTerm keeps the tokens encrypted by the system (DPAPI on Windows, the Keychain on macOS, the keyring on Linux) and gives each one only to the tabs on its account. Claude Code lets a token make model requests only, so a tab on an extra account has no claude.ai connectors and no Remote Control.
 
 ## Install
 
@@ -119,35 +119,47 @@ Your normal Claude Code login stays the **Main account**. An extra account is a 
 
 **Linux (x64; Ubuntu 22.04+, Debian 12+ and their derivatives):** download `ClaudeTerm-<version>.deb` from the latest release and run `sudo apt install ./ClaudeTerm-<version>.deb`. ClaudeTerm downloads updates by itself; installing one asks for your password when you click restart. To paste images into Claude, Claude Code needs `xclip` (X11) or `wl-clipboard` (Wayland).
 
+**macOS (12 or later, Apple Silicon or Intel):** download `ClaudeTerm-<version>-arm64.dmg` (Apple Silicon) or `ClaudeTerm-<version>-x64.dmg` (Intel) from the latest release, open it and drag ClaudeTerm to **Applications**.
+
+> The app is not signed with an Apple Developer ID yet, so macOS refuses a downloaded copy the first time ("ClaudeTerm is damaged" or "cannot be verified"). Run this once in Terminal, then open ClaudeTerm as usual:
+>
+> ```
+> xattr -dr com.apple.quarantine /Applications/ClaudeTerm.app
+> ```
+>
+> Or try to open it once, then click **Open Anyway** in **System Settings → Privacy & Security**.
+
+On macOS ClaudeTerm updates itself as well: it downloads a new release and puts it in place of the old one when you click **Restart**. Where it cannot replace itself — started from the disk image or not moved to Applications, or a folder you cannot write — the update banner's **Download** opens the release page instead.
+
 From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. **What's new** in the update banner lists what changed. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — check for updates** to check right away.
 
-On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image` and `show_diff` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux, remove the registration yourself after `sudo apt remove claudeterm`: `claude mcp remove --scope user claudeterm`.
+On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image` and `show_diff` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
 
-**Requirements:** Windows 10 or 11 (x64), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code.
+**Requirements:** Windows 10 or 11 (x64), macOS 12 or later (Apple Silicon or Intel), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code.
 
 ## Keyboard shortcuts
 
-| Action | Shortcut |
-|---|---|
-| New tab (default profile) | `Ctrl+Shift+T` |
-| New Claude tab in the current tab's folder | `Ctrl+Shift+L` |
-| Close tab | `Ctrl+Shift+W` |
-| Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
-| Go to tab 1–9 | `Ctrl+Alt+1` … `Ctrl+Alt+9` |
-| Copy / paste | `Ctrl+Shift+C` / `Ctrl+Shift+V` |
-| Copy selection, or interrupt when nothing is selected | `Ctrl+C` |
-| Paste text, or hand a clipboard image to Claude | `Ctrl+V` |
-| New line in the Claude prompt | `Shift+Enter` |
-| Find in scrollback | `Ctrl+Shift+F` |
-| Show / hide the image panel | `Ctrl+Shift+I` |
-| Show / hide the Changes panel | `Ctrl+Shift+D` |
-| Find in the Changes panel | `Ctrl+F` (when the panel has the focus) |
-| Recent sessions | `Ctrl+Shift+H` |
-| Star / unstar the selected session | `Ctrl+D` (in the Recent sessions window) |
-| Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
-| Open settings | `Ctrl+,` |
+| Action | Windows and Linux | macOS |
+|---|---|---|
+| New tab (default profile) | `Ctrl+Shift+T` | `⌘T` |
+| New Claude tab in the current tab's folder | `Ctrl+Shift+L` | `⌘L` |
+| Close tab | `Ctrl+Shift+W` | `⌘W` |
+| Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab`, `⌘⇧]` / `⌘⇧[` |
+| Go to tab 1–9 | `Ctrl+Alt+1` … `Ctrl+Alt+9` | `⌘1` … `⌘9` |
+| Copy / paste | `Ctrl+Shift+C` / `Ctrl+Shift+V` | `⌘C` / `⌘⇧V` |
+| Copy selection, or interrupt when nothing is selected | `Ctrl+C` | — (`Ctrl+C` always interrupts) |
+| Paste text, or hand a clipboard image to Claude | `Ctrl+V` | `⌘V` |
+| New line in the Claude prompt | `Shift+Enter` | `Shift+Enter` |
+| Find in scrollback | `Ctrl+Shift+F` | `⌘F` |
+| Show / hide the image panel | `Ctrl+Shift+I` | `⌘I` |
+| Show / hide the Changes panel | `Ctrl+Shift+D` | `⌘D` |
+| Find in the Changes panel | `Ctrl+F` (when the panel has the focus) | `⌘F` (when the panel has the focus) |
+| Recent sessions | `Ctrl+Shift+H` | `⌘⇧H` |
+| Star / unstar the selected session | `Ctrl+D` (in the Recent sessions window) | `⌘D` (in the Recent sessions window) |
+| Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | `⌘=` / `⌘-` / `⌘0` |
+| Open settings | `Ctrl+,` | `⌘,` |
 
-Right-click in the terminal copies the selection, or pastes when nothing is selected. Double-click a tab to rename it.
+Right-click in the terminal copies the selection, or pastes when nothing is selected. On macOS `⌥`-drag selects text while Claude Code has the mouse (`Shift`-drag elsewhere). Double-click a tab to rename it.
 
 Right-click a tab → **Restart session** restarts Claude Code in the same tab and resumes the conversation — handy after adding an MCP server, a plugin or a settings change that Claude Code only reads at startup. For a shell tab the item is **Restart shell**.
 
@@ -157,11 +169,11 @@ Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notific
 
 ![Settings window](docs/images/settings.png)
 
-Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeTerm/settings.json` on Linux). Profiles, image types, ignored folders, a custom theme and the image and Changes panel widths are set only there — the window's **Open settings.json** button opens it, and changes to the file apply as soon as you save it. When the window saves a change, it rewrites the file as plain JSON with two-space indentation.
+Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Application Support/ClaudeTerm/settings.json` on macOS, `~/.config/ClaudeTerm/settings.json` on Linux). Profiles, image types, ignored folders, a custom theme and the image and Changes panel widths are set only there — the window's **Open settings.json** button opens it, and changes to the file apply as soon as you save it. When the window saves a change, it rewrites the file as plain JSON with two-space indentation.
 
 ```jsonc
 {
-  "defaultProfile": null,          // profile name; null = PowerShell 7 if installed, else Windows PowerShell (Linux: your login shell)
+  "defaultProfile": null,          // profile name; null = PowerShell 7 if installed, else Windows PowerShell (macOS, Linux: your login shell)
   "claude": {
     "command": "claude",           // how to start Claude Code
     "shellProfile": null           // shell that hosts claude in Claude tabs; null = same rule as above
@@ -169,7 +181,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeT
   "profiles": [                    // added to (or overriding by name) the detected profiles
     { "name": "Git Bash", "command": "C:\\Program Files\\Git\\bin\\bash.exe", "args": ["--login", "-i"] }
   ],
-  "font": { "family": "Cascadia Mono, Consolas, monospace", "size": 12 },   // size in points
+  "font": { "family": "Cascadia Mono, Consolas, Menlo, monospace", "size": 12 },   // size in points
   "theme": "Campbell",             // "Campbell", "One Half Dark", "One Half Light", or an xterm.js theme object
   "scrollback": 10000,
   "imageWatch": {                  // new images in the session's scratchpad (Claude tabs only)
@@ -200,14 +212,14 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/.config/ClaudeT
 }
 ```
 
-Logs are in `%APPDATA%\ClaudeTerm\logs` (`~/.config/ClaudeTerm/logs` on Linux).
+Logs are in `%APPDATA%\ClaudeTerm\logs` (`~/Library/Application Support/ClaudeTerm/logs` on macOS, `~/.config/ClaudeTerm/logs` on Linux).
 
 ### Good to know
 
 - Claude tabs start `claude` with `--settings` pointing at a file ClaudeTerm generates. It adds `SessionStart`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `PermissionRequest`, `UserPromptSubmit`, `PreToolUse` (for `AskUserQuestion` and the edit tools `Edit`, `MultiEdit`, `Write`, `NotebookEdit`) and `Stop` hooks and a `statusLine` command — that is how session restore, the image panel, the Changes panel, the status bar and the waiting signal know what is going on. These hooks never print anything, so they don't change what Claude does. Inside ClaudeTerm's Claude tabs this replaces a custom `statusLine` from your own Claude Code settings, and Claude Code hides its footer key hints.
 - `claude` started by hand in a regular shell tab gets `show_image`, but not session restore, the transcript images or the status bar.
-- Before Claude edits a file, ClaudeTerm keeps a copy of it in `%APPDATA%\ClaudeTerm\review` (`~/.config/ClaudeTerm/review` on Linux), so Last turn and Session know the file before the edit; copies of a conversation untouched for a week are deleted.
-- Extra accounts are kept in `%APPDATA%\ClaudeTerm\accounts.json` (`~/.config/ClaudeTerm/accounts.json` on Linux), readable only by your user, with the tokens encrypted where the system has a keyring. A Claude tab on an extra account gets `CLAUDE_CODE_OAUTH_TOKEN`, and the `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` of your environment are left out of it, because Claude Code would use them first.
+- Before Claude edits a file, ClaudeTerm keeps a copy of it in `%APPDATA%\ClaudeTerm\review` (`~/Library/Application Support/ClaudeTerm/review` on macOS, `~/.config/ClaudeTerm/review` on Linux), so Last turn and Session know the file before the edit; copies of a conversation untouched for a week are deleted.
+- Extra accounts are kept in `%APPDATA%\ClaudeTerm\accounts.json` (`~/Library/Application Support/ClaudeTerm/accounts.json` on macOS, `~/.config/ClaudeTerm/accounts.json` on Linux), readable only by your user, with the tokens encrypted where the system has a keyring. A Claude tab on an extra account gets `CLAUDE_CODE_OAUTH_TOKEN`, and the `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` of your environment are left out of it, because Claude Code would use them first.
 
 ## How it works
 
@@ -227,11 +239,11 @@ flowchart LR
   end
 ```
 
-ClaudeTerm is an Electron app: `node-pty` runs the shells over ConPTY (a PTY on Linux) and xterm.js draws them. The hook script and the MCP server are small Node scripts run by the ClaudeTerm executable itself; they report to the app over a named pipe (a Unix socket on Linux), tagged with the tab they run in (`CLAUDETERM_TAB_ID`). Images and model details come from Claude Code's own transcript files, which ClaudeTerm tails read-only.
+ClaudeTerm is an Electron app: `node-pty` runs the shells over ConPTY (a PTY on macOS and Linux) and xterm.js draws them. The hook script and the MCP server are small Node scripts run by the ClaudeTerm executable itself; they report to the app over a named pipe (a Unix socket on macOS and Linux), tagged with the tab they run in (`CLAUDETERM_TAB_ID`). Images and model details come from Claude Code's own transcript files, which ClaudeTerm tails read-only.
 
 ## Building from source
 
-You need Windows 10/11 or Linux, [Node.js](https://nodejs.org) 22.12 or later, and Git (on Linux also `build-essential` and `python3`: node-pty is compiled on install).
+You need Windows 10/11, macOS or Linux, [Node.js](https://nodejs.org) 22.12 or later, and Git (on Linux also `build-essential` and `python3`: node-pty is compiled on install).
 
 ```powershell
 git clone https://github.com/DmVergasov/ClaudeTerm.git
@@ -242,6 +254,7 @@ npm test             # unit and integration tests
 npm run test:e2e     # end-to-end tests against the built app
 npm run dist         # build the installer into dist\
 npm run dist:linux   # build the .deb into dist/ (on Linux)
+npm run dist:mac     # build the .dmg and .zip files into dist/ (on macOS)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the project layout and how to get a change merged.

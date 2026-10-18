@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -35,7 +35,7 @@ jobs:
       - run: npm run build
 
       - name: End-to-end tests
-        if: runner.os == 'Windows'
+        if: runner.os != 'Linux'
         run: npx playwright test
 
       - name: End-to-end tests
@@ -55,6 +55,25 @@ jobs:
         with:
           name: linux-package
           path: dist/ClaudeTerm-*.deb
+          retention-days: 7
+
+      - name: Build the macOS packages
+        if: runner.os == 'macOS'
+        run: npx electron-builder --mac --publish never
+
+      # node-pty starts every shell through spawn-helper: without its execute bit no tab opens
+      - name: Check that the packaged spawn-helper can run
+        if: runner.os == 'macOS'
+        run: |
+          test -x dist/mac-arm64/ClaudeTerm.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper
+          test -x dist/mac/ClaudeTerm.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/darwin-x64/spawn-helper
+
+      - name: Keep the macOS packages for a hand check
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-packages
+          path: dist/ClaudeTerm-*.dmg
           retention-days: 7
 
       - name: Keep end-to-end results when they fail

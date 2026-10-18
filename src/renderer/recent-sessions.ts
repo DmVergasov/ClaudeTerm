@@ -1,4 +1,5 @@
 import type { RecentSession, SessionSummary } from '../shared/types'
+import { isPrimaryKey, shortcutLabel } from './keymap'
 import { folderName } from './util'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -73,7 +74,7 @@ export class RecentSessionsWindow {
   private readonly input: HTMLInputElement
   private readonly rows: HTMLElement
 
-  constructor(private readonly root: HTMLElement, private readonly cb: RecentSessionsCallbacks) {
+  constructor(private readonly root: HTMLElement, private readonly cb: RecentSessionsCallbacks, private readonly platform: string) {
     const box = document.createElement('div')
     box.className = 'sessions-box'
     const heading = document.createElement('div')
@@ -93,7 +94,7 @@ export class RecentSessionsWindow {
       this.render()
     })
     this.input.addEventListener('keydown', (e) => {
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyD') this.toggleStar(this.shown[this.selected])
+      if (isPrimaryKey(e, this.platform) && e.code === 'KeyD') this.toggleStar(this.shown[this.selected])
       else if (e.key === 'ArrowDown') this.move(1)
       else if (e.key === 'ArrowUp') this.move(-1)
       else if (e.key === 'Enter') this.choose(this.shown[this.selected])
@@ -201,7 +202,7 @@ export class RecentSessionsWindow {
     const star = document.createElement('span')
     star.className = `session-star${s.starred ? ' starred' : ''}`
     star.textContent = s.starred ? '★' : '☆'
-    star.title = s.starred ? 'Unstar (Ctrl+D)' : 'Star (Ctrl+D)'
+    star.title = `${s.starred ? 'Unstar' : 'Star'} (${shortcutLabel('star', this.platform)})`
     star.addEventListener('click', (e) => {
       e.stopPropagation()
       this.toggleStar(s)

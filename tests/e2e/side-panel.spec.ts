@@ -2,7 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { WIN } from '../fixtures/platform'
-import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, KEYS } from './helpers'
 
 const panel = (page: Page) => page.locator('#image-panel')
 
@@ -54,7 +54,7 @@ test('opening a side panel widens the window by its width: the terminal keeps it
   const before = await layout(page)
   const sizes = await ptySizes(page)
 
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   await expect.poll(async () => (await place(app)).bounds).toEqual({ ...start, width: start.width + 300 })
   await expect.poll(async () => {
@@ -63,7 +63,7 @@ test('opening a side panel widens the window by its width: the terminal keeps it
   }).toEqual({ termWidth: before.termWidth, panelWidth: 300, besideIt: true })
   expect(await ptySizes(page)).toEqual(sizes)
 
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect(panel(page)).toHaveClass(/collapsed/)
   await expect.poll(async () => (await place(app)).bounds).toEqual(start)
   expect((await layout(page)).termWidth).toBe(before.termWidth)
@@ -78,13 +78,13 @@ test('switching to a panel of another width changes the window by the difference
   const before = await layout(page)
   const sizes = await ptySizes(page)
 
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 400)
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect(page.locator('.panel-title')).toHaveText('Images')
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
   await expect.poll(async () => (await layout(page)).termWidth).toBe(before.termWidth)
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width)
   expect(await ptySizes(page)).toEqual(sizes)
   await app.close()
@@ -98,7 +98,7 @@ test('a window with no room to widen shows the panel over the terminal, which ke
   const before = await layout(page)
   const sizes = await ptySizes(page)
 
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   await expect.poll(async () => {
     const l = await layout(page)
@@ -106,7 +106,7 @@ test('a window with no room to widen shows the panel over the terminal, which ke
   }).toEqual({ termWidth: before.termWidth, panelWidth: 300, panelLeft: before.inner - 300 })
   expect((await place(app)).bounds).toEqual(start)
   expect(await ptySizes(page)).toEqual(sizes)
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect(panel(page)).toHaveClass(/collapsed/)
   expect((await place(app)).bounds).toEqual(start)
   await app.close()
@@ -120,7 +120,7 @@ test('sidePanel.noRoom "narrow": a window with no room to widen narrows the term
   const before = await layout(page)
   const sizes = await ptySizes(page)
 
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect.poll(async () => {
     const l = await layout(page)
     return { termWidth: l.termWidth, besideIt: l.panelLeft >= l.termRight - 0.5 }
@@ -135,12 +135,12 @@ test('choosing "Narrow the terminal" in the settings window moves a panel shown 
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await setWidth(app, page, (await place(app)).area.width)
   const before = await layout(page)
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect.poll(async () => (await layout(page)).panelLeft).toBe(before.inner - 300)
   expect((await layout(page)).termWidth).toBe(before.termWidth)
 
   await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
-  const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press('Control+Comma')])
+  const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
   await win.waitForSelector('#settings .settings-heading')
   const select = win.locator('[data-key="sidePanel.noRoom"]')
   await expect(select.locator('option:checked')).toHaveText('Over the terminal')
@@ -156,7 +156,7 @@ test('the expanded Changes panel lies over the terminal, which keeps its size', 
   const start = (await place(app)).bounds
   const before = await layout(page)
   const sizes = await ptySizes(page)
-  await page.keyboard.press('Control+Shift+KeyD')
+  await page.keyboard.press(KEYS.changes)
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
   await expect.poll(async () => (await layout(page)).termWidth).toBe(before.termWidth)
   const grown = (await place(app)).bounds
@@ -177,7 +177,7 @@ test('the saved window size leaves out the width added for the panel', async () 
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await setWidth(app, page, roomyWidth(await place(app), 300))
   const start = (await place(app)).bounds
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
   // a move saves the window state again
   await app.evaluate(({ BrowserWindow }, x) => {
@@ -196,7 +196,7 @@ test('a panel closed while the window was maximized gives its width back when th
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await setWidth(app, page, roomyWidth(await place(app), 300))
   const start = (await place(app)).bounds
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)!.maximize())
@@ -206,7 +206,7 @@ test('a panel closed while the window was maximized gives its width back when th
     const l = await layout(page)
     return Math.round(l.termRight) === l.inner && l.panelLeft === l.inner - 300
   }).toBe(true)
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect(panel(page)).toHaveClass(/collapsed/)
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)!.unmaximize())
   await expect.poll(async () => (await place(app)).bounds).toEqual(start)

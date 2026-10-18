@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { claudeTempRoot } from '../../src/main/image-watcher'
@@ -41,6 +41,29 @@ test('a PNG created in the session temp folder appears and is served via ctimg; 
   await expect(page.locator('.card img').first()).toHaveJSProperty('naturalWidth', 1)
   await page.waitForTimeout(1500)
   expect((await images(page)).map((i) => i.name)).toEqual(['plot.png'])
+  await app.close()
+})
+
+test('an image Claude reads from the scratchpad by its real path is the same card as the file the folder watch saw', async () => {
+  test.skip(WIN, 'a temp root behind a link: /tmp is /private/tmp on macOS')
+  const temp = mkdtempSync(join(tmpdir(), 'ct-temp-'))
+  const link = `${temp}-link`
+  symlinkSync(temp, link)
+  const { app, page, tabId, pipeName } = await claudeTab({ CLAUDE_CODE_TMPDIR: link })
+  const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
+  mkdirSync(projectDir, { recursive: true })
+  const transcriptPath = join(projectDir, `${SID}.jsonl`)
+  writeFileSync(transcriptPath, '')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
+  // Claude Code names the scratchpad by its real path, and Claude reads it by that path
+  const scratchpad = join(realpathSync(temp), `claude-${process.getuid!()}`, 'D--e2e', SID)
+  await expect.poll(() => existsSync(scratchpad), { timeout: 10_000 }).toBe(true)
+  await page.waitForTimeout(500) // let the watcher start
+  const plot = join(scratchpad, 'plot.png')
+  writeFileSync(plot, PNG_1x1)
+  await expect.poll(() => images(page), { timeout: 10_000 }).toEqual([{ name: 'plot.png', source: 'created', caption: null }])
+  appendFileSync(transcriptPath, [toolUseLine('toolu_r1', 'Read', { file_path: plot }), toolResultLine('toolu_r1'), ''].join('\n'))
+  await expect.poll(() => images(page), { timeout: 10_000 }).toEqual([{ name: 'plot.png', source: 'read', caption: null }])
   await app.close()
 })
 

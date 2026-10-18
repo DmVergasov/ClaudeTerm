@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os'
 import { join, posix, win32 } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { claudeTempRoot, isRootGoneEvent, sessionTempDir, watchedImagePath } from '../../src/main/image-watcher'
+import { claudeTempRoot, isRootGoneEvent, realTempRoot, sessionTempDir, watchedImagePath } from '../../src/main/image-watcher'
 
 const cfg = { extensions: ['png', 'jpg'], ignore: ['.git', 'node_modules', 'Intermediate'], maxDepth: 8 }
 
@@ -52,6 +52,22 @@ describe('Claude Code temp folders', () => {
   it('Linux: <CLAUDE_CODE_TMPDIR or /tmp>/claude-<uid>, whatever TMPDIR says', () => {
     expect(claudeTempRoot({ platform: 'linux', env: {}, tmpdir: '/var/tmp', uid: 1000 })).toBe('/tmp/claude-1000')
     expect(claudeTempRoot({ platform: 'linux', env: { CLAUDE_CODE_TMPDIR: '/scratch' }, tmpdir: '/tmp', uid: 1000 })).toBe('/scratch/claude-1000')
+  })
+
+  it('macOS: /tmp/claude-<uid> as well', () => {
+    expect(claudeTempRoot({ platform: 'darwin', env: {}, tmpdir: '/var/folders/x1/abc/T', uid: 501 })).toBe('/tmp/claude-501')
+  })
+
+  it('the root by its real path, as Claude Code names the scratchpad: /tmp is /private/tmp on macOS', () => {
+    const real = (links: Record<string, string>, existing: string[]) => (p: string): string => {
+      if (!existing.includes(p)) throw new Error(`ENOENT: ${p}`)
+      return links[p] ?? p
+    }
+    // the folder does not exist yet: the nearest one that does is resolved
+    expect(realTempRoot('/tmp/claude-501', real({ '/tmp': '/private/tmp' }, ['/', '/tmp']))).toBe('/private/tmp/claude-501')
+    expect(realTempRoot('/tmp/claude-501', real({ '/tmp/claude-501': '/private/tmp/claude-501' }, ['/tmp/claude-501']))).toBe('/private/tmp/claude-501')
+    expect(realTempRoot('/scratch/claude-1000', real({}, ['/', '/scratch']))).toBe('/scratch/claude-1000')
+    expect(realTempRoot('/gone/claude-1000', real({}, []))).toBe('/gone/claude-1000')
   })
 
   it('a session folder is <root>/<project key>/<session id>', () => {

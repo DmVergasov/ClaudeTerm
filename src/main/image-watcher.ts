@@ -72,6 +72,25 @@ export function claudeTempRoot(o: { platform: NodeJS.Platform; env: NodeJS.Proce
   return posix.join(o.env.CLAUDE_CODE_TMPDIR || '/tmp', `claude-${o.uid}`)
 }
 
+/**
+ * The temp root by its real path, as Claude Code names the scratchpad in its prompt and so in the paths Claude reads:
+ * on macOS /tmp is a link to /private/tmp. The folder may not exist yet: the nearest one that does is resolved.
+ */
+export function realTempRoot(root: string, realpath: (p: string) => string): string {
+  const rest: string[] = []
+  let dir = root
+  for (;;) {
+    try {
+      return posix.join(realpath(dir), ...rest)
+    } catch {
+      const parent = posix.dirname(dir)
+      if (parent === dir) return root
+      rest.unshift(posix.basename(dir))
+      dir = parent
+    }
+  }
+}
+
 /** A session's own folder in it, where its scratchpad lives: <root>/<project key>/<session id> */
 export function sessionTempDir(transcriptPath: string, sessionId: string, claudeRoot: string, path: PlatformPath = nativePath): string {
   return path.join(claudeRoot, path.basename(path.dirname(transcriptPath)), sessionId)

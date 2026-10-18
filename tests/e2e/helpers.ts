@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { testPipeName, WIN } from '../fixtures/platform'
+import { MAC, testPipeName, WIN } from '../fixtures/platform'
 
 export const ROOT = resolve(__dirname, '..', '..')
 
@@ -13,8 +13,29 @@ const TEST_PROFILES = [{ name: 'Test Bash', command: '/bin/bash', args: ['--norc
 /** the test shell's prompt, once it waits for input (the buffer text has no trailing spaces) */
 export const PROMPT = WIN ? /PS .*>/ : /bash-[\d.]+\$/
 
-/** Linux: safeStorage would look for a keyring, and may wait for one under xvfb; the tests use the basic store */
-const PLATFORM_ARGS = WIN ? [] : ['--password-store=basic']
+/**
+ * Linux: safeStorage would look for a keyring, and may wait for one under xvfb; the tests use the basic store.
+ * macOS: a stand-in keychain, so that the tests never write to the user's login keychain.
+ */
+const PLATFORM_ARGS = WIN ? [] : MAC ? ['--use-mock-keychain'] : ['--password-store=basic']
+
+/** the app's shortcuts as Playwright presses them: Ctrl+Shift on Windows and Linux, ⌘ on macOS */
+export const KEYS = MAC
+  ? {
+      newTab: 'Meta+KeyT', newClaudeTab: 'Meta+KeyL', closeTab: 'Meta+KeyW', nextTab: 'Control+Tab', copy: 'Meta+KeyC', paste: 'Meta+KeyV',
+      images: 'Meta+KeyI', changes: 'Meta+KeyD', recentSessions: 'Meta+Shift+KeyH', settings: 'Meta+Comma', zoomIn: 'Meta+Equal',
+      panelFind: 'Meta+KeyF', star: 'Meta+KeyD'
+    }
+  : {
+      newTab: 'Control+Shift+KeyT', newClaudeTab: 'Control+Shift+KeyL', closeTab: 'Control+Shift+KeyW', nextTab: 'Control+Tab', copy: 'Control+Shift+KeyC', paste: 'Control+KeyV',
+      images: 'Control+Shift+KeyI', changes: 'Control+Shift+KeyD', recentSessions: 'Control+Shift+KeyH', settings: 'Control+Comma', zoomIn: 'Control+Equal',
+      panelFind: 'Control+KeyF', star: 'Control+KeyD'
+    }
+
+/** the shortcuts as the window's tooltips write them */
+export const KEY_LABELS = MAC
+  ? { images: '⌘I', changes: '⌘D', panelFind: '⌘F', star: '⌘D' }
+  : { images: 'Ctrl+Shift+I', changes: 'Ctrl+Shift+D', panelFind: 'Ctrl+F', star: 'Ctrl+D' }
 
 // "claude" prints its arguments instead of starting (on Linux also the folder it runs in, as PowerShell's prompt shows it)
 export const FAKE_CLAUDE_SETTINGS = WIN
@@ -107,4 +128,27 @@ export function gitRepo(): string {
   git('add', '-A')
   git('commit', '-qm', 'one')
   return dir
+}
+
+type SavedClipboard = { savedClipboard?: Record<string, Blob | Electron.ClipboardBookmark>[] }
+
+/** Runs the steps, then gives the system clipboard back what it held: the tests must not change the machine they run on */
+export async function keepingClipboard(app: ElectronApplication, steps: () => Promise<void>): Promise<void> {
+  // the items clipboard.read() returns read the clipboard lazily and cannot be written back: keep their data. An empty
+  // clipboard reads as one item without types, which ClipboardItem does not accept
+  await app.evaluate(async ({ clipboard }) => {
+    const items = (await clipboard.read()).filter((item) => item.types.length)
+    const savedClipboard = await Promise.all(items.map(async (item) =>
+      Object.fromEntries(await Promise.all(item.types.map(async (type) => [type, await item.getType(type)] as const)))))
+    Object.assign(globalThis, { savedClipboard } satisfies SavedClipboard)
+  })
+  try {
+    await steps()
+  } finally {
+    await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+      const saved = (globalThis as SavedClipboard).savedClipboard ?? []
+      if (saved.length) await clipboard.write(saved.map((data) => new ClipboardItem(data)))
+      else clipboard.clear()
+    })
+  }
 }

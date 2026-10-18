@@ -4,6 +4,8 @@ import { join } from 'node:path'
 
 /** true when the tests run on Windows; for the steps only one platform can run */
 export const WIN = process.platform === 'win32'
+/** true when the tests run on macOS */
+export const MAC = process.platform === 'darwin'
 
 /** A fresh address for a test server: a named pipe on Windows, a socket file in the temp folder elsewhere (kept short: a socket path has ~100 bytes) */
 export function testPipeName(tag: string): string {

@@ -5,10 +5,12 @@ export const FIRST_CHECK_MS = 15_000
 export const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
 
 export interface UpdaterBackend {
-  /** resolves the newer version that is being downloaded, or null when this build is the latest */
+  /** resolves the newer version that is being downloaded (or offered), or null when this build is the latest */
   check(): Promise<string | null>
   /** `notes`: the release notes the feed gives for it, when they are text */
   onDownloaded(cb: (version: string, notes: string | null) => void): void
+  /** a newer version this copy cannot install itself: it is offered on its release page, before check resolves */
+  onOffered(cb: (version: string, notes: string | null) => void): void
   onError(cb: (message: string) => void): void
   quitAndInstall(): void
 }
@@ -22,6 +24,8 @@ export interface UpdaterDeps {
   publish(state: UpdateState): void
   notify(message: string): void
   beforeInstall(): void
+  /** opens the download page of a version this copy cannot install itself */
+  openReleasePage(version: string): void
   log(message: string): void
   setTimer?(fn: () => void, ms: number): unknown
   clearTimer?(t: unknown): void
@@ -36,6 +40,11 @@ export class Updater {
   constructor(private readonly d: UpdaterDeps) {
     d.backend?.onDownloaded((version, notes) => {
       this.state = { status: 'ready', version, notes: parseUpdateNotes(notes, d.currentVersion, version) }
+      d.publish(this.state)
+    })
+    d.backend?.onOffered((version, notes) => {
+      if (this.state.status === 'ready') return
+      this.state = { status: 'available', version, notes: parseUpdateNotes(notes, d.currentVersion, version) }
       d.publish(this.state)
     })
     d.backend?.onError((m) => d.log(`update error: ${m}`))
@@ -64,8 +73,11 @@ export class Updater {
     this.checking = true
     try {
       const version = await b.check()
-      if (manual) this.d.notify(version ? `Downloading ClaudeTerm ${version}…` : `You have the latest version (${this.d.currentVersion})`)
-      else if (version) this.d.log(`update ${version} found, downloading`)
+      const offered = version !== null && this.state.status === 'available' && this.state.version === version
+      if (manual) {
+        this.d.notify(!version ? `You have the latest version (${this.d.currentVersion})`
+          : offered ? `ClaudeTerm ${version} is available — click Download to get it` : `Downloading ClaudeTerm ${version}…`)
+      } else if (version) this.d.log(`update ${version} found, ${offered ? 'offered on its release page' : 'downloading'}`)
     } catch (e) {
       const m = (e as Error).message
       if (manual) this.d.notify(`Couldn't check for updates: ${m}`)
@@ -76,6 +88,10 @@ export class Updater {
   }
 
   install(): void {
+    if (this.state.status === 'available') {
+      this.d.openReleasePage(this.state.version)
+      return
+    }
     if (this.state.status !== 'ready' || !this.d.backend) return
     this.d.beforeInstall()
     this.d.backend.quitAndInstall()

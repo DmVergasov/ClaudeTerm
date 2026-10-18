@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
-import { createSoundPlayer, FREEDESKTOP_SOUND, linuxPlayer, linuxSoundDeps, type ProcessSpec, wavPlayer } from '../../src/main/sound'
+import { createSoundPlayer, FREEDESKTOP_SOUND, linuxPlayer, linuxSoundDeps, MAC_SOUND, macSoundDeps, type ProcessSpec, wavPlayer } from '../../src/main/sound'
 
 function setup(o: { spawnThrows?: boolean; systemSound?: string | null; noPlayer?: boolean } = {}) {
   const calls: string[] = []
@@ -131,5 +131,15 @@ describe('linuxSoundDeps', () => {
     d.player('/b.wav')
     expect(asked).toEqual(['paplay', 'pw-play'])
     expect(linuxSoundDeps({}, has, () => false).systemSound).toBeNull()
+  })
+})
+
+describe('macSoundDeps', () => {
+  it('afplay plays a file, the path an argument; the system sound is macOS\' Glass when there', () => {
+    const env = { HOME: '/Users/dev' }
+    const d = macSoundDeps(env, (p) => p === MAC_SOUND)
+    expect(d.player('/Users/dev/My Sounds/ding.wav')).toEqual({ file: '/usr/bin/afplay', args: ['/Users/dev/My Sounds/ding.wav'], env })
+    expect(d.systemSound).toBe('/System/Library/Sounds/Glass.aiff')
+    expect(macSoundDeps(env, () => false).systemSound).toBeNull()
   })
 })

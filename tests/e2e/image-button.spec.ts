@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, launchApp, PNG_1x1 } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, launchApp, PNG_1x1, KEYS, KEY_LABELS } from './helpers'
 
 test('image button toggles the panel and shows the unseen counter', async () => {
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
@@ -20,7 +20,7 @@ test('image button toggles the panel and shows the unseen counter', async () => 
   }
 
   await expect(button).toBeVisible()
-  await expect(button).toHaveAttribute('title', 'Images (Ctrl+Shift+I)')
+  await expect(button).toHaveAttribute('title', `Images (${KEY_LABELS.images})`)
   await expect(button).not.toHaveClass(/active/)
   await expect(badge).toBeHidden()
 
@@ -43,7 +43,7 @@ test('image button toggles the panel and shows the unseen counter', async () => 
   await button.click() // hide again, then a second image must be counted too
   await show('b.png')
   await expect(badge).toHaveText('1')
-  await page.keyboard.press('Control+Shift+KeyI')
+  await page.keyboard.press(KEYS.images)
   await expect(panel).not.toHaveClass(/collapsed/)
   await expect(badge).toBeHidden()
   await app.close()

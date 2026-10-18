@@ -39,3 +39,21 @@ linux:
   maintainer: Dmitry Vergasov
 deb:
   artifactName: ClaudeTerm-${version}.${ext}
+mac:
+  # the dmg for people, the zip for updates (latest-mac.yml lists it); one of each for Apple Silicon and Intel
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
+  # no Developer ID: an ad-hoc signature, without which Apple Silicon does not run the app at all. The hardened
+  # runtime would refuse Electron's own frameworks, signed by another team, and is needed only for notarization
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+dmg:
+  artifactName: ClaudeTerm-${version}-${arch}.${ext}
+zip:
+  artifactName: ClaudeTerm-${version}-${arch}-mac.${ext}

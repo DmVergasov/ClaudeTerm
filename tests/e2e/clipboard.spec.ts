@@ -1,29 +1,6 @@
-import { type ElectronApplication, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { WIN } from '../fixtures/platform'
-import { FAKE_CLAUDE_SETTINGS, launchApp, PROMPT, bufferText, typeInTerminal } from './helpers'
-
-type SavedClipboard = { savedClipboard?: Record<string, Blob | Electron.ClipboardBookmark>[] }
-
-/** Runs the steps, then gives the system clipboard back what it held: the tests must not change the machine they run on */
-async function keepingClipboard(app: ElectronApplication, steps: () => Promise<void>): Promise<void> {
-  // the items clipboard.read() returns read the clipboard lazily and cannot be written back: keep their data. An empty
-  // clipboard reads as one item without types, which ClipboardItem does not accept
-  await app.evaluate(async ({ clipboard }) => {
-    const items = (await clipboard.read()).filter((item) => item.types.length)
-    const savedClipboard = await Promise.all(items.map(async (item) =>
-      Object.fromEntries(await Promise.all(item.types.map(async (type) => [type, await item.getType(type)] as const)))))
-    Object.assign(globalThis, { savedClipboard } satisfies SavedClipboard)
-  })
-  try {
-    await steps()
-  } finally {
-    await app.evaluate(async ({ clipboard, ClipboardItem }) => {
-      const saved = (globalThis as SavedClipboard).savedClipboard ?? []
-      if (saved.length) await clipboard.write(saved.map((data) => new ClipboardItem(data)))
-      else clipboard.clear()
-    })
-  }
-}
+import { FAKE_CLAUDE_SETTINGS, keepingClipboard, launchApp, PROMPT, bufferText, typeInTerminal } from './helpers'
 
 // Claude Code in its fullscreen mode copies its own mouse selection with OSC 52
 test('a program copies text to the clipboard with OSC 52', async () => {

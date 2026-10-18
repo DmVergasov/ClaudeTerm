@@ -3,7 +3,7 @@ import { CHECK_EVERY_MS, FIRST_CHECK_MS, Updater, type UpdaterBackend } from '..
 import type { UpdateState } from '../../src/shared/types'
 
 function fakeBackend() {
-  const h: { downloaded?: (v: string, notes: unknown) => void; error?: (m: string) => void } = {}
+  const h: { downloaded?: (v: string, notes: unknown) => void; offered?: (v: string, notes: string | null) => void; error?: (m: string) => void } = {}
   const b = {
     result: null as string | null,
     fail: null as string | null,
@@ -17,6 +17,7 @@ function fakeBackend() {
       return b.fail ? Promise.reject(new Error(b.fail)) : Promise.resolve(b.result)
     },
     onDownloaded: (cb: (v: string, notes: unknown) => void) => { h.downloaded = cb },
+    onOffered: (cb: (v: string, notes: string | null) => void) => { h.offered = cb },
     onError: (cb: (m: string) => void) => { h.error = cb },
     quitAndInstall: () => { b.installs++ }
   }
@@ -36,6 +37,7 @@ function setup(o: { backend?: boolean; enabled?: boolean } = {}) {
     publish: (s) => states.push(s),
     notify: (m) => out.push(`toast:${m}`),
     beforeInstall: () => out.push('beforeInstall'),
+    openReleasePage: (v) => out.push(`release page ${v}`),
     log: (m) => out.push(`log:${m}`),
     setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length },
     clearTimer: () => { timers.length = 0 }
@@ -119,6 +121,34 @@ describe('Updater', () => {
     u.install()
     expect(out).toEqual(['beforeInstall'])
     expect(b.installs).toBe(1)
+  })
+
+  it('a version this copy cannot install itself is offered on its release page: Download opens it', async () => {
+    const { u, b, h, out, states } = setup()
+    b.check = async () => { b.checks++; h.offered!('0.1.4', '## 0.1.4\n\n- **Mac builds.** ClaudeTerm runs on macOS.\n'); return '0.1.4' }
+    await u.check(true)
+    expect(states).toEqual([{ status: 'available', version: '0.1.4', notes: [{ version: '0.1.4', items: [{ title: 'Mac builds', text: 'Mac builds. ClaudeTerm runs on macOS.' }] }] }])
+    expect(out).toEqual(['toast:ClaudeTerm 0.1.4 is available — click Download to get it'])
+    u.install()
+    expect(out.slice(1)).toEqual(['release page 0.1.4'])
+    expect(b.installs).toBe(0)
+  })
+
+  it('an offered version keeps being checked: a later download of it, or of a newer one, makes it ready', async () => {
+    const { u, b, h, states } = setup()
+    h.offered!('0.1.4', null)
+    await u.check(false)
+    expect(b.checks).toBe(1)
+    h.downloaded!('0.1.4', null)
+    expect(states.map((s) => s.status)).toEqual(['available', 'ready'])
+  })
+
+  it('an offer does not replace a downloaded update', () => {
+    const { u, h, states } = setup()
+    h.downloaded!('0.1.4', null)
+    h.offered!('0.1.4', null)
+    expect(u.current.status).toBe('ready')
+    expect(states).toHaveLength(1)
   })
 
   it('backend errors (e.g. a failed download) are logged', () => {
