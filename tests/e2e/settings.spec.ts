@@ -3,6 +3,7 @@ import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
+import { MAC } from '../fixtures/platform'
 import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, TEST_SHELL, windowPlaces, KEYS } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -113,8 +114,9 @@ test('Ctrl+, opens one settings window; Esc closes it', async () => {
   await page.keyboard.press(KEYS.settings)
   await page.waitForTimeout(500)
   expect(app.windows()).toHaveLength(2)
-  // a test run shows both windows off the screen, and bringing the open one forward does not take the focus
-  expect(await windowPlaces(app)).toEqual([{ onScreen: false, focused: false }, { onScreen: false, focused: false }])
+  // a test run shows both windows off the screen (macOS keeps them on one), and bringing the open one forward does not
+  // take the focus
+  expect(await windowPlaces(app)).toEqual([{ onScreen: MAC, focused: false }, { onScreen: MAC, focused: false }])
   const closed = win.waitForEvent('close')
   // the window is gone before the key comes back up, which fails the press itself; the close event is the check
   await win.keyboard.press('Escape').catch(() => {})

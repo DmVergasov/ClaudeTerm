@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { WIN } from '../fixtures/platform'
+import { MAC, WIN } from '../fixtures/platform'
 import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, PROMPT, typeInTerminal, windowPlaces } from './helpers'
 
 // the typed line never holds the answer itself, so seeing the answer shows the shell ran it
@@ -21,10 +21,8 @@ test('a test run shows the window off the screen and leaves the focus alone: not
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await expect.poll(() => bufferText(page), { timeout: 15_000 }).toMatch(PROMPT)
-  // a failure says where the window is, and where the displays are
-  const where = await app.evaluate(({ BrowserWindow, screen }) =>
-    JSON.stringify({ windows: BrowserWindow.getAllWindows().map((w) => w.getBounds()), displays: screen.getAllDisplays().map((d) => d.bounds) }))
-  expect(await windowPlaces(app), where).toEqual([{ onScreen: false, focused: false }])
+  // macOS keeps every window on a screen: there it only stays in the background
+  expect(await windowPlaces(app)).toEqual([{ onScreen: MAC, focused: false }])
   await app.close()
 })
 

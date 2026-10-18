@@ -25,11 +25,14 @@ test('the copy key copies the terminal\'s selection, the paste key pastes text',
     await typeInTerminal(page, 'echo copy-me-42')
     await expect.poll(() => bufferText(page)).toMatch(/^copy-me-42$/m)
     // the output line: the command line above it holds the word too. The terminal redraws its rows all the time
-    // (the blinking cursor), so the word is double-clicked where it is, not as an element
-    const word = (await page.locator('.terminal-host:visible .xterm-rows span', { hasText: 'copy-me-42' }).last().boundingBox())!
-    await page.mouse.dblclick(word.x + word.width / 2, word.y + word.height / 2)
-    await page.keyboard.press(KEYS.copy)
-    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe('copy-me-42')
+    // (the blinking cursor), so the word is double-clicked where it is, not as an element, again if a redraw took it
+    await expect(async () => {
+      const word = await page.locator('.terminal-host:visible .xterm-rows span', { hasText: 'copy-me-42' }).last().boundingBox()
+      expect(word).not.toBeNull()
+      await page.mouse.dblclick(word!.x + word!.width / 2, word!.y + word!.height / 2)
+      await page.keyboard.press(KEYS.copy)
+      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()), { timeout: 1000 }).toBe('copy-me-42')
+    }).toPass({ timeout: 10_000 })
     await app.evaluate(({ clipboard }) => clipboard.writeText('echo pasted-by-key'))
     await page.keyboard.press(KEYS.paste)
     // the paste reads the clipboard through main: an Enter pressed at once could come first
