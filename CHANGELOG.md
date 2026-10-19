@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.6.1
+
+### Fixes
+
+- **A tab closed right after it opened closes at once on macOS.** While the shell of a new tab was still running your shell profile, for example `brew shellenv`, nvm or conda, closing the tab or quitting ClaudeTerm waited until the profile's current command finished. The tab now ends that command together with the shell.
+
 ## 0.6.0
 
 ### New
