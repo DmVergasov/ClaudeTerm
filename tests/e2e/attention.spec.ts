@@ -22,7 +22,8 @@ test('Claude waiting in a background tab makes that tab pulse until it is opened
   await expect(claudeTab).not.toHaveClass(/\battention\b/)
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
   await expect(claudeTab).toHaveClass(/\battention\b/)
-  expect(await claudeTab.evaluate((e) => getComputedStyle(e).animationName)).toBe('tab-attention')
+  // found and read in one go: a redraw of the tab bar replaces its elements, and a replaced one has no style left
+  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`[data-tab-id="${id}"]`)!).animationName, tabId)).toBe('tab-attention')
   await expect(claudeTab.locator('.tab-bell')).toHaveCount(0)
 
   await claudeTab.click()
