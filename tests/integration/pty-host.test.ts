@@ -70,4 +70,20 @@ describe.runIf(!WIN)('spawnPty on Linux and macOS', () => {
     expect(() => process.kill(p.child, 0)).not.toThrow()
     process.kill(p.child, 'SIGKILL')
   })
+
+  // a tab closed while its login shell still runs its profile, as `eval "$(brew shellenv)"`: bash 3.2 (macOS) answers
+  // SIGHUP only once such a command ends
+  it('kill() ends a shell busy with a command of its startup files at once, not when that command ends', async () => {
+    let out = ''
+    let exitedAt = 0
+    const h = spawnPty({
+      file: '/bin/bash', args: ['--norc', '--noprofile', '-i', '-c', 'x=$(echo busy-starting >&2; sleep 10)'], cwd: process.cwd(), env, cols: 80, rows: 24,
+      onData: (d) => { out += d }, onExit: () => { exitedAt = Date.now() }
+    })
+    await vi.waitFor(() => expect(out).toContain('busy-starting'), { timeout: 5000 })
+    const killedAt = Date.now()
+    h.kill()
+    await vi.waitFor(() => expect(exitedAt).toBeGreaterThan(0), { timeout: 8000 })
+    expect(exitedAt - killedAt).toBeLessThan(1500)
+  })
 })
