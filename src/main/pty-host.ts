@@ -70,8 +70,14 @@ export const spawnPty: SpawnPty = (o) => {
       if (!alive) return
       alive = false
       killed = true
+      // Elsewhere than Windows the shell's whole process group: a shell still busy with a command of its startup files
+      // (bash 3.2 on macOS) would answer SIGHUP only once that command ends. The programs it runs as jobs (claude) get
+      // their SIGHUP from the shell, as before.
       const hangUp = (): void => {
-        try { p.kill() } catch { /* process already gone */ }
+        try {
+          if (process.platform === 'win32') p.kill()
+          else process.kill(-p.pid, 'SIGHUP')
+        } catch { /* process already gone */ }
       }
       if (process.platform === 'darwin') void sessionPrograms(p.pid).then((pids) => { programs = pids; hangUp() })
       else hangUp()
