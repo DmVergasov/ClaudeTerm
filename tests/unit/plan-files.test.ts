@@ -41,6 +41,23 @@ describe('parseLedger', () => {
     expect(parseLedger('Task 1: complete\nFinal review: clean\n').final).toBe(true)
     expect(parseLedger('Pre-flight: Final check later\n').final).toBe(false)
   })
+  it('reads the lines as ledgers write them: list items, bold, headings, upper case', () => {
+    const l = parseLedger([
+      '- Task 1: complete (commits c4d35dc0f..98a1ac8f5, review clean)',
+      '- **Task 2: complete** (commits 98a1ac8f5..ca320d797)',
+      '**Task 3: complete**',
+      '## Task 4: complete',
+      '- Task 5: **complete**',
+      'Task 6: COMPLETE',
+      '- Task 7: review Approved (Opus), spec ✅.',
+      '- Task 8: Ruling: complete rewrite declined'
+    ].join('\n'))
+    expect([...l.complete]).toEqual([1, 2, 3, 4, 5, 6])
+    expect(l.final).toBe(false)
+    expect(parseLedger('- Final review: clean\n').final).toBe(true)
+    expect(parseLedger('- **Final**: suite green\n').final).toBe(true)
+    expect(parseLedger('- Final3 rerun\n').final).toBe(false)
+  })
 })
 
 describe('planStatus', () => {

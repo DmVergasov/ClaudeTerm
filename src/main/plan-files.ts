@@ -51,10 +51,11 @@ export function parsePlan(text: string): ParsedPlan | null {
 export function parseLedger(text: string): ParsedLedger {
   const complete = new Set<number>()
   let final = false
+  // ledgers are Markdown: a line may start as a list item, a heading or in bold (`- **Task 2: complete**`)
   for (const line of text.split('\n')) {
-    const m = /^\s*Task\s+(\d+):\s*complete\b/.exec(line)
+    const m = /^[\s#>*+-]*Task\s+(\d+):[\s*]*complete\b/i.exec(line)
     if (m) complete.add(Number(m[1]))
-    else if (/^\s*Final\b/.test(line)) final = true
+    else if (/^[\s#>*+-]*Final\b/.test(line)) final = true
   }
   return { complete, final }
 }
