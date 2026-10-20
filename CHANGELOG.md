@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.8.1
+
+### Fixes
+
+- **The plan's progress counts the finished tasks.** When Claude wrote the plan's progress as a list, in bold or as headings (`- Task 3: complete`), the status bar showed 0 tasks done for the whole plan. It now reads those lines too.
+
 ## 0.8.0
 
 ### New
