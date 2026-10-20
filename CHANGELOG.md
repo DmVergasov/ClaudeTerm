@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.7.0
+
+### New
+
+- **Mute a tab.** Right-click a tab → **Mute sound**, and Claude waiting for you, asking a question or finishing its answer in that tab — or a bell in its terminal — makes no sound any more. The tab is still highlighted and the taskbar still flashes, so you don't miss it; a crossed-out speaker on the tab shows that it is muted. **Unmute sound** brings the sound back. Restart and **Restore previous session** keep the mute.
+
 ## 0.6.1
 
 ### Fixes
