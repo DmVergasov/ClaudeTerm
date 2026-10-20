@@ -66,7 +66,7 @@ const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? fol
 function renderTabs(): void {
   const items = order.flatMap((id) => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited }] : []
+    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited }] : []
   })
   tabBar.render(items, activeId)
   if (imagePanel) refreshPanelButtons()
@@ -338,6 +338,7 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
     showMenu(at, [
       { label: t.info.kind === 'claude' ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
       ...(sessionId ? [{ label: isStarred ? 'Unstar session' : 'Star session', action: () => void ct.setSessionStarred(sessionId, !isStarred) }] : []),
+      { label: t.info.muted ? 'Unmute sound' : 'Mute sound', action: () => ct.muteTab(id, !t.info.muted) },
       ...(switches.length > 0 ? [{ label: '', separator: true }, ...switches] : []),
       { label: '', separator: true },
       { label: 'Close tab', action: () => ct.closeTab(id) }

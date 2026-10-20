@@ -32,6 +32,22 @@ test('restores a claude tab with --resume and its title', async () => {
   await app.close()
 })
 
+test('a muted tab is restored muted, and the next snapshot keeps which tabs are muted', async () => {
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const tab = (title: string, muted: boolean) => ({ kind: 'claude', profile: TEST_SHELL, cwd: work, title, claudeSessionId: SID, muted })
+  writeFileSync(join(dataDir, 'session-state.json'), JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs: [tab('quiet', true), tab('loud', false)] }))
+  const { app, page } = await launchApp({ dataDir })
+  await expect.poll(() => page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
+  await page.locator('.banner-restore').click()
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  await expect(page.locator('.tab', { hasText: 'quiet' }).locator('.tab-muted')).toHaveCount(1)
+  await expect(page.locator('.tab', { hasText: 'loud' }).locator('.tab-muted')).toHaveCount(0)
+  await closeWindow(app)
+  const saved = JSON.parse(readFileSync(join(dataDir, 'session-state.json'), 'utf8')) as { tabs: { title: string; muted: boolean }[] }
+  expect(saved.tabs.map((t) => [t.title, t.muted])).toEqual([['quiet', true], ['loud', false]])
+})
+
 test('closing the window keeps open tabs in the snapshot', async () => {
   const { app, page, dataDir } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)

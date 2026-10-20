@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, safeStorage, screen, shell, type Rectangle } from 'electron'
 import { spawn } from 'node:child_process'
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
+import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { AccountResult, AccountsView } from '../shared/accounts'
@@ -204,16 +204,20 @@ function bootstrap(): void {
     }
   })
 
-  const playSound = createSoundPlayer({
-    ...(process.platform === 'win32'
-      ? { player: (f: string) => wavPlayer(f, process.env), systemSound: null }
-      : process.platform === 'darwin'
-        ? macSoundDeps(process.env, existsSync)
-        : linuxSoundDeps(process.env, (cmd) => findExecutable(cmd, process.env.PATH ?? '', isExecutableFile) !== null, existsSync)),
-    beep: () => shell.beep(),
-    spawn: (p) => spawn(p.file, p.args, { env: p.env, windowsHide: true, stdio: 'ignore' }),
-    warn: toast
-  })
+  // a test run can have each sound written to a file instead of played
+  const testSoundLog = isTest ? process.env.CLAUDETERM_TEST_SOUND_LOG : undefined
+  const playSound = testSoundLog
+    ? (sound: string): void => appendFileSync(testSoundLog, `${sound}\n`)
+    : createSoundPlayer({
+      ...(process.platform === 'win32'
+        ? { player: (f: string) => wavPlayer(f, process.env), systemSound: null }
+        : process.platform === 'darwin'
+          ? macSoundDeps(process.env, existsSync)
+          : linuxSoundDeps(process.env, (cmd) => findExecutable(cmd, process.env.PATH ?? '', isExecutableFile) !== null, existsSync)),
+      beep: () => shell.beep(),
+      spawn: (p) => spawn(p.file, p.args, { env: p.env, windowsHide: true, stdio: 'ignore' }),
+      warn: toast
+    })
 
   const stopTabStatus = (tabId: string): void => {
     const timer = statusTimers.get(tabId)
@@ -373,7 +377,8 @@ function bootstrap(): void {
     settings: () => settings.notifications,
     flash: () => { if (win && !win.isDestroyed()) win.flashFrame(true) },
     play: playSound,
-    markTab: (tabId, reason) => send(IPC.evAttention, tabId, reason)
+    markTab: (tabId, reason) => send(IPC.evAttention, tabId, reason),
+    muted: (tabId) => tabs.get(tabId)?.muted === true
   })
 
   const openTab = (req: OpenTabRequest, activate = true, setupToken = false): TabInfo | null => {
@@ -419,7 +424,7 @@ function bootstrap(): void {
       const { cwd, warning } = resolveLaunchDir(t.cwd, homedir(), isDirectory)
       if (warning) toast(warning)
       const opened = openTab(
-        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId: t.kind === 'claude' ? t.claudeSessionId : null, account: t.kind === 'claude' ? t.account : null },
+        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId: t.kind === 'claude' ? t.claudeSessionId : null, account: t.kind === 'claude' ? t.account : null, muted: t.muted },
         false
       )
       if (opened && first === null) first = opened.id
@@ -611,6 +616,7 @@ function bootstrap(): void {
       .then((ok) => { if (!ok && account !== null && accounts.token(account) === null) toast(`${accountName(account)} is not available`) })
       .catch((e: Error) => log.warn(`cannot switch the account: ${e.message}`))
   })
+  ipcMain.on(IPC.tabsMute, (_e, id: unknown, muted: unknown) => { if (isId(id) && isFlag(muted)) tabs.setMuted(id, muted) })
   ipcMain.on(IPC.ptyWrite, (_e, id: unknown, data: unknown) => {
     if (!isId(id) || !isPtyData(data)) return
     if (id === autoTabId && isUserInput(data)) autoTabId = null

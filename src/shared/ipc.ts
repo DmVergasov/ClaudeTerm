@@ -14,6 +14,7 @@ export const IPC = {
   tabsReorder: 'tabs:reorder',
   tabsRestart: 'tabs:restart',
   tabsSwitchAccount: 'tabs:switch-account',
+  tabsMute: 'tabs:mute',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   profilesList: 'profiles:list',
@@ -142,6 +143,8 @@ export interface CtApi {
   restartTab(tabId: string, live?: boolean): void
   /** restarts a Claude tab on another account (null: the main one), resuming its conversation */
   switchAccount(tabId: string, account: string | null): void
+  /** a muted tab makes no notification sound; it is still marked and still flashes the taskbar */
+  muteTab(tabId: string, muted: boolean): void
   writePty(tabId: string, data: string): void
   resizePty(tabId: string, cols: number, rows: number): void
   listProfiles(): Promise<string[]>

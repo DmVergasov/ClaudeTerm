@@ -183,6 +183,35 @@ describe('TabManager', () => {
     expect(tm.get(a.id)?.customTitle).toBeNull()
   })
 
+  it('setMuted mutes and unmutes a tab, tells the window and saves the state; the snapshot keeps it', () => {
+    const { tm, log, onStateChanged } = setup()
+    const a = tm.open({ kind: 'shell', cwd: 'D:\\a' })
+    expect(a.muted).toBe(false)
+    log.length = 0
+    onStateChanged.mockClear()
+    tm.setMuted(a.id, true)
+    expect(tm.get(a.id)?.muted).toBe(true)
+    expect(log).toEqual([`updated:${a.id}:false`])
+    expect(onStateChanged).toHaveBeenCalledTimes(1)
+    expect(tm.snapshot()[0]).toMatchObject({ muted: true })
+    tm.setMuted(a.id, true)
+    expect(log).toHaveLength(1)
+    tm.setMuted(a.id, false)
+    expect(tm.get(a.id)?.muted).toBe(false)
+    expect(onStateChanged).toHaveBeenCalledTimes(2)
+    tm.setMuted('unknown', true)
+    expect(onStateChanged).toHaveBeenCalledTimes(2)
+  })
+
+  it('a tab opened muted stays muted through a restart', async () => {
+    const { tm, ptys } = setup({ restartWaitMs: 0 })
+    const t = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, muted: true })
+    expect(t.muted).toBe(true)
+    await tm.restart(t.id, { live: true })
+    expect(ptys).toHaveLength(2)
+    expect(tm.get(t.id)?.muted).toBe(true)
+  })
+
   it('session ids are tracked per tab, even for two claude tabs in the same folder', () => {
     const { tm } = setup()
     const a = tm.open({ kind: 'claude', cwd: 'D:\\same' })
@@ -193,9 +222,9 @@ describe('TabManager', () => {
     expect(tm.setClaudeSession(s.id, SID_A)).toBe(false)
     expect(tm.setClaudeSession('unknown', SID_A)).toBe(false)
     expect(tm.snapshot()).toEqual([
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null },
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null },
-      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null }
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null, muted: false },
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null, muted: false },
+      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null, muted: false }
     ])
   })
 

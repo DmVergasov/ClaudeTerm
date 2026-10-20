@@ -1,4 +1,7 @@
 import { expect, test } from '@playwright/test'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, PROMPT } from './helpers'
 
@@ -93,6 +96,36 @@ test('each case follows its own settings: a finished answer without tab highligh
   await expect(claudeTab).not.toHaveClass(/\battention\b/)
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
   await expect(claudeTab).toHaveClass(/\battention\b/)
+  await app.close()
+})
+
+test('Mute sound in the tab menu silences that tab, which is still marked; Unmute sound brings the sound back', async () => {
+  // the app writes each sound it would play to this file instead
+  const sounds = join(mkdtempSync(join(tmpdir(), 'ct-sound-')), 'sounds.txt')
+  const played = (): string => (existsSync(sounds) ? readFileSync(sounds, 'utf8') : '')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const loud = { sound: true, flash: false, tab: true }
+  const { app, page, pipeName } = await launchApp({ settings: quietNotifications({ permission: loud, done: loud }), args: ['--claude', work], env: { CLAUDETERM_TEST_SOUND_LOG: sounds } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  const claudeTab = page.locator(`[data-tab-id="${tabId}"]`)
+  await expect(claudeTab.locator('.tab-muted')).toHaveCount(0)
+
+  await claudeTab.click({ button: 'right' })
+  await page.locator('.menu-item', { hasText: /^Mute sound$/ }).click()
+  await expect(claudeTab.locator('.tab-muted')).toHaveCount(1)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
+  await expect(claudeTab).toHaveClass(/\battention\b/)
+  // the sound is written before the pipe answers
+  expect(played()).toBe('')
+
+  await claudeTab.click({ button: 'right' })
+  await page.locator('.menu-item', { hasText: /^Unmute sound$/ }).click()
+  await expect(claudeTab.locator('.tab-muted')).toHaveCount(0)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  expect(played()).toBe('system\n')
   await app.close()
 })
 

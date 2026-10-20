@@ -11,6 +11,8 @@ export interface AttentionDeps {
   /** 'system' or an absolute path to a .wav file */
   play(sound: string): void
   markTab(tabId: string, reason: NotificationCase): void
+  /** the user muted that tab: it gives every signal but the sound */
+  muted(tabId: string): boolean
   now?(): number
 }
 
@@ -36,7 +38,7 @@ export class Attention {
       this.d.flash()
       signalled = true
     }
-    if (c.sound) {
+    if (c.sound && !this.d.muted(tabId)) {
       const now = this.d.now?.() ?? Date.now()
       const prev = this.lastSound.get(tabId)
       if (prev === undefined || now - prev >= ATTENTION_REPEAT_MS) {

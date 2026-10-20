@@ -83,6 +83,7 @@ export class TabManager {
       customTitle: req.title ?? null,
       claudeSessionId: req.kind === 'claude' ? req.resumeSessionId ?? null : null,
       account: req.kind === 'claude' ? launch.account ?? null : null,
+      muted: req.muted === true,
       exited: false
     }
     const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false }
@@ -129,6 +130,15 @@ export class TabManager {
     if (!rec) return
     const t = title?.trim()
     rec.info.customTitle = t ? t : null
+    this.deps.events.updated({ ...rec.info })
+    this.changed()
+  }
+
+  /** a muted tab makes no notification sound */
+  setMuted(tabId: string, muted: boolean): void {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.info.muted === muted) return
+    rec.info.muted = muted
     this.deps.events.updated({ ...rec.info })
     this.changed()
   }
@@ -212,7 +222,7 @@ export class TabManager {
   snapshot(): SessionSnapshotTab[] {
     return this.order.map((id) => {
       const i = this.tabs.get(id)!.info
-      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account }
+      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted }
     })
   }
 

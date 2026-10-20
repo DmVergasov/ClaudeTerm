@@ -19,6 +19,7 @@ const api: CtApi = {
   reorderTabs: (ids) => ipcRenderer.send(IPC.tabsReorder, ids),
   restartTab: (id, live) => ipcRenderer.send(IPC.tabsRestart, id, live === true),
   switchAccount: (id, account) => ipcRenderer.send(IPC.tabsSwitchAccount, id, account),
+  muteTab: (id, muted) => ipcRenderer.send(IPC.tabsMute, id, muted),
   writePty: (id, data) => ipcRenderer.send(IPC.ptyWrite, id, data),
   resizePty: (id, cols, rows) => ipcRenderer.send(IPC.ptyResize, id, cols, rows),
   listProfiles: () => ipcRenderer.invoke(IPC.profilesList),

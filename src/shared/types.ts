@@ -16,6 +16,8 @@ export interface TabInfo {
   claudeSessionId: string | null
   /** the extra account a Claude tab runs on; null: the main account (and every shell tab) */
   account: string | null
+  /** the user muted the tab: it makes no notification sound */
+  muted: boolean
   exited: boolean
 }
 
@@ -27,6 +29,8 @@ export interface OpenTabRequest {
   resumeSessionId?: string | null
   /** a Claude tab's account, null the main one; left out: the account of the active Claude tab */
   account?: string | null
+  /** start the tab muted, as it was when its session was saved */
+  muted?: boolean
 }
 
 export type ImageSource = 'created' | 'shown' | 'read' | 'tool' | 'pasted'
@@ -52,6 +56,7 @@ export interface SessionSnapshotTab {
   title: string | null
   claudeSessionId: string | null
   account: string | null
+  muted: boolean
 }
 
 export interface SessionSnapshot {

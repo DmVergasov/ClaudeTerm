@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS } from '../../src/main/settings'
 import type { NotificationSettings } from '../../src/shared/types'
 
 function setup(o: { focused?: boolean; active?: string | null } = {}) {
-  const state = { focused: o.focused ?? false, active: o.active === undefined ? 't1' : o.active, n: structuredClone(DEFAULT_SETTINGS.notifications) as NotificationSettings, t: 1000 }
+  const state = { focused: o.focused ?? false, active: o.active === undefined ? 't1' : o.active, n: structuredClone(DEFAULT_SETTINGS.notifications) as NotificationSettings, t: 1000, muted: new Set<string>() }
   const calls: string[] = []
   const a = new Attention({
     windowFocused: () => state.focused,
@@ -13,6 +13,7 @@ function setup(o: { focused?: boolean; active?: string | null } = {}) {
     flash: () => calls.push('flash'),
     play: (sound) => calls.push(`play:${sound}`),
     markTab: (id, reason) => calls.push(`mark:${id}:${reason}`),
+    muted: (id) => state.muted.has(id),
     now: () => state.t
   })
   return { a, calls, state }
@@ -114,6 +115,37 @@ describe('Attention', () => {
     a.notify('t1', 'done')
     state.focused = false
     a.notify('t1', 'done')
+    expect(calls).toContain('play:system')
+  })
+
+  it('a muted tab gives no sound; it is still marked and the taskbar still flashes', () => {
+    const { a, calls, state } = setup({ focused: false, active: 't2' })
+    state.n.bell.sound = true
+    state.muted.add('t1')
+    expect(a.notify('t1', 'permission')).toBe(true)
+    a.notify('t1', 'bell')
+    expect(calls).toEqual(['mark:t1:permission', 'flash', 'mark:t1:bell', 'flash'])
+    calls.length = 0
+    a.notify('t3', 'done')
+    expect(calls).toContain('play:system')
+  })
+
+  it('a muted tab with only the sound on for the case gives no signal and reports it', () => {
+    const { a, calls, state } = setup({ focused: true, active: 't2' })
+    state.n.done = { sound: true, flash: true, tab: false }
+    state.muted.add('t1')
+    expect(a.notify('t1', 'done')).toBe(false)
+    expect(calls).toEqual([])
+  })
+
+  it('a muted tab does not use up the sound window: unmuted, it sounds at once', () => {
+    const { a, calls, state } = setup({ focused: false })
+    state.muted.add('t1')
+    a.notify('t1', 'question')
+    state.muted.delete('t1')
+    state.t += 10
+    calls.length = 0
+    a.notify('t1', 'permission')
     expect(calls).toContain('play:system')
   })
 

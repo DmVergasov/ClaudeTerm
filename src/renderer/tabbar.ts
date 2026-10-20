@@ -11,6 +11,8 @@ export interface TabBarItem {
   /** the folder the tab was opened in */
   folder: string
   kind: TabKind
+  /** the tab makes no notification sound */
+  muted: boolean
   bell: boolean
   /** Claude in this tab is waiting for the user */
   attention: boolean
@@ -150,6 +152,14 @@ export class TabBar {
     label.className = 'tab-title'
     label.textContent = item.title
     el.append(icon, label)
+    if (item.muted) {
+      const m = document.createElement('span')
+      m.className = 'tab-muted'
+      m.title = 'Sound muted'
+      m.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M1.65 5.65h2.7l3.5-3v10.7l-3.5-3h-2.7z"/><path d="M10.5 5.5l4 4M14.5 5.5l-4 4"/></svg>'
+      el.append(m)
+    }
     if (item.bell) {
       const b = document.createElement('span')
       b.className = 'tab-bell'
