@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.8.0
+
+### New
+
+- **See how far Claude has got with a plan.** While Claude carries out a plan with the superpowers plugin (`subagent-driven-development` or `executing-plans`), the status bar under its tab shows how many tasks are done and which one it is on: `3/7 · Save dialog and file writing`. Click it for the whole list — done tasks ticked, the current one highlighted, the rest still to come; Esc or a click elsewhere closes it. It follows the plan's progress as Claude works, ends with ✓ when the plan is finished, and a restored session shows its plan's progress again.
+
 ## 0.7.0
 
 ### New
