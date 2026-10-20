@@ -188,5 +188,17 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .review-send:disabled { opacity: 0.45; cursor: default; }
 #statusbar .status-changes { cursor: pointer; }
 #statusbar .status-changes:hover { color: var(--fg); }
+#statusbar .status-plan { cursor: pointer; min-width: 0; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
+#statusbar .status-plan:hover { color: var(--fg); }
+#statusbar .status-plan::before { content: ''; display: inline-block; width: 48px; height: 5px; margin-right: 6px; vertical-align: middle; border-radius: 3px; background: linear-gradient(to right, var(--accent) var(--plan-fill), var(--border) var(--plan-fill)); }
+#plan-list { position: fixed; z-index: 50; width: 340px; max-height: 60vh; overflow: auto; background: var(--chrome); border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; box-shadow: 0 8px 24px #0008; }
+#plan-list .plan-head { display: flex; justify-content: space-between; gap: 10px; padding: 6px 12px 8px; border-bottom: 1px solid var(--border); }
+#plan-list .plan-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+#plan-list .plan-count { flex-shrink: 0; color: var(--muted); }
+#plan-list .plan-task { display: flex; gap: 8px; padding: 4px 12px; }
+#plan-list .plan-mark { flex-shrink: 0; width: 1.2em; text-align: center; }
+#plan-list .plan-task.done { color: var(--muted); }
+#plan-list .plan-task.current { background: var(--chrome-2); color: var(--fg); }
+#plan-list .plan-task.current .plan-mark { color: var(--accent); }
 #statusbar .status-account { cursor: pointer; }
 #statusbar .status-account:hover { color: var(--fg); }

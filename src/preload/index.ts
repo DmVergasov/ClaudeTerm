@@ -75,6 +75,7 @@ const api: CtApi = {
   onSettingsView: (cb) => on(IPC.evSettingsView, cb),
   onRestore: (cb) => on(IPC.evRestore, cb),
   onStatus: (cb) => on(IPC.evStatus, cb),
+  onPlan: (cb) => on(IPC.evPlan, cb),
   onAttention: (cb) => on(IPC.evAttention, cb),
   onUpdate: (cb) => on(IPC.evUpdate, cb),
   onReview: (cb) => on(IPC.evReview, cb),

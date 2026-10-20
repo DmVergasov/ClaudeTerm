@@ -1,7 +1,7 @@
 import type { AccountResult, AccountsView } from './accounts'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
-import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, RecentSession, Settings, TabInfo, UpdateState } from './types'
+import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -69,6 +69,7 @@ export const IPC = {
   evSettingsView: 'ev:settings-view',
   evRestore: 'ev:restore',
   evStatus: 'ev:status',
+  evPlan: 'ev:plan',
   evAttention: 'ev:attention',
   evUpdate: 'ev:update',
   evReview: 'ev:review',
@@ -102,6 +103,11 @@ export interface StatusUpdate {
   tabId: string
   main: MainStatus | null
   agents: AgentStatus[]
+}
+
+export interface PlanUpdate {
+  tabId: string
+  plan: PlanStatus | null
 }
 
 export interface RestoreInfo {
@@ -221,6 +227,7 @@ export interface CtApi {
   onSettingsView(cb: (view: SettingsView) => void): Unsubscribe
   onRestore(cb: (info: RestoreInfo | null) => void): Unsubscribe
   onStatus(cb: (update: StatusUpdate) => void): Unsubscribe
+  onPlan(cb: (update: PlanUpdate) => void): Unsubscribe
   /** mark that tab: the bell dot for 'bell', the pulse for the Claude cases */
   onAttention(cb: (tabId: string, reason: NotificationCase) => void): Unsubscribe
   onUpdate(cb: (state: UpdateState) => void): Unsubscribe

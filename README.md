@@ -59,6 +59,8 @@ Click a card to open it full-size (wheel to zoom, drag to pan, arrows to flip); 
 
 Under every Claude tab: the current model and reasoning effort, how full the context window is, how much of the 5-hour and weekly usage limits is spent, and which subagents are running right now with their model and effort. Hover for exact token counts, when each limit resets, and a list of the agents with their tasks.
 
+While Claude carries out a superpowers plan (`subagent-driven-development` or `executing-plans`), the status bar shows how far it has got — `3/7 · Save dialog and file writing` — and a click on it lists every task as done, current or still to come. It follows the plan's progress ledger and ends with ✓ when the plan is finished.
+
 <p align="center"><img src="docs/images/status-bar.png" width="640" alt="Status bar: model, effort, context, 5-hour and weekly limits, running subagents"></p>
 
 The limits are shown for Claude Pro and Max subscriptions, where Claude Code reports them.

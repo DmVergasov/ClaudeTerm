@@ -44,6 +44,7 @@ import { StarredSessions } from './starred-sessions'
 import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
+import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager } from './tab-manager'
 import { readAgentMeta } from './transcript-agent-info'
 import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, writeUpdateMarker } from './update-marker'
@@ -204,6 +205,9 @@ function bootstrap(): void {
     }
   })
 
+  const planHub = new PlanHub({ read: readPlanFile, onChange: (tabId) => send(IPC.evPlan, planHub.get(tabId)) })
+  setInterval(() => void planHub.refresh(), 1000)
+
   // a test run can have each sound written to a file instead of played
   const testSoundLog = isTest ? process.env.CLAUDETERM_TEST_SOUND_LOG : undefined
   const playSound = testSoundLog
@@ -297,7 +301,8 @@ function bootstrap(): void {
       onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info),
       onEditEvent: (ev) => review.transcriptEvent(tabId, ev),
       onAssistant: (agentId, at) => review.assistantEntry(tabId, agentId, at),
-      onInterrupt: (agentId, at) => review.interrupted(tabId, agentId, at)
+      onInterrupt: (agentId, at) => review.interrupted(tabId, agentId, at),
+      onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at)
     })
     // images there, also ones Claude reads, are shown by their path inside it (scratchpad\plot.png)
     const temp = sessionTempDir(transcriptPath, sessionId, claudeRoot)
@@ -326,6 +331,8 @@ function bootstrap(): void {
     onTabStarted: startTabImages,
     onTabClosed: (tabId) => {
       stopTabImages(tabId)
+      // after the feed has stopped, so no late report brings the closed tab back
+      planHub.removeTab(tabId)
       stopTabStatus(tabId)
       attention.removeTab(tabId)
       review.removeTab(tabId)
@@ -509,6 +516,7 @@ function bootstrap(): void {
       log.info(`session ${msg.source} tab=${msg.tabId} id=${msg.sessionId} transcript=${msg.transcriptPath ?? '-'}`)
       if (!tabs.setClaudeSession(msg.tabId, msg.sessionId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
+      planHub.session(msg.tabId, msg.sessionId)
       // compact keeps the open dialogs: the conversation goes on
       review.sessionStarted(msg.tabId, msg.sessionId, msg.source)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
@@ -531,6 +539,7 @@ function bootstrap(): void {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       log.info(`session end tab=${msg.tabId} id=${msg.sessionId}`)
       statusHub.sessionEnd(msg.tabId, msg.sessionId)
+      planHub.sessionEnd(msg.tabId, msg.sessionId)
       // a late SessionEnd of the session before /clear leaves the new one running
       review.sessionEnded(msg.tabId, msg.sessionId)
       return { ok: true }

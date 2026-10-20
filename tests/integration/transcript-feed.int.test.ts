@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
-import { assistantLine, editResultLine, interruptLine, PNG_B64, pastedLine, promptLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
+import { assistantLine, bashResultLine, editResultLine, interruptLine, PNG_B64, pastedLine, promptLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -122,6 +122,25 @@ describe('TranscriptFeed', () => {
     feed.scanSubagents()
     await feed.poll()
     expect(events).toEqual([[null, Date.parse('2026-10-08T10:00:07.000Z')], ['a1', Date.parse('2026-10-08T10:00:09.000Z')]])
+  })
+
+  it('reports the workspace an sdd-workspace run printed, in the main transcript and in a subagent\'s', async () => {
+    const { projectDir, transcriptPath, cacheRoot } = setup()
+    const run = (id: string, ws: string): string[] => [
+      toolUseLine(id, 'Bash', { command: 'bash /p/scripts/sdd-workspace docs/superpowers/plans/x.md' }),
+      bashResultLine(id, ws + '\n')
+    ]
+    writeFileSync(transcriptPath, run('m1', '/w/a/.superpowers/sdd/2026-10-20-main').join('\n') + '\n')
+    const subagents = join(projectDir, SID, 'subagents')
+    mkdirSync(subagents, { recursive: true })
+    writeFileSync(join(subagents, 'agent-o1.jsonl'), run('s1', '/w/a/.superpowers/sdd/2026-10-20-sub').join('\n') + '\n')
+    const printed: string[] = []
+    const times: number[] = []
+    const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, onPlanWorkspace: (p, at) => (printed.push(p), times.push(at)) })
+    feed.scanSubagents()
+    await feed.poll()
+    expect(printed).toEqual(['/w/a/.superpowers/sdd/2026-10-20-main', '/w/a/.superpowers/sdd/2026-10-20-sub'])
+    expect(times).toEqual([Date.parse('2026-10-05T10:00:01.000Z'), Date.parse('2026-10-05T10:00:01.000Z')])
   })
 
   it('reads history from the start and caches tool screenshots', async () => {

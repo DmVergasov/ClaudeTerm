@@ -1,14 +1,16 @@
 import type { StatusUpdate } from '../shared/ipc'
 import type { ReviewCounter } from '../shared/review'
-import type { AgentStatus } from '../shared/types'
+import type { AgentStatus, PlanStatus } from '../shared/types'
 
 export type Level = 'normal' | 'warn' | 'crit'
 
 export interface Segment {
-  key: 'account' | 'model' | 'context' | 'limit' | 'week' | 'agents' | 'changes'
+  key: 'account' | 'model' | 'context' | 'limit' | 'week' | 'agents' | 'plan' | 'changes'
   text: string
   title: string
   level: Level
+  /** 0..1, drawn as a progress bar before the text */
+  fill?: number
 }
 
 export function formatTokens(n: number): string {
@@ -84,25 +86,35 @@ export function changesSegment(c: ReviewCounter): Segment {
   return { key: 'changes', text: `± ${c.files} file${c.files === 1 ? '' : 's'} +${c.additions} −${c.deletions}`, title: c.title, level: 'normal' }
 }
 
+/** the superpowers plan being carried out: not part of Claude's status either, so it shows without a statusLine */
+export function planSegment(p: PlanStatus): Segment {
+  const current = p.tasks.find((t) => t.state === 'current')
+  const text = p.finished || !current ? `✓ ${p.total}/${p.total}` : `${p.done}/${p.total} · ${current.title || `Task ${current.n}`}`
+  return { key: 'plan', text, title: `${p.title} — ${p.done} of ${p.total} done. Click for the task list`, level: 'normal', fill: p.done / p.total }
+}
+
 /** the tab's account, once extra accounts exist: first, and there before Claude's first status too */
 export function accountSegment(label: string): Segment {
   return { key: 'account', text: label, title: 'The account this tab runs on — click to switch', level: 'normal' }
 }
 
 export class StatusBar {
-  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}) {
+  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}, onPlanClick: (anchor: HTMLElement) => void = () => {}) {
     el.addEventListener('click', (e) => {
       const target = e.target as HTMLElement
       if (target.closest('.status-changes')) onChangesClick()
       const account = target.closest<HTMLElement>('.status-account')
       if (account) onAccountClick(account)
+      const planSeg = target.closest<HTMLElement>('.status-plan')
+      if (planSeg) onPlanClick(planSeg)
     })
   }
 
-  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, account: string | null = null, now = Date.now()): void {
+  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, account: string | null = null, plan: PlanStatus | null = null, now = Date.now()): void {
     const segments = [
       ...(account !== null ? [accountSegment(account)] : []),
       ...(u ? statusSegments(u, now) : []),
+      ...(plan ? [planSegment(plan)] : []),
       ...(changes ? [changesSegment(changes)] : [])
     ]
     this.el.hidden = segments.length === 0
@@ -133,4 +145,5 @@ function fill(span: HTMLElement, s: Segment): void {
   if (span.className !== className) span.className = className
   if (span.textContent !== s.text) span.textContent = s.text
   if (span.title !== s.title) span.title = s.title
+  if (s.fill !== undefined) span.style.setProperty('--plan-fill', `${Math.round(s.fill * 100)}%`)
 }

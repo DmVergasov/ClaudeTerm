@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { accountSegment, changesSegment, formatTokens, levelFor, modelFamily, statusSegments } from '../../src/renderer/status-bar'
-import type { AgentStatus, MainStatus } from '../../src/shared/types'
+import { accountSegment, changesSegment, formatTokens, levelFor, modelFamily, planSegment, statusSegments } from '../../src/renderer/status-bar'
+import type { AgentStatus, MainStatus, PlanStatus } from '../../src/shared/types'
 
 const main: MainStatus = {
   model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
@@ -79,4 +79,14 @@ describe('accountSegment', () => {
   it('names the tab\'s account and says a click switches it', () => {
     expect(accountSegment('Work')).toEqual({ key: 'account', text: 'Work', title: 'The account this tab runs on — click to switch', level: 'normal' })
   })
+})
+
+const plan = (done: number, finished = false, current = 'Save dialog and file writing'): PlanStatus => ({
+  title: 'CSV Export', done, total: 7, finished,
+  tasks: Array.from({ length: 7 }, (_, i) => ({ n: i + 1, title: i === done ? current : `T${i + 1}`, state: finished || i < done ? 'done' : i === done ? 'current' : 'left' }))
+})
+it('planSegment: done/total and the current task; ✓ when finished; Task N for an untitled task', () => {
+  expect(planSegment(plan(3))).toEqual({ key: 'plan', text: '3/7 · Save dialog and file writing', title: 'CSV Export — 3 of 7 done. Click for the task list', level: 'normal', fill: 3 / 7 })
+  expect(planSegment(plan(7, true))).toMatchObject({ text: '✓ 7/7', fill: 1 })
+  expect(planSegment(plan(3, false, '')).text).toBe('3/7 · Task 4')
 })

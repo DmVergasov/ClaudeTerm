@@ -121,6 +121,13 @@ export interface AgentStatus {
   startedAt: number
 }
 
+/** a task of the plan Claude is carrying out: finished, being worked on, or still ahead */
+export type PlanTaskState = 'done' | 'current' | 'left'
+export interface PlanTask { n: number; title: string; state: PlanTaskState }
+
+/** the progress of a superpowers plan, for the status bar */
+export interface PlanStatus { title: string; tasks: PlanTask[]; done: number; total: number; finished: boolean }
+
 /** an item of a release's notes: the headline the update banner lists, and the whole item for its tooltip */
 export interface ReleaseNote {
   title: string

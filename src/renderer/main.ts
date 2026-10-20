@@ -2,11 +2,12 @@ import './styles.css'
 import type { AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
-import type { Settings, TabInfo } from '../shared/types'
+import type { PlanStatus, Settings, TabInfo } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
 import { Lightbox } from './lightbox'
+import { PlanList } from './plan-list'
 import { RecentSessionsWindow } from './recent-sessions'
 import { imagePasteInput, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar } from './search'
@@ -54,10 +55,12 @@ const inputLog = new Map<string, string>()
 const sizeLog = new Map<string, string[]>()
 let lightbox: Lightbox
 let sessionsWindow: RecentSessionsWindow
+let planList: PlanList
 const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
 let updateBanner: UpdateBanner
 const statusUpdates = new Map<string, StatusUpdate>()
+const planUpdates = new Map<string, PlanStatus>()
 /** the extra accounts, without their tokens */
 let accounts: AccountView[] = []
 
@@ -122,7 +125,7 @@ function accountOf(tabId: string | null): string | null {
 }
 
 function renderStatus(tabId: string): void {
-  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId))
+  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId) ?? null)
 }
 
 /** Continue as …: the tab's conversation restarts on another account */
@@ -281,6 +284,7 @@ function addTab(info: TabInfo): void {
 
 function activate(tabId: string): void {
   activeId = tabId
+  planList.close()
   const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
   const focus = !busy
   for (const [id, t] of tabs) t.view.show(id === tabId, focus)
@@ -411,10 +415,14 @@ async function boot(): Promise<void> {
     setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
     closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
   }, ct.platform)
+  planList = new PlanList(document.getElementById('plan-list')!, () => { if (activeId) tabs.get(activeId)?.view.term.focus() })
   statusBar =new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'), (anchor) => {
     const r = anchor.getBoundingClientRect()
     // the menu opens over the status bar, kept inside the window
     if (activeId) showMenu({ x: r.left, y: r.top }, continueItems(activeId))
+  }, (anchor) => {
+    const p = activeId ? planUpdates.get(activeId) : undefined
+    if (p) planList.toggle(anchor, p)
   })
   ct.onAccounts((v) => {
     accounts = v.accounts
@@ -427,6 +435,14 @@ async function boot(): Promise<void> {
   ct.onStatus((u) => {
     statusUpdates.set(u.tabId, u)
     if (u.tabId === activeId) renderStatus(u.tabId)
+  })
+  ct.onPlan((u) => {
+    if (u.plan) planUpdates.set(u.tabId, u.plan)
+    else planUpdates.delete(u.tabId)
+    if (u.tabId === activeId) {
+      renderStatus(u.tabId)
+      planList.update(u.plan)
+    }
   })
   ct.onAttention((tabId, reason) => {
     const t = tabs.get(tabId)
@@ -521,10 +537,12 @@ async function boot(): Promise<void> {
   ct.onTabClosed((id) => {
     const t = tabs.get(id)
     if (!t) return
+    if (id === activeId) planList.close()
     t.view.dispose()
     tabs.delete(id)
     imageUpdates.delete(id)
     statusUpdates.delete(id)
+    planUpdates.delete(id)
     reviewUpdates.delete(id)
     reviewPanel.dropTab(id)
     pendingReveal.delete(id)

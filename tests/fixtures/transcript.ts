@@ -74,3 +74,13 @@ export function interruptLine(o: { forToolUse?: boolean; timestamp?: string } = 
     message: { role: 'user', content: [{ type: 'text', text: o.forToolUse ? '[Request interrupted by user for tool use]' : '[Request interrupted by user]' }] }
   })
 }
+
+/** what Claude Code stores for the result of a Bash call */
+export function bashResultLine(toolUseId: string, stdout: string, timestamp = '2026-10-05T10:00:01.000Z'): string {
+  return JSON.stringify({
+    type: 'user',
+    timestamp,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: stdout, is_error: false }] },
+    toolUseResult: { stdout, stderr: '', interrupted: false, isImage: false, noOutputExpected: false }
+  })
+}

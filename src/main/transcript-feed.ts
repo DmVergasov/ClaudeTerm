@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { assistantInfo, type AgentModelInfo } from './transcript-agent-info'
 import { assistantTime, interruptTime, parseEditEvents, type TranscriptEditEvent } from './transcript-edits'
+import { PlanWorkspaceFinder } from './transcript-plan'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
 
 const CHUNK_BYTES = 4 * 1024 * 1024
@@ -127,6 +128,8 @@ export interface TranscriptFeedOptions {
   onAssistant?(agentId: string | null, at: number): void
   /** the user interrupted that agent's turn (Esc, a denied permission prompt); `agentId` and `at` as for onAssistant */
   onInterrupt?(agentId: string | null, at: number): void
+  /** an sdd-workspace run in any of the session's transcripts printed this workspace path; `at` is the time of its result (0 when it has none) */
+  onPlanWorkspace?(printed: string, at: number): void
   /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
   locate?(): Promise<string | null>
   /** how often locate() may run while the transcript cannot be opened */
@@ -141,6 +144,7 @@ interface Source {
   /** null for the main transcript */
   agentId: string | null
   lastInfo: string | null
+  plan: PlanWorkspaceFinder
 }
 
 export class TranscriptFeed {
@@ -154,7 +158,7 @@ export class TranscriptFeed {
   private lastLocate = -Infinity
 
   constructor(private readonly o: TranscriptFeedOptions) {
-    this.main = { tailer: new LineTailer(o.transcriptPath), parser: new TranscriptParser({ subagent: false }), agentId: null, lastInfo: null }
+    this.main = { tailer: new LineTailer(o.transcriptPath), parser: new TranscriptParser({ subagent: false }), agentId: null, lastInfo: null, plan: new PlanWorkspaceFinder() }
   }
 
   get subagentDir(): string {
@@ -184,7 +188,7 @@ export class TranscriptFeed {
     for (const n of names) {
       if (!n.endsWith('.jsonl') || this.subagents.has(n)) continue
       const agentId = n.startsWith('agent-') ? n.slice('agent-'.length, -'.jsonl'.length) : n.slice(0, -'.jsonl'.length)
-      this.subagents.set(n, { tailer: new LineTailer(join(this.subagentDir, n)), parser: new TranscriptParser({ subagent: true }), agentId, lastInfo: null })
+      this.subagents.set(n, { tailer: new LineTailer(join(this.subagentDir, n)), parser: new TranscriptParser({ subagent: true }), agentId, lastInfo: null, plan: new PlanWorkspaceFinder() })
     }
   }
 
@@ -244,6 +248,7 @@ export class TranscriptFeed {
       if (this.stopped) return
       this.reportInfo(src, line)
       this.reportReview(src, line)
+      this.reportPlan(src, line)
       try {
         for (const img of src.parser.parseLine(line)) {
           if (this.stopped) return
@@ -263,6 +268,16 @@ export class TranscriptFeed {
       if (at !== null) this.o.onAssistant?.(src.agentId, at)
       const stopped = this.o.onInterrupt ? interruptTime(line) : null
       if (stopped !== null) this.o.onInterrupt?.(src.agentId, stopped)
+    } catch (e) {
+      this.report(e)
+    }
+  }
+
+  private reportPlan(src: Source, line: string): void {
+    if (!this.o.onPlanWorkspace) return
+    try {
+      const found = src.plan.parseLine(line)
+      if (found !== null) this.o.onPlanWorkspace(found.printed, found.at)
     } catch (e) {
       this.report(e)
     }
