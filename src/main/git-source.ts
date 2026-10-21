@@ -198,16 +198,21 @@ export interface LineCounts {
   path: string
   additions: number
   deletions: number
+  /** git counts no lines in it: binary content, or .gitattributes says not to diff it */
+  binary: boolean
 }
 
-/** Lines added and removed in each file between `from` and the work tree, untracked files not included: one `git diff --numstat`. A binary file counts none. */
-export async function numstat(run: GitRun, root: string, from: string): Promise<LineCounts[]> {
-  const r = await run(['--literal-pathspecs', 'diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', from, '--'], root)
+/**
+ * Lines added and removed in each file between `from` and `to` — the work tree when null, untracked files not included: one
+ * `git diff --numstat`. A binary file counts none.
+ */
+export async function numstat(run: GitRun, root: string, from: string, to: string | null = null, paths: string[] = []): Promise<LineCounts[]> {
+  const r = await run(['--literal-pathspecs', 'diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', from, ...(to ? [to] : []), '--', ...toSpecs(root, paths)], root)
   if (r.code !== 0) throw new GitError(`git diff failed: ${r.stderr.trim()}`)
   const out: LineCounts[] = []
   for (const rec of r.stdout.toString('utf8').split('\0')) {
     const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(rec)
-    if (m) out.push({ path: resolve(root, m[3]!), additions: m[1] === '-' ? 0 : Number(m[1]), deletions: m[2] === '-' ? 0 : Number(m[2]) })
+    if (m) out.push({ path: resolve(root, m[3]!), additions: m[1] === '-' ? 0 : Number(m[1]), deletions: m[2] === '-' ? 0 : Number(m[2]), binary: m[1] === '-' })
   }
   return out
 }

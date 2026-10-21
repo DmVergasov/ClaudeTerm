@@ -54,8 +54,10 @@ function isLedgerData(v: unknown): v is LedgerData {
   return lt === null || (isObj(lt) && typeof lt.turn === 'number' && isSnapshots(lt.files))
 }
 
+/** how much of a file tells whether it is binary */
+export const BINARY_PROBE_BYTES = 8000
 /** a NUL byte in the first 8000 bytes, as git tells binary files */
-export const isBinary = (b: Buffer): boolean => b.subarray(0, 8000).includes(0)
+export const isBinary = (b: Buffer): boolean => b.subarray(0, BINARY_PROBE_BYTES).includes(0)
 /** names a file's content: snapshots, and the Viewed marks of the Changes panel */
 export const contentSha = (b: Buffer): string => createHash('sha1').update(b).digest('hex')
 

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import type { HistoryEdit } from '../../src/main/baselines'
 import { EditLedger, type Snapshot } from '../../src/main/edit-ledger'
 import type { GitResult, GitRun } from '../../src/main/git-source'
-import { MAX_FILES, MAX_SIDE_BYTES } from '../../src/main/review-diff'
+import { MAX_FILES, MAX_SIDE_BYTES, MAX_TOTAL_BYTES } from '../../src/main/review-diff'
 import { EMPTY_LEDGER, gitTotals, ledgerInputs, ledgerPaths, lineCount, readForSnapshot, relPathFor, type LedgerView, type SourceIo, type TranscriptLog } from '../../src/main/review-sources'
 
 const BASE = process.platform === 'win32' ? 'D:\\proj' : '/proj'
@@ -23,6 +23,10 @@ function io(files: Record<string, string | Buffer>): SourceIo {
     readDisk: (p) => {
       const f = get(p)
       return f === undefined ? null : Buffer.from(f)
+    },
+    readHead: (p) => {
+      const f = get(p)
+      return f === undefined ? null : Buffer.from(f).subarray(0, 8000)
     }
   }
 }
@@ -64,6 +68,16 @@ describe('ledgerInputs', () => {
     const exclude = (p: string): boolean => p === P('dist/x.js')
     expect(sides(ledgerInputs(watching, l, noLog, 'session', BASE, () => false, exclude))).toEqual([['a.ts', 'old\n', 'new\n']])
     expect(reads.every((p) => p !== P('dist/x.js'))).toBe(true)
+  })
+
+  it('spends none of what a view reads on binary files: a text file listed after more than that of them is still read', () => {
+    const names = Array.from({ length: Math.floor(MAX_TOTAL_BYTES / 1_000_000) + 1 }, (_, i) => `assets/b${String(i).padStart(2, '0')}.bin`)
+    const snaps: Snapshot[] = [...names, 'src/a.ts'].map((rel, i) => ({ path: P(rel), at: 1, toolUseId: `t${i}`, kind: 'absent', sha: null }))
+    const ledger: LedgerView = { ...EMPTY_LEDGER, sessionSnapshots: () => snaps }
+    const files = { ...Object.fromEntries(names.map((n) => [P(n), Buffer.alloc(1_000_000)])), [P('src/a.ts')]: 'x\n' }
+    const r = ledgerInputs(io(files), ledger, noLog, 'session', BASE, () => false)
+    expect(r.tooMany).toBe(false)
+    expect(sides(r)).toEqual([...names.map((n) => [n, 'absent', 'binary']), ['src/a.ts', 'absent', 'x\n']])
   })
 
   it('ledgerPaths lists the files a ledger view would take, as the view does', () => {
@@ -118,7 +132,7 @@ describe('ledgerInputs', () => {
     expect(ledgerInputs(io({ [P('big.txt')]: big }), l, noLog, 'session', BASE, () => true).inputs[0]!.after.kind).toBe('data')
     const many = newLedger()
     const files: Record<string, string> = {}
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i <= MAX_TOTAL_BYTES / 900_000; i++) {
       many.recordBefore(`t${i}`, P(`f${i}.txt`), () => ({ kind: 'absent' }))
       files[P(`f${i}.txt`)] = 'y'.repeat(900_000)
     }
@@ -152,6 +166,23 @@ describe('a view over 500 files', () => {
   })
 })
 
+describe('a view over 15 MB of text', () => {
+  it('reads 15 MB of text, and says there are too many changes past that', () => {
+    const view = (n: number) => {
+      const names = Array.from({ length: n }, (_, i) => `t${String(i).padStart(2, '0')}.txt`)
+      const snaps: Snapshot[] = names.map((rel, i) => ({ path: P(rel), at: 1, toolUseId: `t${i}`, kind: 'absent', sha: null }))
+      const ledger: LedgerView = { ...EMPTY_LEDGER, sessionSnapshots: () => snaps }
+      return ledgerInputs(io(Object.fromEntries(names.map((rel) => [P(rel), 'x'.repeat(1_000_000)]))), ledger, noLog, 'session', BASE, () => false)
+    }
+    const fifteen = view(15)
+    expect(fifteen.tooMany).toBe(false)
+    expect(fifteen.inputs.every((i) => i.after.kind === 'data')).toBe(true)
+    const sixteen = view(16)
+    expect(sixteen.tooMany).toBe(true)
+    expect(sixteen.inputs[15]!.after.kind).toBe('skipped')
+  })
+})
+
 describe('gitTotals', () => {
   const ok = (stdout: string): GitResult => ({ code: 0, stdout: Buffer.from(stdout), stderr: '' })
   function fakeGit(numstat: string, untracked: string[]): { run: GitRun; calls: string[][] } {
@@ -173,6 +204,13 @@ describe('gitTotals', () => {
     expect(await gitTotals(big, BASE)).toEqual({ files: 6, additions: 6, deletions: 1 })
     const numstat = git.calls.find((a) => a.includes('--numstat'))!
     expect(numstat).toEqual(['--literal-pathspecs', 'diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '1111111111111111111111111111111111111111', '--'])
+  })
+
+  it('spends none of what it reads on binary files: an untracked text file after more than that of them still counts', async () => {
+    const names = Array.from({ length: Math.floor(MAX_TOTAL_BYTES / 1_000_000) + 1 }, (_, i) => `b${String(i).padStart(2, '0')}.bin`)
+    const git = fakeGit('', [...names, 'new.ts'])
+    const files = { ...Object.fromEntries(names.map((n) => [P(n), Buffer.alloc(1_000_000)])), [P('new.ts')]: 'a\nb\n' }
+    expect(await gitTotals({ ...io(files), git: git.run }, BASE)).toEqual({ files: names.length + 1, additions: 2, deletions: 0 })
   })
 
   it('reads at most 500 untracked files for their lines, and counts them all', async () => {

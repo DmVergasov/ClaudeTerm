@@ -1,7 +1,7 @@
-import { readFileSync, statSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { historyBaseline, type HistoryEdit } from './baselines'
-import { contentSha, isBinary, MAX_SNAPSHOT_BYTES, type FileRead, type Snapshot } from './edit-ledger'
+import { BINARY_PROBE_BYTES, contentSha, isBinary, MAX_SNAPSHOT_BYTES, type FileRead, type Snapshot } from './edit-ledger'
 import { changedFiles, checkIgnored, execGit, headOrEmpty, numstat, readBlobs, repoRoot, revisionInfo, untrackedFiles, verifyRef, type GitChange, type GitRun, type RevInfo } from './git-source'
 import { pathKey } from './path-key'
 import { MAX_FILES, MAX_FORCED_BYTES, MAX_SIDE_BYTES, MAX_TOTAL_BYTES, type DiffInput, type Side } from './review-diff'
@@ -13,6 +13,8 @@ export interface SourceIo {
   diskInfo(path: string): DiskInfo
   /** null when the file cannot be read now */
   readDisk(path: string): Buffer | null
+  /** the file's first bytes, enough to tell a binary file; null when it cannot be read now */
+  readHead(path: string): Buffer | null
 }
 
 export const nodeIo: SourceIo = {
@@ -29,6 +31,19 @@ export const nodeIo: SourceIo = {
   readDisk: (p) => {
     try {
       return readFileSync(p)
+    } catch {
+      return null
+    }
+  },
+  readHead: (p) => {
+    try {
+      const fd = openSync(p, 'r')
+      try {
+        const head = Buffer.alloc(BINARY_PROBE_BYTES)
+        return head.subarray(0, readSync(fd, head, 0, head.length, 0))
+      } finally {
+        closeSync(fd)
+      }
     } catch {
       return null
     }
@@ -131,6 +146,9 @@ function diskSide(io: SourceIo, path: string, forced: boolean, budget: Budget): 
   if (info.kind === 'absent') return { kind: 'absent' }
   if (info.kind === 'dir') return { kind: 'dir' }
   if (info.kind === 'unreadable') return { kind: 'unreadable' }
+  // a binary file is never diffed: told by its first bytes, it spends none of the budget
+  const head = io.readHead(path)
+  if (head && isBinary(head)) return { kind: 'binary', id: `${info.size}:${contentSha(head)}` }
   return sized(info.size, forced, budget, () => io.readDisk(path))
 }
 
@@ -155,12 +173,15 @@ export async function gitInputs(
   const all = changes.map((c) => c.path)
   const before = await revisionInfo(io.git, root, from, all)
   const after = to === null ? null : await revisionInfo(io.git, root, to, all)
+  // git tells which tracked files are binary: their blobs are not read, and spend none of the budget
+  const binary = new Set((await numstat(io.git, root, from, to, paths)).filter((c) => c.binary).map((c) => pathKey(c.path)))
   const budget = new Budget()
   const ids = new Set<string>()
   type Planned = Side | { kind: 'blob'; id: string }
-  const plan = (info: RevInfo | undefined, f: boolean): Planned => {
+  const plan = (info: RevInfo | undefined, f: boolean, bin: boolean): Planned => {
     if (!info || info.kind === 'absent') return { kind: 'absent' }
     if (info.kind === 'dir') return { kind: 'dir' }
+    if (bin) return { kind: 'binary', id: info.id }
     if (info.size > limitOf(f)) return { kind: 'too-large', size: info.size }
     if (!budget.take(info.size)) return { kind: 'skipped' }
     ids.add(info.id)
@@ -168,7 +189,8 @@ export async function gitInputs(
   }
   const planned = changes.map((c) => {
     const f = forced(c.path)
-    return { c, f, b: plan(before.get(c.path), f), a: after ? plan(after.get(c.path), f) : diskSide(io, c.path, f, budget) }
+    const bin = binary.has(pathKey(c.path))
+    return { c, f, b: plan(before.get(c.path), f, bin), a: after ? plan(after.get(c.path), f, bin) : diskSide(io, c.path, f, budget) }
   })
   const blobs = await readBlobs(io.git, root, [...ids])
   const side = (p: Planned): Side => (p.kind === 'blob' ? { kind: 'data', data: blobs.get(p.id) ?? Buffer.alloc(0) } : p)
@@ -323,7 +345,10 @@ export async function gitTotals(io: SourceIo, root: string): Promise<Totals> {
   const budget = new Budget()
   for (const path of untracked.slice(0, MAX_FILES)) {
     const info = io.diskInfo(path)
-    if (info.kind !== 'file' || info.size > MAX_SIDE_BYTES || !budget.take(info.size)) continue
+    if (info.kind !== 'file' || info.size > MAX_SIDE_BYTES) continue
+    // a binary file has no lines: told by its first bytes, it spends none of the budget
+    const head = io.readHead(path)
+    if (!head || isBinary(head) || !budget.take(info.size)) continue
     const data = io.readDisk(path)
     if (data) additions += lineCount(data)
   }

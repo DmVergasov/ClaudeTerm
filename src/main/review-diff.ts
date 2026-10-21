@@ -8,8 +8,8 @@ export const MAX_SIDE_BYTES = 1024 * 1024
 export const MAX_FORCED_BYTES = 10 * 1024 * 1024
 /** a view with more files lists only this many, without reading them */
 export const MAX_FILES = 500
-/** a view reads at most about this much text */
-export const MAX_TOTAL_BYTES = 5 * 1024 * 1024
+/** a view reads at most about this much text; binary files count none */
+export const MAX_TOTAL_BYTES = 15 * 1024 * 1024
 /** a file's diff gives up after this long (the main process waits for it): the file shows "too large" */
 export const DIFF_TIMEOUT_MS = 300
 /** the time limit for a file asked for with "show anyway" */
@@ -21,7 +21,8 @@ export const VIEW_DIFF_MS = 1500
 export type Side =
   | { kind: 'data'; data: Buffer }
   | { kind: 'absent' }
-  | { kind: 'binary' }
+  /** not read; `id` names the content for Viewed when it is known: git's blob id, or the size and the first bytes */
+  | { kind: 'binary'; id?: string }
   | { kind: 'too-large'; size: number }
   | { kind: 'dir' }
   /** no baseline could be found (the before side of Claude's edits) */
@@ -43,7 +44,8 @@ export interface DiffInput {
 
 export const normalizeEol = (s: string): string => s.replace(/\r\n/g, '\n')
 /** names the current content for Viewed; a too large file is named by its size, so a change still clears the mark */
-const hashOf = (s: Side): string => (s.kind === 'data' ? contentSha(s.data) : s.kind === 'too-large' ? `too-large:${s.size}` : s.kind)
+const hashOf = (s: Side): string =>
+  s.kind === 'data' ? contentSha(s.data) : s.kind === 'too-large' ? `too-large:${s.size}` : s.kind === 'binary' && s.id ? `binary:${s.id}` : s.kind
 
 /** the hunks; null when the diff took longer than `timeoutMs` and gave up */
 export function toHunks(before: string, after: string, timeoutMs: number): { hunks: ReviewHunk[]; additions: number; deletions: number } | null {
