@@ -183,8 +183,21 @@ function copySelection(t: TabState): boolean {
 async function paste(t: TabState, allowImage: boolean): Promise<void> {
   const clip = await ct.readClipboard()
   if (clip.text.length > 0) t.view.term.paste(clip.text)
-  // image-only clipboard: Claude Code's image-paste key makes claude read the image from the clipboard itself
-  else if (allowImage && clip.hasImage) handleInput(t.info.id, imagePasteInput(ct.platform))
+  else if (allowImage && clip.hasImage) await pasteImage(t)
+}
+
+/**
+ * An image-only clipboard. Claude Code's image-paste key makes claude read the image from the clipboard itself, but on
+ * Windows it reads it through PowerShell, which fails where a policy keeps PowerShell in Constrained Language mode. There
+ * the image goes to Claude as the pasted path of a PNG file, which Claude Code attaches as the image itself.
+ */
+async function pasteImage(t: TabState): Promise<void> {
+  if (ct.platform !== 'win32' || !(await ct.imagePasteAsFile())) {
+    handleInput(t.info.id, imagePasteInput(ct.platform))
+    return
+  }
+  const file = await ct.saveClipboardImage()
+  if (file) t.view.term.paste(`"${file}"`)
 }
 
 function runAction(a: KeyAction, tabId: string | null): void {

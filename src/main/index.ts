@@ -23,6 +23,7 @@ import { ReviewHub } from './review-hub'
 import { createSources, nodeIo } from './review-sources'
 import { checkImageFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
 import { ImageHub } from './image-hub'
+import { CLAUDE_CLIPBOARD_CHECK, checkOnce, runsCleanly } from './image-paste'
 import { claudeTempRoot, realTempRoot, sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
 import { handleImgProtocol, registerImgScheme } from './img-protocol'
 import { createLogger } from './log'
@@ -167,6 +168,9 @@ function bootstrap(): void {
   const tempRoot = claudeTempRoot({ platform: process.platform, env: process.env, tmpdir: tmpdir(), uid: process.getuid?.() ?? -1 })
   const claudeRoot = process.platform === 'win32' ? tempRoot : realTempRoot(tempRoot, realpathSync)
   cleanupImageCache(imageCacheRoot, 7 * 24 * 60 * 60 * 1000)
+  // clipboard images pasted into a tab as files; Claude Code reads one as its path is pasted
+  const clipboardImageRoot = join(tmpdir(), 'ClaudeTerm', 'clipboard')
+  cleanupImageCache(clipboardImageRoot, 7 * 24 * 60 * 60 * 1000)
   const imageTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const images = new ImageHub({
     maxItems: () => settings.imagePanel.maxItems,
@@ -753,6 +757,24 @@ function bootstrap(): void {
   if (process.platform === 'darwin') Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate(app.name, () => settingsWindow.open())))
   ipcMain.handle(IPC.clipboardRead, async (): Promise<ClipboardContent> => ({ text: await clipboard.readText(), hasImage: await clipboard.has('image/png') }))
   ipcMain.on(IPC.clipboardWriteText, (_e, text: string) => { void clipboard.writeText(text) })
+  // checked at the first image paste of the run; tests stand in for PowerShell with a program run without arguments
+  const testPowerShell = isTest ? process.env.CLAUDETERM_TEST_POWERSHELL : undefined
+  const claudeReadsClipboard = checkOnce(() => runsCleanly(testPowerShell ? { file: testPowerShell, args: [] } : CLAUDE_CLIPBOARD_CHECK, 5000))
+  ipcMain.handle(IPC.clipboardImageAsFile, async (): Promise<boolean> => !(await claudeReadsClipboard()))
+  ipcMain.handle(IPC.clipboardSaveImage, async (): Promise<string | null> => {
+    try {
+      const item = (await clipboard.read()).find((i) => i.types.includes('image/png'))
+      if (!item) return null
+      const png = new Uint8Array(await (await item.getType('image/png')).arrayBuffer())
+      mkdirSync(clipboardImageRoot, { recursive: true })
+      const file = join(clipboardImageRoot, `clipboard-${Date.now()}.png`)
+      writeFileSync(file, png)
+      return file
+    } catch (e) {
+      toast(`Cannot paste the image: ${String(e)}`)
+      return null
+    }
+  })
   ipcMain.on(IPC.openExternal, (_e, url: string) => { if (/^https?:\/\//i.test(url)) void shell.openExternal(url) })
 
   const settingsView = (): SettingsView => ({
