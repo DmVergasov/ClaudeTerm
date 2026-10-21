@@ -2,6 +2,16 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.8.2
+
+### Changes
+
+- **The Changes panel shows three times as much at once.** A view now reads up to 15 MB of text before it says there are too many changes to show, instead of 5 MB.
+
+### Fixes
+
+- **Code files show their changes next to many binary files.** In a project with a lot of binary files, such as the `.uasset` assets of an Unreal project, the Changes panel used up what it reads on those files and listed every code file after them as "not shown" with +0 −0, under "Too many changes to show at once". Binary files no longer count toward that limit, so your code shows its changes again. The status bar's line count now also counts the lines of new files that come after binary ones.
+
 ## 0.8.1
 
 ### Fixes
