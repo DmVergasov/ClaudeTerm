@@ -1,34 +1,60 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { isWindowsPath } from './path-key'
 
-export function hookCmdContent(execPath: string, hookScriptPath: string): string {
-  const esc = (p: string): string => p.replace(/%/g, '%%')
-  return ['@echo off', 'chcp 65001 >nul 2>&1', 'set ELECTRON_RUN_AS_NODE=1', `"${esc(execPath)}" "${esc(hookScriptPath)}" %*`, 'exit /b 0', ''].join('\r\n')
-}
-
-/** The same wrapper for Linux: sh runs the hook script under ClaudeTerm's own Node and always succeeds. */
+/** The wrapper for Linux and macOS: sh runs the hook script under ClaudeTerm's own Node and always succeeds. */
 export function hookShContent(execPath: string, hookScriptPath: string): string {
   const q = (p: string): string => `'${p.replace(/'/g, "'\\''")}'`
   return ['#!/bin/sh', `ELECTRON_RUN_AS_NODE=1 ${q(execPath)} ${q(hookScriptPath)} "$@"`, 'exit 0', ''].join('\n')
 }
 
 export function hookCommandString(hookPath: string): string {
-  // Always double-quote: the command is run by bash (Git Bash, Linux) as well as cmd. Inside bash double quotes
+  // Always double-quote: the command is run by bash (Git Bash, Linux). Inside bash double quotes
   // only \ " $ ` are special, so escape those; ' & ( ) ; # and spaces are then literal. Git Bash takes C:/… paths.
   const p = (isWindowsPath(hookPath) ? hookPath.replace(/\\/g, '/') : hookPath).replace(/(["$`\\])/g, '\\$1')
   return `"${p}"`
 }
 
-export function claudeTabSettingsJson(hookPath: string): string {
-  const command = hookCommandString(hookPath)
-  const run = { type: 'command', command, timeout: 10 }
+/** How Claude Code starts the hook: a shell command, or with `args` an executable it spawns without a shell (exec form) */
+export interface HookRun {
+  command: string
+  args?: string[]
+}
+
+/**
+ * A path on cmd's command line. Claude Code quotes an argument only when it holds a space or a tab, and inside quotes cmd
+ * takes & ^ ( ) literally; a path without them reaches cmd bare, so its special characters get cmd's escape, a ^ before
+ * each (^% keeps %NAME% from expanding). Inside quotes cmd has no escape for %, so a quoted %NAME% naming a set variable
+ * still expands.
+ */
+function cmdPathArg(p: string): string {
+  return /[ \t]/.test(p) ? p : p.replace(/[%^&|<>()]/g, '^$&')
+}
+
+/**
+ * Windows: an exec-form hook, cmd.exe given on its command line what a batch file would hold. AppLocker's default script
+ * rules, where a policy enforces them, refuse batch files outside Program Files and Windows (and with them every hook run
+ * through one), but not cmd.exe and its command line; and no Git Bash is involved. Every argument is one token without
+ * spaces except the two paths. Exec form (`args`) needs Claude Code 2.1.139 or later.
+ */
+export function windowsHookRun(execPath: string, hookScriptPath: string, env: Record<string, string | undefined>): HookRun {
+  const cmd = win32.join(env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe')
+  return { command: cmd, args: ['/d', '/s', '/c', 'set', 'ELECTRON_RUN_AS_NODE=1&&', cmdPathArg(execPath), cmdPathArg(hookScriptPath), '&', 'exit', '0'] }
+}
+
+/** statusLine has no exec form: a command line for Git Bash, the shell Claude Code runs it in on Windows */
+export function windowsStatusCommand(execPath: string, hookScriptPath: string): string {
+  return `ELECTRON_RUN_AS_NODE=1 ${hookCommandString(execPath)} ${hookCommandString(hookScriptPath)} status`
+}
+
+export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string): string {
+  const run = { type: 'command', ...hookRun, timeout: 10 }
   const hook = [{ hooks: [run] }]
   return JSON.stringify(
     {
       // refreshInterval: Claude Code re-runs statusLine only on new messages, /compact and mode changes,
       // so /effort and /model alone would not show up without it
-      statusLine: { type: 'command', command: `${command} status`, refreshInterval: 5 },
+      statusLine: { type: 'command', command: statusCommand, refreshInterval: 5 },
       hooks: {
         SessionStart: hook,
         SubagentStart: hook,
@@ -54,16 +80,21 @@ export function claudeTabSettingsJson(hookPath: string): string {
 
 export interface ClaudeTabFiles {
   settingsPath: string
-  hookPath: string
+  /** the sh wrapper; Windows needs none */
+  hookPath: string | null
 }
 
-export function writeClaudeTabFiles(dataDir: string, execPath: string, hookScriptPath: string, platform: NodeJS.Platform = process.platform): ClaudeTabFiles {
+export function writeClaudeTabFiles(dataDir: string, execPath: string, hookScriptPath: string, platform: NodeJS.Platform = process.platform, env: Record<string, string | undefined> = process.env): ClaudeTabFiles {
   mkdirSync(dataDir, { recursive: true })
-  const win = platform === 'win32'
-  const hookPath = join(dataDir, win ? 'session-hook.cmd' : 'session-hook.sh')
   const settingsPath = join(dataDir, 'claude-tab-settings.json')
-  writeFileSync(hookPath, win ? hookCmdContent(execPath, hookScriptPath) : hookShContent(execPath, hookScriptPath), 'utf8')
-  if (!win) chmodSync(hookPath, 0o755)
-  writeFileSync(settingsPath, claudeTabSettingsJson(hookPath), 'utf8')
+  if (platform === 'win32') {
+    writeFileSync(settingsPath, claudeTabSettingsJson(windowsHookRun(execPath, hookScriptPath, env), windowsStatusCommand(execPath, hookScriptPath)), 'utf8')
+    return { settingsPath, hookPath: null }
+  }
+  const hookPath = join(dataDir, 'session-hook.sh')
+  writeFileSync(hookPath, hookShContent(execPath, hookScriptPath), 'utf8')
+  chmodSync(hookPath, 0o755)
+  const command = hookCommandString(hookPath)
+  writeFileSync(settingsPath, claudeTabSettingsJson({ command }, `${command} status`), 'utf8')
   return { settingsPath, hookPath }
 }
