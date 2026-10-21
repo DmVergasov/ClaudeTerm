@@ -66,6 +66,9 @@ let accounts: AccountView[] = []
 
 const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? folderName(t.info.cwd)
 
+/** where a new tab opens: the defaultFolder setting, else the home folder */
+const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
+
 function renderTabs(): void {
   const items = order.flatMap((id) => {
     const t = tabs.get(id)
@@ -190,8 +193,8 @@ async function paste(t: TabState, allowImage: boolean): Promise<void> {
 function runAction(a: KeyAction, tabId: string | null): void {
   const t = tabId ? tabs.get(tabId) : undefined
   switch (a.type) {
-    case 'newTab': void ct.openTab({ kind: 'shell', cwd: appInfo.homeDir }); break
-    case 'newClaudeTab': void ct.openTab({ kind: 'claude', cwd: t?.info.cwd ?? appInfo.homeDir }); break
+    case 'newTab': void ct.openTab({ kind: 'shell', cwd: defaultFolder() }); break
+    case 'newClaudeTab': void ct.openTab({ kind: 'claude', cwd: t?.info.cwd ?? defaultFolder() }); break
     case 'closeTab': if (tabId) ct.closeTab(tabId); break
     case 'nextTab': cycleTabs(1); break
     case 'prevTab': cycleTabs(-1); break
@@ -307,13 +310,13 @@ function newTabMenu(anchor: HTMLElement): void {
   void ct.listProfiles().then((names) => {
     const active = activeId ? tabs.get(activeId) : undefined
     const items: MenuItem[] = [
-      ...names.map((name) => ({ label: name, action: () => void ct.openTab({ kind: 'shell', cwd: appInfo.homeDir, profile: name }) })),
+      ...names.map((name) => ({ label: name, action: () => void ct.openTab({ kind: 'shell', cwd: defaultFolder(), profile: name }) })),
       { label: '', separator: true },
-      { label: 'Claude Code', action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? appInfo.homeDir }) },
+      { label: 'Claude Code', action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? defaultFolder() }) },
       ...accountChoices(accounts).map((c) => ({
         label: `Claude Code — ${c.label}`,
         disabled: c.disabled,
-        action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? appInfo.homeDir, account: c.account })
+        action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? defaultFolder(), account: c.account })
       })),
       { label: 'Recent sessions…', action: () => void sessionsWindow.open() },
       ...(restoreInfo ? [{ label: `Restore previous session (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
@@ -379,7 +382,7 @@ async function boot(): Promise<void> {
     close: (id) => ct.closeTab(id),
     rename: (id, title) => ct.renameTab(id, title),
     reorder: (ids) => ct.reorderTabs(ids),
-    newTab: () => void ct.openTab({ kind: 'shell', cwd: appInfo.homeDir }),
+    newTab: () => void ct.openTab({ kind: 'shell', cwd: defaultFolder() }),
     openMenu: (anchor) => newTabMenu(anchor),
     tabMenu,
     toggleImages: () => {

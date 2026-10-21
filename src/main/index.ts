@@ -397,12 +397,23 @@ function bootstrap(): void {
     }
   }
 
+  /** the folder new tabs open in: the defaultFolder setting, else (or when that folder is gone) the home folder */
+  const defaultFolder = (): string => {
+    if (settings.defaultFolder === null) return homedir()
+    const { cwd, warning } = resolveLaunchDir(settings.defaultFolder, homedir(), isDirectory)
+    if (warning) toast(warning)
+    return cwd
+  }
+  // the renderer opens new tabs in the defaultFolder setting, a folder only main can check
+  const inDefaultFolder = (req: OpenTabRequest): OpenTabRequest =>
+    settings.defaultFolder !== null && typeof req?.cwd === 'string' && pathKey(req.cwd) === pathKey(settings.defaultFolder) ? { ...req, cwd: defaultFolder() } : req
+
   // the tab opened by a no-argument start; replaced by a restore unless the user typed into it
   let autoTabId: string | null = null
   const openFromLaunch = (cmd: LaunchCommand): void => {
     if (cmd.kind === 'default') {
       if (tabs.list().length === 0) {
-        const t = openTab({ kind: 'shell', cwd: homedir() })
+        const t = openTab({ kind: 'shell', cwd: defaultFolder() })
         autoTabId = t?.id ?? null
       }
       return
@@ -582,7 +593,7 @@ function bootstrap(): void {
     if (restoreAfterUpdate) runRestore()
   })
   ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) attention.notify(tabId, 'bell') })
-  ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => (req?.account === undefined || isAccountRef(req.account) ? openTab(req) : null))
+  ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => (req?.account === undefined || isAccountRef(req.account) ? openTab(inDefaultFolder(req)) : null))
   ipcMain.handle(IPC.sessionsList, async (): Promise<RecentSession[]> => {
     const list = await history.list(100, starred.ids())
     listedSessions = new Map(list.map((s) => [s.id, s]))
