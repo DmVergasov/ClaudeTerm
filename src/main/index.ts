@@ -31,6 +31,7 @@ import { findExecutable, isExecutableFile } from './login-env'
 import { macMenuTemplate } from './mac-menu'
 import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePage, startSwap } from './mac-update'
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
+import { anchorExe, findGitBash, MsysAnchor, spawnAnchor } from './msys-anchor'
 import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
 import { buildLaunch, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver } from './profiles'
@@ -326,6 +327,10 @@ function bootstrap(): void {
     ? resolveClaude(execRunner)
     : resolveClaudePosix({ run: execRunner, shell: loginShell(), env: process.env, isExecutable: isExecutableFile })
   void findingClaude.then((cli) => { claudeCli = cli })
+  // Windows: Claude Code runs a Claude tab's statusLine and hooks through Git Bash, whose runtime an idle process keeps sound
+  const gitBash = process.platform === 'win32' ? findGitBash(process.env, existsSync) : null
+  const anchorFile = gitBash ? anchorExe(gitBash, existsSync) : null
+  const msysAnchor = anchorFile ? new MsysAnchor(anchorFile, { spawn: spawnAnchor, log }) : null
 
   const tabs = new TabManager({
     onTabStarted: startTabImages,
@@ -342,6 +347,7 @@ function bootstrap(): void {
     baseEnv: childEnv,
     resolveLaunch: (req) => {
       if (req.kind === 'claude' || req.setupToken) {
+        msysAnchor?.ensure()
         const acc = accountLaunch(req.kind === 'claude' ? req.account : null, (id) => accounts.token(id))
         // a switch to an account that cannot be used changes nothing; a start goes on with the main account
         if (acc.unavailable && req.strict) throw new Error(`${accountName(req.account!)} is not available`)
@@ -869,6 +875,8 @@ function bootstrap(): void {
     e.preventDefault()
     void allPtysExited(3000).then(() => {
       ptysExited = true
+      // last: a Git Bash that Claude Code starts while its tab closes still finds the runtime ready
+      msysAnchor?.stop()
       app.quit()
     })
   })
