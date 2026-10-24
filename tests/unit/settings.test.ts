@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { applySettingEdit, DEFAULT_SETTINGS, loadSettingsFile, loadSettingsSafe, parseSettings } from '../../src/main/settings'
 import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
+import { WIN } from '../fixtures/platform'
 
 describe('parseSettings', () => {
   it('returns defaults for null or empty text', () => {
@@ -103,6 +104,17 @@ describe('parseSettings', () => {
     const r = parseSettings(JSON.stringify({ autoUpdate: 'no' }))
     expect(r.settings.autoUpdate).toBe(true)
     expect(r.errors.join('\n')).toContain('"autoUpdate"')
+  })
+
+  it('defaultFolder: the home folder (null) by default, an absolute path, other values fall back', () => {
+    expect(DEFAULT_SETTINGS.defaultFolder).toBeNull()
+    const folder = WIN ? 'C:\\Work\\Project' : '/home/me/project'
+    expect(parseSettings(JSON.stringify({ defaultFolder: folder })).settings.defaultFolder).toBe(folder)
+    for (const bad of ['project', '', 1]) {
+      const r = parseSettings(JSON.stringify({ defaultFolder: bad }))
+      expect(r.settings.defaultFolder).toBeNull()
+      expect(r.errors).toEqual(['settings.json: invalid value for "defaultFolder", using default'])
+    }
   })
 
   it('normalizes profiles without args', () => {

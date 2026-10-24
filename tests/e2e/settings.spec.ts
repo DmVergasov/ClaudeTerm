@@ -1,5 +1,6 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
@@ -204,6 +205,25 @@ test('an out-of-range size shows the error and is not saved', async () => {
   await size.press('Enter')
   await expect(win.locator('.field-error', { hasText: 'Between 6 and 72' })).toBeHidden()
   await expect.poll(() => readSettings(dataDir).font?.size).toBe(14)
+  await app.close()
+})
+
+test('the Default folder field saves an absolute folder, refuses a relative one and, emptied, goes back to the home folder', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'ct-folder-'))
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  const field = win.locator('[data-key="defaultFolder"]')
+  await field.fill(folder)
+  await field.press('Enter')
+  await expect.poll(() => readSettings(dataDir).defaultFolder).toBe(folder)
+  await field.fill('project')
+  await field.press('Enter')
+  await expect(win.locator('.field-error', { hasText: 'Invalid value for defaultFolder' })).toBeVisible()
+  expect(readSettings(dataDir).defaultFolder).toBe(folder)
+  await field.fill('')
+  await field.press('Enter')
+  await expect.poll(() => readSettings(dataDir).defaultFolder).toBeNull()
   await app.close()
 })
 

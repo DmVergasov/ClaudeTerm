@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, win32 } from 'node:path'
+import { dirname, isAbsolute, win32 } from 'node:path'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import { DEFAULT_TEST_PATTERNS, MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
 import type { NoRoomMode, NotificationSettings, ProfileDef, Settings } from '../shared/types'
 
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
+  defaultFolder: null,
   claude: { command: 'claude', shellProfile: null },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
@@ -44,6 +45,7 @@ interface RawProfile { name: string; command: string; args?: string[] }
 
 const isStr: Guard<string> = (v): v is string => typeof v === 'string' && v.length > 0
 const isNullableStr: Guard<string | null> = (v): v is string | null => v === null || isStr(v)
+const isFolder: Guard<string | null> = (v): v is string | null => v === null || (isStr(v) && isAbsolute(v))
 const isBool: Guard<boolean> = (v): v is boolean => typeof v === 'boolean'
 const isStrArr: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.every(isStr)
 const isTestPatterns: Guard<string[]> = (v): v is string[] => isStrArr(v) && v.length <= MAX_TEST_PATTERNS && v.every((p) => p.length <= MAX_TEST_PATTERN_LENGTH)
@@ -105,6 +107,7 @@ export function parseSettings(text: string | null): ParsedSettings {
 
   const settings: Settings = {
     defaultProfile: take('defaultProfile', raw.defaultProfile, isNullableStr, d.defaultProfile),
+    defaultFolder: take('defaultFolder', raw.defaultFolder, isFolder, d.defaultFolder),
     claude: {
       command: take('claude.command', claude.command, isStr, d.claude.command),
       shellProfile: take('claude.shellProfile', claude.shellProfile, isNullableStr, d.claude.shellProfile)

@@ -88,6 +88,8 @@ export type NoRoomMode = Exclude<PanelMode, 'beside'>
 
 export interface Settings {
   defaultProfile: string | null
+  /** the folder new tabs open in, an absolute path; null: the home folder */
+  defaultFolder: string | null
   claude: { command: string; shellProfile: string | null }
   profiles: ProfileDef[]
   font: { family: string; size: number }
