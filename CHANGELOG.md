@@ -2,6 +2,18 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.9.0
+
+### New
+
+- **A default folder for new tabs.** Settings → Shells → **Default folder** (`defaultFolder` in settings.json) names the folder new tabs open in: the first tab at start, and every new shell tab from Ctrl+Shift+T (⌘T on macOS), the **+** button or a profile in the ▾ menu. A Claude tab still opens in the folder of the tab you open it from, and in the default folder when there is no such tab. Left empty, tabs open in your home folder as before. If the folder no longer exists, the tab opens in your home folder and says "Folder not found".
+
+### Fixes
+
+- **Claude tabs report to ClaudeTerm where a policy blocks batch files.** On Windows machines where AppLocker allows scripts only from Program Files and Windows, as on many company machines, every hook of a Claude tab was refused with "This program is blocked by group policy". There was no tab highlight, sound or taskbar flash when Claude finished or asked something, no status bar, no **Last turn** / **Session** in the Changes panel and no session restore. The hooks now start without a batch file. On Windows this needs Claude Code 2.1.139 or later.
+- **Ctrl+V pastes an image into Claude where PowerShell is locked down.** On Windows machines whose policy keeps PowerShell in Constrained Language mode, Claude Code cannot read an image from the clipboard, and pasting one did nothing. ClaudeTerm now notices this at the first image paste and hands Claude the image as a PNG file instead, which Claude shows as `[Image #1]` as usual.
+- **Git Bash no longer breaks for good while Claude tabs run.** On Windows, Git Bash could get stuck: every `bash`, git hook, ssh and HTTPS pull or push waited 15 seconds and failed with `add_item (...) failed, errno 1`, until every Git Bash process was ended or Windows restarted. Claude tabs run Git Bash every few seconds for their status line, which made this likely and kept it from clearing. Once a Claude tab has started, ClaudeTerm now keeps one hidden, idle `sleep.exe` from your Git install running until it quits, and Git Bash no longer gets stuck. A Git for Windows installer run while ClaudeTerm is open may list it as a program to close.
+
 ## 0.8.2
 
 ### Changes
