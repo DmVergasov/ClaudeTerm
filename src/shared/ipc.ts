@@ -27,6 +27,8 @@ export const IPC = {
   settingsPlaySound: 'settings:play-sound',
   clipboardRead: 'clipboard:read',
   clipboardWriteText: 'clipboard:write-text',
+  clipboardImageAsFile: 'clipboard:image-as-file',
+  clipboardSaveImage: 'clipboard:save-image',
   imagesList: 'images:list',
   imagesMarkSeen: 'images:mark-seen',
   imagesAction: 'images:action',
@@ -167,6 +169,10 @@ export interface CtApi {
   playSound(): void
   readClipboard(): Promise<ClipboardContent>
   writeClipboardText(text: string): void
+  /** Windows: whether Claude Code cannot read a clipboard image itself, so a pasted one goes to it as a file; checked once per run */
+  imagePasteAsFile(): Promise<boolean>
+  /** saves the clipboard's image to a PNG file in the temp folder and answers its path; null when there is no image */
+  saveClipboardImage(): Promise<string | null>
   listImages(tabId: string): Promise<ImagesUpdate>
   markImagesSeen(tabId: string): void
   imageAction(cardId: string, action: ImageAction): void
