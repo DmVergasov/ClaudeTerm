@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { osc52Text } from './osc52'
+import type { Screen, ScreenRow } from './unread'
 import { windowsPtyOption } from './util'
 
 // Font sizes are in points, like Windows Terminal; xterm.js takes CSS pixels (1pt = 96/72 px)
@@ -127,6 +128,31 @@ export class TerminalView {
       else lines.push(text)
     }
     return lines.join('\n')
+  }
+
+  /** the rows in view now, each also with its dim cells blanked and with only its cells that have a background */
+  screen(): Screen {
+    const b = this.term.buffer.active
+    const rows: ScreenRow[] = []
+    for (let y = 0; y < this.term.rows; y++) {
+      const line = b.getLine(b.viewportY + y)
+      if (!line) break
+      let text = ''
+      let bright = ''
+      let shaded = ''
+      for (let x = 0; x < line.length; x++) {
+        const cell = line.getCell(x)
+        // the second half of a wide character has no text of its own
+        if (!cell || cell.getWidth() === 0) continue
+        const ch = cell.getChars() || ' '
+        const blank = ' '.repeat(ch.length)
+        text += ch
+        bright += cell.isDim() ? blank : ch
+        shaded += cell.isBgDefault() ? blank : ch
+      }
+      rows.push({ text: text.trimEnd(), bright: bright.trimEnd(), shaded: shaded.trimEnd() })
+    }
+    return { rows, scrolledBack: b.type === 'normal' && b.viewportY < b.baseY }
   }
 
   dispose(): void {

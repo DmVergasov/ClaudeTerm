@@ -24,6 +24,14 @@ describe('parseSettings', () => {
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
   })
 
+  it('notifications.autoUnread is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.notifications.autoUnread).toBe(true)
+    expect(parseSettings(JSON.stringify({ notifications: { autoUnread: false } })).settings.notifications.autoUnread).toBe(false)
+    const r = parseSettings(JSON.stringify({ notifications: { autoUnread: 'no' } }))
+    expect(r.settings.notifications.autoUnread).toBe(true)
+    expect(r.errors.join('\n')).toContain('"notifications.autoUnread"')
+  })
+
   it('reports invalid JSON and falls back to defaults', () => {
     const r = parseSettings('{ "font": ')
     expect(r.settings).toEqual(DEFAULT_SETTINGS)
@@ -44,6 +52,7 @@ describe('parseSettings', () => {
   it('notifications: defaults are the old behaviour, the bell rings no sound', () => {
     expect(DEFAULT_SETTINGS.notifications).toEqual({
       sound: 'system',
+      autoUnread: true,
       permission: { sound: true, flash: true, tab: true },
       question: { sound: true, flash: true, tab: true },
       done: { sound: true, flash: true, tab: true },
@@ -74,6 +83,7 @@ describe('parseSettings', () => {
     expect(off.errors).toEqual([])
     expect(off.settings.notifications).toEqual({
       sound: 'system',
+      autoUnread: true,
       permission: { sound: false, flash: false, tab: true },
       question: { sound: false, flash: false, tab: true },
       done: { sound: false, flash: false, tab: true },
@@ -229,6 +239,7 @@ describe('applySettingEdit', () => {
     expect(out.scrollback).toBe(5)
     expect(out.notifications).toEqual({
       sound: 'system',
+      autoUnread: true,
       permission: { sound: false, flash: false, tab: true },
       question: { sound: false, flash: false, tab: true },
       done: { sound: false, flash: false, tab: false },

@@ -20,6 +20,7 @@ import { TabBar } from './tabbar'
 import { TerminalView } from './terminal-view'
 import { resolveTheme } from './themes'
 import { showToast } from './toasts'
+import { leftUnfinished } from './unread'
 import { folderName } from './util'
 
 interface TabState {
@@ -28,6 +29,8 @@ interface TabState {
   oscTitle: string | null
   bell: boolean
   attention: boolean
+  /** Mark as unread on the tab in front: it pulses once it is left */
+  unreadOnLeave: boolean
   images: number
 }
 
@@ -293,12 +296,32 @@ function addTab(info: TabInfo): void {
   })
   view.show(false)
   attachTerminalMouse(info.id, view)
-  tabs.set(info.id, { info, view, oscTitle: null, bell: false, attention: false, images: 0 })
+  tabs.set(info.id, { info, view, oscTitle: null, bell: false, attention: false, unreadOnLeave: false, images: 0 })
   if (!order.includes(info.id)) order.push(info.id)
   renderTabs()
 }
 
+/**
+ * A tab left with something unfinished pulses as one Claude waits in: marked unread, or a Claude tab whose reply is not
+ * read to its end or whose prompt holds a draft (notifications.autoUnread).
+ */
+function leave(t: TabState): void {
+  const unfinished = settings.notifications.autoUnread && t.info.kind === 'claude' && !t.info.exited && leftUnfinished(t.view.screen())
+  if (t.unreadOnLeave || unfinished) t.attention = true
+  t.unreadOnLeave = false
+}
+
+function markUnread(tabId: string): void {
+  const t = tabs.get(tabId)
+  if (!t) return
+  if (tabId === activeId) t.unreadOnLeave = true
+  else t.attention = true
+  renderTabs()
+}
+
 function activate(tabId: string): void {
+  const left = activeId !== null && activeId !== tabId ? tabs.get(activeId) : undefined
+  if (left) leave(left)
   activeId = tabId
   planList.close()
   const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
@@ -359,6 +382,7 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
       { label: t.info.kind === 'claude' ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
       ...(sessionId ? [{ label: isStarred ? 'Unstar session' : 'Star session', action: () => void ct.setSessionStarred(sessionId, !isStarred) }] : []),
       { label: t.info.muted ? 'Unmute sound' : 'Mute sound', action: () => ct.muteTab(id, !t.info.muted) },
+      { label: 'Mark as unread', action: () => markUnread(id) },
       ...(switches.length > 0 ? [{ label: '', separator: true }, ...switches] : []),
       { label: '', separator: true },
       { label: 'Close tab', action: () => ct.closeTab(id) }
