@@ -12,6 +12,7 @@ import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './a
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
 import { AutoContinue } from './auto-continue'
+import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
 import { writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
@@ -399,8 +400,24 @@ function bootstrap(): void {
     markTab: (tabId, reason) => send(IPC.evAttention, tabId, reason),
     muted: (tabId) => tabs.get(tabId)?.muted === true
   })
-  // writes go to the PTY directly: what it types is not taken for the user's keys
-  const autoContinue = new AutoContinue({ enabled: () => settings.claude.autoContinue, write: (tabId, data) => tabs.write(tabId, data), log })
+  const promptQueries = new PromptQueries({
+    send: (queryId, tabId) => {
+      if (!win || win.isDestroyed()) return false
+      win.webContents.send(IPC.evPromptQuery, queryId, tabId)
+      return true
+    }
+  })
+  const autoContinue = new AutoContinue({
+    enabled: () => settings.claude.autoContinue,
+    promptState: (tabId) => promptQueries.ask(tabId),
+    // writes go to the PTY directly: what it types is not taken for the user's keys
+    write: (tabId, data) => tabs.write(tabId, data),
+    notify: (tabId) => {
+      const signalled = attention.notify(tabId, 'done')
+      log.info(`attention done tab=${tabId} after the auto-continue gave up${signalled ? '' : ' (seen)'}`)
+    },
+    log
+  })
 
   const openTab = (req: OpenTabRequest, activate = true, setupToken = false): TabInfo | null => {
     try {
@@ -665,6 +682,8 @@ function bootstrap(): void {
     if (isPromptInput(data)) autoContinue.userInput(id)
     tabs.write(id, data)
   })
+  // only the main window has the terminals; PromptQueries checks the answer itself
+  ipcMain.on(IPC.promptAnswer, (e, queryId: unknown, state: unknown) => { if (win && e.sender === win.webContents) promptQueries.answer(queryId, state) })
   ipcMain.on(IPC.ptyResize, (_e, id: unknown, cols: unknown, rows: unknown) => {
     if (isId(id) && isPtySize(cols, rows)) tabs.resize(id, cols as number, rows as number)
   })

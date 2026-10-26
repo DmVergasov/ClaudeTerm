@@ -17,6 +17,7 @@ export const IPC = {
   tabsMute: 'tabs:mute',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
+  promptAnswer: 'prompt:answer',
   profilesList: 'profiles:list',
   settingsGet: 'settings:get',
   settingsOpen: 'settings:open',
@@ -76,7 +77,8 @@ export const IPC = {
   evUpdate: 'ev:update',
   evReview: 'ev:review',
   evPanelMode: 'ev:panel-mode',
-  evAccounts: 'ev:accounts'
+  evAccounts: 'ev:accounts',
+  evPromptQuery: 'ev:prompt-query'
 } as const
 
 export interface AppInfo {
@@ -135,6 +137,10 @@ export type SetSettingResult = { ok: true } | { ok: false; error: string }
 
 export type Unsubscribe = () => void
 
+/** what Claude Code's prompt in a tab holds: only its placeholder, text the user typed and did not send, or no prompt on screen */
+export type PromptState = 'empty' | 'draft' | 'none'
+export const PROMPT_STATES: readonly PromptState[] = ['empty', 'draft', 'none']
+
 export interface CtApi {
   /** process.platform of the app ('win32', 'linux'); known at once, without a round trip */
   readonly platform: string
@@ -155,6 +161,8 @@ export interface CtApi {
   muteTab(tabId: string, muted: boolean): void
   writePty(tabId: string, data: string): void
   resizePty(tabId: string, cols: number, rows: number): void
+  /** the answer to a query of onPromptQuery */
+  answerPrompt(queryId: number, state: PromptState): void
   listProfiles(): Promise<string[]>
   getSettings(): Promise<Settings>
   openSettingsFile(): void
@@ -242,4 +250,6 @@ export interface CtApi {
   onPanelMode(cb: (mode: PanelMode) => void): Unsubscribe
   /** the extra accounts changed: every window gets the new list */
   onAccounts(cb: (view: AccountsView) => void): Unsubscribe
+  /** main asks what Claude Code's prompt in the tab holds, from the terminal's screen; answer with answerPrompt */
+  onPromptQuery(cb: (queryId: number, tabId: string) => void): Unsubscribe
 }
