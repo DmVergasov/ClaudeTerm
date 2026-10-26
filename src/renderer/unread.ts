@@ -21,15 +21,16 @@ export interface Screen {
 const PILL = /(?:Jump to bottom|\b\d+ new messages?)(?: \([^)]*\))?(?: ↓|: \S+ to scroll)/
 /** the rules above and below Claude Code's prompt */
 const RULE = /^─{20,}/
-const PROMPT = '❯ '
+/** the start of Claude Code's prompt: ❯ and a no-break space, or ❯ alone once the trailing space is trimmed */
+const PROMPT = /^❯(?:[  ]|$)/
 
 /** text typed into Claude Code's prompt and not sent: anything but its dim placeholder between the rules */
 function hasDraft(rows: ScreenRow[]): boolean {
   let top = rows.length - 2
-  while (top >= 0 && !(RULE.test(rows[top]!.text) && rows[top + 1]!.text.startsWith(PROMPT))) top--
+  while (top >= 0 && !(RULE.test(rows[top]!.text) && PROMPT.test(rows[top + 1]!.text))) top--
   if (top < 0) return false
   for (let i = top + 1; i < rows.length && !RULE.test(rows[i]!.text); i++) {
-    const bright = i === top + 1 ? rows[i]!.bright.slice(PROMPT.length) : rows[i]!.bright
+    const bright = i === top + 1 ? rows[i]!.bright.replace(PROMPT, '') : rows[i]!.bright
     if (bright.trim() !== '') return true
   }
   return false

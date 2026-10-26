@@ -47,7 +47,7 @@ async function activate(page: Page, tabId: string): Promise<void> {
 }
 
 /** the bottom of Claude Code's screen: its prompt between two rules */
-const promptBox = (prompt: string): string[] => [RULE, `❯ ${prompt}`, RULE, '  Opus 5.5']
+const promptBox = (prompt: string): string[] => [RULE, `❯\u00a0${prompt}`, RULE, '  Opus 5.5']
 
 test('Mark as unread makes a background tab pulse, and the open tab once it is left; opening it clears the mark', async () => {
   const { app, page, tabId, work } = await launchClaudeTab(QUIET)
