@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { leftUnfinished, type ScreenRow } from '../../src/renderer/unread'
+import type { ScreenRow } from '../../src/renderer/claude-screen'
+import { leftUnfinished } from '../../src/renderer/unread'
 
 const RULE = '─'.repeat(80)
 const blank = (s: string): string => ' '.repeat(s.length)

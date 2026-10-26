@@ -6,7 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { osc52Text } from './osc52'
-import type { Screen, ScreenRow } from './unread'
+import type { Screen, ScreenRow } from './claude-screen'
 import { windowsPtyOption } from './util'
 
 // Font sizes are in points, like Windows Terminal; xterm.js takes CSS pixels (1pt = 96/72 px)
