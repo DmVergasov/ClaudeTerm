@@ -67,7 +67,7 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 ### 🔔 Know when Claude is waiting for you
 
-When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
+When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. Nothing happens while that tab is in front of you, unless you switch on **Even in front** for that case: then its sound plays there too. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
 
 ### 🔍 Review Claude's changes next to the conversation
 
@@ -196,11 +196,11 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 },
   "notifications": {               // when a tab you are not looking at needs you
     "sound": "system",             // "system" or the full path to a .wav file
-    "permission": { "sound": true,  "flash": true, "tab": true },   // Claude asks for a permission
-    "question":   { "sound": true,  "flash": true, "tab": true },   // Claude asks a question
-    "done":       { "sound": true,  "flash": true, "tab": true },   // Claude finished its turn
-    "bell":       { "sound": false, "flash": true, "tab": true }    // a terminal bell (BEL) from any program
-  },                               // flash: the taskbar button; tab: highlight the tab (a dot for the bell)
+    "permission": { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks for a permission
+    "question":   { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks a question
+    "done":       { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude finished its turn
+    "bell":       { "sound": false, "flash": true, "tab": true, "front": false }    // a terminal bell (BEL) from any program
+  },                               // flash: the taskbar button; tab: highlight the tab (a dot for the bell); front: the sound also while you look at the tab
   "review": {                      // the Changes panel
     "editor": null,                // e.g. "code --goto {file}:{line}" or "rider64 --line {line} {file}"; null = VS Code if installed, else the file is shown in its folder
     "statusBar": true,             // the changes counter in the status bar

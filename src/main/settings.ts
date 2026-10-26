@@ -21,10 +21,10 @@ export const DEFAULT_SETTINGS: Settings = {
   imagePanel: { autoOpen: true, width: 320, maxItems: 200 },
   notifications: {
     sound: 'system',
-    permission: { sound: true, flash: true, tab: true },
-    question: { sound: true, flash: true, tab: true },
-    done: { sound: true, flash: true, tab: true },
-    bell: { sound: false, flash: true, tab: true }
+    permission: { sound: true, flash: true, tab: true, front: false },
+    question: { sound: true, flash: true, tab: true, front: false },
+    done: { sound: true, flash: true, tab: true, front: false },
+    bell: { sound: false, flash: true, tab: true, front: false }
   },
   review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200 },
   sidePanel: { noRoom: 'overlay' },
@@ -95,7 +95,7 @@ export function parseSettings(text: string | null): ParsedSettings {
     const sound = take('attention.sound', at.sound, isLegacySound, 'system')
     const flash = take('attention.flash', at.flash, isBool, true)
     if (sound !== 'none') notifications.sound = sound
-    for (const c of CLAUDE_CASES) notifications[c] = { sound: sound !== 'none', flash, tab: true }
+    for (const c of CLAUDE_CASES) notifications[c] = { sound: sound !== 'none', flash, tab: true, front: false }
   } else {
     const nt = obj(raw.notifications)
     notifications.sound = take('notifications.sound', nt.sound, isSoundFile, notifications.sound)

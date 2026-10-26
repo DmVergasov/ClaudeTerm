@@ -16,7 +16,7 @@ export interface AttentionDeps {
   now?(): number
 }
 
-/** Tells the user that a tab needs them, unless they are already looking at it, with the signals set for the case. */
+/** Tells the user that a tab needs them, with the signals set for the case; while they look at it, only the sound of a case set to Even in front. */
 export class Attention {
   private readonly lastSound = new Map<string, number>()
 
@@ -26,9 +26,10 @@ export class Attention {
   notify(tabId: string, reason: NotificationCase): boolean {
     const focused = this.d.windowFocused()
     const active = this.d.activeTabId() === tabId
-    if (focused && active) return false
     const s = this.d.settings()
     const c = s[reason]
+    // in front of the user only the sound can say anything, and only for a case set to Even in front
+    if (focused && active && !c.front) return false
     let signalled = false
     if (c.tab && !active) {
       this.d.markTab(tabId, reason)

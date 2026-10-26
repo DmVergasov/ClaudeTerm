@@ -73,6 +73,8 @@ export interface NotificationChannels {
   flash: boolean
   /** mark the tab when it is not the active one */
   tab: boolean
+  /** signal also while the tab is in front of the user (window focused, tab active): there only the sound can */
+  front: boolean
 }
 
 /** sound: 'system' or an absolute path to a .wav file; then the signals each case gives */

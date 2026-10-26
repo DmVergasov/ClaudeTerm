@@ -15,7 +15,7 @@ const CASE_LABELS: Record<NotificationCase, string> = {
   done: 'Claude finished its answer',
   bell: 'Terminal bell (BEL)'
 }
-const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sound', flash: 'Taskbar flash', tab: 'Tab highlight' }
+const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sound', flash: 'Taskbar flash', tab: 'Tab highlight', front: 'Even in front' }
 const NO_ROOM_OPTIONS: Option[] = [{ value: 'overlay', label: 'Over the terminal' }, { value: 'narrow', label: 'Narrow the terminal' }]
 
 /** one control: shows its part of the view; its inputs are disabled while settings.json is locked */
@@ -210,7 +210,7 @@ root.append(
   el('h1', { className: 'settings-heading', textContent: 'Settings' }),
   banner,
   notice,
-  section('Notifications', 'when a tab you are not looking at needs you', notificationTable(), soundField()),
+  section('Notifications', 'when a tab you are not looking at needs you · Even in front: its sound also plays while you look at it', notificationTable(), soundField()),
   section('Appearance', null,
     textField('Font', 'font.family', 'text', (v) => v.settings.font.family, checkText),
     textField('Size', 'font.size', 'number', (v) => v.settings.font.size, (t) => checkNumber('font.size', t)),

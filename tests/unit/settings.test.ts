@@ -24,6 +24,11 @@ describe('parseSettings', () => {
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
   })
 
+  it('notifications: Even in front is off for every case unless turned on for one', () => {
+    const n = parseSettings(JSON.stringify({ notifications: { done: { front: true } } })).settings.notifications
+    expect([n.permission.front, n.question.front, n.done.front, n.bell.front]).toEqual([false, false, true, false])
+  })
+
   it('reports invalid JSON and falls back to defaults', () => {
     const r = parseSettings('{ "font": ')
     expect(r.settings).toEqual(DEFAULT_SETTINGS)
@@ -44,10 +49,10 @@ describe('parseSettings', () => {
   it('notifications: defaults are the old behaviour, the bell rings no sound', () => {
     expect(DEFAULT_SETTINGS.notifications).toEqual({
       sound: 'system',
-      permission: { sound: true, flash: true, tab: true },
-      question: { sound: true, flash: true, tab: true },
-      done: { sound: true, flash: true, tab: true },
-      bell: { sound: false, flash: true, tab: true }
+      permission: { sound: true, flash: true, tab: true, front: false },
+      question: { sound: true, flash: true, tab: true, front: false },
+      done: { sound: true, flash: true, tab: true, front: false },
+      bell: { sound: false, flash: true, tab: true, front: false }
     })
     expect(parseSettings('{}').settings.notifications).toEqual(DEFAULT_SETTINGS.notifications)
   })
@@ -55,9 +60,9 @@ describe('parseSettings', () => {
   it('notifications: each field is read on its own and an invalid one falls back with a notice naming it', () => {
     const r = parseSettings(JSON.stringify({ notifications: { sound: 'D:\\sounds\\Ding.WAV', done: { sound: false, tab: 'no' }, bell: { sound: true } } }))
     expect(r.settings.notifications.sound).toBe('D:\\sounds\\Ding.WAV')
-    expect(r.settings.notifications.done).toEqual({ sound: false, flash: true, tab: true })
-    expect(r.settings.notifications.bell).toEqual({ sound: true, flash: true, tab: true })
-    expect(r.settings.notifications.permission).toEqual({ sound: true, flash: true, tab: true })
+    expect(r.settings.notifications.done).toEqual({ sound: false, flash: true, tab: true, front: false })
+    expect(r.settings.notifications.bell).toEqual({ sound: true, flash: true, tab: true, front: false })
+    expect(r.settings.notifications.permission).toEqual({ sound: true, flash: true, tab: true, front: false })
     expect(r.errors).toEqual(['settings.json: invalid value for "notifications.done.tab", using default'])
   })
 
@@ -74,14 +79,14 @@ describe('parseSettings', () => {
     expect(off.errors).toEqual([])
     expect(off.settings.notifications).toEqual({
       sound: 'system',
-      permission: { sound: false, flash: false, tab: true },
-      question: { sound: false, flash: false, tab: true },
-      done: { sound: false, flash: false, tab: true },
-      bell: { sound: false, flash: true, tab: true }
+      permission: { sound: false, flash: false, tab: true, front: false },
+      question: { sound: false, flash: false, tab: true, front: false },
+      done: { sound: false, flash: false, tab: true, front: false },
+      bell: { sound: false, flash: true, tab: true, front: false }
     })
     const wav = parseSettings(JSON.stringify({ attention: { sound: 'D:\\s\\ding.wav' } })).settings.notifications
     expect(wav.sound).toBe('D:\\s\\ding.wav')
-    expect(wav.done).toEqual({ sound: true, flash: true, tab: true })
+    expect(wav.done).toEqual({ sound: true, flash: true, tab: true, front: false })
   })
 
   it('attention (old files): invalid values fall back with a notice naming them', () => {
@@ -94,7 +99,7 @@ describe('parseSettings', () => {
   it('notifications wins over attention', () => {
     const r = parseSettings(JSON.stringify({ attention: { sound: 'none' }, notifications: { done: { flash: false } } }))
     expect(r.settings.notifications.permission.sound).toBe(true)
-    expect(r.settings.notifications.done).toEqual({ sound: true, flash: false, tab: true })
+    expect(r.settings.notifications.done).toEqual({ sound: true, flash: false, tab: true, front: false })
     expect(r.errors).toEqual([])
   })
 
@@ -229,10 +234,10 @@ describe('applySettingEdit', () => {
     expect(out.scrollback).toBe(5)
     expect(out.notifications).toEqual({
       sound: 'system',
-      permission: { sound: false, flash: false, tab: true },
-      question: { sound: false, flash: false, tab: true },
-      done: { sound: false, flash: false, tab: false },
-      bell: { sound: false, flash: true, tab: true }
+      permission: { sound: false, flash: false, tab: true, front: false },
+      question: { sound: false, flash: false, tab: true, front: false },
+      done: { sound: false, flash: false, tab: false, front: false },
+      bell: { sound: false, flash: true, tab: true, front: false }
     })
   })
 

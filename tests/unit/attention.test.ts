@@ -47,8 +47,8 @@ describe('Attention', () => {
 
   it('each case gives only the signals switched on for it', () => {
     const { a, calls, state } = setup({ focused: false, active: 't2' })
-    state.n.done = { sound: false, flash: true, tab: false }
-    state.n.question = { sound: true, flash: false, tab: true }
+    state.n.done = { sound: false, flash: true, tab: false, front: false }
+    state.n.question = { sound: true, flash: false, tab: true, front: false }
     a.notify('t1', 'done')
     expect(calls).toEqual(['flash'])
     calls.length = 0
@@ -56,9 +56,26 @@ describe('Attention', () => {
     expect(calls).toEqual(['mark:t3:question', 'play:system'])
   })
 
+  it('in front of the user, a case set to Even in front plays its sound and gives nothing else', () => {
+    const { a, calls, state } = setup({ focused: true, active: 't1' })
+    state.n.done.front = true
+    expect(a.notify('t1', 'done')).toBe(true)
+    expect(calls).toEqual(['play:system'])
+    calls.length = 0
+    expect(a.notify('t1', 'permission')).toBe(false)
+    expect(calls).toEqual([])
+  })
+
+  it('Even in front without the sound gives nothing in front', () => {
+    const { a, calls, state } = setup({ focused: true, active: 't1' })
+    state.n.done = { sound: false, flash: true, tab: true, front: true }
+    expect(a.notify('t1', 'done')).toBe(false)
+    expect(calls).toEqual([])
+  })
+
   it('a case with every signal off gives none and reports it', () => {
     const { a, calls, state } = setup({ focused: false, active: 't2' })
-    state.n.permission = { sound: false, flash: false, tab: false }
+    state.n.permission = { sound: false, flash: false, tab: false, front: false }
     expect(a.notify('t1', 'permission')).toBe(false)
     expect(calls).toEqual([])
   })
@@ -132,7 +149,7 @@ describe('Attention', () => {
 
   it('a muted tab with only the sound on for the case gives no signal and reports it', () => {
     const { a, calls, state } = setup({ focused: true, active: 't2' })
-    state.n.done = { sound: true, flash: true, tab: false }
+    state.n.done = { sound: true, flash: true, tab: false, front: false }
     state.muted.add('t1')
     expect(a.notify('t1', 'done')).toBe(false)
     expect(calls).toEqual([])
