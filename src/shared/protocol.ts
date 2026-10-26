@@ -64,6 +64,8 @@ export interface AttentionMessage {
   reason: AttentionReason
   /** the subagent whose dialog it is; absent for the main conversation */
   agentId?: string
+  /** done only: the turn ended while background work Claude started still runs, and Claude goes on when it ends */
+  background?: true
 }
 
 /** Claude Code took a prompt (UserPromptSubmit): a turn starts. */
@@ -225,7 +227,8 @@ export function parsePipeMessage(line: string): ParseResult {
     if (m.type === 'attention') {
       if (typeof m.reason !== 'string' || !ATTENTION_REASONS.includes(m.reason)) return { ok: false, error: 'reason must be "permission", "question" or "done"' }
       const agent = typeof m.agentId === 'string' && AGENT_ID_RE.test(m.agentId) ? { agentId: m.agentId } : {}
-      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent } }
+      const background = m.reason === 'done' && m.background === true ? { background: true as const } : {}
+      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background } }
     }
     if (m.type === 'subagent') {
       if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }

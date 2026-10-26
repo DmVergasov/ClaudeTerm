@@ -16,17 +16,22 @@ export interface AttentionDeps {
   now?(): number
 }
 
-/** Tells the user that a tab needs them, with the signals set for the case; while they look at it, only the sound of a case set to Even in front. */
+/**
+ * Tells the user that a tab needs them, with the signals set for the case; while they look at it, only the sound of a case
+ * set to Even in front. A turn that ends with background work still running gives none when doneWithBackgroundWork is off.
+ */
 export class Attention {
   private readonly lastSound = new Map<string, number>()
 
   constructor(private readonly d: AttentionDeps) {}
 
-  /** Returns true when any signal was given. */
-  notify(tabId: string, reason: NotificationCase): boolean {
+  /** backgroundWork: the turn ended while background work Claude started still runs. Returns true when any signal was given. */
+  notify(tabId: string, reason: NotificationCase, backgroundWork = false): boolean {
+    const s = this.d.settings()
+    // Claude goes on once that work ends, and the turn after which nothing runs is signalled
+    if (backgroundWork && !s.doneWithBackgroundWork) return false
     const focused = this.d.windowFocused()
     const active = this.d.activeTabId() === tabId
-    const s = this.d.settings()
     const c = s[reason]
     // in front of the user only the sound can say anything, and only for a case set to Even in front
     if (focused && active && !c.front) return false

@@ -69,6 +69,8 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. Nothing happens while that tab is in front of you, unless you switch on **Even in front** for that case: then its sound plays there too. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
 
+Claude often ends a turn while work it started still runs in the background — subagents, background shell commands, monitors — and starts another turn when that work ends. Each of those turns is signalled as a finished answer; clear **Signal a finished answer also while background work… still runs** in Settings and only the turn after which nothing runs in the background is. ClaudeTerm learns about that work from Claude Code's `Stop` hook (`background_tasks`); a Claude Code that does not send it gets every turn signalled.
+
 ### 🔍 Review Claude's changes next to the conversation
 
 Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −) in the tab bar or the changes counter in the status bar — to open **Changes** beside a Claude tab:
@@ -196,6 +198,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 },
   "notifications": {               // when a tab you are not looking at needs you
     "sound": "system",             // "system" or the full path to a .wav file
+    "doneWithBackgroundWork": true, // false: a turn that ends while background work Claude started still runs gives no signal
     "permission": { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks for a permission
     "question":   { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks a question
     "done":       { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude finished its turn

@@ -61,6 +61,25 @@ describe('runSessionHook: other hook events', () => {
     expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', attention('done'))
   })
 
+  it('marks a Stop with background work still in flight; an empty or missing background_tasks leaves it a plain done', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    const task = { id: 'bmv6531d6', type: 'shell', status: 'running', description: 'build', command: 'make' }
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [task], session_crons: [] }), ENV, send)
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [], session_crons: [] }), ENV, send)
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)
+    const done = { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done' }
+    expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', { ...done, background: true })
+    expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', done)
+    expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', done)
+  })
+
+  it('a scheduled wakeup alone is no background work', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    const cron = { id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: '/loop check' }
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [], session_crons: [cron] }), ENV, send)
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done' })
+  })
+
   it('ignores notifications and other tools', async () => {
     const send = vi.fn()
     expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Notification', notification_type: 'permission_prompt' }), ENV, send)).toBe(false)

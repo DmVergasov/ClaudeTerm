@@ -77,8 +77,11 @@ export interface NotificationChannels {
   front: boolean
 }
 
-/** sound: 'system' or an absolute path to a .wav file; then the signals each case gives */
-export type NotificationSettings = { sound: string } & Record<NotificationCase, NotificationChannels>
+/**
+ * sound: 'system' or an absolute path to a .wav file; doneWithBackgroundWork: a turn that ends while background work Claude
+ * started still runs gives the done signals too; then the signals each case gives
+ */
+export type NotificationSettings = { sound: string; doneWithBackgroundWork: boolean } & Record<NotificationCase, NotificationChannels>
 
 /**
  * How the side panel sits by the terminal: beside it in a window widened for it, or, when the window had no room, over the

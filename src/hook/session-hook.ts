@@ -59,10 +59,12 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
     return path ? { v: 1, type: 'edit_before', tabId, sessionId, toolUseId: input.tool_use_id, path } : null
   }
   const agentId = typeof input.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null
-  const attention = (reason: AttentionReason): PipeMessage => ({ v: 1, type: 'attention', tabId, sessionId, reason, ...(agentId ? { agentId } : {}) })
+  const attention = (reason: AttentionReason, background = false): PipeMessage =>
+    ({ v: 1, type: 'attention', tabId, sessionId, reason, ...(agentId ? { agentId } : {}), ...(background ? { background: true as const } : {}) })
   if (event === 'PermissionRequest') return attention('permission')
   if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') return attention('question')
-  if (event === 'Stop') return attention('done')
+  // background_tasks: the background work still in flight, which wakes the session again when it ends
+  if (event === 'Stop') return attention('done', Array.isArray(input.background_tasks) && input.background_tasks.length > 0)
   return null
 }
 

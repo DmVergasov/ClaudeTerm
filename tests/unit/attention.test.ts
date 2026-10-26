@@ -73,6 +73,25 @@ describe('Attention', () => {
     expect(calls).toEqual([])
   })
 
+  it('a turn that ends with background work still running is signalled like any other by default', () => {
+    const { a, calls } = setup({ focused: false, active: 't2' })
+    expect(a.notify('t1', 'done', true)).toBe(true)
+    expect(calls).toEqual(['mark:t1:done', 'flash', 'play:system'])
+  })
+
+  it('with doneWithBackgroundWork off, such a turn gives no signal, even in front, while the turn after it does', () => {
+    const { a, calls, state } = setup({ focused: false, active: 't2' })
+    state.n.doneWithBackgroundWork = false
+    expect(a.notify('t1', 'done', true)).toBe(false)
+    state.focused = true
+    state.active = 't1'
+    state.n.done.front = true
+    expect(a.notify('t1', 'done', true)).toBe(false)
+    expect(calls).toEqual([])
+    expect(a.notify('t1', 'done')).toBe(true)
+    expect(calls).toEqual(['play:system'])
+  })
+
   it('a case with every signal off gives none and reports it', () => {
     const { a, calls, state } = setup({ focused: false, active: 't2' })
     state.n.permission = { sound: false, flash: false, tab: false, front: false }

@@ -29,6 +29,14 @@ describe('parseSettings', () => {
     expect([n.permission.front, n.question.front, n.done.front, n.bell.front]).toEqual([false, false, true, false])
   })
 
+  it('notifications.doneWithBackgroundWork is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.notifications.doneWithBackgroundWork).toBe(true)
+    expect(parseSettings(JSON.stringify({ notifications: { doneWithBackgroundWork: false } })).settings.notifications.doneWithBackgroundWork).toBe(false)
+    const r = parseSettings(JSON.stringify({ notifications: { doneWithBackgroundWork: 'no' } }))
+    expect(r.settings.notifications.doneWithBackgroundWork).toBe(true)
+    expect(r.errors).toEqual(['settings.json: invalid value for "notifications.doneWithBackgroundWork", using default'])
+  })
+
   it('reports invalid JSON and falls back to defaults', () => {
     const r = parseSettings('{ "font": ')
     expect(r.settings).toEqual(DEFAULT_SETTINGS)
@@ -49,6 +57,7 @@ describe('parseSettings', () => {
   it('notifications: defaults are the old behaviour, the bell rings no sound', () => {
     expect(DEFAULT_SETTINGS.notifications).toEqual({
       sound: 'system',
+      doneWithBackgroundWork: true,
       permission: { sound: true, flash: true, tab: true, front: false },
       question: { sound: true, flash: true, tab: true, front: false },
       done: { sound: true, flash: true, tab: true, front: false },
@@ -79,6 +88,7 @@ describe('parseSettings', () => {
     expect(off.errors).toEqual([])
     expect(off.settings.notifications).toEqual({
       sound: 'system',
+      doneWithBackgroundWork: true,
       permission: { sound: false, flash: false, tab: true, front: false },
       question: { sound: false, flash: false, tab: true, front: false },
       done: { sound: false, flash: false, tab: true, front: false },
@@ -234,6 +244,7 @@ describe('applySettingEdit', () => {
     expect(out.scrollback).toBe(5)
     expect(out.notifications).toEqual({
       sound: 'system',
+      doneWithBackgroundWork: true,
       permission: { sound: false, flash: false, tab: true, front: false },
       question: { sound: false, flash: false, tab: true, front: false },
       done: { sound: false, flash: false, tab: false, front: false },

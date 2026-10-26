@@ -166,6 +166,25 @@ test('a notification checkbox saves to settings.json and the case follows it', a
   await app.close()
 })
 
+test('cleared, the background work checkbox leaves a turn that ends with background work unmarked; the turn after it is marked', async () => {
+  const { app, page, tabId, work, pipeName, dataDir } = await launchClaudeTab(QUIET)
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  const win = await openSettings(app, page)
+  const box = win.locator('[data-key="notifications.doneWithBackgroundWork"]')
+  await expect(box).toBeChecked()
+  await box.uncheck()
+  await expect.poll(() => readSettings(dataDir).notifications?.doneWithBackgroundWork).toBe(false)
+  const claudeTab = page.locator(`[data-tab-id="${tabId}"]`)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true })).toEqual({ ok: true })
+  // the mark would arrive right after the pipe answer; give it time to show up if it were sent
+  await page.waitForTimeout(300)
+  await expect(claudeTab).not.toHaveClass(/\battention\b/)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(claudeTab).toHaveClass(/\battention\b/)
+  await app.close()
+})
+
 test('quick clicks all reach the file', async () => {
   const { app, page, dataDir } = await launchApp({ settings: QUIET })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)

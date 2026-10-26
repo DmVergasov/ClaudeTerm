@@ -182,6 +182,14 @@ describe('parsePipeMessage: review messages', () => {
     expect(parsePipeMessage(JSON.stringify({ ...m, paths: Array.from({ length: 101 }, () => FILE) })).ok).toBe(false)
   })
 
+  it('keeps background: true on a done and drops it on other reasons or with another value', () => {
+    const done = { ...ids, type: 'attention', reason: 'done' }
+    expect(parsePipeMessage(JSON.stringify({ ...done, background: true }))).toEqual({ ok: true, message: { ...done, background: true } })
+    expect(parsePipeMessage(JSON.stringify({ ...done, background: 'yes' }))).toEqual({ ok: true, message: done })
+    const permission = { ...ids, type: 'attention', reason: 'permission' }
+    expect(parsePipeMessage(JSON.stringify({ ...permission, background: true }))).toEqual({ ok: true, message: permission })
+  })
+
   it('keeps a valid agentId on attention and drops a bad one', () => {
     const a = { ...ids, type: 'attention', reason: 'permission' }
     expect(parsePipeMessage(JSON.stringify({ ...a, agentId: 'a40a10c1d655cf759' }))).toEqual({ ok: true, message: { ...a, agentId: 'a40a10c1d655cf759' } })
