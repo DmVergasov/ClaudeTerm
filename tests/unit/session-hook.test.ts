@@ -61,6 +61,15 @@ describe('runSessionHook: other hook events', () => {
     expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', attention('done'))
   })
 
+  it('maps StopFailure to the end of a turn with the error it ended in', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    const cutOff = 'API Error: Connection lost mid-response. The response above may be incomplete.'
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'StopFailure', error: 'server_error', last_assistant_message: cutOff }), ENV, send)
+    await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'StopFailure' }), ENV, send)
+    expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error' })
+    expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'unknown' })
+  })
+
   it('ignores notifications and other tools', async () => {
     const send = vi.fn()
     expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Notification', notification_type: 'permission_prompt' }), ENV, send)).toBe(false)
