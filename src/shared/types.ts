@@ -75,8 +75,11 @@ export interface NotificationChannels {
   tab: boolean
 }
 
-/** sound: 'system' or an absolute path to a .wav file; then the signals each case gives */
-export type NotificationSettings = { sound: string } & Record<NotificationCase, NotificationChannels>
+/**
+ * sound: 'system' or an absolute path to a .wav file; autoUnread: a Claude tab left mid-reply or with an unsent prompt
+ * pulses as one Claude waits in; then the signals each case gives
+ */
+export type NotificationSettings = { sound: string; autoUnread: boolean } & Record<NotificationCase, NotificationChannels>
 
 /**
  * How the side panel sits by the terminal: beside it in a window widened for it, or, when the window had no room, over the

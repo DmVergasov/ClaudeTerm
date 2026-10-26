@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   imagePanel: { autoOpen: true, width: 320, maxItems: 200 },
   notifications: {
     sound: 'system',
+    autoUnread: true,
     permission: { sound: true, flash: true, tab: true },
     question: { sound: true, flash: true, tab: true },
     done: { sound: true, flash: true, tab: true },
@@ -99,6 +100,7 @@ export function parseSettings(text: string | null): ParsedSettings {
   } else {
     const nt = obj(raw.notifications)
     notifications.sound = take('notifications.sound', nt.sound, isSoundFile, notifications.sound)
+    notifications.autoUnread = take('notifications.autoUnread', nt.autoUnread, isBool, notifications.autoUnread)
     for (const c of NOTIFICATION_CASES) {
       const cv = obj(nt[c])
       for (const ch of NOTIFICATION_CHANNELS) notifications[c][ch] = take(`notifications.${c}.${ch}`, cv[ch], isBool, notifications[c][ch])
