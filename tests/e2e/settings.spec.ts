@@ -166,6 +166,21 @@ test('a notification checkbox saves to settings.json and the case follows it', a
   await app.close()
 })
 
+test('the auto-continue checkbox saves to settings.json and a cut-off response then goes on without marking the tab', async () => {
+  const { app, page, tabId, work, pipeName, dataDir } = await launchClaudeTab(QUIET)
+  const win = await openSettings(app, page)
+  const box = win.locator('[data-key="claude.autoContinue"]')
+  await expect(box).not.toBeChecked()
+  await box.check()
+  await expect.poll(() => readSettings(dataDir).claude?.autoContinue).toBe(true)
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', error: 'server_error' })).toEqual({ ok: true })
+  await page.waitForTimeout(300)
+  await expect(page.locator(`[data-tab-id="${tabId}"]`)).not.toHaveClass(/\battention\b/)
+  await app.close()
+})
+
 test('quick clicks all reach the file', async () => {
   const { app, page, dataDir } = await launchApp({ settings: QUIET })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)

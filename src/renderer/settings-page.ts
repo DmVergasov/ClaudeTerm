@@ -1,6 +1,6 @@
 import './settings.css'
 import type { SettingsView } from '../shared/ipc'
-import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, type SettingKey, type SettingValue } from '../shared/settings-keys'
+import { MAX_AUTO_CONTINUES, NOTIFICATION_CASES, NOTIFICATION_CHANNELS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import { DEFAULT_TEST_PATTERNS } from '../shared/test-files'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
 import { accountsSection } from './accounts-section'
@@ -222,9 +222,10 @@ root.append(
     selectField('Default shell', 'defaultProfile', (v) => profileOptions(v.profiles, v.settings.defaultProfile), profileValue, automaticHint),
     textField('Default folder', 'defaultFolder', 'text', (v) => v.settings.defaultFolder ?? '', checkOptionalText,
       'new tabs open here; a Claude tab opens in the folder of the tab it is opened from · empty: your home folder')),
-  section('Claude Code', 'applies to new tabs',
-    textField('Command', 'claude.command', 'text', (v) => v.settings.claude.command, checkText),
-    selectField('Shell for Claude tabs', 'claude.shellProfile', (v) => profileOptions(v.profiles, v.settings.claude.shellProfile), profileValue)),
+  section('Claude Code', null,
+    textField('Command', 'claude.command', 'text', (v) => v.settings.claude.command, checkText, 'applies to new tabs'),
+    selectField('Shell for Claude tabs', 'claude.shellProfile', (v) => profileOptions(v.profiles, v.settings.claude.shellProfile), profileValue, 'applies to new tabs'),
+    checkboxField('claude.autoContinue', `Continue a response a dropped connection cut off (up to ${MAX_AUTO_CONTINUES} times in a row)`, (v) => v.settings.claude.autoContinue)),
   accountsSection(),
   section('Images', 'applies to new tabs',
     checkboxField('imageWatch.enabled', 'Show new images from the session scratchpad', (v) => v.settings.imageWatch.enabled),

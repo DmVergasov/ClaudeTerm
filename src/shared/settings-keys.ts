@@ -12,12 +12,15 @@ export const NUMBER_LIMITS = {
   scrollback: { min: 0, max: 1_000_000 }
 } as const
 
+/** claude.autoContinue: continues in a row without a turn that ends normally; after them the tab calls the user */
+export const MAX_AUTO_CONTINUES = 3
+
 /** the settings the settings window edits */
 export type SettingKey =
   | `notifications.${NotificationCase}.${keyof NotificationChannels}`
   | 'notifications.sound'
   | 'font.family' | 'font.size' | 'theme' | 'scrollback'
-  | 'defaultProfile' | 'defaultFolder' | 'claude.command' | 'claude.shellProfile'
+  | 'defaultProfile' | 'defaultFolder' | 'claude.command' | 'claude.shellProfile' | 'claude.autoContinue'
   | 'imageWatch.enabled' | 'imagePanel.autoOpen' | 'autoUpdate'
   | 'review.editor' | 'review.statusBar' | 'review.hideIgnored' | 'review.hideTests' | 'review.testPatterns' | 'review.fileTree'
   | 'sidePanel.noRoom'
@@ -28,7 +31,7 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   ...NOTIFICATION_CASES.flatMap((c) => NOTIFICATION_CHANNELS.map((ch) => `notifications.${c}.${ch}` as const)),
   'notifications.sound',
   'font.family', 'font.size', 'theme', 'scrollback',
-  'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile',
+  'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile', 'claude.autoContinue',
   'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'sidePanel.noRoom', 'autoUpdate'
 ]
 

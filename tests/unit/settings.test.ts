@@ -20,8 +20,16 @@ describe('parseSettings', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])
     expect(settings.font).toEqual({ family: DEFAULT_SETTINGS.font.family, size: 16 })
-    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash' })
+    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', autoContinue: false })
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
+  })
+
+  it('claude.autoContinue is off unless turned on, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.claude.autoContinue).toBe(false)
+    expect(parseSettings(JSON.stringify({ claude: { autoContinue: true } })).settings.claude.autoContinue).toBe(true)
+    const r = parseSettings(JSON.stringify({ claude: { autoContinue: 'yes' } }))
+    expect(r.settings.claude.autoContinue).toBe(false)
+    expect(r.errors.join('\n')).toContain('"claude.autoContinue"')
   })
 
   it('reports invalid JSON and falls back to defaults', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -41,6 +41,15 @@ describe('ipc guards', () => {
     expect(isUserInput('\x1b[12;40R')).toBe(false)
     expect(isUserInput('\x1b[I\x1b[O')).toBe(false)
     expect(isUserInput('\x1b[Ia')).toBe(true)
+  })
+
+  it('isPromptInput: keys that can put text in a prompt, not the mouse or the scroll keys', () => {
+    for (const d of ['a', '\x7f', '\x15', '\x1b[A', '\x1b[B', '\x1b[200~text\x1b[201~', '\r']) expect(isPromptInput(d)).toBe(true)
+    // SGR and X10 wheel and click reports, PgUp, PgDn, Home, End, Ctrl+Home, Ctrl+End, focus reports
+    for (const d of ['\x1b[<65;40;12M', '\x1b[<64;40;12M\x1b[<64;40;12M', '\x1b[<0;10;5M\x1b[<0;10;5m', '\x1b[Ma!!', '\x1b[5~', '\x1b[6~', '\x1b[H', '\x1b[F', '\x1b[1~', '\x1b[4~', '\x1b[1;5H', '\x1b[1;5F', '\x1b[I']) {
+      expect(isPromptInput(d)).toBe(false)
+    }
+    expect(isPromptInput('\x1b[<65;40;12Ma')).toBe(true)
   })
 
   it('isPtyData accepts only strings', () => {

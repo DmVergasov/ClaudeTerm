@@ -49,3 +49,9 @@ export function isPtySize(cols: unknown, rows: unknown): boolean {
 const TERMINAL_REPORTS = /^(?:\x1b\[[IO]|\x1b\[[?>]?[\d;]*c|\x1b\[\??[\d;]*R|\x1b\[\??[\d;]*\$y)+$/
 
 export const isUserInput = (data: string): boolean => !TERMINAL_REPORTS.test(data)
+
+// mouse reports (SGR, X10) and the keys that scroll a view: reading a reply, not writing a prompt
+const READING_INPUT = /^(?:\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3}|\x1b\[[1456](?:;\d+)?~|\x1b\[(?:1;\d+)?[HF])+$/
+
+/** a key that can change what a prompt holds: text, editing keys, history (arrows), a paste */
+export const isPromptInput = (data: string): boolean => isUserInput(data) && !READING_INPUT.test(data)
