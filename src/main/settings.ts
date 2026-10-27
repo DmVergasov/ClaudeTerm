@@ -7,7 +7,7 @@ import type { NoRoomMode, NotificationSettings, ProfileDef, Settings } from '../
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   defaultFolder: null,
-  claude: { command: 'claude', shellProfile: null },
+  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5 },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
   theme: 'Campbell',
@@ -51,6 +51,7 @@ const isStrArr: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.ev
 const isTestPatterns: Guard<string[]> = (v): v is string[] => isStrArr(v) && v.length <= MAX_TEST_PATTERNS && v.every((p) => p.length <= MAX_TEST_PATTERN_LENGTH)
 const isNoRoom: Guard<NoRoomMode> = (v): v is NoRoomMode => v === 'overlay' || v === 'narrow'
 const numIn = (min: number, max: number): Guard<number> => (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
+const wholeIn = (min: number, max: number): Guard<number> => (v): v is number => numIn(min, max)(v) && Number.isInteger(v)
 const isPlainObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isTheme: Guard<Settings['theme']> = (v): v is Settings['theme'] => isStr(v) || (isPlainObj(v) && Object.values(v).every((x) => typeof x === 'string'))
 const isSoundFile: Guard<string> = (v): v is string => v === 'system' || (isStr(v) && win32.isAbsolute(v) && /\.wav$/i.test(v))
@@ -110,7 +111,10 @@ export function parseSettings(text: string | null): ParsedSettings {
     defaultFolder: take('defaultFolder', raw.defaultFolder, isFolder, d.defaultFolder),
     claude: {
       command: take('claude.command', claude.command, isStr, d.claude.command),
-      shellProfile: take('claude.shellProfile', claude.shellProfile, isNullableStr, d.claude.shellProfile)
+      shellProfile: take('claude.shellProfile', claude.shellProfile, isNullableStr, d.claude.shellProfile),
+      statusRefresh: take('claude.statusRefresh', claude.statusRefresh, isBool, d.claude.statusRefresh),
+      statusRefreshInterval: take('claude.statusRefreshInterval', claude.statusRefreshInterval,
+        wholeIn(NUMBER_LIMITS['claude.statusRefreshInterval'].min, NUMBER_LIMITS['claude.statusRefreshInterval'].max), d.claude.statusRefreshInterval)
     },
     profiles,
     font: {

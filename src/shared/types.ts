@@ -90,7 +90,8 @@ export interface Settings {
   defaultProfile: string | null
   /** the folder new tabs open in, an absolute path; null: the home folder */
   defaultFolder: string | null
-  claude: { command: string; shellProfile: string | null }
+  /** statusRefresh: Claude Code also re-runs a Claude tab's statusLine every statusRefreshInterval seconds */
+  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number }
   profiles: ProfileDef[]
   font: { family: string; size: number }
   theme: string | Record<string, string>

@@ -20,7 +20,7 @@ describe('parseSettings', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])
     expect(settings.font).toEqual({ family: DEFAULT_SETTINGS.font.family, size: 16 })
-    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash' })
+    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5 })
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
   })
 
@@ -104,6 +104,25 @@ describe('parseSettings', () => {
     const r = parseSettings(JSON.stringify({ autoUpdate: 'no' }))
     expect(r.settings.autoUpdate).toBe(true)
     expect(r.errors.join('\n')).toContain('"autoUpdate"')
+  })
+
+  it('claude.statusRefresh: Claude tabs refresh the status bar every 5 seconds by default; off, or a whole number of seconds from 1 to 300', () => {
+    expect(DEFAULT_SETTINGS.claude).toMatchObject({ statusRefresh: true, statusRefreshInterval: 5 })
+    expect(parseSettings(JSON.stringify({ claude: { statusRefresh: false } })).settings.claude).toMatchObject({ statusRefresh: false, statusRefreshInterval: 5 })
+    for (const seconds of [1, 300]) {
+      expect(parseSettings(JSON.stringify({ claude: { statusRefreshInterval: seconds } })).settings.claude.statusRefreshInterval).toBe(seconds)
+    }
+  })
+
+  it('claude.statusRefresh: other values fall back with a notice naming the key', () => {
+    for (const bad of [0, 301, 2.5, '30', null]) {
+      const r = parseSettings(JSON.stringify({ claude: { statusRefreshInterval: bad } }))
+      expect(r.settings.claude.statusRefreshInterval).toBe(5)
+      expect(r.errors).toEqual(['settings.json: invalid value for "claude.statusRefreshInterval", using default'])
+    }
+    const r = parseSettings(JSON.stringify({ claude: { statusRefresh: 'no' } }))
+    expect(r.settings.claude.statusRefresh).toBe(true)
+    expect(r.errors).toEqual(['settings.json: invalid value for "claude.statusRefresh", using default'])
   })
 
   it('defaultFolder: the home folder (null) by default, an absolute path, other values fall back', () => {
@@ -210,6 +229,7 @@ describe('applySettingEdit', () => {
     expect(applySettingEdit('{}', 'font.family', '')).toEqual({ ok: false, error: 'Invalid value for font.family' })
     expect(applySettingEdit('{}', 'notifications.sound', 'none')).toEqual({ ok: false, error: 'Invalid value for notifications.sound' })
     expect(applySettingEdit('{}', 'imageWatch.enabled', 'yes')).toEqual({ ok: false, error: 'Invalid value for imageWatch.enabled' })
+    expect(applySettingEdit('{}', 'claude.statusRefreshInterval', 0)).toEqual({ ok: false, error: 'Invalid value for claude.statusRefreshInterval' })
   })
 
   it('refuses a file that is not a JSON object', () => {
