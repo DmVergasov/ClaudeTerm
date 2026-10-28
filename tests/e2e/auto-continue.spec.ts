@@ -3,7 +3,7 @@ import { CONTINUE_PROMPT } from '../../src/main/auto-continue'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { PipeMessage } from '../../src/shared/protocol'
 import { DIM, promptBox, show } from './claude-screen'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchClaudeTab, PROMPT } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, launchClaudeTab } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const OFF = { sound: false, flash: false, tab: true }
@@ -29,8 +29,8 @@ async function openShellTab(page: Page, claudeTab: string, cwd: string): Promise
  * and a long line typed before the shell reads it is cut (macOS keeps 1024 bytes of a line until then)
  */
 async function shellReady(page: Page, tabId: string): Promise<void> {
-  const ready = new RegExp(`(^|\\n)fake-claude[^\\n]*\\n[\\s\\S]*${PROMPT.source}`)
-  await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toMatch(ready)
+  // the prompt is the user's own in a Claude tab (runner@host:…$ on the Linux runner), so any text on a later line
+  await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toMatch(/(^|\n)fake-claude[^\n]*\n[^\n]*\S/)
 }
 
 async function launched(autoContinue: boolean) {
