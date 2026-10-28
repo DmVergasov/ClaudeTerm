@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.10.1
+
+### Changes
+
+- **A Claude tab you leave unfinished no longer pulses by itself.** Highlighting a Claude tab you leave with a reply not read to its end or an unsent prompt is now off by default; turn it on in Settings → Notifications → **Highlight a Claude tab you leave with a reply not read to its end or an unsent prompt**. Right-click → **Mark as unread** works as before.
+
 ## 0.10.0
 
 ### New
