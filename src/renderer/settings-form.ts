@@ -15,7 +15,7 @@ export const CUSTOM_THEME = '\u0000custom'
 
 export function checkNumber(key: keyof typeof NUMBER_LIMITS, text: string): Checked<number> {
   const { min, max } = NUMBER_LIMITS[key]
-  const whole = key === 'scrollback'
+  const whole = key === 'scrollback' || key === 'claude.statusRefreshInterval'
   const n = Number(text.trim())
   const ok = text.trim() !== '' && Number.isFinite(n) && n >= min && n <= max && (!whole || Number.isInteger(n))
   if (ok) return { ok: true, value: n }

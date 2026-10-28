@@ -18,6 +18,10 @@ function renderedFontSize(page: Page): Promise<string> {
 
 const readSettings = (dataDir: string): Record<string, any> => JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8'))
 
+/** the statusLine of the settings file Claude tabs start claude with */
+const tabStatusLine = (dataDir: string): Record<string, unknown> =>
+  (JSON.parse(readFileSync(join(dataDir, 'claude-tab-settings.json'), 'utf8')) as { statusLine: Record<string, unknown> }).statusLine
+
 /** Ctrl+, in the main window; returns the settings window once its page is up */
 async function openSettings(app: ElectronApplication, page: Page): Promise<Page> {
   await page.locator('.terminal-host:visible .xterm').click()
@@ -55,8 +59,8 @@ test('a notifications edit turns the old attention section into notifications', 
   expect(await page.evaluate(() => window.ct.setSetting('notifications.done.tab', false))).toEqual({ ok: true })
   const file = readSettings(dataDir)
   expect(file.attention).toBeUndefined()
-  expect(file.notifications.permission).toEqual({ sound: false, flash: false, tab: true })
-  expect(file.notifications.done).toEqual({ sound: false, flash: false, tab: false })
+  expect(file.notifications.permission).toEqual({ sound: false, flash: false, tab: true, front: false })
+  expect(file.notifications.done).toEqual({ sound: false, flash: false, tab: false, front: false })
   await app.close()
 })
 
@@ -181,6 +185,25 @@ test('the auto-continue checkbox saves to settings.json and a cut-off response t
   await app.close()
 })
 
+test('cleared, the background work checkbox leaves a turn that ends with background work unmarked; the turn after it is marked', async () => {
+  const { app, page, tabId, work, pipeName, dataDir } = await launchClaudeTab(QUIET)
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  const win = await openSettings(app, page)
+  const box = win.locator('[data-key="notifications.doneWithBackgroundWork"]')
+  await expect(box).toBeChecked()
+  await box.uncheck()
+  await expect.poll(() => readSettings(dataDir).notifications?.doneWithBackgroundWork).toBe(false)
+  const claudeTab = page.locator(`[data-tab-id="${tabId}"]`)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true })).toEqual({ ok: true })
+  // the mark would arrive right after the pipe answer; give it time to show up if it were sent
+  await page.waitForTimeout(300)
+  await expect(claudeTab).not.toHaveClass(/\battention\b/)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(claudeTab).toHaveClass(/\battention\b/)
+  await app.close()
+})
+
 test('quick clicks all reach the file', async () => {
   const { app, page, dataDir } = await launchApp({ settings: QUIET })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
@@ -259,6 +282,39 @@ test('a hand edit updates the window but not the field being typed in; a broken 
   writeFileSync(file, JSON.stringify(QUIET))
   await expect(win.locator('.settings-banner')).toBeHidden()
   await expect(win.locator('[data-key="font.size"]')).toBeEnabled()
+  await app.close()
+})
+
+test('the status bar refresh in the Claude Code section sets how often new Claude tabs refresh it, or turns the timer off', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  expect(tabStatusLine(dataDir).refreshInterval).toBe(5)
+  const win = await openSettings(app, page)
+  const timer = win.locator('[data-key="claude.statusRefresh"]')
+  const interval = win.locator('[data-key="claude.statusRefreshInterval"]')
+  await expect(timer).toBeChecked()
+  await expect(interval).toHaveValue('5')
+  await interval.fill('30')
+  await interval.press('Enter')
+  await expect.poll(() => readSettings(dataDir).claude?.statusRefreshInterval).toBe(30)
+  await expect.poll(() => tabStatusLine(dataDir).refreshInterval).toBe(30)
+  await interval.fill('0')
+  await interval.press('Enter')
+  await expect(win.locator('.field-error', { hasText: 'A whole number between 1 and 300' })).toBeVisible()
+  expect(readSettings(dataDir).claude.statusRefreshInterval).toBe(30)
+  await timer.uncheck()
+  await expect.poll(() => readSettings(dataDir).claude?.statusRefresh).toBe(false)
+  await expect.poll(() => 'refreshInterval' in tabStatusLine(dataDir)).toBe(false)
+  expect(tabStatusLine(dataDir).command).toEqual(expect.stringContaining('status'))
+  await app.close()
+})
+
+test('a status bar refresh set in settings.json is in the settings file Claude tabs start with', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: { ...QUIET, claude: { ...QUIET.claude, statusRefreshInterval: 60 } } })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  expect(tabStatusLine(dataDir).refreshInterval).toBe(60)
+  writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ...QUIET, claude: { ...QUIET.claude, statusRefresh: false } }))
+  await expect.poll(() => 'refreshInterval' in tabStatusLine(dataDir)).toBe(false)
   await app.close()
 })
 

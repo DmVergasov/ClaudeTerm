@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { claudeTabSettingsJson, hookCommandString, hookShContent, windowsHookRun, windowsStatusCommand, writeClaudeTabFiles } from '../../src/main/claude-tab-settings'
+import { claudeTabSettingsJson, hookCommandString, hookShContent, statusRefreshInterval, windowsHookRun, windowsStatusCommand, writeClaudeTabFiles } from '../../src/main/claude-tab-settings'
 import { WIN } from '../fixtures/platform'
 
 describe('hook files', () => {
@@ -51,7 +51,7 @@ describe('hook files', () => {
     const hookRun = { command: 'C:\\WINDOWS\\System32\\cmd.exe', args: ['/d', '/s', '/c', 'hook'] }
     const run = { type: 'command', ...hookRun, timeout: 10 }
     const hook = [{ hooks: [run] }]
-    expect(JSON.parse(claudeTabSettingsJson(hookRun, 'status command'))).toEqual({
+    expect(JSON.parse(claudeTabSettingsJson(hookRun, 'status command', 5))).toEqual({
       statusLine: { type: 'command', command: 'status command', refreshInterval: 5 },
       hooks: {
         SessionStart: hook,
@@ -67,13 +67,36 @@ describe('hook files', () => {
     })
   })
 
+  it('claudeTabSettingsJson has Claude Code refresh the statusLine at the interval given, in seconds', () => {
+    const statusLine = (JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', 30)) as { statusLine: unknown }).statusLine
+    expect(statusLine).toEqual({ type: 'command', command: 'status command', refreshInterval: 30 })
+  })
+
+  it('claudeTabSettingsJson without an interval leaves the statusLine to the updates Claude Code makes on its own', () => {
+    const statusLine = (JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', null)) as { statusLine: unknown }).statusLine
+    expect(statusLine).toEqual({ type: 'command', command: 'status command' })
+  })
+
+  it('statusRefreshInterval is the interval of the claude settings while the timer is on, and null while it is off', () => {
+    expect(statusRefreshInterval({ command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 30, autoContinue: false })).toBe(30)
+    expect(statusRefreshInterval({ command: 'claude', shellProfile: null, statusRefresh: false, statusRefreshInterval: 30, autoContinue: false })).toBeNull()
+  })
+
   it('writeClaudeTabFiles on Windows writes only the settings: the hooks run cmd.exe, never a batch file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ct-hook-'))
     const env = { SystemRoot: 'C:\\Windows' }
-    const files = writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', 'win32', env)
+    const files = writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', 5, 'win32', env)
     expect(files).toEqual({ settingsPath: join(dir, 'claude-tab-settings.json'), hookPath: null })
     expect(readdirSync(dir)).toEqual(['claude-tab-settings.json'])
-    expect(readFileSync(files.settingsPath, 'utf8')).toBe(claudeTabSettingsJson(windowsHookRun('C:\\e.exe', 'C:\\h.js', env), windowsStatusCommand('C:\\e.exe', 'C:\\h.js')))
+    expect(readFileSync(files.settingsPath, 'utf8')).toBe(claudeTabSettingsJson(windowsHookRun('C:\\e.exe', 'C:\\h.js', env), windowsStatusCommand('C:\\e.exe', 'C:\\h.js'), 5))
+  })
+
+  it('writeClaudeTabFiles writes the refresh interval it is given, and none when there is none', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ct-hook-'))
+    const refreshOf = (path: string): unknown => (JSON.parse(readFileSync(path, 'utf8')) as { statusLine: { refreshInterval?: number } }).statusLine.refreshInterval
+    expect(refreshOf(writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', 60, 'win32', { SystemRoot: 'C:\\Windows' }).settingsPath)).toBe(60)
+    expect(refreshOf(writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', null, 'win32', { SystemRoot: 'C:\\Windows' }).settingsPath)).toBeUndefined()
+    expect(refreshOf(writeClaudeTabFiles(dir, '/e', '/h.js', 60, 'linux').settingsPath)).toBe(60)
   })
 
   it('hookShContent runs the script under ELECTRON_RUN_AS_NODE, passes the arguments on and always exits 0', () => {
@@ -96,12 +119,12 @@ describe('hook files', () => {
 
   it('writeClaudeTabFiles writes a runnable session-hook.sh on Linux', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ct-hook-'))
-    const files = writeClaudeTabFiles(dir, '/e', '/h.js', 'linux')
+    const files = writeClaudeTabFiles(dir, '/e', '/h.js', 5, 'linux')
     const hookPath = join(dir, 'session-hook.sh')
     expect(files).toEqual({ settingsPath: join(dir, 'claude-tab-settings.json'), hookPath })
     expect(readFileSync(hookPath, 'utf8')).toBe(hookShContent('/e', '/h.js'))
     if (!WIN) expect(statSync(hookPath).mode & 0o777).toBe(0o755)
     const command = hookCommandString(hookPath)
-    expect(readFileSync(files.settingsPath, 'utf8')).toBe(claudeTabSettingsJson({ command }, `${command} status`))
+    expect(readFileSync(files.settingsPath, 'utf8')).toBe(claudeTabSettingsJson({ command }, `${command} status`, 5))
   })
 })

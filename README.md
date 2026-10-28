@@ -67,7 +67,9 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 ### 🔔 Know when Claude is waiting for you
 
-When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
+When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. Nothing happens while that tab is in front of you, unless you switch on **Even in front** for that case: then its sound plays there too. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
+
+Claude often ends a turn while work it started still runs in the background — subagents, background shell commands, monitors — and starts another turn when that work ends. Each of those turns is signalled as a finished answer; clear **Signal a finished answer also while background work… still runs** in Settings and only the turn after which nothing runs in the background is. ClaudeTerm learns about that work from Claude Code's `Stop` hook (`background_tasks`); a Claude Code that does not send it gets every turn signalled.
 
 A turn that ends in an API error — a connection lost mid-response, a rate limit — counts as finished too, so a session never stops without a word. Claude Code itself leaves a response cut off mid-stream to you; with **Continue a response a dropped connection cut off** on, ClaudeTerm types Claude Code's own "resume where it stops" nudge into the tab a few seconds later instead of calling you: up to 3 times in a row, and not when Claude Code's prompt in that tab holds text of yours: then the tab calls you as usual.
 
@@ -184,6 +186,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "claude": {
     "command": "claude",           // how to start Claude Code
     "shellProfile": null,          // shell that hosts claude in Claude tabs; null = same rule as above
+    "statusRefresh": true,         // refresh the status bar on a timer too; false = only with Claude Code's own updates (every message)
+    "statusRefreshInterval": 5,    // that timer in seconds, 1–300; each refresh starts a few short processes per Claude tab
     "autoContinue": false          // type a nudge into a Claude tab whose response a dropped connection cut off, up to 3 times in a row
   },
   "profiles": [                    // added to (or overriding by name) the detected profiles
@@ -201,12 +205,13 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 },
   "notifications": {               // when a tab you are not looking at needs you
     "sound": "system",             // "system" or the full path to a .wav file
+    "doneWithBackgroundWork": true, // false: a turn that ends while background work Claude started still runs gives no signal (one that never ends, like a dev server, keeps every turn silent)
     "autoUnread": true,            // a Claude tab you leave mid-reply or with an unsent prompt pulses until you open it
-    "permission": { "sound": true,  "flash": true, "tab": true },   // Claude asks for a permission
-    "question":   { "sound": true,  "flash": true, "tab": true },   // Claude asks a question
-    "done":       { "sound": true,  "flash": true, "tab": true },   // Claude finished its turn
-    "bell":       { "sound": false, "flash": true, "tab": true }    // a terminal bell (BEL) from any program
-  },                               // flash: the taskbar button; tab: highlight the tab (a dot for the bell)
+    "permission": { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks for a permission
+    "question":   { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks a question
+    "done":       { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude finished its turn
+    "bell":       { "sound": false, "flash": true, "tab": true, "front": false }    // a terminal bell (BEL) from any program
+  },                               // flash: the taskbar button; tab: highlight the tab (a dot for the bell); front: the sound also while you look at the tab
   "review": {                      // the Changes panel
     "editor": null,                // e.g. "code --goto {file}:{line}" or "rider64 --line {line} {file}"; null = VS Code if installed, else the file is shown in its folder
     "statusBar": true,             // the changes counter in the status bar

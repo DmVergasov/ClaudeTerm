@@ -14,7 +14,7 @@ import { Attention } from './attention'
 import { AutoContinue } from './auto-continue'
 import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
-import { writeClaudeTabFiles } from './claude-tab-settings'
+import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
 import { isAbsPath, isAccountRef, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
@@ -149,7 +149,8 @@ function bootstrap(): void {
   // notices toast when they appear, not again on every reload that still has them
   let lastNotices = [...loaded.errors, ...startProfiles.notices]
   startupNotices.push(...lastNotices)
-  const claudeFiles = writeClaudeTabFiles(dataDir, process.execPath, resourcePath('hook/session-hook.js'))
+  const hookScript = resourcePath('hook/session-hook.js')
+  const claudeFiles = writeClaudeTabFiles(dataDir, process.execPath, hookScript, statusRefreshInterval(settings.claude))
   const sessions = new SessionStore(dataDir, { onError: (m) => log.warn(m) })
   // the previous run restarted into an update: reopen its tabs without asking
   const restoreAfterUpdate = consumeUpdateMarker(dataDir, Date.now())
@@ -599,8 +600,8 @@ function bootstrap(): void {
         // a response a dropped connection cut off goes on by itself: nobody needs to look yet
         else if (autoContinue.failed(msg.tabId, msg.error)) return { ok: true }
       } else review.dialogOpened(msg.tabId, msg.agentId ?? null)
-      const signalled = attention.notify(msg.tabId, msg.reason)
-      log.info(`attention ${msg.reason} tab=${msg.tabId}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
+      const signalled = attention.notify(msg.tabId, msg.reason, msg.background === true)
+      log.info(`attention ${msg.reason} tab=${msg.tabId}${msg.background ? ' with background work' : ''}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
       return { ok: true }
     },
     turn: (msg) => {
@@ -853,7 +854,17 @@ function bootstrap(): void {
       const hideIgnored = settings.review.hideIgnored
       const noRoom = settings.sidePanel.noRoom
       const testsBefore = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
+      const refreshBefore = statusRefreshInterval(settings.claude)
       settings = next.settings
+      // Claude tabs started from now on read their settings file with the new status bar refresh
+      const refreshNow = statusRefreshInterval(settings.claude)
+      if (refreshNow !== refreshBefore) {
+        try {
+          writeClaudeTabFiles(dataDir, process.execPath, hookScript, refreshNow)
+        } catch (e) {
+          notices = [...notices, `Cannot update claude-tab-settings.json: ${(e as Error).message}`]
+        }
+      }
       const computed = computeProfiles(settings)
       profiles = computed.profiles
       notices = [...notices, ...computed.notices]

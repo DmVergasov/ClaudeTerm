@@ -4,12 +4,13 @@ import type { NotificationCase, NotificationChannels } from './types'
 // The settings vocabulary shared by the main process (parsing, editing) and the settings window.
 
 export const NOTIFICATION_CASES: readonly NotificationCase[] = ['permission', 'question', 'done', 'bell']
-export const NOTIFICATION_CHANNELS: readonly (keyof NotificationChannels)[] = ['sound', 'flash', 'tab']
+export const NOTIFICATION_CHANNELS: readonly (keyof NotificationChannels)[] = ['sound', 'flash', 'tab', 'front']
 
 /** number ranges the parser and the settings window both check */
 export const NUMBER_LIMITS = {
   'font.size': { min: 6, max: 72 },
-  scrollback: { min: 0, max: 1_000_000 }
+  scrollback: { min: 0, max: 1_000_000 },
+  'claude.statusRefreshInterval': { min: 1, max: 300 }
 } as const
 
 /** claude.autoContinue: continues in a row without a turn that ends normally; after them the tab calls the user */
@@ -18,9 +19,9 @@ export const MAX_AUTO_CONTINUES = 3
 /** the settings the settings window edits */
 export type SettingKey =
   | `notifications.${NotificationCase}.${keyof NotificationChannels}`
-  | 'notifications.sound' | 'notifications.autoUnread'
+  | 'notifications.sound' | 'notifications.doneWithBackgroundWork' | 'notifications.autoUnread'
   | 'font.family' | 'font.size' | 'theme' | 'scrollback'
-  | 'defaultProfile' | 'defaultFolder' | 'claude.command' | 'claude.shellProfile' | 'claude.autoContinue'
+  | 'defaultProfile' | 'defaultFolder' | 'claude.command' | 'claude.shellProfile' | 'claude.statusRefresh' | 'claude.statusRefreshInterval' | 'claude.autoContinue'
   | 'imageWatch.enabled' | 'imagePanel.autoOpen' | 'autoUpdate'
   | 'review.editor' | 'review.statusBar' | 'review.hideIgnored' | 'review.hideTests' | 'review.testPatterns' | 'review.fileTree'
   | 'sidePanel.noRoom'
@@ -29,9 +30,9 @@ export type SettingValue = string | number | boolean | null | string[]
 
 export const SETTING_KEYS: readonly SettingKey[] = [
   ...NOTIFICATION_CASES.flatMap((c) => NOTIFICATION_CHANNELS.map((ch) => `notifications.${c}.${ch}` as const)),
-  'notifications.sound', 'notifications.autoUnread',
+  'notifications.sound', 'notifications.doneWithBackgroundWork', 'notifications.autoUnread',
   'font.family', 'font.size', 'theme', 'scrollback',
-  'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile', 'claude.autoContinue',
+  'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.autoContinue',
   'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'sidePanel.noRoom', 'autoUpdate'
 ]
 

@@ -20,7 +20,7 @@ describe('parseSettings', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])
     expect(settings.font).toEqual({ family: DEFAULT_SETTINGS.font.family, size: 16 })
-    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', autoContinue: false })
+    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false })
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
   })
 
@@ -30,6 +30,19 @@ describe('parseSettings', () => {
     const r = parseSettings(JSON.stringify({ claude: { autoContinue: 'yes' } }))
     expect(r.settings.claude.autoContinue).toBe(false)
     expect(r.errors.join('\n')).toContain('"claude.autoContinue"')
+  })
+
+  it('notifications: Even in front is off for every case unless turned on for one', () => {
+    const n = parseSettings(JSON.stringify({ notifications: { done: { front: true } } })).settings.notifications
+    expect([n.permission.front, n.question.front, n.done.front, n.bell.front]).toEqual([false, false, true, false])
+  })
+
+  it('notifications.doneWithBackgroundWork is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.notifications.doneWithBackgroundWork).toBe(true)
+    expect(parseSettings(JSON.stringify({ notifications: { doneWithBackgroundWork: false } })).settings.notifications.doneWithBackgroundWork).toBe(false)
+    const r = parseSettings(JSON.stringify({ notifications: { doneWithBackgroundWork: 'no' } }))
+    expect(r.settings.notifications.doneWithBackgroundWork).toBe(true)
+    expect(r.errors).toEqual(['settings.json: invalid value for "notifications.doneWithBackgroundWork", using default'])
   })
 
   it('notifications.autoUnread is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
@@ -60,11 +73,12 @@ describe('parseSettings', () => {
   it('notifications: defaults are the old behaviour, the bell rings no sound', () => {
     expect(DEFAULT_SETTINGS.notifications).toEqual({
       sound: 'system',
+      doneWithBackgroundWork: true,
       autoUnread: true,
-      permission: { sound: true, flash: true, tab: true },
-      question: { sound: true, flash: true, tab: true },
-      done: { sound: true, flash: true, tab: true },
-      bell: { sound: false, flash: true, tab: true }
+      permission: { sound: true, flash: true, tab: true, front: false },
+      question: { sound: true, flash: true, tab: true, front: false },
+      done: { sound: true, flash: true, tab: true, front: false },
+      bell: { sound: false, flash: true, tab: true, front: false }
     })
     expect(parseSettings('{}').settings.notifications).toEqual(DEFAULT_SETTINGS.notifications)
   })
@@ -72,9 +86,9 @@ describe('parseSettings', () => {
   it('notifications: each field is read on its own and an invalid one falls back with a notice naming it', () => {
     const r = parseSettings(JSON.stringify({ notifications: { sound: 'D:\\sounds\\Ding.WAV', done: { sound: false, tab: 'no' }, bell: { sound: true } } }))
     expect(r.settings.notifications.sound).toBe('D:\\sounds\\Ding.WAV')
-    expect(r.settings.notifications.done).toEqual({ sound: false, flash: true, tab: true })
-    expect(r.settings.notifications.bell).toEqual({ sound: true, flash: true, tab: true })
-    expect(r.settings.notifications.permission).toEqual({ sound: true, flash: true, tab: true })
+    expect(r.settings.notifications.done).toEqual({ sound: false, flash: true, tab: true, front: false })
+    expect(r.settings.notifications.bell).toEqual({ sound: true, flash: true, tab: true, front: false })
+    expect(r.settings.notifications.permission).toEqual({ sound: true, flash: true, tab: true, front: false })
     expect(r.errors).toEqual(['settings.json: invalid value for "notifications.done.tab", using default'])
   })
 
@@ -91,15 +105,16 @@ describe('parseSettings', () => {
     expect(off.errors).toEqual([])
     expect(off.settings.notifications).toEqual({
       sound: 'system',
+      doneWithBackgroundWork: true,
       autoUnread: true,
-      permission: { sound: false, flash: false, tab: true },
-      question: { sound: false, flash: false, tab: true },
-      done: { sound: false, flash: false, tab: true },
-      bell: { sound: false, flash: true, tab: true }
+      permission: { sound: false, flash: false, tab: true, front: false },
+      question: { sound: false, flash: false, tab: true, front: false },
+      done: { sound: false, flash: false, tab: true, front: false },
+      bell: { sound: false, flash: true, tab: true, front: false }
     })
     const wav = parseSettings(JSON.stringify({ attention: { sound: 'D:\\s\\ding.wav' } })).settings.notifications
     expect(wav.sound).toBe('D:\\s\\ding.wav')
-    expect(wav.done).toEqual({ sound: true, flash: true, tab: true })
+    expect(wav.done).toEqual({ sound: true, flash: true, tab: true, front: false })
   })
 
   it('attention (old files): invalid values fall back with a notice naming them', () => {
@@ -112,7 +127,7 @@ describe('parseSettings', () => {
   it('notifications wins over attention', () => {
     const r = parseSettings(JSON.stringify({ attention: { sound: 'none' }, notifications: { done: { flash: false } } }))
     expect(r.settings.notifications.permission.sound).toBe(true)
-    expect(r.settings.notifications.done).toEqual({ sound: true, flash: false, tab: true })
+    expect(r.settings.notifications.done).toEqual({ sound: true, flash: false, tab: true, front: false })
     expect(r.errors).toEqual([])
   })
 
@@ -122,6 +137,25 @@ describe('parseSettings', () => {
     const r = parseSettings(JSON.stringify({ autoUpdate: 'no' }))
     expect(r.settings.autoUpdate).toBe(true)
     expect(r.errors.join('\n')).toContain('"autoUpdate"')
+  })
+
+  it('claude.statusRefresh: Claude tabs refresh the status bar every 5 seconds by default; off, or a whole number of seconds from 1 to 300', () => {
+    expect(DEFAULT_SETTINGS.claude).toMatchObject({ statusRefresh: true, statusRefreshInterval: 5 })
+    expect(parseSettings(JSON.stringify({ claude: { statusRefresh: false } })).settings.claude).toMatchObject({ statusRefresh: false, statusRefreshInterval: 5 })
+    for (const seconds of [1, 300]) {
+      expect(parseSettings(JSON.stringify({ claude: { statusRefreshInterval: seconds } })).settings.claude.statusRefreshInterval).toBe(seconds)
+    }
+  })
+
+  it('claude.statusRefresh: other values fall back with a notice naming the key', () => {
+    for (const bad of [0, 301, 2.5, '30', null]) {
+      const r = parseSettings(JSON.stringify({ claude: { statusRefreshInterval: bad } }))
+      expect(r.settings.claude.statusRefreshInterval).toBe(5)
+      expect(r.errors).toEqual(['settings.json: invalid value for "claude.statusRefreshInterval", using default'])
+    }
+    const r = parseSettings(JSON.stringify({ claude: { statusRefresh: 'no' } }))
+    expect(r.settings.claude.statusRefresh).toBe(true)
+    expect(r.errors).toEqual(['settings.json: invalid value for "claude.statusRefresh", using default'])
   })
 
   it('defaultFolder: the home folder (null) by default, an absolute path, other values fall back', () => {
@@ -228,6 +262,7 @@ describe('applySettingEdit', () => {
     expect(applySettingEdit('{}', 'font.family', '')).toEqual({ ok: false, error: 'Invalid value for font.family' })
     expect(applySettingEdit('{}', 'notifications.sound', 'none')).toEqual({ ok: false, error: 'Invalid value for notifications.sound' })
     expect(applySettingEdit('{}', 'imageWatch.enabled', 'yes')).toEqual({ ok: false, error: 'Invalid value for imageWatch.enabled' })
+    expect(applySettingEdit('{}', 'claude.statusRefreshInterval', 0)).toEqual({ ok: false, error: 'Invalid value for claude.statusRefreshInterval' })
   })
 
   it('refuses a file that is not a JSON object', () => {
@@ -247,11 +282,12 @@ describe('applySettingEdit', () => {
     expect(out.scrollback).toBe(5)
     expect(out.notifications).toEqual({
       sound: 'system',
+      doneWithBackgroundWork: true,
       autoUnread: true,
-      permission: { sound: false, flash: false, tab: true },
-      question: { sound: false, flash: false, tab: true },
-      done: { sound: false, flash: false, tab: false },
-      bell: { sound: false, flash: true, tab: true }
+      permission: { sound: false, flash: false, tab: true, front: false },
+      question: { sound: false, flash: false, tab: true, front: false },
+      done: { sound: false, flash: false, tab: false, front: false },
+      bell: { sound: false, flash: true, tab: true, front: false }
     })
   })
 

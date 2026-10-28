@@ -106,7 +106,7 @@ describe('session hook end to end', () => {
 
   it.runIf(WIN)('the exec-form hook from the settings file runs with no shell and no batch file, and passes stdin through', async () => {
     const { pipe, got } = await listen()
-    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-exec'), process.execPath, bundle)
+    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-exec'), process.execPath, bundle, 5)
     const r = await runExecForm(settingsHook(settingsPath, 'SessionStart'), { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe })
     expect(r).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([expected])
@@ -114,7 +114,7 @@ describe('session hook end to end', () => {
 
   it.runIf(WIN)('the exec-form hook runs a script in a folder with an apostrophe and a space', async () => {
     const { pipe, got } = await listen()
-    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-exec-quoted'), process.execPath, bundleIn("Bob's data"))
+    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-exec-quoted'), process.execPath, bundleIn("Bob's data"), 5)
     const r = await runExecForm(settingsHook(settingsPath, 'SessionStart'), { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe })
     expect(r).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([expected])
@@ -124,7 +124,7 @@ describe('session hook end to end', () => {
   it.runIf(WIN)('the exec-form hook runs a script in a folder with cmd\'s special characters, with and without a space', async () => {
     const { pipe, got } = await listen()
     for (const [i, folder] of ['R&D^(1)%OS%', 'R&D ^(2)'].entries()) {
-      const { settingsPath } = writeClaudeTabFiles(join(work, `data-exec-special-${i}`), process.execPath, bundleIn(folder))
+      const { settingsPath } = writeClaudeTabFiles(join(work, `data-exec-special-${i}`), process.execPath, bundleIn(folder), 5)
       const r = await runExecForm(settingsHook(settingsPath, 'SessionStart'), { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe })
       expect(r).toEqual({ code: 0, stdout: '' })
     }
@@ -133,7 +133,7 @@ describe('session hook end to end', () => {
 
   it.skipIf(!existsSync(GIT_BASH))('the statusLine command string from the settings file runs from Git Bash', async () => {
     const { pipe, got } = await listen()
-    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-status'), process.execPath, bundleIn("Bob's status"))
+    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-status'), process.execPath, bundleIn("Bob's status"), 5)
     const command = (JSON.parse(readFileSync(settingsPath, 'utf8')) as { statusLine: { command: string } }).statusLine.command
     const r = await run(GIT_BASH, ['-c', command], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, STATUS_INPUT)
     expect(r).toEqual({ code: 0, stdout: '' })
@@ -142,7 +142,7 @@ describe('session hook end to end', () => {
 
   it.runIf(WIN)('SubagentStart via the exec-form hook forwards a subagent message', async () => {
     const { pipe, got } = await listen()
-    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-sub'), process.execPath, bundle)
+    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-sub'), process.execPath, bundle, 5)
     const r = await runExecForm(settingsHook(settingsPath, 'SubagentStart'), { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, SUBAGENT_INPUT)
     expect(r).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([{ v: 1, type: 'subagent', tabId: TAB, sessionId: SID, event: 'start', agentId: AGENT, agentType: 'Explore' }])
@@ -150,7 +150,7 @@ describe('session hook end to end', () => {
 
   it.runIf(WIN)('Stop and AskUserQuestion via the exec-form hooks forward attention and print nothing', async () => {
     const { pipe, got } = await listen()
-    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-attention'), process.execPath, bundle)
+    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-attention'), process.execPath, bundle, 5)
     const env = { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
     const ask = JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [] } })
     const stop = JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false })
@@ -165,7 +165,7 @@ describe('session hook end to end', () => {
 
   it.runIf(!WIN)('the generated .sh, run by sh -c the way Claude Code runs hooks, passes stdin through', async () => {
     const { pipe, got } = await listen()
-    const { hookPath } = writeClaudeTabFiles(join(work, 'data-sh'), process.execPath, bundle)
+    const { hookPath } = writeClaudeTabFiles(join(work, 'data-sh'), process.execPath, bundle, 5)
     const r = await run('/bin/sh', ['-c', hookCommandString(hookPath!)], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe })
     expect(r).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([expected])
@@ -173,7 +173,7 @@ describe('session hook end to end', () => {
 
   it.runIf(!WIN)('the .sh works from a folder with an apostrophe and a space', async () => {
     const { pipe, got } = await listen()
-    const { hookPath } = writeClaudeTabFiles(join(work, "Bob's data sh"), process.execPath, bundle)
+    const { hookPath } = writeClaudeTabFiles(join(work, "Bob's data sh"), process.execPath, bundle, 5)
     const r = await run('/bin/sh', ['-c', hookCommandString(hookPath!)], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe })
     expect(r).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([expected])
@@ -181,7 +181,7 @@ describe('session hook end to end', () => {
 
   it.runIf(!WIN)('the statusLine command from the settings file forwards the status through sh', async () => {
     const { pipe, got } = await listen()
-    const { settingsPath } = writeClaudeTabFiles(join(work, "Bob's status sh"), process.execPath, bundle)
+    const { settingsPath } = writeClaudeTabFiles(join(work, "Bob's status sh"), process.execPath, bundle, 5)
     const command = (JSON.parse(readFileSync(settingsPath, 'utf8')) as { statusLine: { command: string } }).statusLine.command
     const r = await run('/bin/sh', ['-c', command], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, STATUS_INPUT)
     expect(r).toEqual({ code: 0, stdout: '' })
@@ -190,7 +190,7 @@ describe('session hook end to end', () => {
 
   it.runIf(!WIN)('Stop and AskUserQuestion via the .sh forward attention and print nothing', async () => {
     const { pipe, got } = await listen()
-    const { hookPath } = writeClaudeTabFiles(join(work, 'data-attention-sh'), process.execPath, bundle)
+    const { hookPath } = writeClaudeTabFiles(join(work, 'data-attention-sh'), process.execPath, bundle, 5)
     const env = { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
     const ask = JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [] } })
     const stop = JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false })

@@ -7,7 +7,7 @@ import type { NoRoomMode, NotificationSettings, ProfileDef, Settings } from '../
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   defaultFolder: null,
-  claude: { command: 'claude', shellProfile: null, autoContinue: false },
+  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
   theme: 'Campbell',
@@ -21,11 +21,12 @@ export const DEFAULT_SETTINGS: Settings = {
   imagePanel: { autoOpen: true, width: 320, maxItems: 200 },
   notifications: {
     sound: 'system',
+    doneWithBackgroundWork: true,
     autoUnread: true,
-    permission: { sound: true, flash: true, tab: true },
-    question: { sound: true, flash: true, tab: true },
-    done: { sound: true, flash: true, tab: true },
-    bell: { sound: false, flash: true, tab: true }
+    permission: { sound: true, flash: true, tab: true, front: false },
+    question: { sound: true, flash: true, tab: true, front: false },
+    done: { sound: true, flash: true, tab: true, front: false },
+    bell: { sound: false, flash: true, tab: true, front: false }
   },
   review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200 },
   sidePanel: { noRoom: 'overlay' },
@@ -52,6 +53,7 @@ const isStrArr: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.ev
 const isTestPatterns: Guard<string[]> = (v): v is string[] => isStrArr(v) && v.length <= MAX_TEST_PATTERNS && v.every((p) => p.length <= MAX_TEST_PATTERN_LENGTH)
 const isNoRoom: Guard<NoRoomMode> = (v): v is NoRoomMode => v === 'overlay' || v === 'narrow'
 const numIn = (min: number, max: number): Guard<number> => (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
+const wholeIn = (min: number, max: number): Guard<number> => (v): v is number => numIn(min, max)(v) && Number.isInteger(v)
 const isPlainObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isTheme: Guard<Settings['theme']> = (v): v is Settings['theme'] => isStr(v) || (isPlainObj(v) && Object.values(v).every((x) => typeof x === 'string'))
 const isSoundFile: Guard<string> = (v): v is string => v === 'system' || (isStr(v) && win32.isAbsolute(v) && /\.wav$/i.test(v))
@@ -96,10 +98,11 @@ export function parseSettings(text: string | null): ParsedSettings {
     const sound = take('attention.sound', at.sound, isLegacySound, 'system')
     const flash = take('attention.flash', at.flash, isBool, true)
     if (sound !== 'none') notifications.sound = sound
-    for (const c of CLAUDE_CASES) notifications[c] = { sound: sound !== 'none', flash, tab: true }
+    for (const c of CLAUDE_CASES) notifications[c] = { sound: sound !== 'none', flash, tab: true, front: false }
   } else {
     const nt = obj(raw.notifications)
     notifications.sound = take('notifications.sound', nt.sound, isSoundFile, notifications.sound)
+    notifications.doneWithBackgroundWork = take('notifications.doneWithBackgroundWork', nt.doneWithBackgroundWork, isBool, notifications.doneWithBackgroundWork)
     notifications.autoUnread = take('notifications.autoUnread', nt.autoUnread, isBool, notifications.autoUnread)
     for (const c of NOTIFICATION_CASES) {
       const cv = obj(nt[c])
@@ -113,6 +116,9 @@ export function parseSettings(text: string | null): ParsedSettings {
     claude: {
       command: take('claude.command', claude.command, isStr, d.claude.command),
       shellProfile: take('claude.shellProfile', claude.shellProfile, isNullableStr, d.claude.shellProfile),
+      statusRefresh: take('claude.statusRefresh', claude.statusRefresh, isBool, d.claude.statusRefresh),
+      statusRefreshInterval: take('claude.statusRefreshInterval', claude.statusRefreshInterval,
+        wholeIn(NUMBER_LIMITS['claude.statusRefreshInterval'].min, NUMBER_LIMITS['claude.statusRefreshInterval'].max), d.claude.statusRefreshInterval),
       autoContinue: take('claude.autoContinue', claude.autoContinue, isBool, d.claude.autoContinue)
     },
     profiles,
