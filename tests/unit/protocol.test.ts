@@ -142,6 +142,15 @@ describe('status, subagent and session_end messages', () => {
     expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'attention' })).ok).toBe(false)
     expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'attention', reason: 'done', tabId: 'x' })).ok).toBe(false)
   })
+
+  it('keeps the error a turn ended in on attention done and drops a bad one', () => {
+    const done = { ...ids, type: 'attention', reason: 'done' }
+    expect(parsePipeMessage(JSON.stringify({ ...done, error: 'server_error' }))).toEqual({ ok: true, message: { ...done, error: 'server_error' } })
+    expect(parsePipeMessage(JSON.stringify({ ...done, error: 'Server Error!' }))).toEqual({ ok: true, message: done })
+    expect(parsePipeMessage(JSON.stringify({ ...done, error: 'x'.repeat(65) }))).toEqual({ ok: true, message: done })
+    const permission = { ...ids, type: 'attention', reason: 'permission' }
+    expect(parsePipeMessage(JSON.stringify({ ...permission, error: 'server_error' }))).toEqual({ ok: true, message: permission })
+  })
 })
 
 describe('parsePipeMessage: review messages', () => {

@@ -69,6 +69,8 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. Nothing happens while that tab is in front of you. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
 
+A tab you have not finished with pulses the same way: **Mark as unread** in its right-click menu marks any tab (the one in front once you leave it), and a Claude tab you leave with Claude's reply not read to its end (Claude Code's *Jump to bottom* shows, or the terminal is scrolled back) or with an unsent prompt is marked by itself — **Highlight a Claude tab you leave…** in Settings turns that off. Opening the tab clears the mark.
+
 ### 🔍 Review Claude's changes next to the conversation
 
 Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −) in the tab bar or the changes counter in the status bar — to open **Changes** beside a Claude tab:
@@ -198,6 +200,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 },
   "notifications": {               // when a tab you are not looking at needs you
     "sound": "system",             // "system" or the full path to a .wav file
+    "autoUnread": true,            // a Claude tab you leave mid-reply or with an unsent prompt pulses until you open it
     "permission": { "sound": true,  "flash": true, "tab": true },   // Claude asks for a permission
     "question":   { "sound": true,  "flash": true, "tab": true },   // Claude asks a question
     "done":       { "sound": true,  "flash": true, "tab": true },   // Claude finished its turn
