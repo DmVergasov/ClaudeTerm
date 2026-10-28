@@ -71,6 +71,8 @@ When Claude asks for a permission, asks you a question or finishes its turn whil
 
 Claude often ends a turn while work it started still runs in the background — subagents, background shell commands, monitors — and starts another turn when that work ends. Each of those turns is signalled as a finished answer; clear **Signal a finished answer also while background work… still runs** in Settings and only the turn after which nothing runs in the background is. ClaudeTerm learns about that work from Claude Code's `Stop` hook (`background_tasks`); a Claude Code that does not send it gets every turn signalled.
 
+A tab you have not finished with pulses the same way: **Mark as unread** in its right-click menu marks any tab (the one in front once you leave it), and a Claude tab you leave with Claude's reply not read to its end (Claude Code's *Jump to bottom* shows, or the terminal is scrolled back) or with an unsent prompt is marked by itself — **Highlight a Claude tab you leave…** in Settings turns that off. Opening the tab clears the mark.
+
 ### 🔍 Review Claude's changes next to the conversation
 
 Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −) in the tab bar or the changes counter in the status bar — to open **Changes** beside a Claude tab:
@@ -198,7 +200,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "imagePanel": { "autoOpen": true, "width": 320, "maxItems": 200 },
   "notifications": {               // when a tab you are not looking at needs you
     "sound": "system",             // "system" or the full path to a .wav file
-    "doneWithBackgroundWork": true, // false: a turn that ends while background work Claude started still runs gives no signal
+    "doneWithBackgroundWork": true, // false: a turn that ends while background work Claude started still runs gives no signal (one that never ends, like a dev server, keeps every turn silent)
+    "autoUnread": true,            // a Claude tab you leave mid-reply or with an unsent prompt pulses until you open it
     "permission": { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks for a permission
     "question":   { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks a question
     "done":       { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude finished its turn

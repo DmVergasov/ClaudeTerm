@@ -70,7 +70,9 @@ export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string): 
           // ClaudeTerm keeps each file as it was before Claude's first change in the turn and in the session
           { matcher: 'Edit|MultiEdit|Write|NotebookEdit', hooks: [run] }
         ],
-        Stop: hook
+        Stop: hook,
+        // a turn that ends in an API error (a connection lost mid-response, a rate limit) runs this instead of Stop
+        StopFailure: hook
       }
     },
     null,

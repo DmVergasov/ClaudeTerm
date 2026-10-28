@@ -37,6 +37,14 @@ describe('parseSettings', () => {
     expect(r.errors).toEqual(['settings.json: invalid value for "notifications.doneWithBackgroundWork", using default'])
   })
 
+  it('notifications.autoUnread is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.notifications.autoUnread).toBe(true)
+    expect(parseSettings(JSON.stringify({ notifications: { autoUnread: false } })).settings.notifications.autoUnread).toBe(false)
+    const r = parseSettings(JSON.stringify({ notifications: { autoUnread: 'no' } }))
+    expect(r.settings.notifications.autoUnread).toBe(true)
+    expect(r.errors.join('\n')).toContain('"notifications.autoUnread"')
+  })
+
   it('reports invalid JSON and falls back to defaults', () => {
     const r = parseSettings('{ "font": ')
     expect(r.settings).toEqual(DEFAULT_SETTINGS)
@@ -58,6 +66,7 @@ describe('parseSettings', () => {
     expect(DEFAULT_SETTINGS.notifications).toEqual({
       sound: 'system',
       doneWithBackgroundWork: true,
+      autoUnread: true,
       permission: { sound: true, flash: true, tab: true, front: false },
       question: { sound: true, flash: true, tab: true, front: false },
       done: { sound: true, flash: true, tab: true, front: false },
@@ -89,6 +98,7 @@ describe('parseSettings', () => {
     expect(off.settings.notifications).toEqual({
       sound: 'system',
       doneWithBackgroundWork: true,
+      autoUnread: true,
       permission: { sound: false, flash: false, tab: true, front: false },
       question: { sound: false, flash: false, tab: true, front: false },
       done: { sound: false, flash: false, tab: true, front: false },
@@ -245,6 +255,7 @@ describe('applySettingEdit', () => {
     expect(out.notifications).toEqual({
       sound: 'system',
       doneWithBackgroundWork: true,
+      autoUnread: true,
       permission: { sound: false, flash: false, tab: true, front: false },
       question: { sound: false, flash: false, tab: true, front: false },
       done: { sound: false, flash: false, tab: false, front: false },

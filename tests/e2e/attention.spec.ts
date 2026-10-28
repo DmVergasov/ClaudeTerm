@@ -129,6 +129,28 @@ test('Mute sound in the tab menu silences that tab, which is still marked; Unmut
   await app.close()
 })
 
+test('in front of the user only a case set to Even in front plays its sound', async () => {
+  const sounds = join(mkdtempSync(join(tmpdir(), 'ct-sound-')), 'sounds.txt')
+  const played = (): string => (existsSync(sounds) ? readFileSync(sounds, 'utf8') : '')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const settings = quietNotifications({ permission: { sound: true, flash: false, tab: true, front: false }, done: { sound: true, flash: false, tab: true, front: true } })
+  const { app, page, pipeName } = await launchApp({ settings, args: ['--claude', work], env: { CLAUDETERM_TEST_SOUND_LOG: sounds } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  // a test run never takes the focus (smoke.spec.ts): the window says it has it, so the active Claude tab is in front
+  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.isFocused = () => true })
+  const claudeTab = page.locator(`[data-tab-id="${tabId}"]`)
+
+  // the sound is written before the pipe answers
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
+  expect(played()).toBe('')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  expect(played()).toBe('system\n')
+  // the tab in front is not marked: the sound is all the signal there
+  await expect(claudeTab).not.toHaveClass(/\battention\b/)
+  await app.close()
+})
+
 test('with the bell tab highlight off, a terminal bell in a background tab leaves no dot', async () => {
   const { app, page, tabId: first, work } = await launchClaudeTab(quietNotifications({ bell: { sound: false, flash: false, tab: false } }))
   const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work))!.id

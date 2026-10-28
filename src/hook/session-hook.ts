@@ -1,6 +1,6 @@
 import { userInfo } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
-import { type AttentionReason, defaultPipeName, isUuid, type PipeMessage, type PipeResponse } from '../shared/protocol'
+import { type AttentionMessage, type AttentionReason, defaultPipeName, isUuid, type PipeMessage, type PipeResponse } from '../shared/protocol'
 import { statusFromStatusLine } from './status-line'
 
 export type Sender = (pipeName: string, msg: PipeMessage) => Promise<PipeResponse>
@@ -59,12 +59,13 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
     return path ? { v: 1, type: 'edit_before', tabId, sessionId, toolUseId: input.tool_use_id, path } : null
   }
   const agentId = typeof input.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null
-  const attention = (reason: AttentionReason, background = false): PipeMessage =>
+  const attention = (reason: AttentionReason, background = false): AttentionMessage =>
     ({ v: 1, type: 'attention', tabId, sessionId, reason, ...(agentId ? { agentId } : {}), ...(background ? { background: true as const } : {}) })
   if (event === 'PermissionRequest') return attention('permission')
   if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') return attention('question')
   // background_tasks: the background work still in flight, which wakes the session again when it ends
   if (event === 'Stop') return attention('done', Array.isArray(input.background_tasks) && input.background_tasks.length > 0)
+  if (event === 'StopFailure') return { ...attention('done'), error: typeof input.error === 'string' ? input.error : 'unknown' }
   return null
 }
 

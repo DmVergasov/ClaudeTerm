@@ -79,9 +79,10 @@ export interface NotificationChannels {
 
 /**
  * sound: 'system' or an absolute path to a .wav file; doneWithBackgroundWork: a turn that ends while background work Claude
- * started still runs gives the done signals too; then the signals each case gives
+ * started still runs gives the done signals too; autoUnread: a Claude tab left mid-reply or with an unsent prompt pulses as
+ * one Claude waits in; then the signals each case gives
  */
-export type NotificationSettings = { sound: string; doneWithBackgroundWork: boolean } & Record<NotificationCase, NotificationChannels>
+export type NotificationSettings = { sound: string; doneWithBackgroundWork: boolean; autoUnread: boolean } & Record<NotificationCase, NotificationChannels>
 
 /**
  * How the side panel sits by the terminal: beside it in a window widened for it, or, when the window had no room, over the
