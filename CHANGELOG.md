@@ -2,6 +2,26 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.10.0
+
+### New
+
+- **Audio and video in the Media panel.** The image panel is now called Media. An audio or video file (`mp4`, `mov`, `webm`, `mkv`, `mp3`, `wav`, `m4a`, `ogg`) that Claude creates in its scratchpad, or shows you with `show_image`, gets a card with its name: a click opens it in your system's player, and right-click shows it in its folder.
+- **A restored tab goes on with Claude's work.** When ClaudeTerm closed while Claude was still working in a tab — a reboot, an update, the window closed — that tab, once reopened, asks Claude to resume where it stopped a few seconds after the conversation is back. It does not if you type in the tab first, or for a turn you stopped yourself with Esc or Ctrl+C. Settings → Claude Code → **Go on with the work Claude was doing when ClaudeTerm closed** is on by default.
+- **Continue a response a dropped connection cut off.** With Settings → Claude Code → **Continue a response a dropped connection cut off** on, a response that stopped arriving mid-stream is continued by itself: a few seconds later ClaudeTerm types Claude Code's own "resume where it stops" nudge into the tab instead of calling you. Up to 3 times in a row, and never over text of yours in Claude Code's prompt. Off by default.
+- **Mark as unread.** Right-click a tab → **Mark as unread** gives it the pulse of a tab Claude waits in, until you open it. A Claude tab you leave with a reply not read to its end (scrolled up, or Claude Code's "N new messages") or with an unsent prompt now pulses the same way; Settings → Notifications → **Highlight a Claude tab you leave with a reply not read to its end or an unsent prompt** turns that off.
+- **A sound for the tab in front, too.** Each case in Settings → Notifications has a new **Even in front** switch: its sound also plays while the tab is in front of you, for when your eyes are on another screen.
+- **One signal while Claude waits on background work.** Claude often ends a turn while agents or commands it started still run, and starts another one when each of them ends. Clear Settings → Notifications → **Signal a finished answer also while background work Claude started (agents, shell commands, monitors) still runs** to be signalled only for the turn after which nothing runs in the background. A command that never ends, such as a dev server, then keeps every turn silent.
+- **Choose how often Claude tabs refresh the status bar.** Settings → Claude Code → **Refresh every** (5 seconds, as before, up to 300), or clear **Refresh the status bar of new tabs on a timer** to stop the timer. Each refresh starts a few short processes per Claude tab, which could pile up on a machine short of memory.
+
+### Changes
+
+- **Recent sessions groups the conversations by project.** Each project folder is one line with how many conversations it has and when the latest one was; a click, or Enter on it, unfolds it. The project you worked in last opens unfolded, so Enter right away still resumes your latest conversation. Starred conversations stay on top, and a search shows every match.
+
+### Fixes
+
+- **A turn that ends in an API error tells you.** A connection lost mid-response, a stream that stopped arriving or a rate limit ended Claude's turn without a sign: no tab highlight, sound or taskbar flash. It now gives the signals of a finished answer.
+
 ## 0.9.0
 
 ### New
