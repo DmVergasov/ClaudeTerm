@@ -185,6 +185,17 @@ test('the auto-continue checkbox saves to settings.json and a cut-off response t
   await app.close()
 })
 
+test('the checkbox for going on after a restore is checked by default and saves to settings.json', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  const box = win.locator('[data-key="claude.continueAfterRestore"]')
+  await expect(box).toBeChecked()
+  await box.uncheck()
+  await expect.poll(() => readSettings(dataDir).claude?.continueAfterRestore).toBe(false)
+  await app.close()
+})
+
 test('cleared, the background work checkbox leaves a turn that ends with background work unmarked; the turn after it is marked', async () => {
   const { app, page, tabId, work, pipeName, dataDir } = await launchClaudeTab(QUIET)
   await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)

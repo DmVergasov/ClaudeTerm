@@ -6,8 +6,8 @@ import { parseSnapshot, SessionStore } from '../../src/main/session-store'
 import type { SessionSnapshot, SessionSnapshotTab } from '../../src/shared/types'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
-const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null, muted: false }
-const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null, muted: true }
+const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null, muted: false, working: false }
+const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null, muted: true, working: false }
 const snap = (tabs: SessionSnapshotTab[]): SessionSnapshot => ({ version: 1, savedAt: '2026-10-05T10:00:00.000Z', tabs })
 const newDir = (): string => mkdtempSync(join(tmpdir(), 'ct-sess-'))
 
@@ -23,6 +23,13 @@ describe('parseSnapshot', () => {
     expect(parseSnapshot('{')).toBeNull()
     expect(parseSnapshot(JSON.stringify({ version: 2, savedAt: 'x', tabs: [] }))).toBeNull()
     expect(parseSnapshot(JSON.stringify(snap([{ ...shellTab, kind: 'evil' as 'shell' }])))).toBeNull()
+  })
+
+  it('keeps whether Claude was working in a claude tab; a snapshot from before that, or a shell tab, is idle', () => {
+    expect(parseSnapshot(JSON.stringify(snap([{ ...claudeTab, working: true }])))?.tabs[0].working).toBe(true)
+    expect(parseSnapshot(JSON.stringify(snap([{ ...shellTab, working: true }])))?.tabs[0].working).toBe(false)
+    const old = { version: 1, savedAt: 'x', tabs: [{ kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, working: 'yes' }] }
+    expect(parseSnapshot(JSON.stringify(old))?.tabs[0].working).toBe(false)
   })
 
   it('reads the account of a claude tab; a snapshot from before accounts restores on the main account', () => {

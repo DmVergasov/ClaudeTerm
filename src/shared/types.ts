@@ -59,6 +59,8 @@ export interface SessionSnapshotTab {
   claudeSessionId: string | null
   account: string | null
   muted: boolean
+  /** Claude was in the middle of a turn: a prompt had started it, and it had neither ended nor been interrupted */
+  working: boolean
 }
 
 export interface SessionSnapshot {
@@ -100,9 +102,10 @@ export interface Settings {
   defaultFolder: string | null
   /**
    * statusRefresh: Claude Code also re-runs a Claude tab's statusLine every statusRefreshInterval seconds; autoContinue: type a
-   * nudge into a Claude tab whose response a dropped connection cut off, instead of calling the user
+   * nudge into a Claude tab whose response a dropped connection cut off, instead of calling the user; continueAfterRestore:
+   * the same for a restored tab Claude was working in when ClaudeTerm closed
    */
-  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean }
+  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean }
   profiles: ProfileDef[]
   font: { family: string; size: number }
   theme: string | Record<string, string>

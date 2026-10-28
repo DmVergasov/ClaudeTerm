@@ -65,6 +65,8 @@ interface TabRecord {
   /** resolves when the current process has exited */
   stopped: Promise<void>
   restarting: boolean
+  /** Claude is in the middle of a turn, as the session snapshot keeps it */
+  working: boolean
 }
 
 export class TabManager {
@@ -88,7 +90,7 @@ export class TabManager {
       muted: req.muted === true,
       exited: false
     }
-    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false }
+    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false, working: false }
     this.tabs.set(info.id, rec)
     this.order.push(info.id)
     this.deps.events.opened({ ...info })
@@ -201,6 +203,14 @@ export class TabManager {
     rec.pty?.resize(cols, rows)
   }
 
+  /** a turn started (a prompt) or ended (its end, or the user stopping it) in a Claude tab */
+  setWorking(tabId: string, working: boolean): void {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.info.kind !== 'claude' || rec.working === working) return
+    rec.working = working
+    this.changed()
+  }
+
   setClaudeSession(tabId: string, sessionId: string): boolean {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude') return false
@@ -223,8 +233,8 @@ export class TabManager {
 
   snapshot(): SessionSnapshotTab[] {
     return this.order.map((id) => {
-      const i = this.tabs.get(id)!.info
-      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted }
+      const { info: i, working } = this.tabs.get(id)!
+      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working }
     })
   }
 

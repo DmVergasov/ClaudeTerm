@@ -222,9 +222,9 @@ describe('TabManager', () => {
     expect(tm.setClaudeSession(s.id, SID_A)).toBe(false)
     expect(tm.setClaudeSession('unknown', SID_A)).toBe(false)
     expect(tm.snapshot()).toEqual([
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null, muted: false },
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null, muted: false },
-      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null, muted: false }
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null, muted: false, working: false },
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null, muted: false, working: false },
+      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null, muted: false, working: false }
     ])
   })
 
@@ -263,6 +263,21 @@ describe('TabManager', () => {
     expect(ptys[1].writes).toEqual(['ls\r'])
     await new Promise((r) => setTimeout(r, 5))
     expect(data).toEqual([])
+  })
+
+  it('whether Claude is working goes into the snapshot of a claude tab; a shell tab, or no change, saves nothing', () => {
+    const { tm, onStateChanged } = setup()
+    const claude = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\y' })
+    expect(tm.snapshot().map((t) => t.working)).toEqual([false, false])
+    onStateChanged.mockClear()
+    tm.setWorking(claude.id, true)
+    tm.setWorking(claude.id, true)
+    tm.setWorking(shell.id, true)
+    expect(onStateChanged).toHaveBeenCalledTimes(1)
+    expect(tm.snapshot().map((t) => t.working)).toEqual([true, false])
+    tm.setWorking(claude.id, false)
+    expect(tm.snapshot().map((t) => t.working)).toEqual([false, false])
   })
 
   it('a restart, of a running or an exited tab, says so before the new process starts', async () => {

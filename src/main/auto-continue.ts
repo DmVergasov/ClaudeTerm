@@ -7,13 +7,16 @@ import type { Logger } from './log'
  * arriving) and waits for the user; only subagents and claude -p are nudged to go on by Claude Code itself. Such a turn
  * reports StopFailure with error server_error. With claude.autoContinue on, ClaudeTerm types the nudge Claude Code
  * would send into the tab instead of calling the user, unless the user's own text waits in the prompt: right before it
- * types, it asks the window what Claude Code's prompt holds on screen.
+ * types, it asks the window what Claude Code's prompt holds on screen. With claude.continueAfterRestore on, a tab restored
+ * with a turn ClaudeTerm's closing cut off gets the same kind of nudge once its session has started again.
  */
 
 /** the words Claude Code itself sends a subagent whose response was cut off mid-stream */
 export const CONTINUE_PROMPT = 'Your response above was cut off mid-stream. Resume directly from where it stops - no apology, no recap. If none of it survived, answer the request from the start.'
 /** the StopFailure error of a response cut off mid-stream, also of a server error the retries did not get past */
 export const CUT_OFF_ERROR = 'server_error'
+/** for a turn that was still running when ClaudeTerm closed, typed into the tab restored with its conversation */
+export const RESUME_PROMPT = 'Your previous turn was cut off when the terminal closed. Resume directly from where it stops - no apology, no recap.'
 /** time for Claude Code to take input again, and for a dropped connection to come back */
 export const CONTINUE_DELAY_MS = 5000
 /** Enter goes on its own after the text, as Send does: in the same write it would be part of a paste */
@@ -70,10 +73,25 @@ export class AutoContinue {
     const run = s.run
     s.timer = setTimeout(() => {
       s.timer = null
-      void this.type(tabId, s, run)
+      void this.type(tabId, s, run, CONTINUE_PROMPT)
     }, CONTINUE_DELAY_MS)
     this.d.log.info(`auto-continue tab=${tabId} try=${s.tries}/${MAX_AUTO_CONTINUES} in ${CONTINUE_DELAY_MS} ms`)
     return true
+  }
+
+  /**
+   * A restored tab's session started again (SessionStart) after ClaudeTerm closed in the middle of its turn: the turn goes on
+   * once the prompt is empty, as a cut-off response does, and the tab calls the user when it is not
+   */
+  resumed(tabId: string): void {
+    const s = this.state(tabId)
+    this.cancel(s)
+    const run = s.run
+    s.timer = setTimeout(() => {
+      s.timer = null
+      void this.type(tabId, s, run, RESUME_PROMPT)
+    }, CONTINUE_DELAY_MS)
+    this.d.log.info(`continue after restore tab=${tabId} in ${CONTINUE_DELAY_MS} ms`)
   }
 
   /** the tab closed or Claude left it */
@@ -83,7 +101,7 @@ export class AutoContinue {
     this.tabs.delete(tabId)
   }
 
-  private async type(tabId: string, s: TabState, run: number): Promise<void> {
+  private async type(tabId: string, s: TabState, run: number, text: string): Promise<void> {
     const prompt = await this.d.promptState(tabId)
     // a key, a new turn or the tab closing while the window answered
     if (this.tabs.get(tabId) !== s || s.run !== run) return
@@ -92,7 +110,7 @@ export class AutoContinue {
       this.d.notify(tabId)
       return
     }
-    this.d.write(tabId, CONTINUE_PROMPT)
+    this.d.write(tabId, text)
     s.timer = setTimeout(() => {
       s.timer = null
       this.d.write(tabId, '\r')

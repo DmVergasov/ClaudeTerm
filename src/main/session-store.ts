@@ -27,7 +27,9 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       // written before accounts existed, or by hand: the main account
       account: x.kind === 'claude' && typeof x.account === 'string' && x.account.length > 0 && x.account.length <= 64 ? x.account : null,
       // written before tabs could be muted: with sound
-      muted: x.muted === true
+      muted: x.muted === true,
+      // written before ClaudeTerm kept track of it: idle
+      working: x.kind === 'claude' && x.working === true
     })
   }
   return { version: 1, savedAt: r.savedAt, tabs }

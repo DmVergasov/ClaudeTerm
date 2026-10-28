@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { isSettingKey, isSettingValue, SETTING_KEYS } from '../../src/shared/settings-keys'
 
 describe('settings keys', () => {
-  it('lists the 16 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-one plain settings', () => {
-    expect(SETTING_KEYS).toHaveLength(40)
+  it('lists the 16 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-two plain settings', () => {
+    expect(SETTING_KEYS).toHaveLength(41)
     expect(SETTING_KEYS).toContain('notifications.bell.tab')
     expect(SETTING_KEYS).toContain('notifications.done.front')
     expect(SETTING_KEYS).toContain('notifications.sound')
@@ -14,6 +14,7 @@ describe('settings keys', () => {
     expect(SETTING_KEYS).toContain('claude.statusRefresh')
     expect(SETTING_KEYS).toContain('claude.statusRefreshInterval')
     expect(SETTING_KEYS).toContain('claude.autoContinue')
+    expect(SETTING_KEYS).toContain('claude.continueAfterRestore')
     expect(SETTING_KEYS).toContain('review.editor')
     expect(SETTING_KEYS).toContain('review.statusBar')
     expect(SETTING_KEYS).toContain('review.hideIgnored')

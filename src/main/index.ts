@@ -343,7 +343,10 @@ function bootstrap(): void {
   const tabs = new TabManager({
     onTabStarted: startTabImages,
     // a continue armed for the old process would type into the resumed one
-    onTabRestarting: (tabId) => autoContinue.forget(tabId),
+    onTabRestarting: (tabId) => {
+      autoContinue.forget(tabId)
+      resumeAfterRestore.delete(tabId)
+    },
     onTabClosed: (tabId) => {
       stopTabImages(tabId)
       // after the feed has stopped, so no late report brings the closed tab back
@@ -351,6 +354,7 @@ function bootstrap(): void {
       stopTabStatus(tabId)
       attention.removeTab(tabId)
       autoContinue.forget(tabId)
+      resumeAfterRestore.delete(tabId)
       review.removeTab(tabId)
     },
     spawn: spawnPty,
@@ -422,6 +426,8 @@ function bootstrap(): void {
     },
     log
   })
+  // restored tabs whose turn ClaudeTerm's closing cut off: they go on once their session has started again
+  const resumeAfterRestore = new Set<string>()
 
   const openTab = (req: OpenTabRequest, activate = true, setupToken = false): TabInfo | null => {
     try {
@@ -480,6 +486,7 @@ function bootstrap(): void {
         { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId: t.kind === 'claude' ? t.claudeSessionId : null, account: t.kind === 'claude' ? t.account : null, muted: t.muted },
         false
       )
+      if (opened && t.working && settings.claude.continueAfterRestore) resumeAfterRestore.add(opened.id)
       if (opened && first === null) first = opened.id
     }
     if (first) tabs.activate(first)
@@ -566,6 +573,7 @@ function bootstrap(): void {
       // compact keeps the open dialogs: the conversation goes on
       review.sessionStarted(msg.tabId, msg.sessionId, msg.source)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
+      if (resumeAfterRestore.delete(msg.tabId)) autoContinue.resumed(msg.tabId)
       return { ok: true }
     },
     status: (msg) => {
@@ -597,6 +605,7 @@ function bootstrap(): void {
       // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
       if (msg.reason === 'done') {
         review.turnEnded(msg.tabId)
+        tabs.setWorking(msg.tabId, false)
         if (msg.error === undefined) autoContinue.turnEnded(msg.tabId)
         // a response a dropped connection cut off goes on by itself: nobody needs to look yet
         else if (autoContinue.failed(msg.tabId, msg.error)) return { ok: true }
@@ -608,6 +617,7 @@ function bootstrap(): void {
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       review.turn(msg.tabId, msg.sessionId)
+      tabs.setWorking(msg.tabId, true)
       autoContinue.turnStarted(msg.tabId)
       return { ok: true }
     },
@@ -683,7 +693,12 @@ function bootstrap(): void {
     if (!isId(id) || !isPtyData(data)) return
     if (id === autoTabId && isUserInput(data)) autoTabId = null
     // scrolling through the reply with the mouse or PgUp is reading it, it puts nothing in the prompt
-    if (isPromptInput(data)) autoContinue.userInput(id)
+    if (isPromptInput(data)) {
+      autoContinue.userInput(id)
+      resumeAfterRestore.delete(id)
+    }
+    // Esc or Ctrl+C stops a turn, and Claude Code runs no Stop hook for that: a restore must not take the turn up again
+    if (data === '\x1b' || data === '\x03') tabs.setWorking(id, false)
     tabs.write(id, data)
   })
   // only the main window has the terminals; PromptQueries checks the answer itself

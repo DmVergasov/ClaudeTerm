@@ -109,6 +109,8 @@ Right-click any folder (or the background of a folder) in Explorer → **Open Cl
 
 Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the same tabs, and **each Claude tab resumes its own conversation** (`claude --resume <session>`), even when several of them ran in the same folder or you used `/clear` in between.
 
+A tab Claude was still working in when ClaudeTerm closed **goes on with that work by itself** once it is reopened: a few seconds after the conversation is back, ClaudeTerm asks Claude to resume where it stopped, unless you have typed something in that tab first. A turn you stopped yourself with Esc or Ctrl+C is not taken up again. **Settings → Claude Code** has a checkbox to turn this off.
+
 **Recent sessions** (`Ctrl+Shift+H`, or **Recent sessions…** in the ▾ menu) lists your latest Claude Code conversations from every project — also ones started outside ClaudeTerm — with their titles, folders and last messages. Type to filter, Enter to continue one: ClaudeTerm opens a Claude tab in that folder with `claude --resume`, or switches to the tab that already has it. Click the ☆ of a session (or press `Ctrl+D`) to star it: starred sessions stay on top of the list, however old. **Star session** in a Claude tab's right-click menu stars that tab's conversation.
 
 <p align="center"><img src="docs/images/recent-sessions.png" width="560" alt="Recent sessions window: titles, folders, ages and last messages, with a search field"></p>
@@ -190,7 +192,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "shellProfile": null,          // shell that hosts claude in Claude tabs; null = same rule as above
     "statusRefresh": true,         // refresh the status bar on a timer too; false = only with Claude Code's own updates (every message)
     "statusRefreshInterval": 5,    // that timer in seconds, 1–300; each refresh starts a few short processes per Claude tab
-    "autoContinue": false          // type a nudge into a Claude tab whose response a dropped connection cut off, up to 3 times in a row
+    "autoContinue": false,         // type a nudge into a Claude tab whose response a dropped connection cut off, up to 3 times in a row
+    "continueAfterRestore": true   // a restored tab Claude was working in when ClaudeTerm closed goes on by itself
   },
   "profiles": [                    // added to (or overriding by name) the detected profiles
     { "name": "Git Bash", "command": "C:\\Program Files\\Git\\bin\\bash.exe", "args": ["--login", "-i"] }

@@ -22,6 +22,7 @@ export type SettingKey =
   | 'notifications.sound' | 'notifications.doneWithBackgroundWork' | 'notifications.autoUnread'
   | 'font.family' | 'font.size' | 'theme' | 'scrollback'
   | 'defaultProfile' | 'defaultFolder' | 'claude.command' | 'claude.shellProfile' | 'claude.statusRefresh' | 'claude.statusRefreshInterval' | 'claude.autoContinue'
+  | 'claude.continueAfterRestore'
   | 'imageWatch.enabled' | 'imagePanel.autoOpen' | 'autoUpdate'
   | 'review.editor' | 'review.statusBar' | 'review.hideIgnored' | 'review.hideTests' | 'review.testPatterns' | 'review.fileTree'
   | 'sidePanel.noRoom'
@@ -33,6 +34,7 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'notifications.sound', 'notifications.doneWithBackgroundWork', 'notifications.autoUnread',
   'font.family', 'font.size', 'theme', 'scrollback',
   'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.autoContinue',
+  'claude.continueAfterRestore',
   'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'sidePanel.noRoom', 'autoUpdate'
 ]
 

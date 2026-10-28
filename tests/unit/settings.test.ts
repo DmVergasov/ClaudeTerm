@@ -20,8 +20,16 @@ describe('parseSettings', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])
     expect(settings.font).toEqual({ family: DEFAULT_SETTINGS.font.family, size: 16 })
-    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false })
+    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true })
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
+  })
+
+  it('claude.continueAfterRestore is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.claude.continueAfterRestore).toBe(true)
+    expect(parseSettings(JSON.stringify({ claude: { continueAfterRestore: false } })).settings.claude.continueAfterRestore).toBe(false)
+    const r = parseSettings(JSON.stringify({ claude: { continueAfterRestore: 'no' } }))
+    expect(r.settings.claude.continueAfterRestore).toBe(true)
+    expect(r.errors.join('\n')).toContain('"claude.continueAfterRestore"')
   })
 
   it('claude.autoContinue is off unless turned on, and a value that is not a boolean falls back with a notice', () => {
