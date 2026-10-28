@@ -1,4 +1,7 @@
 import { expect, type Page } from '@playwright/test'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { WIN } from '../fixtures/platform'
 import { bufferText } from './helpers'
 
@@ -12,8 +15,9 @@ export const PILL = (text: string): string => `${ESC}[38;2;255;255;255m${ESC}[48
 
 /**
  * A command line for the tab's shell that clears the screen and prints the lines, as Claude Code draws its screen. The
- * shell echoes the command itself; non-ASCII characters and escapes are spelled out in it, so the echo never looks like
- * what it prints. `marker` is printed split by an escape: found in the buffer, it shows the output arrived.
+ * shell echoes the command itself, so it never holds what it prints: PowerShell gets non-ASCII characters and escapes
+ * spelled out, other shells read the screen from a file. `marker` is printed split by an escape: found in the buffer, it
+ * shows the output arrived.
  */
 function printScreen(lines: string[], marker: string): string {
   const text = `${ESC}[H${ESC}[2J${lines.join('\n')}\n${marker.slice(0, 1)}${ESC}[0m${marker.slice(1)}\n`
@@ -26,12 +30,11 @@ function printScreen(lines: string[], marker: string): string {
     }).join('')
     return `Write-Host -NoNewline "${ps}"\r`
   }
-  const sh = [...Buffer.from(text, 'utf8')].map((b) => {
-    const ch = String.fromCharCode(b)
-    if (b < 32 || b > 126) return `\\${b.toString(8).padStart(3, '0')}`
-    return ch === '%' ? '%%' : ch === '\\' ? '\\\\' : ch === "'" ? "'\\''" : ch
-  }).join('')
-  return `printf '${sh}'\r`
+  // from a file: the command stays short. macOS keeps only 1024 bytes of a line typed before the shell reads it, and a
+  // Claude tab's shell can take a while to start there; spelled out in a printf, the screen is longer than that
+  const file = join(mkdtempSync(join(tmpdir(), 'ct-screen-')), 'screen.txt')
+  writeFileSync(file, text)
+  return `cat '${file}'\r`
 }
 
 /** prints the screen into the tab and waits until it is there */

@@ -24,18 +24,9 @@ async function openShellTab(page: Page, claudeTab: string, cwd: string): Promise
   await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, claudeTab)
 }
 
-/**
- * The fake claude's output on a line of its own, then the shell's prompt: the echo of the command already holds the word,
- * and a long line typed before the shell reads it is cut (macOS keeps 1024 bytes of a line until then)
- */
-async function shellReady(page: Page, tabId: string): Promise<void> {
-  // the prompt is the user's own in a Claude tab (runner@host:…$ on the Linux runner), so any text on a later line
-  await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toMatch(/(^|\n)fake-claude[^\n]*\n[^\n]*\S/)
-}
-
 async function launched(autoContinue: boolean) {
   const l = await launchClaudeTab(settings(autoContinue))
-  await shellReady(l.page, l.tabId)
+  await expect.poll(() => bufferText(l.page, l.tabId), { timeout: 15_000 }).toMatch(/fake-claude/)
   return { ...l, claudeTab: l.page.locator(`[data-tab-id="${l.tabId}"]`) }
 }
 
@@ -112,7 +103,6 @@ test('a continue armed when the tab is restarted is dropped: nothing is typed in
   await page.evaluate((id) => window.ct.restartTab(id, true), tabId)
   // the restart clears the terminal, so a continue still armed would find no prompt, give up and mark the tab
   await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).not.toContain('step1')
-  await shellReady(page, tabId)
   await page.waitForTimeout(6000)
   expect(await bufferText(page, tabId)).not.toContain(CONTINUE_PROMPT)
   await expect(claudeTab).not.toHaveClass(/\battention\b/)
