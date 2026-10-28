@@ -6,6 +6,7 @@ export const PROTOCOL_VERSION = 1
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_CAPTION = 500
 const AGENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+const ERROR_RE = /^[a-z_]{1,64}$/
 const MAX_LABEL = 100
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,200}$/
 const MAX_REF = 200
@@ -64,6 +65,8 @@ export interface AttentionMessage {
   reason: AttentionReason
   /** the subagent whose dialog it is; absent for the main conversation */
   agentId?: string
+  /** done only: the API error the turn ended in (StopFailure), e.g. server_error for a response cut off mid-stream */
+  error?: string
 }
 
 /** Claude Code took a prompt (UserPromptSubmit): a turn starts. */
@@ -225,7 +228,8 @@ export function parsePipeMessage(line: string): ParseResult {
     if (m.type === 'attention') {
       if (typeof m.reason !== 'string' || !ATTENTION_REASONS.includes(m.reason)) return { ok: false, error: 'reason must be "permission", "question" or "done"' }
       const agent = typeof m.agentId === 'string' && AGENT_ID_RE.test(m.agentId) ? { agentId: m.agentId } : {}
-      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent } }
+      const error = m.reason === 'done' && typeof m.error === 'string' && ERROR_RE.test(m.error) ? { error: m.error } : {}
+      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...error } }
     }
     if (m.type === 'subagent') {
       if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }

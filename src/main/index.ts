@@ -571,7 +571,7 @@ function bootstrap(): void {
       if (msg.reason === 'done') review.turnEnded(msg.tabId)
       else review.dialogOpened(msg.tabId, msg.agentId ?? null)
       const signalled = attention.notify(msg.tabId, msg.reason)
-      log.info(`attention ${msg.reason} tab=${msg.tabId}${signalled ? '' : ' (seen)'}`)
+      log.info(`attention ${msg.reason} tab=${msg.tabId}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
       return { ok: true }
     },
     turn: (msg) => {

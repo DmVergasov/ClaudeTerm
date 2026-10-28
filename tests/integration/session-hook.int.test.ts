@@ -96,6 +96,14 @@ describe('session hook end to end', () => {
     expect(got).toEqual([expected])
   })
 
+  it('node bundle: StopFailure forwards the end of the turn with the error it ended in and prints nothing', async () => {
+    const { pipe, got } = await listen()
+    const failure = JSON.stringify({ session_id: SID, hook_event_name: 'StopFailure', error: 'server_error', last_assistant_message: 'API Error: The response stopped arriving. The response above may be incomplete.' })
+    const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, failure)
+    expect(r).toEqual({ code: 0, stdout: '' })
+    expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error' }])
+  })
+
   it.runIf(WIN)('the exec-form hook from the settings file runs with no shell and no batch file, and passes stdin through', async () => {
     const { pipe, got } = await listen()
     const { settingsPath } = writeClaudeTabFiles(join(work, 'data-exec'), process.execPath, bundle)
