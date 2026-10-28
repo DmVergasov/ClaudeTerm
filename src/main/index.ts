@@ -340,6 +340,8 @@ function bootstrap(): void {
 
   const tabs = new TabManager({
     onTabStarted: startTabImages,
+    // a continue armed for the old process would type into the resumed one
+    onTabRestarting: (tabId) => autoContinue.forget(tabId),
     onTabClosed: (tabId) => {
       stopTabImages(tabId)
       // after the feed has stopped, so no late report brings the closed tab back

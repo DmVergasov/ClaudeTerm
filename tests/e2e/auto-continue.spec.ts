@@ -3,7 +3,7 @@ import { CONTINUE_PROMPT } from '../../src/main/auto-continue'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { PipeMessage } from '../../src/shared/protocol'
 import { DIM, promptBox, show } from './claude-screen'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchClaudeTab } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, launchClaudeTab, PROMPT } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const OFF = { sound: false, flash: false, tab: true }
@@ -24,9 +24,18 @@ async function openShellTab(page: Page, claudeTab: string, cwd: string): Promise
   await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, claudeTab)
 }
 
+/**
+ * The fake claude's output on a line of its own, then the shell's prompt: the echo of the command already holds the word,
+ * and a long line typed before the shell reads it is cut (macOS keeps 1024 bytes of a line until then)
+ */
+async function shellReady(page: Page, tabId: string): Promise<void> {
+  const ready = new RegExp(`(^|\\n)fake-claude[^\\n]*\\n[\\s\\S]*${PROMPT.source}`)
+  await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toMatch(ready)
+}
+
 async function launched(autoContinue: boolean) {
   const l = await launchClaudeTab(settings(autoContinue))
-  await expect.poll(() => bufferText(l.page, l.tabId), { timeout: 15_000 }).toMatch(/fake-claude/)
+  await shellReady(l.page, l.tabId)
   return { ...l, claudeTab: l.page.locator(`[data-tab-id="${l.tabId}"]`) }
 }
 
@@ -91,6 +100,21 @@ test('the mouse wheel and PgUp during the pause, reading the reply, do not cance
     await page.evaluate(([id, data]) => window.ct.writePty(id, data), [tabId, scroll] as const)
   }
   await expect.poll(() => bufferText(page, tabId), { timeout: 20_000 }).toContain(CONTINUE_PROMPT)
+  await expect(claudeTab).not.toHaveClass(/\battention\b/)
+  await app.close()
+})
+
+test('a continue armed when the tab is restarted is dropped: nothing is typed into the new session, and it calls nobody', async () => {
+  const { app, page, tabId, work, pipeName, claudeTab } = await launched(true)
+  await show(page, tabId, EMPTY_PROMPT, 'step1')
+  await openShellTab(page, tabId, work)
+  expect(await sendPipeMessage(pipeName, cutOff(tabId))).toEqual({ ok: true })
+  await page.evaluate((id) => window.ct.restartTab(id, true), tabId)
+  // the restart clears the terminal, so a continue still armed would find no prompt, give up and mark the tab
+  await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).not.toContain('step1')
+  await shellReady(page, tabId)
+  await page.waitForTimeout(6000)
+  expect(await bufferText(page, tabId)).not.toContain(CONTINUE_PROMPT)
   await expect(claudeTab).not.toHaveClass(/\battention\b/)
   await app.close()
 })
