@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { arrangeSessions, displayTitle, filterSessions, formatAge } from '../../src/renderer/recent-sessions'
+import { arrangeSessions, displayTitle, filterSessions, formatAge, projectKey } from '../../src/renderer/recent-sessions'
 import type { RecentSession } from '../../src/shared/types'
 
 const s = (over: Partial<RecentSession>): RecentSession => ({ id: 'x', cwd: 'D:\\Workspace\\Offroad', title: null, firstPrompt: null, lastPrompt: null, modifiedAt: 0, open: false, starred: false, ...over })
@@ -70,6 +70,62 @@ describe('arrangeSessions', () => {
     expect(arrangeSessions(list, 'docs').dividerAt).toBeNull()
     expect(arrangeSessions(list.filter((x) => !x.starred), '').dividerAt).toBeNull()
     expect(arrangeSessions(list.filter((x) => x.starred), '').dividerAt).toBeNull()
-    expect(arrangeSessions([], '')).toEqual({ shown: [], dividerAt: null })
+    expect(arrangeSessions([], '')).toEqual({ shown: [], dividerAt: null, headings: [] })
+  })
+})
+
+/** a heading's place and folder: what most tests care about */
+const heads = (a: ReturnType<typeof arrangeSessions>): Array<{ at: number; cwd: string }> => a.headings.map(({ at, cwd }) => ({ at, cwd }))
+
+describe('arrangeSessions by project', () => {
+  const shop = 'D:\\Workspace\\Shop'
+  const offroad = 'D:\\Workspace\\Offroad'
+  const docs = 'D:\\Workspace\\Docs'
+  const list = [
+    s({ id: '1', cwd: offroad, modifiedAt: 10 }),
+    s({ id: '2', cwd: shop, modifiedAt: 50 }),
+    s({ id: '3', cwd: offroad, modifiedAt: 40 }),
+    s({ id: '4', cwd: docs, modifiedAt: 30, starred: true }),
+    s({ id: '5', cwd: shop, modifiedAt: 20 })
+  ]
+
+  it('the others go under one heading per folder: the folder with the newest session first, newest first inside', () => {
+    const a = arrangeSessions(list, '')
+    expect(a.shown.map((x) => x.id)).toEqual(['4', '2', '5', '3', '1'])
+    expect(heads(a)).toEqual([{ at: 1, cwd: shop }, { at: 3, cwd: offroad }])
+    expect(a.dividerAt).toBe(1)
+  })
+
+  it('starred sessions stay on top without a heading, even when their folder has other sessions', () => {
+    const a = arrangeSessions(list.map((x) => (x.id === '2' ? { ...x, starred: true } : x)), '')
+    expect(a.shown.map((x) => x.id)).toEqual(['2', '4', '3', '1', '5'])
+    expect(heads(a)).toEqual([{ at: 2, cwd: offroad }, { at: 4, cwd: shop }])
+  })
+
+  it('a folder written with another case, slash or trailing separator is the same project on Windows', () => {
+    const a = arrangeSessions([s({ id: '1', cwd: 'D:\\Workspace\\Shop', modifiedAt: 5 }), s({ id: '2', cwd: 'd:/workspace/shop/', modifiedAt: 9 })], '')
+    expect(heads(a)).toEqual([{ at: 0, cwd: 'd:/workspace/shop/' }])
+  })
+
+  it('folders with the same name in different places are separate projects', () => {
+    const a = arrangeSessions([s({ id: '1', cwd: 'D:\\One\\app', modifiedAt: 9 }), s({ id: '2', cwd: 'D:\\Two\\app', modifiedAt: 5 })], '')
+    expect(a.headings.map((h) => h.cwd)).toEqual(['D:\\One\\app', 'D:\\Two\\app'])
+  })
+
+  it('the filter drops the headings of folders with no match left', () => {
+    const a = arrangeSessions(list, 'offroad')
+    expect(a.shown.map((x) => x.id)).toEqual(['3', '1'])
+    expect(heads(a)).toEqual([{ at: 0, cwd: offroad }])
+    expect(a.dividerAt).toBeNull()
+  })
+
+  it('a heading knows how many sessions its project has and when the newest was active', () => {
+    const a = arrangeSessions(list, '')
+    expect(a.headings.map((h) => [h.count, h.modifiedAt])).toEqual([[2, 50], [2, 40]])
+  })
+
+  it('the key is the same for every spelling of the folder', () => {
+    expect(projectKey('D:\\Workspace\\Shop')).toBe(projectKey('d:/workspace/shop/'))
+    expect(projectKey('D:\\One\\app')).not.toBe(projectKey('D:\\Two\\app'))
   })
 })

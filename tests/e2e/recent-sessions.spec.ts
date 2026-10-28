@@ -76,6 +76,7 @@ test('Ctrl+Shift+H opens the window: newest first, filter as you type, Enter con
   await page.keyboard.press(KEYS.recentSessions)
   const win = page.locator('#sessions')
   await expect(win).toBeVisible()
+  await unfoldAll(win)
   await expect(win.locator('.session-title')).toHaveText(['Payments', 'Fix the login bug'])
   const first = win.locator('.session-row').first()
   await expect(first).toHaveClass(/selected/)
@@ -89,6 +90,57 @@ test('Ctrl+Shift+H opens the window: newest first, filter as you type, Enter con
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   const id = (await page.evaluate(() => window.__ct!.activeTabId()))!
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`--resume ${SID_A}`)
+  await app.close()
+})
+
+test('sessions are grouped under a heading per project; the filter hides the headings with no match', async () => {
+  const { config, workA, workB } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press(KEYS.recentSessions)
+  const win = page.locator('#sessions')
+  await unfoldAll(win)
+  await expect(win.locator('.session-row')).toHaveCount(2)
+  await expect(win.locator('.group-name')).toHaveText([basename(workB), basename(workA)])
+  await expect(win.locator('.sessions-group').first()).toHaveAttribute('title', workB)
+  expect(await win.locator('.sessions-list').evaluate((l) => [...l.children].map((c) => c.className.split(' ')[0]))).toEqual(['sessions-group', 'session-row', 'sessions-group', 'session-row'])
+  await page.keyboard.type('login')
+  await expect(win.locator('.group-name')).toHaveText([basename(workA)])
+  await app.close()
+})
+
+test('projects open folded except the newest one; a click or Enter on a heading folds and unfolds it; a search shows every match', async () => {
+  const { config, workA, workB } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press(KEYS.recentSessions)
+  const win = page.locator('#sessions')
+  await expect(win.locator('.group-name')).toHaveText([basename(workB), basename(workA)])
+  // the newest project is open and has the selection, the older one is folded to a line with its count and age
+  await expect(win.locator('.session-title')).toHaveText(['Payments'])
+  await expect(win.locator('.group-arrow')).toHaveText(['▾', '▸'])
+  await expect(win.locator('.group-meta').last()).toHaveText('1 session · 2 h ago')
+  await win.locator('.sessions-group').last().click()
+  await expect(win.locator('.session-title')).toHaveText(['Payments', 'Fix the login bug'])
+  // the selected session was in the project the click folded: the selection goes to its heading
+  await win.locator('.sessions-group').first().click()
+  await expect(win.locator('.session-title')).toHaveText(['Fix the login bug'])
+  await expect(win.locator('.sessions-group.selected .group-name')).toHaveText(basename(workB))
+  // arrows stop on headings, Enter on one folds it back
+  await page.keyboard.press('ArrowDown')
+  await expect(win.locator('.sessions-group.selected .group-name')).toHaveText(basename(workA))
+  await page.keyboard.press('Enter')
+  await expect(win.locator('.session-row')).toHaveCount(0)
+  await expect(win).toBeVisible()
+  // a search shows what it found even in a folded project
+  await page.keyboard.type('login')
+  await expect(win.locator('.session-title')).toHaveText(['Fix the login bug'])
+  // opening the window again folds everything but the newest project again
+  await page.keyboard.press('Escape')
+  await page.keyboard.press(KEYS.recentSessions)
+  await expect(win.locator('.group-arrow')).toHaveText(['▾', '▸'])
   await app.close()
 })
 
@@ -107,7 +159,10 @@ test('the ▾ menu opens the window; an open session is marked and goes to its t
   await page.locator('.tab-menu').click()
   await page.locator('.menu-item', { hasText: 'Recent sessions…' }).click()
   const win = page.locator('#sessions')
+  await unfoldAll(win)
   await expect(win.locator('.session-row', { hasText: 'Fix the login bug' }).locator('.session-open')).toHaveText('● open')
+  // past the heading of the second project
+  await page.keyboard.press('ArrowDown')
   await page.keyboard.press('ArrowDown')
   await expect(win.locator('.session-row').nth(1)).toHaveClass(/selected/)
   await page.keyboard.press('Enter')
@@ -135,6 +190,7 @@ test('empty states', async () => {
   await second.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   await second.page.locator('.terminal-host:visible .xterm').click()
   await second.page.keyboard.press(KEYS.recentSessions)
+  await unfoldAll(second.page.locator('#sessions'))
   await expect(second.page.locator('#sessions .session-row')).toHaveCount(2)
   await second.page.keyboard.type('zzz')
   await expect(second.page.locator('#sessions .sessions-empty')).toHaveText('Nothing matches')
@@ -149,6 +205,7 @@ test('the window keeps the keyboard: Tab and clicks inside it leave typing in th
   await page.locator('.terminal-host:visible .xterm').click()
   await page.keyboard.press(KEYS.recentSessions)
   const win = page.locator('#sessions')
+  await unfoldAll(win)
   await expect(win.locator('.session-row')).toHaveCount(2)
   await page.keyboard.press('Tab')
   await page.keyboard.type('login')
@@ -161,6 +218,16 @@ test('the window keeps the keyboard: Tab and clicks inside it leave typing in th
   await app.close()
 })
 
+/** every project opens folded except the newest one: tests that need all the rows unfold the rest */
+async function unfoldAll(win: Locator): Promise<void> {
+  await expect(win.locator('.sessions-group').first()).toBeVisible()
+  for (;;) {
+    const folded = win.locator('.sessions-group', { hasText: '▸' })
+    if ((await folded.count()) === 0) return
+    await folded.first().click()
+  }
+}
+
 const stars = (win: Locator): Promise<string[][]> =>
   win.locator('.session-row').evaluateAll((rows) => rows.map((r) => [r.querySelector('.session-title')!.textContent!, r.querySelector('.session-star')!.textContent!]))
 
@@ -172,6 +239,7 @@ test('the star puts a session on top of the list under a divider, without openin
   await page.locator('.terminal-host:visible .xterm').click()
   await page.keyboard.press(KEYS.recentSessions)
   const win = page.locator('#sessions')
+  await unfoldAll(win)
   await expect(win.locator('.session-row')).toHaveCount(2)
   expect(await stars(win)).toEqual([['Payments', '☆'], ['Fix the login bug', '☆']])
   await expect(win.locator('.sessions-divider')).toHaveCount(0)
@@ -183,8 +251,8 @@ test('the star puts a session on top of the list under a divider, without openin
   await expect(older.locator('.session-star')).toHaveClass(/starred/)
   await expect(older.locator('.session-star')).toHaveAttribute('title', `Unstar (${KEY_LABELS.star})`)
   await expect(win.locator('.sessions-divider')).toHaveCount(1)
-  // the divider sits between the starred row and the rest
-  expect(await win.locator('.sessions-list').evaluate((l) => [...l.children].map((c) => c.className.split(' ')[0]))).toEqual(['session-row', 'sessions-divider', 'session-row'])
+  // the divider sits between the starred row and the rest, which go under their project's heading
+  expect(await win.locator('.sessions-list').evaluate((l) => [...l.children].map((c) => c.className.split(' ')[0]))).toEqual(['session-row', 'sessions-divider', 'sessions-group', 'session-row'])
   // the click toggled the star only: no tab was opened, the window is still there
   await expect(win).toBeVisible()
   expect(await page.evaluate(() => window.__ct!.tabIds().length)).toBe(1)
@@ -193,6 +261,7 @@ test('the star puts a session on top of the list under a divider, without openin
   await page.keyboard.press('Escape')
   await expect(win).toBeHidden()
   await page.keyboard.press(KEYS.recentSessions)
+  await unfoldAll(win)
   await expect(win.locator('.session-row')).toHaveCount(2)
   expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
   await app.close()
@@ -202,6 +271,7 @@ test('the star puts a session on top of the list under a divider, without openin
   await second.page.locator('.terminal-host:visible .xterm').click()
   await second.page.keyboard.press(KEYS.recentSessions)
   const win2 = second.page.locator('#sessions')
+  await unfoldAll(win2)
   await expect(win2.locator('.session-row')).toHaveCount(2)
   expect(await stars(win2)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
   // a click on the star again takes it off
@@ -218,7 +288,10 @@ test('Ctrl+D stars the selected row while typing in the search; the selection st
   await page.locator('.terminal-host:visible .xterm').click()
   await page.keyboard.press(KEYS.recentSessions)
   const win = page.locator('#sessions')
+  await unfoldAll(win)
   await expect(win.locator('.session-row')).toHaveCount(2)
+  // past the heading of the second project
+  await page.keyboard.press('ArrowDown')
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press(KEYS.star)
   // the older row moved to the top and is still the selected one
@@ -270,6 +343,7 @@ test('the tab menu stars the session of a Claude tab; a shell tab has no such it
 
   await page.keyboard.press(KEYS.recentSessions)
   const win = page.locator('#sessions')
+  await unfoldAll(win)
   await expect(win.locator('.session-row')).toHaveCount(2)
   expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
 
@@ -287,6 +361,7 @@ test('a double-click on a star does not open a session', async () => {
   await page.locator('.terminal-host:visible .xterm').click()
   await page.keyboard.press(KEYS.recentSessions)
   const win = page.locator('#sessions')
+  await unfoldAll(win)
   await expect(win.locator('.session-row')).toHaveCount(2)
   // the first click moves the row, so the second lands on another one
   await win.locator('.session-row', { hasText: 'Fix the login bug' }).locator('.session-star').dblclick()
@@ -309,6 +384,7 @@ test('Enter right after opening the window resumes the latest session, even when
   await page.locator('.terminal-host:visible .xterm').click()
   await page.keyboard.press(KEYS.recentSessions)
   const win = page.locator('#sessions')
+  await unfoldAll(win)
   await expect(win.locator('.session-row')).toHaveCount(2)
   expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
   await expect(win.locator('.session-row.selected .session-title')).toHaveText('Payments')

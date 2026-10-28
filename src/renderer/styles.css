@@ -101,6 +101,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .session-star { color: var(--muted); cursor: pointer; line-height: 1; padding: 0 2px; }
 .session-star:hover, .session-star.starred { color: var(--accent); }
 .sessions-divider { height: 1px; margin: 4px 14px; background: var(--border); }
+.sessions-group { display: flex; gap: 6px; align-items: baseline; padding: 6px 14px; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+.sessions-group:hover { background: #ffffff0d; }
+.sessions-group.selected { background: #ffffff1a; box-shadow: inset 2px 0 0 var(--accent); }
+.group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.group-meta { font-weight: 400; white-space: nowrap; }
 .session-meta, .session-last { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-last { opacity: 0.75; }
 .sessions-empty { padding: 12px 14px; color: var(--muted); }
