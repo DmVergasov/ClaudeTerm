@@ -27,6 +27,12 @@ describe('settings form', () => {
     for (const t of ['-1', '1000001', '10.5', '']) expect(checkNumber('scrollback', t)).toEqual({ ok: false, error: 'A whole number between 0 and 1000000' })
   })
 
+  it('checkNumber: the status bar refresh of Claude tabs is a whole number of seconds 1–300', () => {
+    expect(checkNumber('claude.statusRefreshInterval', '1')).toEqual({ ok: true, value: 1 })
+    expect(checkNumber('claude.statusRefreshInterval', ' 300 ')).toEqual({ ok: true, value: 300 })
+    for (const t of ['0', '301', '2.5', '', 'often']) expect(checkNumber('claude.statusRefreshInterval', t)).toEqual({ ok: false, error: 'A whole number between 1 and 300' })
+  })
+
   it('checkText: trims and refuses empty text', () => {
     expect(checkText('  Consolas ')).toEqual({ ok: true, value: 'Consolas' })
     expect(checkText('   ')).toEqual({ ok: false, error: 'Cannot be empty' })
