@@ -183,7 +183,9 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "defaultFolder": null,           // the folder new tabs open in (a Claude tab: the folder of the tab it is opened from); null = your home folder
   "claude": {
     "command": "claude",           // how to start Claude Code
-    "shellProfile": null           // shell that hosts claude in Claude tabs; null = same rule as above
+    "shellProfile": null,          // shell that hosts claude in Claude tabs; null = same rule as above
+    "statusRefresh": true,         // refresh the status bar on a timer too; false = only with Claude Code's own updates (every message)
+    "statusRefreshInterval": 5     // that timer in seconds, 1–300; each refresh starts a few short processes per Claude tab
   },
   "profiles": [                    // added to (or overriding by name) the detected profiles
     { "name": "Git Bash", "command": "C:\\Program Files\\Git\\bin\\bash.exe", "args": ["--login", "-i"] }

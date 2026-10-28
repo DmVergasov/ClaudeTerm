@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, win32 } from 'node:path'
+import type { Settings } from '../shared/types'
 import { isWindowsPath } from './path-key'
 
 /** The wrapper for Linux and macOS: sh runs the hook script under ClaudeTerm's own Node and always succeeds. */
@@ -47,14 +48,19 @@ export function windowsStatusCommand(execPath: string, hookScriptPath: string): 
   return `ELECTRON_RUN_AS_NODE=1 ${hookCommandString(execPath)} ${hookCommandString(hookScriptPath)} status`
 }
 
-export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string): string {
+/** the statusLine's refreshInterval the claude settings ask for; null: no timer */
+export function statusRefreshInterval(claude: Settings['claude']): number | null {
+  return claude.statusRefresh ? claude.statusRefreshInterval : null
+}
+
+export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string, refreshInterval: number | null): string {
   const run = { type: 'command', ...hookRun, timeout: 10 }
   const hook = [{ hooks: [run] }]
   return JSON.stringify(
     {
       // refreshInterval: Claude Code re-runs statusLine only on new messages, /compact and mode changes,
-      // so /effort and /model alone would not show up without it
-      statusLine: { type: 'command', command: statusCommand, refreshInterval: 5 },
+      // so /effort and /model alone would not show up without it. Each run starts a few processes, so it is a setting.
+      statusLine: { type: 'command', command: statusCommand, ...(refreshInterval !== null ? { refreshInterval } : {}) },
       hooks: {
         SessionStart: hook,
         SubagentStart: hook,
@@ -86,17 +92,17 @@ export interface ClaudeTabFiles {
   hookPath: string | null
 }
 
-export function writeClaudeTabFiles(dataDir: string, execPath: string, hookScriptPath: string, platform: NodeJS.Platform = process.platform, env: Record<string, string | undefined> = process.env): ClaudeTabFiles {
+export function writeClaudeTabFiles(dataDir: string, execPath: string, hookScriptPath: string, refreshInterval: number | null, platform: NodeJS.Platform = process.platform, env: Record<string, string | undefined> = process.env): ClaudeTabFiles {
   mkdirSync(dataDir, { recursive: true })
   const settingsPath = join(dataDir, 'claude-tab-settings.json')
   if (platform === 'win32') {
-    writeFileSync(settingsPath, claudeTabSettingsJson(windowsHookRun(execPath, hookScriptPath, env), windowsStatusCommand(execPath, hookScriptPath)), 'utf8')
+    writeFileSync(settingsPath, claudeTabSettingsJson(windowsHookRun(execPath, hookScriptPath, env), windowsStatusCommand(execPath, hookScriptPath), refreshInterval), 'utf8')
     return { settingsPath, hookPath: null }
   }
   const hookPath = join(dataDir, 'session-hook.sh')
   writeFileSync(hookPath, hookShContent(execPath, hookScriptPath), 'utf8')
   chmodSync(hookPath, 0o755)
   const command = hookCommandString(hookPath)
-  writeFileSync(settingsPath, claudeTabSettingsJson({ command }, `${command} status`), 'utf8')
+  writeFileSync(settingsPath, claudeTabSettingsJson({ command }, `${command} status`, refreshInterval), 'utf8')
   return { settingsPath, hookPath }
 }
