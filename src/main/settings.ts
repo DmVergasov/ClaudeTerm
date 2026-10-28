@@ -22,7 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifications: {
     sound: 'system',
     doneWithBackgroundWork: true,
-    autoUnread: true,
+    autoUnread: false,
     permission: { sound: true, flash: true, tab: true, front: false },
     question: { sound: true, flash: true, tab: true, front: false },
     done: { sound: true, flash: true, tab: true, front: false },

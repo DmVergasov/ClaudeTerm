@@ -75,7 +75,7 @@ Claude often ends a turn while work it started still runs in the background — 
 
 A turn that ends in an API error — a connection lost mid-response, a rate limit — counts as finished too, so a session never stops without a word. Claude Code itself leaves a response cut off mid-stream to you; with **Continue a response a dropped connection cut off** on, ClaudeTerm types Claude Code's own "resume where it stops" nudge into the tab a few seconds later instead of calling you: up to 3 times in a row, and not when Claude Code's prompt in that tab holds text of yours: then the tab calls you as usual.
 
-A tab you have not finished with pulses the same way: **Mark as unread** in its right-click menu marks any tab (the one in front once you leave it), and a Claude tab you leave with Claude's reply not read to its end (Claude Code's *Jump to bottom* shows, or the terminal is scrolled back) or with an unsent prompt is marked by itself — **Highlight a Claude tab you leave…** in Settings turns that off. Opening the tab clears the mark.
+A tab you have not finished with pulses the same way: **Mark as unread** in its right-click menu marks any tab (the one in front once you leave it). Turn on **Highlight a Claude tab you leave…** in Settings, and a Claude tab you leave with Claude's reply not read to its end (Claude Code's *Jump to bottom* shows, or the terminal is scrolled back) or with an unsent prompt is marked by itself. Opening the tab clears the mark.
 
 ### 🔍 Review Claude's changes next to the conversation
 
@@ -211,7 +211,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "notifications": {               // when a tab you are not looking at needs you
     "sound": "system",             // "system" or the full path to a .wav file
     "doneWithBackgroundWork": true, // false: a turn that ends while background work Claude started still runs gives no signal (one that never ends, like a dev server, keeps every turn silent)
-    "autoUnread": true,            // a Claude tab you leave mid-reply or with an unsent prompt pulses until you open it
+    "autoUnread": false,           // true: a Claude tab you leave mid-reply or with an unsent prompt pulses until you open it
     "permission": { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks for a permission
     "question":   { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks a question
     "done":       { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude finished its turn

@@ -32,12 +32,20 @@ test('Mark as unread makes a background tab pulse, and the open tab once it is l
   await app.close()
 })
 
-test('a Claude tab left with an unsent prompt or a reply scrolled up pulses, unless autoUnread is off', async () => {
+test('a Claude tab left with an unsent prompt or a reply scrolled up pulses once autoUnread is turned on, not before or after', async () => {
   const { app, page, tabId, work } = await launchClaudeTab(QUIET)
   const claudeTab = page.locator(`[data-tab-id="${tabId}"]`)
   await expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toMatch(/fake-claude/)
   const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work))!.id
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, shell)
+
+  // off by default: a draft left in the prompt marks nothing
+  await activate(page, tabId)
+  await show(page, tabId, promptBox('a draft'), 'step0')
+  await activate(page, shell)
+  await page.waitForTimeout(300)
+  await expect(claudeTab).not.toHaveClass(/\battention\b/)
+  expect(await page.evaluate(() => window.ct.setSetting('notifications.autoUnread', true))).toEqual({ ok: true })
 
   // an empty prompt shows its placeholder dim: nothing is left
   await activate(page, tabId)
