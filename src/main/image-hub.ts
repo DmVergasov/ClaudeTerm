@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { PlatformPath } from 'node:path'
+import { mediaKindOf } from '../shared/image-file'
 import type { ImageCard, ImageSource } from '../shared/types'
 import { nativePath, pathKey } from './path-key'
 
@@ -89,7 +90,7 @@ export class ImageHub {
         source: SOURCE_RANK[source] >= SOURCE_RANK[prev.source] ? source : prev.source
       }
     } else {
-      card = { id, tabId, path, name: this.paths.basename(path), relPath: relPathOf(f.cwd, path, f.tempDir, this.paths), source, caption, touchedAt, version: 1, updated: false, deleted: false }
+      card = { id, tabId, path, name: this.paths.basename(path), relPath: relPathOf(f.cwd, path, f.tempDir, this.paths), source, kind: mediaKindOf(path) ?? 'image', caption, touchedAt, version: 1, updated: false, deleted: false }
     }
     f.cards.unshift(card)
     // a known file reported again by another source (e.g. the folder watcher after show_image) is not news

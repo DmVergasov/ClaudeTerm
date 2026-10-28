@@ -10,6 +10,7 @@ const PIPE = String.raw`\\.\pipe\x`
 const cwd = mkdtempSync(join(tmpdir(), 'ct-mcp-'))
 writeFileSync(join(cwd, 'plot.png'), Buffer.from([1, 2, 3]))
 writeFileSync(join(cwd, 'notes.txt'), 'x')
+writeFileSync(join(cwd, 'talk.mp4'), Buffer.from([1, 2, 3]))
 
 function deps(send: ShowImageDeps['send']): ShowImageDeps {
   return { cwd, tabId: TAB, pipeName: PIPE, send }
@@ -28,7 +29,20 @@ describe('handleShowImage', () => {
     expect((await handleShowImage({ path: 'missing.png' }, deps(send))).isError).toBe(true)
     const txt = await handleShowImage({ path: join(cwd, 'notes.txt') }, deps(send))
     expect(txt.isError).toBe(true)
-    expect(txt.text).toContain('not a supported image type')
+    expect(txt.text).toContain('not a supported image, audio or video type')
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('sends a video file as it is, without the image checks', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    const r = await handleShowImage({ path: 'talk.mp4' }, deps(send))
+    expect(r).toEqual({ text: `Shown in ClaudeTerm: ${join(cwd, 'talk.mp4')}`, isError: false })
+    expect(send).toHaveBeenCalledWith(PIPE, { v: 1, type: 'show_image', tabId: TAB, path: join(cwd, 'talk.mp4'), caption: null })
+  })
+
+  it('reports a missing audio file as a tool error', async () => {
+    const send = vi.fn()
+    expect((await handleShowImage({ path: 'missing.mp3' }, deps(send))).isError).toBe(true)
     expect(send).not.toHaveBeenCalled()
   })
 

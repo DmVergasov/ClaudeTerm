@@ -13,10 +13,10 @@ server.registerTool(
   'show_image',
   {
     title: 'Show image in ClaudeTerm',
-    description: 'Show an image file to the user in the ClaudeTerm image panel. Use after creating or finding an image the user should see.',
+    description: 'Show an image, audio or video file to the user in the ClaudeTerm panel. Use after creating or finding a file the user should see or open.',
     inputSchema: {
       path: z.string().describe('Absolute path (preferred) or a path relative to the current working directory'),
-      caption: z.string().optional().describe('Short caption shown under the image')
+      caption: z.string().optional().describe('Short caption shown under the file')
     }
   },
   async ({ path, caption }) => {

@@ -271,7 +271,7 @@ test('a shell tab has no Changes button', async () => {
   await app.close()
 })
 
-test('Changes and Images have their own buttons and replace each other', async () => {
+test('Changes and Media have their own buttons and replace each other', async () => {
   const { app, page, tabId } = await reviewTab(upper)
   await expect(changesTab(page)).toHaveAttribute('title', `Changes (${KEY_LABELS.changes})`)
   await changesTab(page).click()
@@ -280,7 +280,7 @@ test('Changes and Images have their own buttons and replace each other', async (
   await expect(imagesTab(page)).not.toHaveClass(/active/)
   await expect(panelTitle(page)).toHaveText('Changes')
   // no tab strip came back
-  await expect(panel(page).locator('.panel-header button', { hasText: /Images|Changes/ })).toHaveCount(0)
+  await expect(panel(page).locator('.panel-header button', { hasText: /Media|Changes/ })).toHaveCount(0)
   await changesTab(page).click()
   await expect(panel(page)).toHaveClass(/collapsed/)
   await expect(changesTab(page)).not.toHaveClass(/active/)
@@ -289,19 +289,19 @@ test('Changes and Images have their own buttons and replace each other', async (
   await imagesTab(page).click()
   await expect(imagesTab(page)).toHaveClass(/active/)
   await expect(changesTab(page)).not.toHaveClass(/active/)
-  await expect(panelTitle(page)).toHaveText('Images')
+  await expect(panelTitle(page)).toHaveText('Media')
   await imagesTab(page).click()
   await expect(panel(page)).toHaveClass(/collapsed/)
   await expect(imagesTab(page)).not.toHaveClass(/active/)
   await expect(changesTab(page)).not.toHaveClass(/active/)
-  // a shell tab has no Changes button; coming to the front while Changes is shown, it shows Images in its place
+  // a shell tab has no Changes button; coming to the front while Changes is shown, it shows Media in its place
   await changesTab(page).click()
   await expect(panelTitle(page)).toHaveText('Changes')
   await page.keyboard.press(KEYS.newTab)
   await expect(changesTab(page)).toBeHidden()
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   await expect(imagesTab(page)).toHaveClass(/active/)
-  await expect(panelTitle(page)).toHaveText('Images')
+  await expect(panelTitle(page)).toHaveText('Media')
   await page.locator(`[data-tab-id="${tabId}"]`).click()
   await expect(changesTab(page)).toBeVisible()
   await expect(changesTab(page)).not.toHaveClass(/active/)

@@ -93,7 +93,7 @@ export class TabBar {
   }
 
   private createImagesButton(): HTMLButtonElement {
-    return this.createToggle('tab-images-toggle', `Images (${shortcutLabel('toggleImages', this.platform)})`,() => this.cb.toggleImages(),
+    return this.createToggle('tab-images-toggle', `Media (${shortcutLabel('toggleImages', this.platform)})`,() => this.cb.toggleImages(),
       '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
       '<rect x="1.65" y="2.65" width="12.7" height="10.7" rx="1.5"/><circle cx="5.3" cy="6.2" r="1.1"/><path d="M2 12l3.7-3.7 2.6 2.6 2-2L14 12.5"/></svg>')
   }

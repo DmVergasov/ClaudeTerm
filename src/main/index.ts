@@ -23,8 +23,9 @@ import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
 import { ReviewHub } from './review-hub'
 import { createSources, nodeIo } from './review-sources'
-import { checkImageFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
+import { checkShowableFile, DEFAULT_IMAGE_EXTENSIONS, MEDIA_EXTENSIONS } from '../shared/image-file'
 import { ImageHub } from './image-hub'
+import { openCard } from './image-open'
 import { CLAUDE_CLIPBOARD_CHECK, checkOnce, runsCleanly } from './image-paste'
 import { claudeTempRoot, realTempRoot, sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
 import { handleImgProtocol, registerImgScheme } from './img-protocol'
@@ -240,7 +241,7 @@ function bootstrap(): void {
 
   /** the session's temp folder (its scratchpad): images that appear there are the session's own */
   const watchTemp = (tabId: string, dir: string): ImageWatcherHandle => {
-    const handle: ImageWatcherHandle = watchImages(dir, settings.imageWatch, {
+    const handle: ImageWatcherHandle = watchImages(dir, { ...settings.imageWatch, extensions: [...settings.imageWatch.extensions, ...MEDIA_EXTENSIONS] }, {
       added: (p) => images.add(tabId, p, 'created', null),
       changed: (p) => images.add(tabId, p, 'created', null, undefined, true),
       removed: (p) => images.markDeleted(tabId, p),
@@ -550,7 +551,7 @@ function bootstrap(): void {
   if (pipeProblem) toast(`Claude tabs cannot report to ClaudeTerm (status, images, notifications): ${pipeProblem}`)
   else startPipeServer(pipeName, {
     showImage: async (msg) => {
-      const check = await checkImageFile(msg.path, [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
+      const check = await checkShowableFile(msg.path, [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
       if (!check.ok) return { ok: false, error: check.error }
       const target = images.resolveTarget(msg.tabId, tabs.activeTabId())
       if (!target) return { ok: false, error: 'no open tabs in ClaudeTerm' }
@@ -732,12 +733,17 @@ function bootstrap(): void {
     if (!card) return
     switch (action) {
       case 'open':
-        void shell.openPath(card.path)
+        void openCard(card, {
+          imageExtensions: [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions],
+          openPath: (p) => shell.openPath(p),
+          toast
+        })
         break
       case 'reveal':
         shell.showItemInFolder(card.path)
         break
       case 'copy-image': {
+        if (card.kind !== 'image') break
         const img = nativeImage.createFromPath(card.path)
         if (img.isEmpty()) {
           toast(`Cannot copy this image format: ${card.path}`)

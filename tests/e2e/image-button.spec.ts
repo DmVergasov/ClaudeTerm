@@ -20,7 +20,7 @@ test('image button toggles the panel and shows the unseen counter', async () => 
   }
 
   await expect(button).toBeVisible()
-  await expect(button).toHaveAttribute('title', `Images (${KEY_LABELS.images})`)
+  await expect(button).toHaveAttribute('title', `Media (${KEY_LABELS.images})`)
   await expect(button).not.toHaveClass(/active/)
   await expect(badge).toBeHidden()
 

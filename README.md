@@ -43,7 +43,7 @@
 
 ### 🖼️ Every image of the conversation, right next to it
 
-Claude Code works with images all the time — browser screenshots, charts it plots, files it reads, pictures you paste. In a plain terminal you never see them. ClaudeTerm puts them in a panel beside each Claude tab, the way the Claude mobile app does:
+Claude Code works with images all the time — browser screenshots, charts it plots, files it reads, pictures you paste. In a plain terminal you never see them. ClaudeTerm puts them in the Media panel beside each Claude tab, the way the Claude mobile app does:
 
 - **From the conversation** — screenshots returned by tools and MCP servers, images Claude opens with `Read`, images you paste, including those of subagents. On `--resume` the panel fills with the conversation's history.
 - **Its scratchpad** — new and changed images in the temp folder Claude Code gives each session. The project folder is not watched, so images that another session, a dev server or a test run writes there stay out of your panel; an image Claude saves in the project shows up once Claude opens it or shows it.
@@ -52,6 +52,8 @@ Claude Code works with images all the time — browser screenshots, charts it pl
 The panel opens beside the terminal, not in its place: the window widens by the panel's width, so the terminal and Claude Code's screen keep their size, and closing the panel gives the width back. The Changes panel opens the same way. A maximized window, or one with no room left on the screen, shows the panel over the right of the terminal, or narrows the terminal if you choose so in the settings.
 
 Click a card to open it full-size (wheel to zoom, drag to pan, arrows to flip); right-click to open it in a viewer, reveal it in Explorer, copy the image or its path, or insert the path into the prompt.
+
+Audio and video files (`mp4`, `mov`, `webm`, `mkv`, `mp3`, `wav`, `m4a`, `ogg`) that Claude creates in its scratchpad or shows with `show_image` get a card too: a click opens the file in your system's player.
 
 <p align="center"><img src="docs/images/lightbox.png" width="820" alt="Full-size image viewer"></p>
 
@@ -159,7 +161,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Paste text, or hand a clipboard image to Claude | `Ctrl+V` | `⌘V` |
 | New line in the Claude prompt | `Shift+Enter` | `Shift+Enter` |
 | Find in scrollback | `Ctrl+Shift+F` | `⌘F` |
-| Show / hide the image panel | `Ctrl+Shift+I` | `⌘I` |
+| Show / hide the Media panel | `Ctrl+Shift+I` | `⌘I` |
 | Show / hide the Changes panel | `Ctrl+Shift+D` | `⌘D` |
 | Find in the Changes panel | `Ctrl+F` (when the panel has the focus) | `⌘F` (when the panel has the focus) |
 | Recent sessions | `Ctrl+Shift+H` | `⌘⇧H` |
@@ -222,7 +224,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "fileTree": true,              // the file tree on the left of the diff (the ☰ button in the panel)
     "treeWidth": 200               // the file tree's width in px; dragging its right edge changes it until the next start
   },
-  "sidePanel": { "noRoom": "overlay" },  // a maximized window, or one with no room to widen for Images or Changes: "overlay" lays the panel over the terminal, "narrow" narrows the terminal
+  "sidePanel": { "noRoom": "overlay" },  // a maximized window, or one with no room to widen for Media or Changes: "overlay" lays the panel over the terminal, "narrow" narrows the terminal
   "autoUpdate": true               // check GitHub for new versions in the background
 }
 ```
@@ -231,7 +233,7 @@ Logs are in `%APPDATA%\ClaudeTerm\logs` (`~/Library/Application Support/ClaudeTe
 
 ### Good to know
 
-- Claude tabs start `claude` with `--settings` pointing at a file ClaudeTerm generates. It adds `SessionStart`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `PermissionRequest`, `UserPromptSubmit`, `PreToolUse` (for `AskUserQuestion` and the edit tools `Edit`, `MultiEdit`, `Write`, `NotebookEdit`) and `Stop` hooks and a `statusLine` command — that is how session restore, the image panel, the Changes panel, the status bar and the waiting signal know what is going on. These hooks never print anything, so they don't change what Claude does. Inside ClaudeTerm's Claude tabs this replaces a custom `statusLine` from your own Claude Code settings, and Claude Code hides its footer key hints.
+- Claude tabs start `claude` with `--settings` pointing at a file ClaudeTerm generates. It adds `SessionStart`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `PermissionRequest`, `UserPromptSubmit`, `PreToolUse` (for `AskUserQuestion` and the edit tools `Edit`, `MultiEdit`, `Write`, `NotebookEdit`) and `Stop` hooks and a `statusLine` command — that is how session restore, the Media panel, the Changes panel, the status bar and the waiting signal know what is going on. These hooks never print anything, so they don't change what Claude does. Inside ClaudeTerm's Claude tabs this replaces a custom `statusLine` from your own Claude Code settings, and Claude Code hides its footer key hints.
 - `claude` started by hand in a regular shell tab gets `show_image`, but not session restore, the transcript images or the status bar.
 - Before Claude edits a file, ClaudeTerm keeps a copy of it in `%APPDATA%\ClaudeTerm\review` (`~/Library/Application Support/ClaudeTerm/review` on macOS, `~/.config/ClaudeTerm/review` on Linux), so Last turn and Session know the file before the edit; copies of a conversation untouched for a week are deleted.
 - Extra accounts are kept in `%APPDATA%\ClaudeTerm\accounts.json` (`~/Library/Application Support/ClaudeTerm/accounts.json` on macOS, `~/.config/ClaudeTerm/accounts.json` on Linux), readable only by your user, with the tokens encrypted where the system has a keyring. A Claude tab on an extra account gets `CLAUDE_CODE_OAUTH_TOKEN`, and the `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` of your environment are left out of it, because Claude Code would use them first.

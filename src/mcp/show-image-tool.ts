@@ -1,5 +1,5 @@
 import { isAbsolute, resolve } from 'node:path'
-import { checkImageFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
+import { checkShowableFile, DEFAULT_IMAGE_EXTENSIONS } from '../shared/image-file'
 import { PipeUnavailableError } from '../shared/pipe-client'
 import type { PipeResponse, ShowImageMessage } from '../shared/protocol'
 
@@ -17,7 +17,7 @@ export interface ToolResult {
 
 export async function handleShowImage(input: { path: string; caption?: string }, deps: ShowImageDeps): Promise<ToolResult> {
   const abs = isAbsolute(input.path) ? input.path : resolve(deps.cwd, input.path)
-  const check = await checkImageFile(abs, DEFAULT_IMAGE_EXTENSIONS)
+  const check = await checkShowableFile(abs, DEFAULT_IMAGE_EXTENSIONS)
   if (!check.ok) return { text: check.error, isError: true }
   let res: PipeResponse
   try {

@@ -18,7 +18,7 @@ export async function resolveImgRequest(url: string, hub: ImageHub, extensions: 
     return null
   }
   const card = hub.get(id)
-  if (!card) return null
+  if (!card || card.kind !== 'image') return null
   const check = await checkImageFile(card.path, extensions)
   return check.ok ? { path: card.path } : null
 }

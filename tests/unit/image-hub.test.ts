@@ -90,6 +90,33 @@ describe('ImageHub', () => {
     expect(h.unseenCount('t1')).toBe(2)
   })
 
+  it('a media file gets its kind, an image gets image, and a seen card keeps its kind', () => {
+    const { h } = hub()
+    h.addTab('t1', 'D:\\proj')
+    h.add('t1', 'D:\\tmp\\clip.mov', 'created', null)
+    h.add('t1', 'D:\\tmp\\plot.png', 'created', null)
+    expect(h.list('t1').map((c) => [c.name, c.kind])).toEqual([
+      ['plot.png', 'image'],
+      ['clip.mov', 'video']
+    ])
+    h.add('t1', 'D:\\tmp\\clip.mov', 'shown', null)
+    const list = h.list('t1')
+    expect(list).toHaveLength(2)
+    expect(list.find((c) => c.name === 'clip.mov')).toMatchObject({ kind: 'video', source: 'shown' })
+  })
+
+  it('a media card and images share the one maxItems cap, the oldest card goes whatever its kind', () => {
+    const { h } = hub(2)
+    h.addTab('t1', 'D:\\p')
+    h.add('t1', 'D:\\p\\song.mp3', 'created', null)
+    h.add('t1', 'D:\\p\\1.png', 'created', null)
+    h.add('t1', 'D:\\p\\2.png', 'created', null)
+    expect(h.list('t1').map((c) => [c.name, c.kind])).toEqual([
+      ['2.png', 'image'],
+      ['1.png', 'image']
+    ])
+  })
+
   it('markSeen clears the unseen counter once', () => {
     const { h, onChange } = hub()
     h.addTab('t1', 'D:\\p')

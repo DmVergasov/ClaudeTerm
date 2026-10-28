@@ -126,6 +126,25 @@ describe('watchImages', () => {
     await vi.waitFor(() => expect(events).toContain(`add:${later}`), { timeout: 5000 })
   })
 
+  it('reports the media extensions it is configured with, and nothing else', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ct-watch-'))
+    const media = { extensions: ['png', 'mp4', 'wav'], ignore: ['node_modules'], maxDepth: 8 }
+    const events: string[] = []
+    handle = watchImages(root, media, {
+      added: (p) => events.push(`add:${p}`),
+      changed: (p) => events.push(`change:${p}`),
+      removed: (p) => events.push(`unlink:${p}`),
+      error: (e) => events.push(`error:${e.message}`)
+    })
+    await handle.ready
+    const wav = join(root, 'rec.wav')
+    writeFileSync(wav, 'x')
+    writeFileSync(join(root, 'notes.txt'), 'x')
+    await vi.waitFor(() => expect(events).toContain(`add:${wav}`), { timeout: 5000 })
+    await sleep(300)
+    expect(events).toEqual([`add:${wav}`])
+  })
+
   it('lets go of a watched folder that is deleted, without burning CPU, and watches it again once it is back', async () => {
     const root = join(mkdtempSync(join(tmpdir(), 'ct-watch-')), 'proj')
     mkdirSync(root)

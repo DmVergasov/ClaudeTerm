@@ -3,7 +3,7 @@ import type { PanelMode } from '../shared/types'
 export type PanelTab = 'images' | 'changes'
 
 const TABS: readonly PanelTab[] = ['images', 'changes']
-const LABELS: Record<PanelTab, string> = { images: 'Images', changes: 'Changes' }
+const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes' }
 /** how wide a drag may make each tab, as a share of the window */
 const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85 }
 const EXPANDED_SHARE = 0.85

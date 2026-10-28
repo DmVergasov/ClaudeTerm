@@ -50,6 +50,14 @@ describe('resolveImgRequest', () => {
     expect(await resolveImgRequest(url(idOf(p)), hub, EXT)).toBeNull()
   })
 
+  it('404 for a media card, even when its extension is allowed', async () => {
+    const p = join(dir, 'clip.mp4')
+    writeFileSync(p, 'x')
+    const id = idOf(p)
+    expect(await resolveImgRequest(url(id), hub, ['png'])).toBeNull()
+    expect(await resolveImgRequest(url(id), hub, ['png', 'mp4'])).toBeNull()
+  })
+
   it('404 for a file over the size limit', async () => {
     const p = join(dir, 'big.png')
     writeFileSync(p, '')

@@ -11,6 +11,13 @@ export interface ImagePanelCallbacks {
   markSeen(tabId: string): void
 }
 
+/** The image cards among cards, and the index of cards[index] among them: the lightbox shows pictures only. */
+/** Must be called with an image card; for any other card the returned index is -1. */
+export function lightboxTarget(cards: ImageCard[], index: number): { cards: ImageCard[]; index: number } {
+  const images = cards.filter((c) => c.kind === 'image')
+  return { cards: images, index: images.indexOf(cards[index]) }
+}
+
 const SOURCE_LABEL: Record<ImageSource, string> = { created: 'created', shown: 'show_image', read: 'read', tool: 'tool', pasted: 'you' }
 
 export class ImagePanel {
@@ -70,10 +77,22 @@ export class ImagePanel {
     const el = document.createElement('div')
     el.className = `card${card.deleted ? ' deleted' : ''}`
     el.dataset.cardId = card.id
-    const img = document.createElement('img')
-    img.src = imageUrl(card)
-    img.alt = card.name
-    img.draggable = false
+    const media = card.kind !== 'image'
+    let visual: HTMLElement
+    if (media) {
+      // audio and video are never loaded here: a click hands the file to the system player
+      el.classList.add('media')
+      const icon = document.createElement('div')
+      icon.className = 'card-icon'
+      icon.textContent = card.kind === 'video' ? '🎬' : '🎵'
+      visual = icon
+    } else {
+      const img = document.createElement('img')
+      img.src = imageUrl(card)
+      img.alt = card.name
+      img.draggable = false
+      visual = img
+    }
     const meta = document.createElement('div')
     meta.className = 'card-meta'
     const name = document.createElement('div')
@@ -93,14 +112,21 @@ export class ImagePanel {
       cap.textContent = card.caption
       meta.append(cap)
     }
-    el.append(img, meta)
-    el.addEventListener('click', () => this.cb.open(all, index))
+    el.append(visual, meta)
+    el.addEventListener('click', () => {
+      if (media) {
+        this.cb.action(card.id, 'open')
+        return
+      }
+      const target = lightboxTarget(all, index)
+      this.cb.open(target.cards, target.index)
+    })
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault()
       showMenu({ x: e.clientX, y: e.clientY }, [
         { label: 'Open in viewer', action: () => this.cb.action(card.id, 'open') },
         { label: 'Show in Explorer', action: () => this.cb.action(card.id, 'reveal') },
-        { label: 'Copy image', action: () => this.cb.action(card.id, 'copy-image') },
+        ...(media ? [] : [{ label: 'Copy image', action: () => this.cb.action(card.id, 'copy-image') }]),
         { label: 'Copy path', action: () => this.cb.action(card.id, 'copy-path') },
         { label: 'Insert path into terminal', action: () => this.cb.insertPath(card.path) },
         { label: '', separator: true },

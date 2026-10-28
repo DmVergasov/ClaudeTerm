@@ -34,6 +34,7 @@ export interface OpenTabRequest {
 }
 
 export type ImageSource = 'created' | 'shown' | 'read' | 'tool' | 'pasted'
+export type CardKind = 'image' | 'audio' | 'video'
 
 export interface ImageCard {
   id: string
@@ -42,6 +43,7 @@ export interface ImageCard {
   name: string
   relPath: string
   source: ImageSource
+  kind: CardKind
   caption: string | null
   touchedAt: number
   version: number

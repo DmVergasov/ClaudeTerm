@@ -81,7 +81,7 @@ test('switching to a panel of another width changes the window by the difference
   await page.keyboard.press(KEYS.changes)
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 400)
   await page.keyboard.press(KEYS.images)
-  await expect(page.locator('.panel-title')).toHaveText('Images')
+  await expect(page.locator('.panel-title')).toHaveText('Media')
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
   await expect.poll(async () => (await layout(page)).termWidth).toBe(before.termWidth)
   await page.keyboard.press(KEYS.images)
