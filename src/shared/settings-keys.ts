@@ -4,7 +4,7 @@ import type { NotificationCase, NotificationChannels } from './types'
 // The settings vocabulary shared by the main process (parsing, editing) and the settings window.
 
 export const NOTIFICATION_CASES: readonly NotificationCase[] = ['permission', 'question', 'done', 'bell']
-export const NOTIFICATION_CHANNELS: readonly (keyof NotificationChannels)[] = ['sound', 'flash', 'tab']
+export const NOTIFICATION_CHANNELS: readonly (keyof NotificationChannels)[] = ['sound', 'flash', 'tab', 'front']
 
 /** number ranges the parser and the settings window both check */
 export const NUMBER_LIMITS = {
@@ -16,7 +16,7 @@ export const NUMBER_LIMITS = {
 /** the settings the settings window edits */
 export type SettingKey =
   | `notifications.${NotificationCase}.${keyof NotificationChannels}`
-  | 'notifications.sound' | 'notifications.autoUnread'
+  | 'notifications.sound' | 'notifications.doneWithBackgroundWork' | 'notifications.autoUnread'
   | 'font.family' | 'font.size' | 'theme' | 'scrollback'
   | 'defaultProfile' | 'defaultFolder' | 'claude.command' | 'claude.shellProfile' | 'claude.statusRefresh' | 'claude.statusRefreshInterval'
   | 'imageWatch.enabled' | 'imagePanel.autoOpen' | 'autoUpdate'
@@ -27,7 +27,7 @@ export type SettingValue = string | number | boolean | null | string[]
 
 export const SETTING_KEYS: readonly SettingKey[] = [
   ...NOTIFICATION_CASES.flatMap((c) => NOTIFICATION_CHANNELS.map((ch) => `notifications.${c}.${ch}` as const)),
-  'notifications.sound', 'notifications.autoUnread',
+  'notifications.sound', 'notifications.doneWithBackgroundWork', 'notifications.autoUnread',
   'font.family', 'font.size', 'theme', 'scrollback',
   'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval',
   'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'sidePanel.noRoom', 'autoUpdate'

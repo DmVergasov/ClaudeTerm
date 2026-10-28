@@ -571,8 +571,8 @@ function bootstrap(): void {
       // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
       if (msg.reason === 'done') review.turnEnded(msg.tabId)
       else review.dialogOpened(msg.tabId, msg.agentId ?? null)
-      const signalled = attention.notify(msg.tabId, msg.reason)
-      log.info(`attention ${msg.reason} tab=${msg.tabId}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
+      const signalled = attention.notify(msg.tabId, msg.reason, msg.background === true)
+      log.info(`attention ${msg.reason} tab=${msg.tabId}${msg.background ? ' with background work' : ''}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
       return { ok: true }
     },
     turn: (msg) => {
