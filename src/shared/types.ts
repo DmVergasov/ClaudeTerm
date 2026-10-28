@@ -96,8 +96,11 @@ export interface Settings {
   defaultProfile: string | null
   /** the folder new tabs open in, an absolute path; null: the home folder */
   defaultFolder: string | null
-  /** statusRefresh: Claude Code also re-runs a Claude tab's statusLine every statusRefreshInterval seconds */
-  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number }
+  /**
+   * statusRefresh: Claude Code also re-runs a Claude tab's statusLine every statusRefreshInterval seconds; autoContinue: type a
+   * nudge into a Claude tab whose response a dropped connection cut off, instead of calling the user
+   */
+  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean }
   profiles: ProfileDef[]
   font: { family: string; size: number }
   theme: string | Record<string, string>

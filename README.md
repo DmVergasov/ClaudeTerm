@@ -71,6 +71,8 @@ When Claude asks for a permission, asks you a question or finishes its turn whil
 
 Claude often ends a turn while work it started still runs in the background — subagents, background shell commands, monitors — and starts another turn when that work ends. Each of those turns is signalled as a finished answer; clear **Signal a finished answer also while background work… still runs** in Settings and only the turn after which nothing runs in the background is. ClaudeTerm learns about that work from Claude Code's `Stop` hook (`background_tasks`); a Claude Code that does not send it gets every turn signalled.
 
+A turn that ends in an API error — a connection lost mid-response, a rate limit — counts as finished too, so a session never stops without a word. Claude Code itself leaves a response cut off mid-stream to you; with **Continue a response a dropped connection cut off** on, ClaudeTerm types Claude Code's own "resume where it stops" nudge into the tab a few seconds later instead of calling you: up to 3 times in a row, and not when Claude Code's prompt in that tab holds text of yours: then the tab calls you as usual.
+
 A tab you have not finished with pulses the same way: **Mark as unread** in its right-click menu marks any tab (the one in front once you leave it), and a Claude tab you leave with Claude's reply not read to its end (Claude Code's *Jump to bottom* shows, or the terminal is scrolled back) or with an unsent prompt is marked by itself — **Highlight a Claude tab you leave…** in Settings turns that off. Opening the tab clears the mark.
 
 ### 🔍 Review Claude's changes next to the conversation
@@ -185,7 +187,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "command": "claude",           // how to start Claude Code
     "shellProfile": null,          // shell that hosts claude in Claude tabs; null = same rule as above
     "statusRefresh": true,         // refresh the status bar on a timer too; false = only with Claude Code's own updates (every message)
-    "statusRefreshInterval": 5     // that timer in seconds, 1–300; each refresh starts a few short processes per Claude tab
+    "statusRefreshInterval": 5,    // that timer in seconds, 1–300; each refresh starts a few short processes per Claude tab
+    "autoContinue": false          // type a nudge into a Claude tab whose response a dropped connection cut off, up to 3 times in a row
   },
   "profiles": [                    // added to (or overriding by name) the detected profiles
     { "name": "Git Bash", "command": "C:\\Program Files\\Git\\bin\\bash.exe", "args": ["--login", "-i"] }

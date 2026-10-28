@@ -22,6 +22,7 @@ const api: CtApi = {
   muteTab: (id, muted) => ipcRenderer.send(IPC.tabsMute, id, muted),
   writePty: (id, data) => ipcRenderer.send(IPC.ptyWrite, id, data),
   resizePty: (id, cols, rows) => ipcRenderer.send(IPC.ptyResize, id, cols, rows),
+  answerPrompt: (queryId, state) => ipcRenderer.send(IPC.promptAnswer, queryId, state),
   listProfiles: () => ipcRenderer.invoke(IPC.profilesList),
   getSettings: () => ipcRenderer.invoke(IPC.settingsGet),
   openSettingsFile: () => ipcRenderer.send(IPC.settingsOpen),
@@ -82,7 +83,8 @@ const api: CtApi = {
   onUpdate: (cb) => on(IPC.evUpdate, cb),
   onReview: (cb) => on(IPC.evReview, cb),
   onPanelMode: (cb) => on(IPC.evPanelMode, cb),
-  onAccounts: (cb) => on(IPC.evAccounts, cb)
+  onAccounts: (cb) => on(IPC.evAccounts, cb),
+  onPromptQuery: (cb) => on(IPC.evPromptQuery, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

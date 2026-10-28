@@ -7,7 +7,7 @@ import type { NoRoomMode, NotificationSettings, ProfileDef, Settings } from '../
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   defaultFolder: null,
-  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5 },
+  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
   theme: 'Campbell',
@@ -118,7 +118,8 @@ export function parseSettings(text: string | null): ParsedSettings {
       shellProfile: take('claude.shellProfile', claude.shellProfile, isNullableStr, d.claude.shellProfile),
       statusRefresh: take('claude.statusRefresh', claude.statusRefresh, isBool, d.claude.statusRefresh),
       statusRefreshInterval: take('claude.statusRefreshInterval', claude.statusRefreshInterval,
-        wholeIn(NUMBER_LIMITS['claude.statusRefreshInterval'].min, NUMBER_LIMITS['claude.statusRefreshInterval'].max), d.claude.statusRefreshInterval)
+        wholeIn(NUMBER_LIMITS['claude.statusRefreshInterval'].min, NUMBER_LIMITS['claude.statusRefreshInterval'].max), d.claude.statusRefreshInterval),
+      autoContinue: take('claude.autoContinue', claude.autoContinue, isBool, d.claude.autoContinue)
     },
     profiles,
     font: {

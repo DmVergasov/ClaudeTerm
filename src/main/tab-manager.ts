@@ -41,6 +41,8 @@ export interface TabManagerDeps {
   pipeName: string
   events: TabEvents
   onTabStarted?(tab: TabInfo): void
+  /** the tab gets a new process (Restart session, another account): what waited on the old one must not reach the new one */
+  onTabRestarting?(tabId: string): void
   onTabClosed?(tabId: string): void
   onStateChanged?(): void
   /** whether a Claude conversation can be resumed; one without a message has no transcript yet */
@@ -266,6 +268,7 @@ export class TabManager {
 
   /** an exited tab starts again; a running one is stopped first, and the new process waits for the old one */
   private async relaunch(rec: TabRecord): Promise<void> {
+    this.deps.onTabRestarting?.(rec.info.id)
     if (rec.info.exited) {
       rec.info.exited = false
       this.deps.events.updated({ ...rec.info })

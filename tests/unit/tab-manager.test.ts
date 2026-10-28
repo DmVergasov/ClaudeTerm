@@ -265,6 +265,21 @@ describe('TabManager', () => {
     expect(data).toEqual([])
   })
 
+  it('a restart, of a running or an exited tab, says so before the new process starts', async () => {
+    const onTabRestarting = vi.fn()
+    const { tm, ptys } = setup({ onTabRestarting })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const done = tm.restart(tab.id, { live: true })
+    expect(onTabRestarting).toHaveBeenCalledWith(tab.id)
+    expect(ptys).toHaveLength(1)
+    ptys[0].emitExit(0)
+    await done
+    ptys[1].emitExit(0)
+    await tm.restart(tab.id)
+    expect(onTabRestarting).toHaveBeenCalledTimes(2)
+    expect(ptys).toHaveLength(3)
+  })
+
   it('restart of a running claude tab resumes the current conversation', async () => {
     const resolveLaunch = vi.fn((req: { profile?: string | null }) => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }))
     const { tm, ptys } = setup({ resolveLaunch })

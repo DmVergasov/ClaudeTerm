@@ -11,11 +11,13 @@ import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Setting
 import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './accounts'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
+import { AutoContinue } from './auto-continue'
+import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -339,12 +341,15 @@ function bootstrap(): void {
 
   const tabs = new TabManager({
     onTabStarted: startTabImages,
+    // a continue armed for the old process would type into the resumed one
+    onTabRestarting: (tabId) => autoContinue.forget(tabId),
     onTabClosed: (tabId) => {
       stopTabImages(tabId)
       // after the feed has stopped, so no late report brings the closed tab back
       planHub.removeTab(tabId)
       stopTabStatus(tabId)
       attention.removeTab(tabId)
+      autoContinue.forget(tabId)
       review.removeTab(tabId)
     },
     spawn: spawnPty,
@@ -397,6 +402,24 @@ function bootstrap(): void {
     play: playSound,
     markTab: (tabId, reason) => send(IPC.evAttention, tabId, reason),
     muted: (tabId) => tabs.get(tabId)?.muted === true
+  })
+  const promptQueries = new PromptQueries({
+    send: (queryId, tabId) => {
+      if (!win || win.isDestroyed()) return false
+      win.webContents.send(IPC.evPromptQuery, queryId, tabId)
+      return true
+    }
+  })
+  const autoContinue = new AutoContinue({
+    enabled: () => settings.claude.autoContinue,
+    promptState: (tabId) => promptQueries.ask(tabId),
+    // writes go to the PTY directly: what it types is not taken for the user's keys
+    write: (tabId, data) => tabs.write(tabId, data),
+    notify: (tabId) => {
+      const signalled = attention.notify(tabId, 'done')
+      log.info(`attention done tab=${tabId} after the auto-continue gave up${signalled ? '' : ' (seen)'}`)
+    },
+    log
   })
 
   const openTab = (req: OpenTabRequest, activate = true, setupToken = false): TabInfo | null => {
@@ -564,13 +587,19 @@ function bootstrap(): void {
       planHub.sessionEnd(msg.tabId, msg.sessionId)
       // a late SessionEnd of the session before /clear leaves the new one running
       review.sessionEnded(msg.tabId, msg.sessionId)
+      // a continue still waiting would be typed into the shell
+      autoContinue.forget(msg.tabId)
       return { ok: true }
     },
     attention: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
-      if (msg.reason === 'done') review.turnEnded(msg.tabId)
-      else review.dialogOpened(msg.tabId, msg.agentId ?? null)
+      if (msg.reason === 'done') {
+        review.turnEnded(msg.tabId)
+        if (msg.error === undefined) autoContinue.turnEnded(msg.tabId)
+        // a response a dropped connection cut off goes on by itself: nobody needs to look yet
+        else if (autoContinue.failed(msg.tabId, msg.error)) return { ok: true }
+      } else review.dialogOpened(msg.tabId, msg.agentId ?? null)
       const signalled = attention.notify(msg.tabId, msg.reason, msg.background === true)
       log.info(`attention ${msg.reason} tab=${msg.tabId}${msg.background ? ' with background work' : ''}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
       return { ok: true }
@@ -578,6 +607,7 @@ function bootstrap(): void {
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       review.turn(msg.tabId, msg.sessionId)
+      autoContinue.turnStarted(msg.tabId)
       return { ok: true }
     },
     editBefore: (msg) => {
@@ -651,8 +681,12 @@ function bootstrap(): void {
   ipcMain.on(IPC.ptyWrite, (_e, id: unknown, data: unknown) => {
     if (!isId(id) || !isPtyData(data)) return
     if (id === autoTabId && isUserInput(data)) autoTabId = null
+    // scrolling through the reply with the mouse or PgUp is reading it, it puts nothing in the prompt
+    if (isPromptInput(data)) autoContinue.userInput(id)
     tabs.write(id, data)
   })
+  // only the main window has the terminals; PromptQueries checks the answer itself
+  ipcMain.on(IPC.promptAnswer, (e, queryId: unknown, state: unknown) => { if (win && e.sender === win.webContents) promptQueries.answer(queryId, state) })
   ipcMain.on(IPC.ptyResize, (_e, id: unknown, cols: unknown, rows: unknown) => {
     if (isId(id) && isPtySize(cols, rows)) tabs.resize(id, cols as number, rows as number)
   })

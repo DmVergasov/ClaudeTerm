@@ -20,6 +20,7 @@ import { TabBar } from './tabbar'
 import { TerminalView } from './terminal-view'
 import { resolveTheme } from './themes'
 import { showToast } from './toasts'
+import { promptText } from './claude-screen'
 import { leftUnfinished } from './unread'
 import { folderName } from './util'
 
@@ -490,6 +491,12 @@ async function boot(): Promise<void> {
     if (reason === 'bell') t.bell = true
     else t.attention = true
     renderTabs()
+  })
+  // before main types a continue into a Claude tab: only this window has the terminal's screen
+  ct.onPromptQuery((queryId, tabId) => {
+    const t = tabs.get(tabId)
+    const text = t ? promptText(t.view.screen().rows) : null
+    ct.answerPrompt(queryId, text === null ? 'none' : text === '' ? 'empty' : 'draft')
   })
   sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width }, (width, resize) => ct.setPanel(width, resize))
   ct.onPanelMode((mode) => sidePanel.setMode(mode))
