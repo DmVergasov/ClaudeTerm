@@ -1,6 +1,8 @@
 /*
  * What Claude Code draws in a Claude tab, read from the terminal's screen. As Claude Code 2.1.308 draws it in its
  * fullscreen mode: its prompt sits between two rules, starts with ❯ and a no-break space, and shows its placeholder dim.
+ * On Windows it draws > in place of ❯ unless it finds a terminal it knows to show Unicode (WT_SESSION, TERM=xterm-256color
+ * and a few others), and a Claude tab has none of those.
  */
 
 /** a row of the screen: its text, and the same with some cells blanked */
@@ -21,8 +23,8 @@ export interface Screen {
 
 /** the rules above and below Claude Code's prompt */
 const RULE = /^─{20,}/
-/** the start of Claude Code's prompt: ❯ and a no-break space (a plain one in the conversation above), or ❯ alone once the space is trimmed */
-const PROMPT = /^❯(?:[ \u00a0]|$)/
+/** the start of Claude Code's prompt: ❯ (or >) and a no-break space (a plain one in the conversation above), or the mark alone once the space is trimmed */
+const PROMPT = /^[❯>](?:[ \u00a0]|$)/
 
 /**
  * What Claude Code's prompt holds: the text typed into it and not sent, '' when it shows only its dim placeholder, null
