@@ -2,6 +2,16 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.11.0
+
+### New
+
+- **Markdown files show formatted in the Changes panel.** A `.md` file — a spec or a plan Claude wrote, a README it changed — shows as the document it is: headings, lists, task lists, tables, quotes and code blocks. New and changed blocks have a green bar, a removed block stays where it was in red and struck through, and a changed paragraph shows its old version above the new one. Hover a block and click **+** to comment on it, or drag the **+** over several blocks; **Send to Claude** quotes the lines as before. Untick **Render Markdown** in the panel, or Settings → Review → **Show Markdown files formatted**, to see Markdown files as plain diffs.
+
+### Changes
+
+- **The expanded Changes panel fills the window.** ⤢ now spreads the panel over the whole window instead of leaving a strip of the terminal on its left.
+
 ## 0.10.1
 
 ### Changes
