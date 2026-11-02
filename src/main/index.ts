@@ -270,7 +270,8 @@ function bootstrap(): void {
     publish: (u) => send(IPC.evReview, u),
     onError: (m) => log.warn(m),
     hideIgnored: () => settings.review.hideIgnored,
-    testPatterns: () => (settings.review.hideTests ? settings.review.testPatterns : null)
+    testPatterns: () => (settings.review.hideTests ? settings.review.testPatterns : null),
+    renderMarkdown: () => settings.review.renderMarkdown
   })
 
   const startTabImages = (tab: TabInfo): void => {
@@ -873,6 +874,7 @@ function bootstrap(): void {
     // a file that cannot be read keeps the current settings
     if (!next.failed) {
       const hideIgnored = settings.review.hideIgnored
+      const renderMarkdown = settings.review.renderMarkdown
       const noRoom = settings.sidePanel.noRoom
       const testsBefore = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
       const refreshBefore = statusRefreshInterval(settings.claude)
@@ -890,10 +892,11 @@ function bootstrap(): void {
       profiles = computed.profiles
       notices = [...notices, ...computed.notices]
       send(IPC.evSettings, settings)
-      // the active tab's Last turn and Session views list other files now
+      // the active tab's Last turn and Session views list other files now, or give their Markdown files whole or not
       const active = tabs.activeTabId()
       const testsNow = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
-      if ((hideIgnored !== settings.review.hideIgnored || testsBefore !== testsNow) && active) review.refresh(active)
+      const changed = hideIgnored !== settings.review.hideIgnored || testsBefore !== testsNow || renderMarkdown !== settings.review.renderMarkdown
+      if (changed && active) review.refresh(active)
       if (noRoom !== settings.sidePanel.noRoom) refitPanel()
     }
     for (const n of notices) if (!lastNotices.includes(n)) toast(n)

@@ -6,7 +6,6 @@ const TABS: readonly PanelTab[] = ['images', 'changes']
 const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes' }
 /** how wide a drag may make each tab, as a share of the window */
 const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85 }
-const EXPANDED_SHARE = 0.85
 const MIN_WIDTH = 180
 /** how long the terminal waits for the window to take the size main gave it */
 const SETTLE_MS = 300
@@ -190,8 +189,8 @@ export class SidePanel {
     this.title.textContent = LABELS[this.currentTab]
     this.tools.hidden = this.currentTab !== 'changes'
     const width = this.widths[this.currentTab]
-    this.root.style.width = `${this.isExpanded ? Math.round(window.innerWidth * EXPANDED_SHARE) : width}px`
-    // the expanded panel lies over the terminal too, which keeps the room it gave the panel
+    this.root.style.width = `${this.isExpanded ? window.innerWidth : width}px`
+    // the expanded panel lies over the whole window, terminal and all; the terminal keeps the room it gave the panel
     this.terminals.style.marginRight = `${shown && this.mode !== 'overlay' ? width : 0}px`
   }
 

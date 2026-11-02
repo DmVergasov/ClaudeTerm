@@ -46,7 +46,12 @@ export interface ReviewFile {
   /** names the file's current content: a Viewed mark lasts while it stays the same */
   hash: string
   viewed: boolean
+  /** a Markdown file the panel shows formatted (review.renderMarkdown): its one hunk holds every line of the file */
+  markdown: boolean
 }
+
+/** a Markdown file by its name: .md or .markdown, in any case */
+export const isMarkdownPath = (path: string): boolean => /\.(md|markdown)$/i.test(path)
 
 export type ReviewSendState = { ok: true } | { ok: false; reason: string }
 
@@ -72,6 +77,8 @@ export interface ReviewUpdate {
   ignored: number
   /** review.hideTests is on: the Hide tests checkbox shows it */
   hideTests: boolean
+  /** review.renderMarkdown is on: the Render Markdown checkbox shows it */
+  renderMarkdown: boolean
   /** test files review.hideTests left out of this view, and up to 10 of their paths (relative to the view's root, sorted) */
   testsHidden: number
   testsSample: string[]

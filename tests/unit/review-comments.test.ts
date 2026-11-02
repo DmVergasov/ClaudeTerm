@@ -4,7 +4,7 @@ import type { ReviewFile, ReviewLine } from '../../src/shared/review'
 
 const L = (kind: ReviewLine['kind'], text: string, oldNo: number | null, newNo: number | null): ReviewLine => ({ kind, text, oldNo, newNo })
 const file = (relPath: string, lines: ReviewLine[], path = `/r/${relPath}`): ReviewFile => ({
-  path, relPath, status: 'modified', additions: 0, deletions: 0, hunks: [{ header: '@@', lines }], note: null, canForce: false, hash: 'h', viewed: false
+  path, relPath, status: 'modified', additions: 0, deletions: 0, hunks: [{ header: '@@', lines }], note: null, canForce: false, hash: 'h', viewed: false, markdown: false
 })
 const same = (a: string, b: string): boolean => a === b
 const comment = (anchor: ReviewComment['anchor'], text: string, outdated = false): ReviewComment => ({ id: 'c', anchor, text, outdated })

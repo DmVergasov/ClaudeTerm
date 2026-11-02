@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -242,7 +243,8 @@ test('show_diff opens a file git ignores when its paths name it', async () => {
   })
   const msg = { v: 1 as const, type: 'show_diff' as const, tabId, cwd: repo, scope: null, from: null, to: null, paths: [join(repo, 'docs', 'plans', 'plan.md')], title: null }
   expect(await sendPipeMessage(pipeName, msg)).toEqual({ ok: true, info: 'Opened 1 file (+2 −0) in the Changes panel.' })
-  await expect(added(page, 'docs/plans/plan.md')).toHaveText(['# Plan', 'step one'])
+  // a Markdown file shows formatted
+  await expect(file(page, 'docs/plans/plan.md').locator('.md-seg .md-body')).toHaveText(['Plan', 'step one'])
   await app.close()
 })
 
@@ -727,12 +729,14 @@ test('the file filter narrows the tree and the diffs, Find looks in the files sh
 test('Collapse all and Expand all fold and unfold every file shown', async () => {
   const { app, page } = await reviewTab(inFolders)
   await page.keyboard.press(KEYS.changes)
-  await expect(page.locator('.review-hunk')).toHaveCount(5)
+  // the diffs, and docs/guide.md formatted
+  const bodies = page.locator('.review-hunk, .review-md')
+  await expect(bodies).toHaveCount(5)
   await page.locator('.review-collapse-all').click()
   await expect(page.locator('.review-file')).toHaveCount(5)
-  await expect(page.locator('.review-hunk')).toHaveCount(0)
+  await expect(bodies).toHaveCount(0)
   await page.locator('.review-expand-all').click()
-  await expect(page.locator('.review-hunk')).toHaveCount(5)
+  await expect(bodies).toHaveCount(5)
   await app.close()
 })
 
@@ -751,5 +755,133 @@ test('the tree button hides the file tree with its filter, and settings.json kee
   await expect(page.locator('.review-tree')).toBeVisible()
   await expect(page.locator('.review-tree-filter')).toHaveValue('')
   await expect.poll(saved).toBe(true)
+  await app.close()
+})
+
+const SPEC_BEFORE = '# Spec\n\nIntro paragraph.\n\n- one\n- two\n\nOld sentence.\n'
+const SPEC_AFTER = '# Spec\n\nIntro paragraph.\n\n- one\n- two\n- three\n\nNew sentence, see [the docs](https://example.com/docs).\n\n```ts\nconst x = 1\n```\n'
+/** a.ts changed, docs/spec.md committed and then changed, and a new docs/new.md */
+function withDocs(repo: string): void {
+  const git = (...args: string[]): void => { execFileSync('git', args, { cwd: repo, stdio: 'ignore' }) }
+  mkdirSync(join(repo, 'docs'))
+  writeFileSync(join(repo, 'docs', 'spec.md'), SPEC_BEFORE)
+  git('add', '-A')
+  git('commit', '-qm', 'docs')
+  writeFileSync(join(repo, 'docs', 'spec.md'), SPEC_AFTER)
+  writeFileSync(join(repo, 'docs', 'new.md'), '# New doc\n\nFresh text.\n')
+  upper(repo)
+}
+const savedRenderMarkdown = (dataDir: string): boolean | undefined =>
+  (JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')) as { review?: { renderMarkdown?: boolean } }).review?.renderMarkdown
+/** what the tab's terminal sent to Claude, without the bracketed-paste markers */
+const sentToClaude = async (page: Page, tabId: string): Promise<string> =>
+  (await page.evaluate((id) => window.__ct!.ptyInput!(id), tabId)).replace(/\x1b\[20[01]~/g, '')
+
+test('a Markdown file shows formatted: new blocks are marked, a removed one stays where it was, and a new file is a plain document', async () => {
+  const { app, page } = await reviewTab(withDocs)
+  await page.keyboard.press(KEYS.changes)
+  const spec = file(page, 'docs/spec.md')
+  await expect(spec.locator('.review-md h1')).toHaveText('Spec')
+  await expect(spec.locator('.md-seg.same .md-body')).toHaveText(['Spec', 'Intro paragraph.', 'one', 'two'])
+  await expect(spec.locator('.md-seg.added .md-body')).toHaveText(['three', 'New sentence, see the docs.', 'const x = 1'])
+  await expect(spec.locator('.md-seg.removed .md-body')).toHaveText('Old sentence.')
+  await expect(spec.locator('.md-seg.added pre code')).toHaveText('const x = 1')
+  await expect(spec.locator('.review-line')).toHaveCount(0)
+  const fresh = file(page, 'docs/new.md')
+  await expect(fresh.locator('.md-seg h1')).toHaveText('New doc')
+  await expect(fresh.locator('.md-seg .md-body')).toHaveText(['New doc', 'Fresh text.'])
+  await expect(fresh.locator('.md-seg.added')).toHaveCount(0)
+  // other files are diffs as before
+  await expect(added(page, 'a.ts')).toHaveText('TWO')
+  await app.close()
+})
+
+test('the Render Markdown checkbox shows Markdown files as plain diffs, and is saved', async () => {
+  const { app, page, dataDir } = await reviewTab(withDocs)
+  await page.keyboard.press(KEYS.changes)
+  const label = page.locator('.review-render-md')
+  const box = label.locator('input[type="checkbox"]')
+  await expect(label).toHaveText('Render Markdown')
+  await expect(label).toHaveAttribute('title', 'Show Markdown files formatted (review.renderMarkdown)')
+  await expect(box).toBeChecked()
+  await box.uncheck()
+  await expect(file(page, 'docs/spec.md').locator('.review-line.del .review-code')).toHaveText('Old sentence.')
+  await expect(page.locator('.review-md')).toHaveCount(0)
+  await expect(box).not.toBeChecked()
+  await expect.poll(() => savedRenderMarkdown(dataDir)).toBe(false)
+  await box.check()
+  await expect(file(page, 'docs/spec.md').locator('.md-seg.removed .md-body')).toHaveText('Old sentence.')
+  await expect.poll(() => savedRenderMarkdown(dataDir)).toBe(true)
+  await app.close()
+})
+
+test('a view without Markdown files has no Render Markdown checkbox', async () => {
+  const { app, page } = await reviewTab(upper)
+  await page.keyboard.press(KEYS.changes)
+  await expect(added(page, 'a.ts')).toHaveText('TWO')
+  await expect(page.locator('.review-hide-tests')).toBeVisible()
+  await expect(page.locator('.review-render-md')).toHaveCount(0)
+  await app.close()
+})
+
+test('a comment on a formatted block goes under it and is sent to Claude with its line', async () => {
+  const { app, page, tabId } = await reviewTab(withDocs)
+  await page.keyboard.press(KEYS.changes)
+  const block = file(page, 'docs/spec.md').locator('.md-seg.added', { hasText: 'New sentence' })
+  await block.hover()
+  await block.locator('.md-plus').click()
+  await page.locator('.review-comment-input').fill('Link the spec instead')
+  await page.locator('.review-btn.primary').click()
+  await expect(page.locator('.review-comment-meta')).toHaveText('docs/spec.md · Line 9')
+  await expect(block.locator('xpath=following-sibling::*[1]')).toHaveClass(/review-comment/)
+  await page.locator('.review-send').click()
+  await expect(page.locator('.review-count')).toHaveText('0 comments')
+  expect(await sentToClaude(page, tabId)).toContain('1. docs/spec.md:9\r   > New sentence, see [the docs](https://example.com/docs).\r   Link the spec instead\r')
+  await app.close()
+})
+
+test('dragging the + of a formatted block over the next ones comments on all of them', async () => {
+  const { app, page } = await reviewTab(withDocs)
+  await page.keyboard.press(KEYS.changes)
+  const spec = file(page, 'docs/spec.md')
+  const from = spec.locator('.md-seg.added', { hasText: 'three' })
+  const to = spec.locator('.md-seg.added', { hasText: 'New sentence' })
+  await from.hover()
+  const plus = await from.locator('.md-plus').boundingBox()
+  await page.mouse.move(plus!.x + 5, plus!.y + 5)
+  await page.mouse.down()
+  await to.hover()
+  await expect(spec.locator('.md-seg.selected')).toHaveCount(3)
+  await page.mouse.up()
+  await expect(page.locator('.review-comment-box .review-comment-meta')).toHaveText('Lines 7–9')
+  await app.close()
+})
+
+test('Find in a formatted Markdown file marks the block that holds the match', async () => {
+  const { app, page } = await reviewTab(withDocs)
+  await openFind(page)
+  await page.keyboard.type('sentence')
+  await expect(findCount(page)).toHaveText('1 / 2')
+  const spec = file(page, 'docs/spec.md')
+  await expect(spec.locator('.review-match-block')).toHaveCount(2)
+  await expect(spec.locator('.review-match-block.current .md-body')).toHaveText('Old sentence.')
+  await page.keyboard.press('Enter')
+  await expect(findCount(page)).toHaveText('2 / 2')
+  await expect(spec.locator('.review-match-block.current')).toContainText('New sentence')
+  await app.close()
+})
+
+test('a link in a formatted Markdown file opens in the browser', async () => {
+  const { app, page } = await reviewTab(withDocs)
+  await app.evaluate(({ shell }) => {
+    const opened: string[] = []
+    ;(globalThis as { opened?: string[] }).opened = opened
+    shell.openExternal = async (url: string) => { opened.push(url) }
+  })
+  await page.keyboard.press(KEYS.changes)
+  const url = page.url()
+  await file(page, 'docs/spec.md').locator('.md-seg a', { hasText: 'the docs' }).click()
+  await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string[] }).opened)).toEqual(['https://example.com/docs'])
+  expect(page.url()).toBe(url)
   await app.close()
 })

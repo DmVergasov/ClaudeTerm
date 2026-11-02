@@ -114,7 +114,9 @@ export interface Settings {
   imagePanel: { autoOpen: boolean; width: number; maxItems: number }
   notifications: NotificationSettings
   /** the Changes panel */
-  review: { editor: string | null; statusBar: boolean; hideIgnored: boolean; hideTests: boolean; testPatterns: string[]; width: number; fileTree: boolean; treeWidth: number }
+  review: { editor: string | null; statusBar: boolean; hideIgnored: boolean; hideTests: boolean; testPatterns: string[]; width: number; fileTree: boolean; treeWidth: number
+    /** Markdown files show formatted, not as plain diffs */
+    renderMarkdown: boolean }
   /** where Images and Changes go when the window has no room to widen for them */
   sidePanel: { noRoom: NoRoomMode }
   /** check GitHub for new versions in the background */

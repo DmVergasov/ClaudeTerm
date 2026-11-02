@@ -244,6 +244,7 @@ root.append(
     checkboxField('review.statusBar', 'Show the changes counter in the status bar', (v) => v.settings.review.statusBar),
     checkboxField('review.hideIgnored', 'Hide files git ignores', (v) => v.settings.review.hideIgnored),
     checkboxField('review.hideTests', 'Hide test files', (v) => v.settings.review.hideTests),
+    checkboxField('review.renderMarkdown', 'Show Markdown files formatted', (v) => v.settings.review.renderMarkdown),
     listField('Test files', 'review.testPatterns', (v) => v.settings.review.testPatterns, DEFAULT_TEST_PATTERNS,
       'One pattern per line, matched against the path inside the project: * and ? within a name, ** across folders; a pattern without / matches the file name in any folder. Case-sensitive.')),
   section('Updates', null,

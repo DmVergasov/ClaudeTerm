@@ -1,8 +1,9 @@
-import type { ReviewFile, ReviewFileNote, ReviewHunk, ReviewLine, ReviewScope, ReviewUpdate } from '../shared/review'
+import { isMarkdownPath, type ReviewFile, type ReviewFileNote, type ReviewHunk, type ReviewLine, type ReviewScope, type ReviewUpdate } from '../shared/review'
 import { isPrimaryKey, shortcutLabel } from './keymap'
+import { markdownSegments, segmentOf, type MdSegment } from './markdown-diff'
 import { showMenu } from './menu'
 import {
-  anchorOf, attemptSend, describeLines, draftAfterSend, formatSendMessage, locate, moveAnchor, reanchorComment, sendErrorAfter, viewKeyOf,
+  anchorOf, attemptSend, describeLines, draftAfterSend, formatSendMessage, locate, location, moveAnchor, reanchorComment, sendErrorAfter, viewKeyOf,
   type CommentAnchor, type Located, type ReviewComment
 } from './review-comments'
 import { findMatches, type SearchMatch } from './review-search'
@@ -18,8 +19,12 @@ export interface ReviewPanelCallbacks {
   openEditor(tabId: string, path: string, line: number): void
   reveal(tabId: string, path: string): void
   copyText(text: string): void
+  /** a link clicked in a formatted Markdown file: an http(s) address, opened in the browser */
+  openLink(url: string): void
   /** saves review.hideTests; resolves to whether it was saved */
   setHideTests(on: boolean): Promise<boolean>
+  /** saves review.renderMarkdown; resolves to whether it was saved */
+  setRenderMarkdown(on: boolean): Promise<boolean>
   /** saves review.fileTree; the panel shows the change when the settings come back */
   setFileTree(on: boolean): void
   /** writes the message into Claude's prompt and presses Enter; resolves to null, or to why it was not sent */
@@ -109,6 +114,20 @@ function appendMarked(parent: HTMLElement, text: string, base: number, marks: Ma
   if (pos < text.length) parent.append(text.slice(pos))
 }
 
+/** the marks of match `n`: a highlighted range in a diff line, or a formatted Markdown block that holds it */
+const matchSelector = (n: number): string => `.review-match[data-match="${n}"], .review-match-block[data-matches~="${n}"]`
+
+/** where a drag of the + began and where it is now, as ranges of lines of one hunk */
+interface Drag {
+  file: number
+  hunk: number
+  start: readonly [number, number]
+  end: readonly [number, number]
+}
+
+/** the lines a drag covers, from..to */
+const dragRange = (d: Drag): [number, number] => [Math.min(d.start[0], d.end[0]), Math.max(d.start[1], d.end[1])]
+
 /** a typed find query takes effect after this long without a key */
 const QUERY_DELAY_MS = 150
 
@@ -152,7 +171,9 @@ export class ReviewPanel {
   private current = 0
   private queryTimer: ReturnType<typeof setTimeout> | null = null
   private draftArea: HTMLTextAreaElement | null = null
-  private drag: { file: number; hunk: number; from: number; to: number } | null = null
+  private drag: Drag | null = null
+  /** the formatted blocks of each Markdown file's hunk, made once per update */
+  private readonly mdSegments = new WeakMap<ReviewHunk, MdSegment[]>()
   private sending = false
   private sendError: string | null = null
   private wasShowing = false
@@ -196,6 +217,14 @@ export class ReviewPanel {
     root.tabIndex = -1
     // the scroller takes the focus of a click in the diff, so that PageDown and the arrows scroll it
     this.filesEl.tabIndex = -1
+    // a link in a formatted Markdown file never navigates the window: a web address opens in the browser, others do nothing
+    this.filesEl.addEventListener('click', (e) => {
+      const link = (e.target as Element | null)?.closest?.('.review-md a')
+      if (!link) return
+      e.preventDefault()
+      const href = link.getAttribute('href') ?? ''
+      if (/^https?:\/\//i.test(href)) this.cb.openLink(href)
+    })
     // capture phase, stopped there: on macOS ⌘F is also the window's find in the terminal
     document.addEventListener('keydown', (e) => {
       if (isPrimaryKey(e, platform) && e.code === 'KeyF' && this.panel.isShowing('changes') && root.parentElement?.contains(document.activeElement)) {
@@ -462,15 +491,15 @@ export class ReviewPanel {
       s.folds.set(f.path, false)
       this.render()
     } else {
-      for (const old of this.filesEl.querySelectorAll('.review-match.current')) old.classList.remove('current')
-      for (const mark of this.filesEl.querySelectorAll(`.review-match[data-match="${this.current}"]`)) mark.classList.add('current')
+      for (const old of this.filesEl.querySelectorAll('.review-match.current, .review-match-block.current')) old.classList.remove('current')
+      for (const mark of this.filesEl.querySelectorAll(matchSelector(this.current))) mark.classList.add('current')
       this.findCount.textContent = this.counterText()
     }
     this.scrollToCurrent()
   }
 
   private scrollToCurrent(): void {
-    const mark = this.filesEl.querySelector(`.review-match[data-match="${this.current}"]`)
+    const mark = this.filesEl.querySelector(matchSelector(this.current))
     if (!mark) return
     // a path match sits in the sticky, ellipsized file header: bring the file in, not the mark
     if (this.matches[this.current]?.where === 'path') mark.closest('.review-file')?.scrollIntoView({ block: 'nearest' })
@@ -661,7 +690,22 @@ export class ReviewPanel {
       void this.cb.setHideTests(box.checked).then((ok) => { if (!ok) this.render() }, () => this.render())
     })
     hide.append(box, ' Hide tests')
-    this.scopeBar.replaceChildren(...parts, summary, hide)
+    this.scopeBar.replaceChildren(...parts, summary, hide, ...(u.files.some((f) => isMarkdownPath(f.relPath)) ? [this.renderMarkdownBox(u)] : []))
+  }
+
+  /** Render Markdown: shown while the view lists a Markdown file */
+  private renderMarkdownBox(u: ReviewUpdate): HTMLElement {
+    const label = el('label', 'review-render-md')
+    label.title = 'Show Markdown files formatted (review.renderMarkdown)'
+    const box = el('input', '')
+    box.type = 'checkbox'
+    box.checked = u.renderMarkdown
+    box.addEventListener('change', () => {
+      // a refusal (a settings.json that cannot be edited) puts the box back to the saved setting
+      void this.cb.setRenderMarkdown(box.checked).then((ok) => { if (!ok) this.render() }, () => this.render())
+    })
+    label.append(box, ' Render Markdown')
+    return label
   }
 
   private renderOutside(u: ReviewUpdate, s: TabComments, outside: ReviewComment[], draftHere: boolean): void {
@@ -726,7 +770,80 @@ export class ReviewPanel {
       box.append(row)
       return box
     }
-    f.hunks.forEach((h, hi) => box.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt, marks)))
+    const doc = f.markdown && f.hunks.length === 1 ? this.segmentsOf(f.hunks[0]!) : []
+    if (doc.length > 0) box.append(this.renderMarkdown(u, s, f, fi, doc, placed, draftAt, marks))
+    else f.hunks.forEach((h, hi) => box.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt, marks)))
+    return box
+  }
+
+  private segmentsOf(h: ReviewHunk): MdSegment[] {
+    let segs = this.mdSegments.get(h)
+    if (!segs) {
+      segs = markdownSegments(h.lines)
+      this.mdSegments.set(h, segs)
+    }
+    return segs
+  }
+
+  /**
+   * A Markdown file formatted: its blocks, each with a + that comments on its lines, and under each block the comments
+   * and the draft that end in it. A find match marks the block that holds it.
+   */
+  private renderMarkdown(
+    u: ReviewUpdate, s: TabComments, f: ReviewFile, fi: number, segs: MdSegment[], placed: Map<string, ReviewComment[]>, draftAt: Located | null, marks?: FileMarks
+  ): HTMLElement {
+    const h = f.hunks[0]!
+    const under = segs.map((): HTMLElement[] => [])
+    const found = segs.map((): number[] => [])
+    h.lines.forEach((_, li) => {
+      const comments = placed.get(`${fi}:0:${li}`) ?? []
+      const draftHere = s.draft !== null && draftAt !== null && draftAt.file === fi && draftAt.hunk === 0 && draftAt.to === li
+      const lineMarks = marks?.lines.get(`0:${li}`) ?? []
+      if (comments.length === 0 && !draftHere && lineMarks.length === 0) return
+      const at = segmentOf(segs, h.lines, li)
+      for (const c of comments) if (s.draft?.editing !== c.id) under[at]!.push(this.renderComment(s, c))
+      if (draftHere) under[at]!.push(this.renderDraft(u, s))
+      for (const m of lineMarks) found[at]!.push(m.index)
+    })
+    const box = el('div', 'review-md')
+    segs.forEach((seg, k) => {
+      const row = el('div', `md-seg ${seg.kind}${/^<(ul|ol)\b/.test(seg.html) ? ' md-list' : ''}`)
+      row.dataset.file = String(fi)
+      row.dataset.from = String(seg.from)
+      row.dataset.to = String(seg.to)
+      if (found[k]!.length > 0) {
+        row.classList.add('review-match-block')
+        row.classList.toggle('current', found[k]!.includes(this.current))
+        row.dataset.matches = found[k]!.join(' ')
+      }
+      const plus = el('span', 'review-plus md-plus', '+')
+      plus.title = 'Comment'
+      plus.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        this.drag = { file: fi, hunk: 0, start: [seg.from, seg.to], end: [seg.from, seg.to] }
+        this.markDrag()
+      })
+      row.addEventListener('mouseenter', () => {
+        if (this.drag && this.drag.file === fi && this.drag.hunk === 0) {
+          this.drag.end = [seg.from, seg.to]
+          this.markDrag()
+        }
+      })
+      // the HTML is markdown-it's, made with raw HTML off: the file's own markup is text in it
+      const body = el('div', 'md-body')
+      body.innerHTML = seg.html
+      row.append(plus, body)
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault()
+        const at = editorLine(h, seg.from)
+        showMenu({ x: e.clientX, y: e.clientY }, [
+          { label: 'Comment', action: () => this.startDraft(u, f, h, seg.from, seg.to) },
+          { label: `Open in editor at line ${at}`, action: () => this.cb.openEditor(u.tabId, f.path, at) },
+          { label: 'Copy path:line', action: () => this.cb.copyText(location(anchorOf(f, h.lines.slice(seg.from, seg.to + 1), ''))) }
+        ])
+      })
+      box.append(row, ...under[k]!)
+    })
     return box
   }
 
@@ -745,13 +862,13 @@ export class ReviewPanel {
       plus.title = 'Comment'
       plus.addEventListener('mousedown', (e) => {
         e.preventDefault()
-        this.drag = { file: fi, hunk: hi, from: li, to: li }
+        this.drag = { file: fi, hunk: hi, start: [li, li], end: [li, li] }
         this.markDrag()
       })
       gutter.append(plus)
       row.addEventListener('mouseenter', () => {
         if (this.drag && this.drag.file === fi && this.drag.hunk === hi) {
-          this.drag.to = li
+          this.drag.end = [li, li]
           this.markDrag()
         }
       })
@@ -776,10 +893,16 @@ export class ReviewPanel {
 
   private markDrag(): void {
     const d = this.drag
+    const [from, to] = d ? dragRange(d) : [0, -1]
     for (const row of this.filesEl.querySelectorAll<HTMLElement>('.review-line')) {
       const li = Number(row.dataset.line)
-      const on = d !== null && Number(row.dataset.file) === d.file && Number(row.dataset.hunk) === d.hunk && li >= Math.min(d.from, d.to) && li <= Math.max(d.from, d.to)
+      const on = d !== null && Number(row.dataset.file) === d.file && Number(row.dataset.hunk) === d.hunk && li >= from && li <= to
       row.classList.toggle('selected', on)
+    }
+    // a formatted Markdown file has one hunk
+    for (const seg of this.filesEl.querySelectorAll<HTMLElement>('.md-seg')) {
+      const on = d !== null && Number(seg.dataset.file) === d.file && Number(seg.dataset.from) >= from && Number(seg.dataset.to) <= to
+      seg.classList.toggle('selected', on)
     }
   }
 
@@ -790,7 +913,7 @@ export class ReviewPanel {
     const u = this.update
     const f = u?.files[d.file]
     const h = f?.hunks[d.hunk]
-    if (u && f && h) this.startDraft(u, f, h, Math.min(d.from, d.to), Math.max(d.from, d.to))
+    if (u && f && h) this.startDraft(u, f, h, ...dragRange(d))
     else this.markDrag()
   }
 

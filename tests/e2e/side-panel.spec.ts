@@ -150,7 +150,7 @@ test('choosing "Narrow the terminal" in the settings window moves a panel shown 
   await app.close()
 })
 
-test('the expanded Changes panel lies over the terminal, which keeps its size', async () => {
+test('the expanded Changes panel lies over the whole window, and the terminal keeps its size', async () => {
   const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false }, review: { width: 300 } })
   await setWidth(app, page, roomyWidth(await place(app), 300))
   const start = (await place(app)).bounds
@@ -165,8 +165,8 @@ test('the expanded Changes panel lies over the terminal, which keeps its size', 
   await expect(panel(page)).toHaveClass(/expanded/)
   await expect.poll(async () => {
     const l = await layout(page)
-    return { termWidth: l.termWidth, panelWidth: l.panelWidth }
-  }).toEqual({ termWidth: before.termWidth, panelWidth: Math.round((await layout(page)).inner * 0.85) })
+    return { termWidth: l.termWidth, panelLeft: l.panelLeft, panelWidth: l.panelWidth }
+  }).toEqual({ termWidth: before.termWidth, panelLeft: 0, panelWidth: (await layout(page)).inner })
   expect((await place(app)).bounds).toEqual(grown)
   expect(await ptySizes(page)).toEqual(sizes)
   await app.close()

@@ -86,6 +86,8 @@ Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −)
 - **File tree** — the changed files by folder on the left of the diff: click a file to jump to it, type in **Filter files** to show only the files whose path holds the text, and fold or unfold every file at once with ⊟ and ⊞. ☰ hides the tree.
 - **Viewed** folds the files you are done with; a file Claude changes again unfolds.
 - **Hide tests** — the checkbox in the panel leaves test files out of every view and says how many it hid; which files count as tests is a list of patterns in the settings.
+- **Markdown, formatted** — a `.md` file shows as the document it is, headings, lists, tables and code included: new and changed blocks have a green bar, removed ones stay where they were in red. Hover a block and click **+** to comment on it. Untick **Render Markdown** to see Markdown files as plain diffs.
+- **Expand** — ⤢ spreads the panel over the whole window; ⤢ again or `Esc` puts it back.
 - **Find** — `Ctrl+F` finds text in the diff (and in the file names), highlights every match and steps through them with `Enter`.
 - **Ask in words** — "show me the diff of the last three commits, only src/main": Claude opens it in the panel with the bundled `show_diff` tool.
 - Right-click a line to open the file at that line in your editor (VS Code by default, or your own command in `review.editor`), or show it in Explorer from the file's ⋯ menu.
@@ -225,7 +227,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "testPatterns": ["**/tests/**", "*.test.*", "*Test.*"],  // which files are tests, matched against the path in the project (the default list is in the Settings window)
     "width": 640,                  // the panel's width when it opens, in px
     "fileTree": true,              // the file tree on the left of the diff (the ☰ button in the panel)
-    "treeWidth": 200               // the file tree's width in px; dragging its right edge changes it until the next start
+    "treeWidth": 200,              // the file tree's width in px; dragging its right edge changes it until the next start
+    "renderMarkdown": true         // show Markdown files formatted, not as plain diffs (the Render Markdown checkbox in the panel)
   },
   "sidePanel": { "noRoom": "overlay" },  // a maximized window, or one with no room to widen for Media or Changes: "overlay" lays the panel over the terminal, "narrow" narrows the terminal
   "autoUpdate": true               // check GitHub for new versions in the background

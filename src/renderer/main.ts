@@ -516,6 +516,17 @@ async function boot(): Promise<void> {
     () => settings.imagePanel.autoOpen
   )
   toggleImagePanel = () => imagePanel.toggle()
+  /** a checkbox of the Changes panel saves its setting; resolves to whether it was saved */
+  const saveReviewBox = async (key: 'review.hideTests' | 'review.renderMarkdown', on: boolean): Promise<boolean> => {
+    try {
+      const r = await ct.setSetting(key, on)
+      if (!r.ok) showToast(r.error)
+      return r.ok
+    } catch (e) {
+      showToast(`Cannot save ${key}: ${String(e)}`)
+      return false
+    }
+  }
   reviewPanel = new ReviewPanel(
     sidePanel.bodies.changes,
     sidePanel,
@@ -528,16 +539,9 @@ async function boot(): Promise<void> {
       openEditor: (id, path, line) => ct.openInEditor(id, path, line),
       reveal: (id, path) => ct.revealFile(id, path),
       copyText: (text) => ct.writeClipboardText(text),
-      setHideTests: async (on) => {
-        try {
-          const r = await ct.setSetting('review.hideTests', on)
-          if (!r.ok) showToast(r.error)
-          return r.ok
-        } catch (e) {
-          showToast(`Cannot save review.hideTests: ${String(e)}`)
-          return false
-        }
-      },
+      openLink: (url) => ct.openExternal(url),
+      setHideTests: (on) => saveReviewBox('review.hideTests', on),
+      setRenderMarkdown: (on) => saveReviewBox('review.renderMarkdown', on),
       setFileTree: (on) => {
         ct.setSetting('review.fileTree', on).then((r) => { if (!r.ok) showToast(r.error) }, (e: unknown) => showToast(`Cannot save review.fileTree: ${String(e)}`))
       },

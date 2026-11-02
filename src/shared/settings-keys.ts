@@ -25,7 +25,7 @@ export type SettingKey =
   | 'claude.continueAfterRestore'
   | 'imageWatch.enabled' | 'imagePanel.autoOpen' | 'autoUpdate'
   | 'review.editor' | 'review.statusBar' | 'review.hideIgnored' | 'review.hideTests' | 'review.testPatterns' | 'review.fileTree'
-  | 'sidePanel.noRoom'
+  | 'review.renderMarkdown' | 'sidePanel.noRoom'
 
 export type SettingValue = string | number | boolean | null | string[]
 
@@ -35,7 +35,7 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'font.family', 'font.size', 'theme', 'scrollback',
   'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.autoContinue',
   'claude.continueAfterRestore',
-  'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'sidePanel.noRoom', 'autoUpdate'
+  'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'review.renderMarkdown', 'sidePanel.noRoom', 'autoUpdate'
 ]
 
 export const isSettingKey = (v: unknown): v is SettingKey => typeof v === 'string' && (SETTING_KEYS as readonly string[]).includes(v)

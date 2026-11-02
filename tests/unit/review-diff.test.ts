@@ -124,4 +124,48 @@ describe('buildFiles', () => {
     await built
     expect(order).toEqual(['immediate', 'built'])
   })
+
+  it('passes review.renderMarkdown on to every file', async () => {
+    const md = input(text('a\n'), text('b\n'), { path: '/r/a.md', relPath: 'a.md' })
+    expect((await buildFiles([md], Date.now, true)).files[0]!.markdown).toBe(true)
+    expect((await buildFiles([md])).files[0]!.markdown).toBe(false)
+  })
+})
+
+describe('Markdown files shown formatted', () => {
+  const side = (s: string | null): Side => (s === null ? { kind: 'absent' } : text(s))
+  const md = (before: string | null, after: string | null, relPath = 'docs/a.md'): DiffInput => input(side(before), side(after), { path: `/r/${relPath}`, relPath })
+  const doc = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`)
+  const before = `${doc.join('\n')}\n`
+  const after = `${doc.map((l, i) => (i === 10 ? 'changed' : l)).join('\n')}\n`
+
+  it('holds the whole file in one hunk, so that the panel can format the document', () => {
+    const f = buildFile(md(before, after), false, true)!
+    expect(f.markdown).toBe(true)
+    expect(f.hunks).toHaveLength(1)
+    expect(f.hunks[0]!.header).toBe('@@ -1,20 +1,20 @@')
+    expect(f.hunks[0]!.lines.filter((l) => l.kind !== 'del').map((l) => l.text)).toEqual(after.trimEnd().split('\n'))
+    expect(f.hunks[0]!.lines.filter((l) => l.kind !== 'add').map((l) => l.text)).toEqual(before.trimEnd().split('\n'))
+    expect(f).toMatchObject({ additions: 1, deletions: 1 })
+  })
+
+  it('keeps three lines of context with the setting off, and for other files', () => {
+    for (const f of [buildFile(md(before, after))!, buildFile(md(before, after, 'src/a.ts'), false, true)!]) {
+      expect(f.markdown).toBe(false)
+      expect(f.hunks[0]!.lines).toHaveLength(8)
+    }
+  })
+
+  it('tells Markdown by the .md and .markdown extensions, in any case', () => {
+    const is = (relPath: string): boolean => buildFile(md(before, after, relPath), false, true)!.markdown
+    expect(['README.MD', 'notes.markdown', 'docs/spec.Md'].map(is)).toEqual([true, true, true])
+    expect(['a.mdx', 'md', 'a.md.txt', 'docs.md/a.ts'].map(is)).toEqual([false, false, false, false])
+  })
+
+  it('formats an added file, and leaves a deleted one and a row without hunks as they are', () => {
+    expect(buildFile(md(null, 'a\n'), false, true)).toMatchObject({ status: 'added', markdown: true })
+    expect(buildFile(md('a\n', null), false, true)).toMatchObject({ status: 'deleted', markdown: false })
+    expect(buildFile(md('a\r\n', 'a\n'), false, true)).toMatchObject({ note: 'eol-only', markdown: false })
+    expect(buildFile(md(null, ''), false, true)).toMatchObject({ hunks: [], markdown: false })
+  })
 })

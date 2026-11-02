@@ -125,8 +125,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .review-add { color: #7ee2a8; }
 .review-del { color: #ff9b94; }
 .review-ignored, .review-hidden-outside, .review-tests-hidden { opacity: 0.65; }
-.review-hide-tests { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; white-space: nowrap; cursor: pointer; }
-.review-hide-tests input { margin: 0; accent-color: var(--accent); }
+.review-hide-tests, .review-render-md { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; white-space: nowrap; cursor: pointer; }
+.review-hide-tests input, .review-render-md input { margin: 0; accent-color: var(--accent); }
 .review-outside { padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .review-outside[hidden] { display: none; }
 .review-outside-title { margin-bottom: 4px; color: var(--muted); font-size: 12px; }
@@ -165,6 +165,43 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .review-plus { position: absolute; left: 2px; top: 2px; width: 15px; height: 15px; border-radius: 3px; background: var(--accent); color: #111; font: bold 12px/15px sans-serif; text-align: center; cursor: pointer; visibility: hidden; }
 .review-line:hover .review-plus { visibility: visible; }
 .review-code { padding: 0 8px 0 6px; }
+/* A Markdown file formatted: a new or changed block has a green bar, a removed one is red and struck through. */
+.review-md { padding: 6px 0 10px; font: 13px/1.55 "Segoe UI", system-ui, sans-serif; color: var(--fg); }
+.md-seg { position: relative; padding: 3px 16px 3px 28px; border-left: 3px solid transparent; }
+.md-seg.md-list { padding-top: 0; padding-bottom: 0; }
+.md-seg.added { border-left-color: #2ea043; background: rgba(46, 160, 67, 0.09); }
+.md-seg.removed { border-left-color: #f85149; background: rgba(248, 81, 73, 0.09); }
+.md-seg.removed .md-body { opacity: 0.75; text-decoration: line-through; text-decoration-color: rgba(255, 155, 148, 0.7); }
+.md-seg.selected { border-left-color: var(--accent); background: rgba(217, 119, 87, 0.12); }
+.md-seg.review-match-block { box-shadow: inset 0 0 0 1px rgba(229, 192, 123, 0.45); }
+.md-seg.review-match-block.current { box-shadow: inset 0 0 0 2px #e5c07b; }
+.md-plus { left: 6px; top: 5px; }
+.md-seg:hover .md-plus { visibility: visible; }
+.md-body { overflow-wrap: anywhere; }
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 { margin: 10px 0 4px; line-height: 1.25; font-weight: 600; }
+.md-body h1 { font-size: 1.6em; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.md-body h2 { font-size: 1.3em; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+.md-body h3 { font-size: 1.12em; }
+.md-body h4, .md-body h5 { font-size: 1em; }
+.md-body h6 { font-size: 0.9em; color: var(--muted); }
+.md-body p { margin: 4px 0; }
+.md-body ul, .md-body ol { margin: 0; padding-left: 24px; }
+.md-body li > p { margin: 2px 0; }
+.md-body li.md-task-item { list-style: none; }
+.md-task { margin: 0 4px 0 -18px; vertical-align: -1px; accent-color: var(--accent); }
+.md-body blockquote { margin: 4px 0; padding: 0 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.md-body code { padding: 1px 4px; border-radius: 3px; background: #ffffff14; font: 0.92em Consolas, "Cascadia Mono", monospace; }
+.md-body pre { margin: 4px 0; padding: 8px 10px; overflow-x: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; }
+.md-body pre code { padding: 0; background: none; font-size: 12px; line-height: 1.5; }
+.md-body table { display: block; max-width: 100%; overflow-x: auto; margin: 4px 0; border-collapse: collapse; }
+.md-body th, .md-body td { padding: 3px 8px; border: 1px solid var(--border); }
+.md-body th { background: var(--chrome-2); font-weight: 600; }
+.md-body hr { margin: 8px 0; border: 0; border-top: 1px solid var(--border); }
+.md-body a { color: #6cb6ff; text-decoration: none; }
+.md-body a:hover { text-decoration: underline; }
+.md-image { display: inline-block; padding: 0 5px; border: 1px dashed var(--border); border-radius: 3px; color: var(--muted); font-size: 0.9em; }
 .panel-body:focus, .review-files:focus { outline: none; }
 .review-find { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .review-find[hidden] { display: none; }

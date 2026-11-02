@@ -18,7 +18,10 @@ const input = (rel: string, before: string | null, after: string | null): DiffIn
 })
 const result = (...inputs: DiffInput[]): Inputs => ({ inputs, tooMany: false })
 
-function setup(o: Partial<ReviewSources> = {}, active: string | null = TAB, now?: () => number, hideIgnored = false, testPatterns: string[] | null | (() => string[] | null) = null) {
+function setup(
+  o: Partial<ReviewSources> = {}, active: string | null = TAB, now?: () => number, hideIgnored = false, testPatterns: string[] | null | (() => string[] | null) = null,
+  renderMarkdown: boolean | (() => boolean) = false
+) {
   const published: ReviewUpdate[] = []
   const errors: string[] = []
   const git = vi.fn(async () => result(input('a.ts', 'a\n', 'b\n')))
@@ -47,6 +50,7 @@ function setup(o: Partial<ReviewSources> = {}, active: string | null = TAB, now?
     onError: (m) => errors.push(m),
     hideIgnored: () => hideIgnored,
     testPatterns: () => (typeof testPatterns === 'function' ? testPatterns() : testPatterns),
+    renderMarkdown: () => (typeof renderMarkdown === 'function' ? renderMarkdown() : renderMarkdown),
     now
   })
   hub.addTab(TAB, ROOT, true)
@@ -900,5 +904,26 @@ describe('ReviewHub hide tests, edge cases', () => {
     release()
     await vi.advanceTimersByTimeAsync(0)
     expect(published[0]).toMatchObject({ hideTests: true, testsHidden: 1 })
+  })
+})
+
+describe('ReviewHub and review.renderMarkdown', () => {
+  const git = (): Partial<ReviewSources> => ({ git: vi.fn(async () => result(input('docs/a.md', '# A\n\none\n', '# A\n\ntwo\n'), input('a.ts', 'a\n', 'b\n'))) })
+
+  it('a view says whether the setting is on, and gives its Markdown files whole, to be formatted', async () => {
+    const { hub, last } = setup(git(), TAB, undefined, false, null, true)
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last().renderMarkdown).toBe(true)
+    expect(last().files.map((f) => [f.relPath, f.markdown])).toEqual([['docs/a.md', true], ['a.ts', false]])
+    expect(last().files[0]!.hunks[0]!.lines.map((l) => l.text)).toEqual(['# A', '', 'one', 'two'])
+  })
+
+  it('with the setting off, the Markdown files are plain diffs', async () => {
+    const { hub, last } = setup(git(), TAB, undefined, false, null, false)
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(last().renderMarkdown).toBe(false)
+    expect(last().files.map((f) => f.markdown)).toEqual([false, false])
   })
 })

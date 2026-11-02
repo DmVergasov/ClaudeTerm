@@ -28,6 +28,8 @@ export interface ReviewHubDeps {
   hideIgnored(): boolean
   /** review.hideTests: the patterns of the files every view leaves out; null while the setting is off */
   testPatterns(): string[] | null
+  /** review.renderMarkdown: Markdown files come whole, for the panel to format */
+  renderMarkdown(): boolean
   debounceMs?: number
   /** the clock of a view's diff time limit; Date.now when absent */
   now?(): number
@@ -392,8 +394,9 @@ export class ReviewHub {
     const forced = (p: string): boolean => forcedKeys.has(pathKey(p))
     // the setting is read once: the view and what it says about the setting agree
     const patterns = this.d.testPatterns()
+    const markdown = this.d.renderMarkdown()
     const view = await this.inputs(t, request, scope, root, problem, base, forced, patterns)
-    const { files, tooMany } = await buildFiles(view.inputs, this.d.now)
+    const { files, tooMany } = await buildFiles(view.inputs, this.d.now, markdown)
     // the status bar counts all the changes: a view that left test files out cannot give the counter
     const own = !request && scope === (root ? 'uncommitted' : 'session') && view.tests.length === 0
     const update: ReviewUpdate = {
@@ -407,6 +410,7 @@ export class ReviewHub {
       unviewed: files.length,
       ignored: view.ignored,
       hideTests: patterns !== null,
+      renderMarkdown: markdown,
       testsHidden: view.tests.length,
       testsSample: [...view.tests].sort().slice(0, TESTS_SAMPLE),
       outside: view.outside,

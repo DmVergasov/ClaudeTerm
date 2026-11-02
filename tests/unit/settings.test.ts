@@ -310,20 +310,20 @@ describe('applySettingEdit', () => {
 })
 
 describe('review settings', () => {
-  const defaults = { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200 }
+  const defaults = { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200, renderMarkdown: true }
 
-  it('defaults: no editor, the counter on, 640 px, ignored files hidden, tests shown, the default test patterns, the file tree shown 200 px wide', () => {
+  it('defaults: no editor, the counter on, 640 px, ignored files hidden, tests shown, the default test patterns, the file tree shown 200 px wide, Markdown formatted', () => {
     expect(parseSettings('{}').settings.review).toEqual(defaults)
     expect(defaults.testPatterns).toContain('**/tests/**')
     expect(defaults.testPatterns).toContain('*Test.*')
   })
 
   it('takes valid values and reports invalid ones', () => {
-    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false, treeWidth: 320 } })).settings.review)
-      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false, treeWidth: 320 })
-    const bad = parseSettings(JSON.stringify({ review: { editor: 5, hideIgnored: 'yes', width: 10, fileTree: 'no', treeWidth: 50 } }))
+    expect(parseSettings(JSON.stringify({ review: { editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false, treeWidth: 320, renderMarkdown: false } })).settings.review)
+      .toEqual({ editor: 'code --goto {file}:{line}', statusBar: false, hideIgnored: false, hideTests: true, testPatterns: ['a/**', '*.t'], width: 900, fileTree: false, treeWidth: 320, renderMarkdown: false })
+    const bad = parseSettings(JSON.stringify({ review: { editor: 5, hideIgnored: 'yes', width: 10, fileTree: 'no', treeWidth: 50, renderMarkdown: 'yes' } }))
     expect(bad.settings.review).toEqual(defaults)
-    expect(bad.errors).toEqual(['settings.json: invalid value for "review.editor", using default', 'settings.json: invalid value for "review.hideIgnored", using default', 'settings.json: invalid value for "review.width", using default', 'settings.json: invalid value for "review.fileTree", using default', 'settings.json: invalid value for "review.treeWidth", using default'])
+    expect(bad.errors).toEqual(['settings.json: invalid value for "review.editor", using default', 'settings.json: invalid value for "review.hideIgnored", using default', 'settings.json: invalid value for "review.width", using default', 'settings.json: invalid value for "review.fileTree", using default', 'settings.json: invalid value for "review.treeWidth", using default', 'settings.json: invalid value for "review.renderMarkdown", using default'])
     expect(defaults.treeWidth).toBe(200)
   })
 
@@ -346,6 +346,12 @@ describe('review settings', () => {
     const off = applySettingEdit('{}', 'review.fileTree', false)
     expect(off.ok && JSON.parse(off.text)).toEqual({ review: { fileTree: false } })
     expect(applySettingEdit('{}', 'review.fileTree', 'no')).toEqual({ ok: false, error: 'Invalid value for review.fileTree' })
+  })
+
+  it('the Changes panel and the settings window save review.renderMarkdown, a boolean', () => {
+    const off = applySettingEdit('{}', 'review.renderMarkdown', false)
+    expect(off.ok && JSON.parse(off.text)).toEqual({ review: { renderMarkdown: false } })
+    expect(applySettingEdit('{}', 'review.renderMarkdown', 'no')).toEqual({ ok: false, error: 'Invalid value for review.renderMarkdown' })
   })
 
   it('the settings window can edit both keys', () => {

@@ -415,6 +415,18 @@ test('Hide test files and the Test files field save to settings.json; Restore de
   await app.close()
 })
 
+test('Show Markdown files formatted is on by default and saves to settings.json', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  const render = win.locator('[data-key="review.renderMarkdown"]')
+  await expect(win.locator('label', { has: render })).toContainText('Show Markdown files formatted')
+  await expect(render).toBeChecked()
+  await render.uncheck()
+  await expect.poll(() => readSettings(dataDir).review?.renderMarkdown).toBe(false)
+  await app.close()
+})
+
 test('the Test files field refuses more than 200 patterns and keeps the saved list', async () => {
   const { app, page, dataDir } = await launchApp({ settings: { ...QUIET, review: { testPatterns: ['keep/**'] } } })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)

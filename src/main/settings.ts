@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS: Settings = {
     done: { sound: true, flash: true, tab: true, front: false },
     bell: { sound: false, flash: true, tab: true, front: false }
   },
-  review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200 },
+  review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200, renderMarkdown: true },
   sidePanel: { noRoom: 'overlay' },
   autoUpdate: true
 }
@@ -149,7 +149,8 @@ export function parseSettings(text: string | null): ParsedSettings {
       testPatterns: take('review.testPatterns', rv.testPatterns, isTestPatterns, d.review.testPatterns),
       width: take('review.width', rv.width, numIn(240, 4000), d.review.width),
       fileTree: take('review.fileTree', rv.fileTree, isBool, d.review.fileTree),
-      treeWidth: take('review.treeWidth', rv.treeWidth, numIn(120, 2000), d.review.treeWidth)
+      treeWidth: take('review.treeWidth', rv.treeWidth, numIn(120, 2000), d.review.treeWidth),
+      renderMarkdown: take('review.renderMarkdown', rv.renderMarkdown, isBool, d.review.renderMarkdown)
     },
     sidePanel: { noRoom: take('sidePanel.noRoom', sp.noRoom, isNoRoom, d.sidePanel.noRoom) },
     autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)

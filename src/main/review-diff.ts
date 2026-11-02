@@ -1,5 +1,5 @@
 import { structuredPatch } from 'diff'
-import type { ReviewFile, ReviewFileStatus, ReviewHunk, ReviewLine } from '../shared/review'
+import { isMarkdownPath, type ReviewFile, type ReviewFileStatus, type ReviewHunk, type ReviewLine } from '../shared/review'
 import { contentSha, isBinary } from './edit-ledger'
 
 /** a side larger than this shows "too large" */
@@ -47,9 +47,9 @@ export const normalizeEol = (s: string): string => s.replace(/\r\n/g, '\n')
 const hashOf = (s: Side): string =>
   s.kind === 'data' ? contentSha(s.data) : s.kind === 'too-large' ? `too-large:${s.size}` : s.kind === 'binary' && s.id ? `binary:${s.id}` : s.kind
 
-/** the hunks; null when the diff took longer than `timeoutMs` and gave up */
-export function toHunks(before: string, after: string, timeoutMs: number): { hunks: ReviewHunk[]; additions: number; deletions: number } | null {
-  const patch = structuredPatch('a', 'b', before, after, '', '', { context: 3, timeout: timeoutMs })
+/** the hunks; null when the diff took longer than `timeoutMs` and gave up. `whole`: one hunk holds every line of both sides */
+export function toHunks(before: string, after: string, timeoutMs: number, whole = false): { hunks: ReviewHunk[]; additions: number; deletions: number } | null {
+  const patch = structuredPatch('a', 'b', before, after, '', '', { context: whole ? Number.MAX_SAFE_INTEGER : 3, timeout: timeoutMs })
   if (!patch) return null
   let additions = 0
   let deletions = 0
@@ -75,13 +75,17 @@ export function toHunks(before: string, after: string, timeoutMs: number): { hun
   return { hunks, additions, deletions }
 }
 
-/** The review entry for one file; null when there is nothing to show (both sides the same, or absent). `skip`: list it without diffing. */
-export function buildFile(input: DiffInput, skip = false): ReviewFile | null {
+/**
+ * The review entry for one file; null when there is nothing to show (both sides the same, or absent). `skip`: list it without diffing.
+ * `markdown` (review.renderMarkdown): a Markdown file that is not deleted comes whole, in one hunk, for the panel to format.
+ */
+export function buildFile(input: DiffInput, skip = false, markdown = false): ReviewFile | null {
   const { before, after } = input
   if (before.kind === 'absent' && after.kind === 'absent') return null
   const status: ReviewFileStatus = input.status ?? (before.kind === 'absent' ? 'added' : after.kind === 'absent' ? 'deleted' : 'modified')
   const file: ReviewFile = {
-    path: input.path, relPath: input.relPath, status, additions: 0, deletions: 0, hunks: [], note: null, canForce: false, hash: hashOf(after), viewed: false
+    path: input.path, relPath: input.relPath, status, additions: 0, deletions: 0, hunks: [], note: null, canForce: false, hash: hashOf(after), viewed: false,
+    markdown: false
   }
   const kinds = [before.kind, after.kind]
   if (skip || kinds.includes('skipped')) return { ...file, note: 'too-many' }
@@ -99,17 +103,18 @@ export function buildFile(input: DiffInput, skip = false): ReviewFile | null {
   const bt = normalizeEol(b.toString('utf8'))
   const at = normalizeEol(a.toString('utf8'))
   if (status === 'modified' && bt === at) return b.equals(a) ? null : { ...file, note: 'eol-only' }
-  const diff = toHunks(bt, at, input.forced ? FORCED_DIFF_TIMEOUT_MS : DIFF_TIMEOUT_MS)
+  const whole = markdown && status !== 'deleted' && isMarkdownPath(input.relPath)
+  const diff = toHunks(bt, at, input.forced ? FORCED_DIFF_TIMEOUT_MS : DIFF_TIMEOUT_MS, whole)
   // too slow to diff: shown like a too large file, and "show anyway" gives it longer
   if (!diff) return { ...file, note: 'too-large', canForce: !input.forced && b.length <= MAX_FORCED_BYTES && a.length <= MAX_FORCED_BYTES }
-  return { ...file, ...diff }
+  return { ...file, ...diff, markdown: whole && diff.hunks.length > 0 }
 }
 
 /**
  * A view's files. It yields to the event loop between files, so pipe messages (an edit waiting for its baseline)
  * and IPC are served during a long build; after VIEW_DIFF_MS of diffing the files left are listed without hunks.
  */
-export async function buildFiles(inputs: DiffInput[], now: () => number = Date.now): Promise<{ files: ReviewFile[]; tooMany: boolean }> {
+export async function buildFiles(inputs: DiffInput[], now: () => number = Date.now, markdown = false): Promise<{ files: ReviewFile[]; tooMany: boolean }> {
   const files: ReviewFile[] = []
   let spent = 0
   let tooMany = false
@@ -117,7 +122,7 @@ export async function buildFiles(inputs: DiffInput[], now: () => number = Date.n
     if (i > 0) await new Promise<void>((r) => setImmediate(r))
     tooMany ||= spent >= VIEW_DIFF_MS
     const start = now()
-    const f = buildFile(input, tooMany)
+    const f = buildFile(input, tooMany, markdown)
     spent += now() - start
     if (f) files.push(f)
   }
