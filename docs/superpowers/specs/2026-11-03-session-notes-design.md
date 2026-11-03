@@ -1,7 +1,7 @@
 # Session notes — design
 
 Date: 2026-11-03
-Status: agreed in chat, waiting for the user to review this document
+Status: approved by the user; built on the branch feat/session-notes
 
 ## Goal
 
@@ -61,6 +61,8 @@ prototype behaved.)*
 - They sit at the top right of the part of the terminal that is visible: when the side panel lies over the terminal
   (overlay mode), they sit left of it; the expanded side panel lies over the whole window and covers them. The find
   box (Ctrl+Shift+F) draws over them. *(Claude's call.)*
+- Showing the note while the Changes panel is expanded over the whole window brings the panel back to its normal
+  width first, so the note is never shown, or typed into, unseen. *(The user's decision.)*
 - The terminal keeps its size when a note is shown, hidden, collapsed or opened: Claude Code does not redraw.
 
 ### Writing
@@ -114,6 +116,10 @@ The user chose: **the note lives in the tab, and when the tab is closed it stays
 - The file is untrusted on read: keys must be session ids (`isUuid`), `text` a string of at most 100 000
   characters *(Claude's call)*, `shown` a boolean, `form` one of the two values; anything else is dropped.
 - An entry with empty text is not stored.
+- A `session-notes.json` that exists but cannot be read or is not valid notes is never overwritten: the user chose
+  that it is moved aside to `session-notes.json.corrupt-<timestamp>` when the app starts, the notes start empty, and a
+  toast says so once. If it cannot be moved either, nothing is written to it for the rest of the run and the toast
+  says notes are not being saved. *(The fallback for a file that cannot be moved is Claude's call.)*
 - Saving while the user types is debounced (like `SessionStore.scheduleSave`), and flushed when the app quits.
 
 ### The tab's note
@@ -128,6 +134,12 @@ The user chose: **the note lives in the tab, and when the tab is closed it stays
   - the new id has a stored note → the tab's note stays stored under the old id, and the tab shows the new id's
     note, in that note's state (a tab without an old id merges instead, as above).
   The rule depends only on whether the new id has a stored note, not on the hook's `source`.
+- Edits the renderer sent before it learned that the tab's note was replaced (a keystroke in flight while main gives
+  the tab another conversation's note) must not land on the new note. The user chose: main numbers the notes it
+  gives a tab, every edit carries the number of the note it was typed against, and an edit typed against an older
+  note goes where that note lives — the conversation the tab left. When the older note had no conversation (the
+  merge above), the edit replaces the tab's part of the merged note. *(Dropping a stale change of the shown/form
+  state, which is no text, is Claude's call.)*
 - Closing the tab leaves the stored entry under its last id as it is.
 - Two tabs in one conversation is not a state the app sets up (Recent sessions activates the open tab instead); if
   it happens anyway, the last edit wins. *(Claude's call.)*
