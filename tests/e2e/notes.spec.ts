@@ -16,11 +16,11 @@ async function closeWindow(app: ElectronApplication): Promise<void> {
 }
 
 const record = (page: Page) => page.evaluate(() => {
-  const w = window as unknown as { notes: [string, Note | null][] }
+  const w = window as unknown as { notes: [string, Note | null, number][] }
   w.notes = []
-  window.ct.onNote((id, n) => { w.notes.push([id, n]) })
+  window.ct.onNote((id, n, generation) => { w.notes.push([id, n, generation]) })
 })
-const recorded = (page: Page) => page.evaluate(() => (window as unknown as { notes: [string, Note | null][] }).notes)
+const recorded = (page: Page) => page.evaluate(() => (window as unknown as { notes: [string, Note | null, number][] }).notes)
 const notesFile = (dataDir: string) => JSON.parse(readFileSync(join(dataDir, 'session-notes.json'), 'utf8')) as Record<string, Note>
 /** a round trip to main: what the page sent before has been handled when it answers */
 const synced = (page: Page) => page.evaluate(() => window.ct.getStarredSessions())
@@ -34,8 +34,8 @@ test('a note written in a Claude tab is kept with its conversation, even when th
   const { app, page, tabId, dataDir, pipeName } = await launchClaudeTab()
   expect(await session(pipeName, tabId, SID_A, 'startup')).toEqual({ ok: true })
   await page.evaluate((id) => {
-    window.ct.setNoteText(id, 'Goal: payments')
-    window.ct.setNoteView(id, true, 'label')
+    window.ct.setNoteText(id, 'Goal: payments', 0)
+    window.ct.setNoteView(id, true, 'label', 0)
   }, tabId)
   await closeWindow(app)
   expect(notesFile(dataDir)).toEqual({ [SID_A]: { text: 'Goal: payments', shown: true, form: 'label' } })
@@ -52,7 +52,7 @@ test('Restore gives a restored tab the note of its conversation', async () => {
   await page.locator('.banner-restore').click()
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const restored = (await page.evaluate(() => window.__ct!.activeTabId()))!
-  await expect.poll(() => recorded(page)).toEqual([[restored, alpha]])
+  await expect.poll(() => recorded(page)).toEqual([[restored, alpha, 1]])
   await app.close()
 })
 
@@ -64,7 +64,7 @@ test("a closed tab's note comes back when Recent sessions reopens its conversati
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
   expect(await session(pipeName, tabId, SID_A, 'startup')).toEqual({ ok: true })
-  await page.evaluate((id) => window.ct.setNoteText(id, 'kept'), tabId)
+  await page.evaluate((id) => window.ct.setNoteText(id, 'kept', 0), tabId)
   await page.locator('.tab-new').click()
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   await page.evaluate((id) => window.ct.closeTab(id), tabId)
@@ -80,7 +80,7 @@ test("a closed tab's note comes back when Recent sessions reopens its conversati
 test('/clear: the tab keeps its note, now under the new conversation', async () => {
   const { app, page, tabId, dataDir, pipeName } = await launchClaudeTab()
   expect(await session(pipeName, tabId, SID_A, 'startup')).toEqual({ ok: true })
-  await page.evaluate((id) => window.ct.setNoteText(id, 'mine'), tabId)
+  await page.evaluate((id) => window.ct.setNoteText(id, 'mine', 0), tabId)
   await synced(page)
   await record(page)
   expect(await session(pipeName, tabId, SID_B, 'clear')).toEqual({ ok: true })
@@ -98,15 +98,38 @@ test('/resume into a conversation with a note: the tab shows that note, the one 
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
   expect(await session(pipeName, tabId, SID_B, 'startup')).toEqual({ ok: true })
-  await page.evaluate((id) => window.ct.setNoteText(id, 'beta'), tabId)
+  await page.evaluate((id) => window.ct.setNoteText(id, 'beta', 0), tabId)
   await synced(page)
   await record(page)
   expect(await session(pipeName, tabId, SID_A, 'resume')).toEqual({ ok: true })
-  await expect.poll(() => recorded(page)).toEqual([[tabId, alpha]])
+  await expect.poll(() => recorded(page)).toEqual([[tabId, alpha, 1]])
   await closeWindow(app)
   const saved = notesFile(dataDir)
   expect(saved[SID_A]).toEqual(alpha)
   expect(saved[SID_B]?.text).toBe('beta')
+})
+
+test('text typed against the note the tab had before /resume goes to the conversation it left, not to the note that came', async () => {
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  writeFileSync(join(dataDir, 'session-notes.json'), JSON.stringify({ [SID_A]: alpha }))
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { app, page, pipeName } = await launchApp({ dataDir, args: ['--claude', work] })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  expect(await session(pipeName, tabId, SID_B, 'startup')).toEqual({ ok: true })
+  await page.evaluate((id) => window.ct.setNoteText(id, 'b', 0), tabId)
+  await synced(page)
+  await record(page)
+  expect(await session(pipeName, tabId, SID_A, 'resume')).toEqual({ ok: true })
+  await expect.poll(() => recorded(page)).toEqual([[tabId, alpha, 1]])
+  // typed before the window learned of A's note
+  await page.evaluate((id) => window.ct.setNoteText(id, 'beta', 0), tabId)
+  await page.evaluate((id) => window.ct.setNoteView(id, false, 'label', 0), tabId)
+  await synced(page)
+  await closeWindow(app)
+  const saved = notesFile(dataDir)
+  expect(saved[SID_A]).toEqual(alpha)
+  expect(saved[SID_B]).toEqual({ text: 'beta', shown: false, form: 'card' })
 })
 
 test('a notes file that cannot be read is kept aside, and the window says so', async () => {
@@ -123,7 +146,7 @@ test('what is sent for a shell tab is not kept', async () => {
   const { app, page, dataDir } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
-  await page.evaluate((id) => window.ct.setNoteText(id, 'x'), tabId)
+  await page.evaluate((id) => window.ct.setNoteText(id, 'x', 0), tabId)
   await synced(page)
   await closeWindow(app)
   expect(existsSync(join(dataDir, 'session-notes.json'))).toBe(false)

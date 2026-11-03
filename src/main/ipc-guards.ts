@@ -33,6 +33,9 @@ export const isNoteText = (v: unknown): v is string => typeof v === 'string' && 
 
 export const isNoteForm = (v: unknown): v is NoteForm => typeof v === 'string' && (NOTE_FORMS as readonly string[]).includes(v)
 
+/** the number of a tab's note an edit was typed against */
+export const isGeneration = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
+
 export const isAbsPath = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && isAbsolute(v)
 
 export const isLineNo = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10_000_000

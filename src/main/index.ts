@@ -17,7 +17,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -161,7 +161,7 @@ function bootstrap(): void {
   const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
   const starred = new StarredSessions(dataDir, toast)
   const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
-  const noteHub = new NoteHub({ store: notes, publish: (tabId, note) => send(IPC.evNote, tabId, note) })
+  const noteHub = new NoteHub({ store: notes, publish: (tabId, note, generation) => send(IPC.evNote, tabId, note, generation) })
   const accounts = new AccountStore(nodeAccountFile(join(dataDir, 'accounts.json')), electronVault(safeStorage, process.platform), { onError: (m) => log.warn(m) })
   /** how a message names an account */
   const accountName = (id: string): string => {
@@ -666,8 +666,12 @@ function bootstrap(): void {
   ipcMain.handle(IPC.sessionsStar, (_e, id: unknown, on: unknown): void => {
     if (isSessionId(id) && isFlag(on)) starred.set(id, on)
   })
-  ipcMain.on(IPC.notesSetText, (_e, id: unknown, text: unknown) => { if (isId(id) && isNoteText(text)) noteHub.setText(id, text) })
-  ipcMain.on(IPC.notesSetView, (_e, id: unknown, shown: unknown, form: unknown) => { if (isId(id) && isFlag(shown) && isNoteForm(form)) noteHub.setView(id, shown, form) })
+  ipcMain.on(IPC.notesSetText, (_e, id: unknown, text: unknown, generation: unknown) => {
+    if (isId(id) && isNoteText(text) && isGeneration(generation)) noteHub.setText(id, text, generation)
+  })
+  ipcMain.on(IPC.notesSetView, (_e, id: unknown, shown: unknown, form: unknown, generation: unknown) => {
+    if (isId(id) && isFlag(shown) && isNoteForm(form) && isGeneration(generation)) noteHub.setView(id, shown, form, generation)
+  })
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
   ipcMain.on(IPC.sessionsOpen, (_e, id: unknown) => {
     const s = isId(id) ? listedSessions.get(id) : undefined

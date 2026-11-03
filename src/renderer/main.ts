@@ -444,8 +444,8 @@ async function boot(): Promise<void> {
     }
   }, ct.platform)
   noteOverlay = new NoteOverlay(document.getElementById('note')!, {
-    setText: (id, text) => ct.setNoteText(id, text),
-    setView: (id, shown, form) => ct.setNoteView(id, shown, form),
+    setText: (id, text, generation) => ct.setNoteText(id, text, generation),
+    setView: (id, shown, form, generation) => ct.setNoteView(id, shown, form, generation),
     focusTerminal: () => { if (activeId) tabs.get(activeId)?.view.term.focus() },
     changed: () => renderTabs()
   }, ct.platform)
@@ -594,8 +594,8 @@ async function boot(): Promise<void> {
     refreshPanelButtons()
   })
   // a stored note comes to a tab with its conversation: Restore, Recent sessions, /resume
-  ct.onNote((id, note) => {
-    noteOverlay.set(id, note)
+  ct.onNote((id, note, generation) => {
+    noteOverlay.set(id, note, generation)
     renderTabs()
   })
   ct.onTabOpened(addTab)

@@ -8,8 +8,9 @@ export function noteIcon(size: number): string {
 }
 
 export interface NoteOverlayCallbacks {
-  setText(tabId: string, text: string): void
-  setView(tabId: string, shown: boolean, form: NoteForm): void
+  /** `generation`: the number of the note it was typed against, as main gave it */
+  setText(tabId: string, text: string, generation: number): void
+  setView(tabId: string, shown: boolean, form: NoteForm, generation: number): void
   focusTerminal(): void
   /** a note got or lost its text, or was shown or hidden */
   changed(): void
@@ -26,6 +27,8 @@ const icon = (size: number): HTMLElement => el('span', { className: 'note-icon',
  */
 export class NoteOverlay {
   private readonly notes = new Map<string, Note>()
+  /** the number of the note main gave each tab last; 0 until it gives one */
+  private readonly generations = new Map<string, number>()
   /** the Claude tab in front; null for a shell tab or none */
   private active: string | null = null
   private readonly label: HTMLElement
@@ -63,10 +66,14 @@ export class NoteOverlay {
     this.draw()
   }
 
-  /** the note that came from main with the tab's conversation (null: none), drawn at once; the caller redraws the tabs */
-  set(tabId: string, note: Note | null): void {
+  /**
+   * the note that came from main with the tab's conversation (null: none) and its number, drawn at once; the caller redraws
+   * the tabs
+   */
+  set(tabId: string, note: Note | null, generation: number): void {
     if (note) this.notes.set(tabId, { ...note })
     else this.notes.delete(tabId)
+    this.generations.set(tabId, generation)
     if (tabId === this.active) this.draw()
   }
 
@@ -77,7 +84,7 @@ export class NoteOverlay {
     const emptied = left !== null && note !== undefined && note.shown && !noteHasText(note)
     if (emptied) {
       note.shown = false
-      this.cb.setView(left, false, note.form)
+      this.cb.setView(left, false, note.form, this.generationOf(left))
     }
     this.active = claude ? tabId : null
     this.draw()
@@ -107,6 +114,7 @@ export class NoteOverlay {
 
   dropTab(tabId: string): void {
     this.notes.delete(tabId)
+    this.generations.delete(tabId)
     if (this.active !== tabId) return
     this.active = null
     this.draw()
@@ -121,6 +129,10 @@ export class NoteOverlay {
     return note
   }
 
+  private generationOf(tabId: string): number {
+    return this.generations.get(tabId) ?? 0
+  }
+
   /** shows the note of the tab in front as `form`, or hides it (null), and tells main; the keyboard leaves with the card */
   private present(form: NoteForm | null): void {
     if (this.active === null) return
@@ -129,7 +141,7 @@ export class NoteOverlay {
     const wasShown = note.shown
     note.shown = form !== null
     if (form !== null) note.form = form
-    this.cb.setView(this.active, note.shown, note.form)
+    this.cb.setView(this.active, note.shown, note.form, this.generationOf(this.active))
     this.draw()
     if (keyboard && this.card.hidden) this.cb.focusTerminal()
     if (note.shown !== wasShown) this.cb.changed()
@@ -140,7 +152,7 @@ export class NoteOverlay {
     const note = this.noteOf(this.active)
     const had = noteHasText(note)
     note.text = this.text.value
-    this.cb.setText(this.active, note.text)
+    this.cb.setText(this.active, note.text, this.generationOf(this.active))
     if (noteHasText(note) !== had) this.cb.changed()
   }
 

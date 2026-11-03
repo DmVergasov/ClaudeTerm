@@ -232,7 +232,7 @@ test('a restored tab shows its note as it was left', async () => {
   await app.close()
 })
 
-test('/resume into a conversation with a note while typing in the card: the card shows that note, the typed text stays with the conversation left', async () => {
+test('/resume into a conversation with a note while typing in the card: the card shows that note, the typed text stays with the conversation left, and what is typed next goes to the note shown', async () => {
   const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
   writeFileSync(join(dataDir, 'session-notes.json'), JSON.stringify({ [SID_A]: { text: 'alpha', shown: true, form: 'card' } }))
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
@@ -246,14 +246,17 @@ test('/resume into a conversation with a note while typing in the card: the card
   await button.click()
   await page.keyboard.type('beta')
   await expect(text).toBeFocused()
-  // a round trip to main: the typed text has reached it before the conversation changes
-  await page.evaluate(() => window.ct.getStarredSessions())
 
+  // what was typed may still be on its way to main: it stays with the conversation left either way
   expect(await session(SID_A, 'resume')).toEqual({ ok: true })
   await expect(text).toHaveValue('alpha')
+  await expect(text).toBeFocused()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' too')
+  await expect(text).toHaveValue('alpha too')
   await closeWindow(app)
   const saved = JSON.parse(readFileSync(join(dataDir, 'session-notes.json'), 'utf8')) as Record<string, Note>
-  expect(saved[SID_A]?.text).toBe('alpha')
+  expect(saved[SID_A]?.text).toBe('alpha too')
   expect(saved[SID_B]?.text).toBe('beta')
 })
 
