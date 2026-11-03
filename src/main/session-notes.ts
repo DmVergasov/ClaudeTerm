@@ -1,5 +1,5 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { hasText, MAX_NOTE_LENGTH, NOTE_FORMS, type Note } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 
@@ -28,6 +28,8 @@ export function parseNotes(text: string): Map<string, Note> | null {
 export interface SessionNotesOptions {
   debounceMs?: number
   onError?(message: string): void
+  /** what the user is told: the file could not be read */
+  warn?(message: string): void
 }
 
 /** The user's notes by Claude session id: ClaudeTerm's own file, never anything in Claude Code's folders. */
@@ -36,6 +38,8 @@ export class SessionNotes {
   private readonly notes = new Map<string, Note>()
   private timer: ReturnType<typeof setTimeout> | null = null
   private dirty = false
+  /** false when a file that could not be read could not be moved aside either: it is never written over */
+  private writable = true
 
   constructor(dir: string, private readonly opts: SessionNotesOptions = {}) {
     this.path = join(dir, 'session-notes.json')
@@ -61,7 +65,7 @@ export class SessionNotes {
       clearTimeout(this.timer)
       this.timer = null
     }
-    if (!this.dirty) return
+    if (!this.dirty || !this.writable) return
     this.dirty = false
     const tmp = `${this.path}.tmp`
     try {
@@ -77,14 +81,29 @@ export class SessionNotes {
     try {
       text = readFileSync(this.path, 'utf8')
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') this.opts.onError?.(`cannot read ${this.path}: ${(e as Error).message}`)
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return
+      this.opts.onError?.(`cannot read ${this.path}: ${(e as Error).message}`)
+      this.moveAside()
       return
     }
     const parsed = parseNotes(text)
     if (!parsed) {
-      this.opts.onError?.(`ignoring corrupt ${this.path}`)
+      this.moveAside()
       return
     }
     for (const [id, n] of parsed) this.notes.set(id, n)
+  }
+
+  /** a file that is not notes is kept beside the new one, never written over; the notes start empty */
+  private moveAside(): void {
+    const aside = `${this.path}.corrupt-${Date.now()}`
+    try {
+      renameSync(this.path, aside)
+      this.opts.warn?.(`Session notes could not be read; the file was kept as ${basename(aside)}`)
+    } catch (e) {
+      this.writable = false
+      this.opts.onError?.(`cannot move ${this.path} aside: ${(e as Error).message}`)
+      this.opts.warn?.(`Session notes could not be read and are not being saved this run: ${this.path}`)
+    }
   }
 }

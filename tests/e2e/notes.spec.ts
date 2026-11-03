@@ -1,5 +1,5 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Note } from '../../src/shared/note'
@@ -107,6 +107,16 @@ test('/resume into a conversation with a note: the tab shows that note, the one 
   const saved = notesFile(dataDir)
   expect(saved[SID_A]).toEqual(alpha)
   expect(saved[SID_B]?.text).toBe('beta')
+})
+
+test('a notes file that cannot be read is kept aside, and the window says so', async () => {
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  writeFileSync(join(dataDir, 'session-notes.json'), '{oops')
+  const { app, page } = await launchApp({ dataDir })
+  await expect(page.locator('.toast', { hasText: 'Session notes could not be read; the file was kept as session-notes.json.corrupt-' })).toBeVisible()
+  const kept = readdirSync(dataDir).filter((f) => f.startsWith('session-notes.json.corrupt-'))
+  expect(kept.map((f) => readFileSync(join(dataDir, f), 'utf8'))).toEqual(['{oops'])
+  await app.close()
 })
 
 test('what is sent for a shell tab is not kept', async () => {

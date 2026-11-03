@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +8,8 @@ import { MAX_NOTE_LENGTH, type Note, type NoteForm } from '../../src/shared/note
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const SID2 = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
 const note = (text: string, shown = true, form: NoteForm = 'card'): Note => ({ text, shown, form })
+/** the time a file that is not notes is moved aside at */
+const T = 1_762_171_200_000
 
 const dirs: string[] = []
 const newDir = (): string => {
@@ -76,15 +78,63 @@ describe('session notes', () => {
     a.flush()
     expect(existsSync(a.path)).toBe(false)
   })
-  it('a corrupt file is reported and ignored; a missing file is not reported', () => {
+  it('a missing file is not reported', () => {
+    const reported: string[] = []
+    new SessionNotes(newDir(), { onError: (m) => reported.push(m), warn: (m) => reported.push(m) })
+    expect(reported).toEqual([])
+  })
+  it('a file that is not notes is moved aside when the store opens, and the user is told; it is never written over', () => {
     const dir = newDir()
-    const errors: string[] = []
-    new SessionNotes(dir, { onError: (m) => errors.push(m) })
-    expect(errors).toEqual([])
     writeFileSync(join(dir, 'session-notes.json'), '{oops')
-    const b = new SessionNotes(dir, { onError: (m) => errors.push(m) })
-    expect(errors).toEqual([`ignoring corrupt ${b.path}`])
-    expect(b.get(SID)).toBeNull()
+    vi.useFakeTimers({ now: T, toFake: ['Date'] })
+    const warned: string[] = []
+    const a = new SessionNotes(dir, { warn: (m) => warned.push(m) })
+    expect(a.get(SID)).toBeNull()
+    expect(warned).toEqual([`Session notes could not be read; the file was kept as session-notes.json.corrupt-${T}`])
+    a.set(SID, note('new'))
+    a.flush()
+    expect(readFileSync(join(dir, `session-notes.json.corrupt-${T}`), 'utf8')).toBe('{oops')
+    expect(JSON.parse(readFileSync(a.path, 'utf8'))).toEqual({ [SID]: note('new') })
+  })
+  it('a file that cannot be read is moved aside too', () => {
+    const dir = newDir()
+    // a folder in the file's place: reading it fails on every system
+    mkdirSync(join(dir, 'session-notes.json'))
+    writeFileSync(join(dir, 'session-notes.json', 'inside'), 'kept')
+    const warned: string[] = []
+    const a = new SessionNotes(dir, { warn: (m) => warned.push(m) })
+    const kept = readdirSync(dir).filter((f) => f.startsWith('session-notes.json.corrupt-'))
+    expect(kept).toHaveLength(1)
+    expect(warned).toEqual([`Session notes could not be read; the file was kept as ${kept[0]}`])
+    a.set(SID, note('new'))
+    a.flush()
+    expect(readFileSync(join(dir, kept[0]!, 'inside'), 'utf8')).toBe('kept')
+    expect(JSON.parse(readFileSync(a.path, 'utf8'))).toEqual({ [SID]: note('new') })
+  })
+  it('a file that is not notes and cannot be moved aside is left as it is for the whole run, and the user is told', () => {
+    const dir = newDir()
+    writeFileSync(join(dir, 'session-notes.json'), '{oops')
+    vi.useFakeTimers({ now: T, toFake: ['Date'] })
+    // a folder where the file would be moved: the move fails on every system
+    mkdirSync(join(dir, `session-notes.json.corrupt-${T}`))
+    writeFileSync(join(dir, `session-notes.json.corrupt-${T}`, 'other'), 'x')
+    const warned: string[] = []
+    const a = new SessionNotes(dir, { warn: (m) => warned.push(m) })
+    expect(warned).toEqual([`Session notes could not be read and are not being saved this run: ${a.path}`])
+    a.set(SID, note('new'))
+    a.flush()
+    expect(a.get(SID)).toEqual(note('new'))
+    expect(readFileSync(a.path, 'utf8')).toBe('{oops')
+    expect(readdirSync(dir).sort()).toEqual(['session-notes.json', `session-notes.json.corrupt-${T}`])
+  })
+  it('a valid file with some bad entries stays where it is', () => {
+    const dir = newDir()
+    writeFileSync(join(dir, 'session-notes.json'), JSON.stringify({ [SID]: note('kept'), 'not-a-uuid': note('x') }))
+    const warned: string[] = []
+    const a = new SessionNotes(dir, { warn: (m) => warned.push(m) })
+    expect(warned).toEqual([])
+    expect(a.get(SID)).toEqual(note('kept'))
+    expect(readdirSync(dir)).toEqual(['session-notes.json'])
   })
   it('get answers a copy', () => {
     const a = new SessionNotes(newDir())

@@ -160,7 +160,7 @@ function bootstrap(): void {
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
   const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
   const starred = new StarredSessions(dataDir, toast)
-  const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m) })
+  const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
   const noteHub = new NoteHub({ store: notes, publish: (tabId, note) => send(IPC.evNote, tabId, note) })
   const accounts = new AccountStore(nodeAccountFile(join(dataDir, 'accounts.json')), electronVault(safeStorage, process.platform), { onError: (m) => log.warn(m) })
   /** how a message names an account */
