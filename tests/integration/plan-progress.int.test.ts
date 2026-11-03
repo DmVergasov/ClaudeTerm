@@ -87,6 +87,19 @@ describe('plan progress', () => {
     expect(hub.get('t').plan?.done).toBe(2)
   })
 
+  it('a ledger that records a task complete at the end of a longer line moves the plan on', async () => {
+    const { root, ws, transcriptPath } = layout()
+    writeFileSync(join(ws, 'progress.md'), 'Task 1: fix round 1 verified by controller (build green, CRLF). Task 1: complete\r\n')
+    const { hub, feed } = wire(root, transcriptPath)
+    feed.scanSubagents()
+    await feed.poll()
+    await expect.poll(() => hub.get('t').plan?.title, { timeout: 5000 }).toBe('CSV Export')
+    expect(hub.get('t').plan?.done).toBe(1)
+    appendFileSync(join(ws, 'progress.md'), 'Task 2: reviewer approved, controller checked; Task 2: complete\r\n')
+    await hub.refresh()
+    expect(hub.get('t').plan).toMatchObject({ done: 2, tasks: [{ state: 'done' }, { state: 'done' }, { state: 'current' }] })
+  })
+
   it('a replay reads the transcripts in file order: the newer plan of the main transcript beats an older one in a subagent transcript', async () => {
     const { root, ws, old, transcriptPath } = layout()
     const subagent = join(dirname(transcriptPath), SID, 'subagents', 'agent-o1.jsonl')

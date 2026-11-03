@@ -15,6 +15,9 @@ export interface ParsedLedger {
 
 const TASK_HEADING = /^#{2,4}\s+Task\s+(\d+)\b[^:\r\n]*:\s*(.*)$/
 const FENCE = /^(```|~~~)/
+// ledgers are Markdown: a line may start as a list item, a heading or in bold (`- **Task 2: complete**`), and a
+// controller may end a longer line with it as a sentence of its own (`… verified by controller. Task 1: complete`)
+const TASK_COMPLETE = /(?:^[\s#>*+-]*|[.;]\s+\**)Task\s+(\d+):[\s*]*complete\b/gi
 
 /**
  * The title and the tasks of a superpowers plan file: `### Task <N>: <title>` headings (levels 2 to 4) outside
@@ -51,11 +54,9 @@ export function parsePlan(text: string): ParsedPlan | null {
 export function parseLedger(text: string): ParsedLedger {
   const complete = new Set<number>()
   let final = false
-  // ledgers are Markdown: a line may start as a list item, a heading or in bold (`- **Task 2: complete**`)
   for (const line of text.split('\n')) {
-    const m = /^[\s#>*+-]*Task\s+(\d+):[\s*]*complete\b/i.exec(line)
-    if (m) complete.add(Number(m[1]))
-    else if (/^[\s#>*+-]*Final\b/.test(line)) final = true
+    for (const m of line.matchAll(TASK_COMPLETE)) complete.add(Number(m[1]))
+    if (/^[\s#>*+-]*Final\b/.test(line)) final = true
   }
   return { complete, final }
 }

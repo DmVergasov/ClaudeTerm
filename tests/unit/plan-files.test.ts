@@ -58,6 +58,17 @@ describe('parseLedger', () => {
     expect(parseLedger('- **Final**: suite green\n').final).toBe(true)
     expect(parseLedger('- Final3 rerun\n').final).toBe(false)
   })
+  it('a "Task <N>: complete" sentence that ends a line counts; the words inside a sentence do not', () => {
+    const l = parseLedger([
+      'Task 1: fix round 1 verified by controller (no blank lines in RunTest, CRLF). Task 1: complete',
+      'Task 2: fix round 1 DONE (build rc=0), controller checked; Task 2: complete (review clean)',
+      'Task 3: BASE = working tree after Task 2. **Task 3: complete**',
+      'Task 4: blocked until Task 3: complete is verified',
+      'Note: the ledger line Task 5: complete comes later'
+    ].join('\r\n'))
+    expect([...l.complete]).toEqual([1, 2, 3])
+    expect(l.final).toBe(false)
+  })
 })
 
 describe('planStatus', () => {
