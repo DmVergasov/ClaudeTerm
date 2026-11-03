@@ -298,6 +298,34 @@ test('a switch to a tab whose note is not a card, while typing in the card, give
   await app.close()
 })
 
+test('showing the note while the Changes panel is expanded brings the panel back to its width first; hiding it leaves the panel as it is', async () => {
+  const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false } })
+  const { card, button } = note(page)
+  const panel = page.locator('#image-panel')
+  const expand = page.locator('.review-expand')
+  await page.locator('#tabbar .tab-changes-toggle').click()
+  await expect(panel).not.toHaveClass(/collapsed/)
+  await expand.click()
+  await expect(panel).toHaveClass(/expanded/)
+
+  await button.click()
+  await expect(panel).not.toHaveClass(/expanded/)
+  await expect(panel).not.toHaveClass(/collapsed/)
+  await expect(card).toBeVisible()
+  // nothing lies over the card
+  await expect.poll(async () => {
+    const box = (await card.boundingBox())!
+    return page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.closest('#note') !== null, [box.x + box.width / 2, box.y + box.height / 2])
+  }).toBe(true)
+
+  await expand.click()
+  await expect(panel).toHaveClass(/expanded/)
+  await button.click()
+  await expect(card).toBeHidden()
+  await expect(panel).toHaveClass(/expanded/)
+  await app.close()
+})
+
 test('with the side panel lying over the terminal, the note sits left of it', async () => {
   test.skip(!WIN && !process.env.XDG_CURRENT_DESKTOP, 'no desktop (xvfb): there is no window manager to maximize the window')
   const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, sidePanel: { noRoom: 'overlay' }, imagePanel: { autoOpen: false } })

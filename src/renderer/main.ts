@@ -231,7 +231,13 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'find': searchBar.open(); break
     case 'toggleImages': toggleImagePanel(); break
     case 'toggleChanges': if (t?.info.kind === 'claude') sidePanel.toggle('changes'); break
-    case 'toggleNote': if (t?.info.kind === 'claude') noteOverlay.toggle(); break
+    case 'toggleNote': {
+      if (t?.info.kind !== 'claude') break
+      // a note shown under the Changes panel expanded over the whole window would be unseen: the panel takes its width back first
+      if (!noteOverlay.isShown() && sidePanel.expanded) sidePanel.setExpanded(false)
+      noteOverlay.toggle()
+      break
+    }
     case 'zoomIn': setFontSize(fontSize + 1); break
     case 'zoomOut': setFontSize(fontSize - 1); break
     case 'zoomReset': setFontSize(settings.font.size); break
