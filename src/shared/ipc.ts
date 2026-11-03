@@ -256,9 +256,9 @@ export interface CtApi {
   onReview(cb: (update: ReviewUpdate) => void): Unsubscribe
   /** the window was maximized, restored, or entered or left full screen, or sidePanel.noRoom changed */
   onPanelMode(cb: (mode: PanelMode) => void): Unsubscribe
-  /** the extra accounts changed: every window gets the new list */
   /** the note that comes to a tab from its conversation (null: none); not sent for the tab's own edits */
   onNote(cb: (tabId: string, note: Note | null) => void): Unsubscribe
+  /** the extra accounts changed: every window gets the new list */
   onAccounts(cb: (view: AccountsView) => void): Unsubscribe
   /** main asks what Claude Code's prompt in the tab holds, from the terminal's screen; answer with answerPrompt */
   onPromptQuery(cb: (queryId: number, tabId: string) => void): Unsubscribe
