@@ -74,7 +74,7 @@ export class NoteOverlay {
     if (note) this.notes.set(tabId, { ...note })
     else this.notes.delete(tabId)
     this.generations.set(tabId, generation)
-    if (tabId === this.active) this.draw()
+    if (tabId === this.active) this.redraw()
   }
 
   /** the tab in front changed; only a Claude tab has a note. A shown note without text goes once its tab is left */
@@ -87,7 +87,7 @@ export class NoteOverlay {
       this.cb.setView(left, false, note.form, this.generationOf(left))
     }
     this.active = claude ? tabId : null
-    this.draw()
+    this.redraw()
     if (emptied) this.cb.changed()
   }
 
@@ -137,13 +137,11 @@ export class NoteOverlay {
   private present(form: NoteForm | null): void {
     if (this.active === null) return
     const note = this.noteOf(this.active)
-    const keyboard = this.root.contains(document.activeElement)
     const wasShown = note.shown
     note.shown = form !== null
     if (form !== null) note.form = form
     this.cb.setView(this.active, note.shown, note.form, this.generationOf(this.active))
-    this.draw()
-    if (keyboard && this.card.hidden) this.cb.focusTerminal()
+    this.redraw()
     if (note.shown !== wasShown) this.cb.changed()
   }
 
@@ -161,6 +159,13 @@ export class NoteOverlay {
     this.text.focus()
     const end = this.text.value.length
     this.text.setSelectionRange(end, end)
+  }
+
+  /** draws the note; when the card that had the keyboard goes, the keyboard goes back to the terminal */
+  private redraw(): void {
+    const keyboard = this.root.contains(document.activeElement)
+    this.draw()
+    if (keyboard && this.card.hidden) this.cb.focusTerminal()
   }
 
   private draw(): void {

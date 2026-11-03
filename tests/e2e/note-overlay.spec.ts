@@ -260,6 +260,44 @@ test('/resume into a conversation with a note while typing in the card: the card
   expect(saved[SID_B]?.text).toBe('beta')
 })
 
+test('/resume into a conversation whose note is a label while typing in the card: the label shows, and the keyboard goes back to the terminal', async () => {
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  writeFileSync(join(dataDir, 'session-notes.json'), JSON.stringify({ [SID_A]: { text: 'alpha', shown: true, form: 'label' } }))
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { app, page, pipeName } = await launchApp({ dataDir, args: ['--claude', work] })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  const session = (sessionId: string, source: 'startup' | 'resume') =>
+    sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId, source, transcriptPath: null })
+  const { card, label, text, button } = note(page)
+  expect(await session(SID_B, 'startup')).toEqual({ ok: true })
+  await button.click()
+  await page.keyboard.type('beta')
+  await expect(text).toBeFocused()
+
+  expect(await session(SID_A, 'resume')).toEqual({ ok: true })
+  await expect(label).toBeVisible()
+  await expect(label.locator('.note-label-text')).toHaveText('alpha')
+  await expect(card).toBeHidden()
+  await expect(terminalInput(page)).toBeFocused()
+  await app.close()
+})
+
+test('a switch to a tab whose note is not a card, while typing in the card, gives the keyboard to that tab\'s terminal', async () => {
+  const { app, page, tabId, work } = await launchClaudeTab()
+  const { card, text, button } = note(page)
+  const second = await openSecondTab(page, work, tabId)
+  await activate(page, tabId)
+  await button.click()
+  await page.keyboard.type('one')
+  await expect(text).toBeFocused()
+
+  await activate(page, second)
+  await expect(card).toBeHidden()
+  await expect(terminalInput(page)).toBeFocused()
+  await app.close()
+})
+
 test('with the side panel lying over the terminal, the note sits left of it', async () => {
   test.skip(!WIN && !process.env.XDG_CURRENT_DESKTOP, 'no desktop (xvfb): there is no window manager to maximize the window')
   const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, sidePanel: { noRoom: 'overlay' }, imagePanel: { autoOpen: false } })
