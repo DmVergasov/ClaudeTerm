@@ -1,10 +1,15 @@
-import type { Note, NoteForm } from '../shared/note'
+import { hasText, MAX_NOTE_LENGTH, type Note, type NoteForm } from '../shared/note'
 import type { SessionNotes } from './session-notes'
 
 export interface NoteHubDeps {
   store: Pick<SessionNotes, 'get' | 'set'>
   /** Tells the renderer a tab's note that came from main (a stored one), never an echo of its own edits. */
   publish(tabId: string, note: Note | null): void
+}
+
+/** The tab's text after the stored note's, an empty line between; the stored note's state, cut at the length limit. */
+function merge(stored: Note, own: Note): Note {
+  return { ...stored, text: `${stored.text}\n\n${own.text}`.slice(0, MAX_NOTE_LENGTH) }
 }
 
 interface TabNote {
@@ -37,8 +42,11 @@ export class NoteHub {
     tab.sessionId = sessionId
     const stored = this.deps.store.get(sessionId)
     if (stored) {
-      tab.note = stored
-      this.deps.publish(tabId, { ...stored })
+      // A note written before the first id arrived has nothing stored to stay in: it joins the stored one.
+      const own = tab.note
+      tab.note = !old && own && hasText(own) ? merge(stored, own) : stored
+      if (tab.note !== stored) this.deps.store.set(sessionId, tab.note)
+      this.deps.publish(tabId, { ...tab.note })
       return
     }
     if (!tab.note) return

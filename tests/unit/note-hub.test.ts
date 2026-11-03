@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { NoteHub } from '../../src/main/note-hub'
-import { hasText, type Note } from '../../src/shared/note'
+import { hasText, MAX_NOTE_LENGTH, type Note } from '../../src/shared/note'
 
 const A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -49,6 +49,30 @@ describe('NoteHub', () => {
     expect(store.size).toBe(0)
     hub.session('t1', A)
     expect(store.get(A)?.text).toBe('early')
+  })
+  it('a note written before the conversation is known is appended to the note that conversation already has', () => {
+    const { hub, store, published } = setup({ [A]: alpha })
+    hub.addTab('t1', null)
+    hub.setText('t1', 'early')
+    hub.session('t1', A)
+    const merged: Note = { text: 'alpha\n\nearly', shown: alpha.shown, form: alpha.form }
+    expect(hub.get('t1')).toEqual(merged)
+    expect(store.get(A)).toEqual(merged)
+    expect(published).toEqual([['t1', merged]])
+  })
+  it('the merged text is cut at the length limit', () => {
+    const { hub } = setup({ [A]: { ...alpha, text: 'a'.repeat(MAX_NOTE_LENGTH - 2) } })
+    hub.addTab('t1', null)
+    hub.setText('t1', 'xyz')
+    hub.session('t1', A)
+    expect(hub.get('t1')?.text.length).toBe(MAX_NOTE_LENGTH)
+  })
+  it('a tab with no id and no text takes the stored note unchanged', () => {
+    const { hub, published } = setup({ [A]: alpha })
+    hub.addTab('t1', null)
+    hub.session('t1', A)
+    expect(hub.get('t1')).toEqual(alpha)
+    expect(published).toEqual([['t1', alpha]])
   })
   it('a tab closed before its conversation was known takes its note with it', () => {
     const { hub, store } = setup()
