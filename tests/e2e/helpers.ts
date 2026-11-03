@@ -1,6 +1,6 @@
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { MAC, testPipeName, WIN } from '../fixtures/platform'
@@ -151,4 +151,12 @@ export async function keepingClipboard(app: ElectronApplication, steps: () => Pr
       else clipboard.clear()
     })
   }
+}
+
+/** a conversation of Claude Code on disk, so that Recent sessions lists it: <config>/projects/<cwd with every non-alphanumeric char as ->/<id>.jsonl */
+export function writeTranscript(config: string, cwd: string, id: string): void {
+  const dir = join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+  mkdirSync(dir, { recursive: true })
+  const entry = { type: 'user', cwd, entrypoint: 'cli', isSidechain: false, message: { role: 'user', content: 'hello' } }
+  writeFileSync(join(dir, `${id}.jsonl`), JSON.stringify(entry) + '\n')
 }

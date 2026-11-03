@@ -44,6 +44,8 @@ const api: CtApi = {
   openSession: (id) => ipcRenderer.send(IPC.sessionsOpen, id),
   setSessionStarred: (id, starred) => ipcRenderer.invoke(IPC.sessionsStar, id, starred),
   getStarredSessions: () => ipcRenderer.invoke(IPC.sessionsStarred),
+  setNoteText: (id, text) => ipcRenderer.send(IPC.notesSetText, id, text),
+  setNoteView: (id, shown, form) => ipcRenderer.send(IPC.notesSetView, id, shown, form),
   checkForUpdates: () => ipcRenderer.send(IPC.updateCheck),
   installUpdate: () => ipcRenderer.send(IPC.updateInstall),
   getUpdateState: () => ipcRenderer.invoke(IPC.updateGet),
@@ -84,6 +86,7 @@ const api: CtApi = {
   onReview: (cb) => on(IPC.evReview, cb),
   onPanelMode: (cb) => on(IPC.evPanelMode, cb),
   onAccounts: (cb) => on(IPC.evAccounts, cb),
+  onNote: (cb) => on(IPC.evNote, cb),
   onPromptQuery: (cb) => on(IPC.evPromptQuery, cb)
 }
 

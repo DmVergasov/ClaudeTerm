@@ -1,4 +1,5 @@
 import type { AccountResult, AccountsView } from './accounts'
+import type { Note, NoteForm } from './note'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
 import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, UpdateState } from './types'
@@ -39,6 +40,8 @@ export const IPC = {
   sessionsOpen: 'sessions:open',
   sessionsStar: 'sessions:star',
   sessionsStarred: 'sessions:starred',
+  notesSetText: 'notes:set-text',
+  notesSetView: 'notes:set-view',
   updateCheck: 'update:check',
   updateInstall: 'update:install',
   updateGet: 'update:get',
@@ -78,6 +81,7 @@ export const IPC = {
   evReview: 'ev:review',
   evPanelMode: 'ev:panel-mode',
   evAccounts: 'ev:accounts',
+  evNote: 'ev:note',
   evPromptQuery: 'ev:prompt-query'
 } as const
 
@@ -194,6 +198,10 @@ export interface CtApi {
   setSessionStarred(id: string, starred: boolean): Promise<void>
   /** the ids of all starred sessions */
   getStarredSessions(): Promise<string[]>
+  /** the text of a Claude tab's note; main keeps it with the tab's conversation */
+  setNoteText(tabId: string, text: string): void
+  /** whether a Claude tab's note is on show, and how it is drawn */
+  setNoteView(tabId: string, shown: boolean, form: NoteForm): void
   checkForUpdates(): void
   installUpdate(): void
   getUpdateState(): Promise<UpdateState>
@@ -249,6 +257,8 @@ export interface CtApi {
   /** the window was maximized, restored, or entered or left full screen, or sidePanel.noRoom changed */
   onPanelMode(cb: (mode: PanelMode) => void): Unsubscribe
   /** the extra accounts changed: every window gets the new list */
+  /** the note that comes to a tab from its conversation (null: none); not sent for the tab's own edits */
+  onNote(cb: (tabId: string, note: Note | null) => void): Unsubscribe
   onAccounts(cb: (view: AccountsView) => void): Unsubscribe
   /** main asks what Claude Code's prompt in the tab holds, from the terminal's screen; answer with answerPrompt */
   onPromptQuery(cb: (queryId: number, tabId: string) => void): Unsubscribe
