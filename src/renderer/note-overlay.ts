@@ -28,8 +28,6 @@ export class NoteOverlay {
   private readonly notes = new Map<string, Note>()
   /** the Claude tab in front; null for a shell tab or none */
   private active: string | null = null
-  /** the tab whose text the card holds */
-  private textOf: string | null = null
   private readonly label: HTMLElement
   private readonly labelText: HTMLElement
   private readonly card: HTMLElement
@@ -65,7 +63,7 @@ export class NoteOverlay {
     this.draw()
   }
 
-  /** the note that came from main with the tab's conversation (null: none); the caller redraws the tabs */
+  /** the note that came from main with the tab's conversation (null: none), drawn at once; the caller redraws the tabs */
   set(tabId: string, note: Note | null): void {
     if (note) this.notes.set(tabId, { ...note })
     else this.notes.delete(tabId)
@@ -159,8 +157,9 @@ export class NoteOverlay {
     this.label.hidden = form !== 'label' || !noteHasText(note)
     this.card.hidden = form !== 'card'
     this.labelText.textContent = firstLine(note?.text ?? '')
-    // never under the user's typing: main sends a note only with a conversation, never back what was typed
-    if (document.activeElement !== this.text || this.textOf !== this.active) this.text.value = note?.text ?? ''
-    this.textOf = this.active
+    // the typed text is the note's already; another tab's note, or one that came with another conversation (main never
+    // echoes what was typed), replaces it even under the user's typing. An unchanged text keeps the caret where it is
+    const text = note?.text ?? ''
+    if (this.text.value !== text) this.text.value = text
   }
 }

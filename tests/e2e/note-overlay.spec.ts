@@ -1,11 +1,20 @@
-import { expect, test, type Page } from '@playwright/test'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Note } from '../../src/shared/note'
+import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { WIN } from '../fixtures/platform'
 import { bufferText, FAKE_CLAUDE_SETTINGS, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, TEST_SHELL } from './helpers'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+const SID_B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
+
+async function closeWindow(app: ElectronApplication): Promise<void> {
+  const closed = app.waitForEvent('close')
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.close() }).catch(() => {})
+  await closed
+}
 
 /** the note over the terminal, the Note button and the mark on the tabs */
 function note(page: Page) {
@@ -78,6 +87,7 @@ test('â€“ collapses the note to a label with its first line, a click opens it, Ã
   await expect(label).toHaveAttribute('title', 'Show the note')
   await expect(label.locator('.note-label-text')).toHaveText('Goal: payments')
   await expect(card).toBeHidden()
+  await expect(terminalInput(page)).toBeFocused()
 
   await label.click()
   await expect(card).toBeVisible()
@@ -86,10 +96,12 @@ test('â€“ collapses the note to a label with its first line, a click opens it, Ã
   await expect(card).toBeHidden()
   await expect(label).toBeHidden()
   await expect(button).not.toHaveClass(/active/)
+  await expect(terminalInput(page)).toBeFocused()
 
-  await button.click()
+  await button.click() // a note with text: the keyboard goes back to the terminal, as after Media and Changes
   await expect(card).toBeVisible()
   await expect(button).toHaveClass(/active/)
+  await expect(terminalInput(page)).toBeFocused()
   await collapse.click()
   await expect(label).toBeVisible()
   await button.click()
@@ -218,6 +230,31 @@ test('a restored tab shows its note as it was left', async () => {
   await expect(mark).toHaveCount(1)
   await expect(button).toHaveClass(/active/)
   await app.close()
+})
+
+test('/resume into a conversation with a note while typing in the card: the card shows that note, the typed text stays with the conversation left', async () => {
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  writeFileSync(join(dataDir, 'session-notes.json'), JSON.stringify({ [SID_A]: { text: 'alpha', shown: true, form: 'card' } }))
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { app, page, pipeName } = await launchApp({ dataDir, args: ['--claude', work] })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  const session = (sessionId: string, source: 'startup' | 'resume') =>
+    sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId, source, transcriptPath: null })
+  const { text, button } = note(page)
+  expect(await session(SID_B, 'startup')).toEqual({ ok: true })
+  await button.click()
+  await page.keyboard.type('beta')
+  await expect(text).toBeFocused()
+  // a round trip to main: the typed text has reached it before the conversation changes
+  await page.evaluate(() => window.ct.getStarredSessions())
+
+  expect(await session(SID_A, 'resume')).toEqual({ ok: true })
+  await expect(text).toHaveValue('alpha')
+  await closeWindow(app)
+  const saved = JSON.parse(readFileSync(join(dataDir, 'session-notes.json'), 'utf8')) as Record<string, Note>
+  expect(saved[SID_A]?.text).toBe('alpha')
+  expect(saved[SID_B]?.text).toBe('beta')
 })
 
 test('with the side panel lying over the terminal, the note sits left of it', async () => {
