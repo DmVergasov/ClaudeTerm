@@ -71,6 +71,11 @@ prototype behaved.)*
 - Erasing the whole text removes the note: its label and its mark on the tab go away. The card stays open (empty)
   until the user hides it or switches tabs; a tab with no note shows nothing over the terminal.
 - An empty note has no label to collapse to: **–** on an empty card hides it, like **×**. *(Claude's call.)*
+- After a click on the Note button, **–** or **×**, the keyboard goes back to the terminal unless the note took it (an
+  empty note opens with the cursor in its text), as after the Media and Changes buttons. *(The user's decision.)*
+- When the tab moves into a conversation that has a note of its own while the user is typing in the card, the card
+  shows the arrived note at once; the text being typed stays with the conversation the tab left. *(The user's
+  decision.)*
 
 ### The mark on the tab
 
@@ -115,11 +120,13 @@ The user chose: **the note lives in the tab, and when the tab is closed it stays
 
 - Main holds each Claude tab's note (text and state). A tab opened with a session id (restore, Recent sessions, any
   `--resume`) takes the stored note of that id, if there is one.
-- A new tab's note, written before its session id is known, is held in the tab and stored once the id arrives.
+- A new tab's note, written before its session id is known, is held in the tab and stored once the id arrives. If
+  that first id already has a stored note, the user chose to keep both: the tab's text is appended to the stored
+  note's text after an empty line, the merged note keeps the stored note's state, and the tab shows it.
 - When `setClaudeSession` gives the tab a new id:
   - the new id has no stored note → the tab's note moves: stored under the new id, removed from the old one;
   - the new id has a stored note → the tab's note stays stored under the old id, and the tab shows the new id's
-    note, in that note's state.
+    note, in that note's state (a tab without an old id merges instead, as above).
   The rule depends only on whether the new id has a stored note, not on the hook's `source`.
 - Closing the tab leaves the stored entry under its last id as it is.
 - Two tabs in one conversation is not a state the app sets up (Recent sessions activates the open tab instead); if
