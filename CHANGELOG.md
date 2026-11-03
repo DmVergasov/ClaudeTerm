@@ -2,6 +2,13 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.11.1
+
+### Fixes
+
+- **Cut-off responses are continued on Windows.** In a Claude tab on Windows, Claude Code draws its prompt with `>` instead of `❯`, and ClaudeTerm did not see it there: **Continue a response a dropped connection cut off** gave up on every cut-off response and called you instead, a restored tab did not go on with Claude's work, and a tab you left with an unsent prompt was not highlighted even with that highlight turned on. ClaudeTerm now reads the prompt either way.
+- **The plan's progress counts a task written as done at the end of a line.** When Claude recorded a task as done at the end of a longer line of the plan's progress (`… build green. Task 1: complete`), the status bar kept showing 0 tasks done. It now counts those lines too.
+
 ## 0.11.0
 
 ### New
