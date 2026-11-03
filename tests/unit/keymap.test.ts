@@ -25,6 +25,7 @@ describe.each(['win32', 'linux'])('mapKey on %s', (platform) => {
     expect(map(k('KeyF', cs, 'А'))).toEqual({ type: 'find' })
     expect(map(k('KeyI', cs, 'Ш'))).toEqual({ type: 'toggleImages' })
     expect(map(k('KeyH', cs, 'Р'))).toEqual({ type: 'recentSessions' })
+    expect(map(k('KeyN', cs, 'Т'))).toEqual({ type: 'toggleNote' })
   })
 
   it('maps Ctrl+Shift+D to the Changes panel, in any layout', () => {
@@ -76,6 +77,7 @@ describe('mapKey on macOS', () => {
     expect(map(k('KeyF', cmd))).toEqual({ type: 'find' })
     expect(map(k('KeyI', cmd))).toEqual({ type: 'toggleImages' })
     expect(map(k('KeyD', cmd, 'в'))).toEqual({ type: 'toggleChanges' })
+    expect(mapKey(k('KeyN', cmd), 'darwin')).toEqual({ type: 'toggleNote' })
   })
 
   it('⌘C copies, ⌘V pastes text or hands a clipboard image to Claude, ⌘⇧V pastes text only', () => {
@@ -143,5 +145,7 @@ describe('shortcutLabel', () => {
     expect(shortcutLabel('closeTab', 'darwin')).toBe('⌘W')
     expect(shortcutLabel('panelFind', 'win32')).toBe('Ctrl+F')
     expect(shortcutLabel('panelFind', 'darwin')).toBe('⌘F')
+    expect(shortcutLabel('toggleNote', 'win32')).toBe('Ctrl+Shift+N')
+    expect(shortcutLabel('toggleNote', 'darwin')).toBe('⌘N')
   })
 })

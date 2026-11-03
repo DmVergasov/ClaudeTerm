@@ -1,6 +1,7 @@
 import type { TabKind } from '../shared/types'
 import { formatBadge } from './badge'
 import { shortcutLabel } from './keymap'
+import { noteIcon } from './note-overlay'
 
 /** one full fade in and out of the attention pulse: 2 × the 1.2 s alternate animation in styles.css */
 const PULSE_CYCLE_MS = 2400
@@ -18,6 +19,8 @@ export interface TabBarItem {
   attention: boolean
   images: number
   exited: boolean
+  /** the tab's note has text */
+  note: boolean
 }
 
 export interface TabBarCallbacks {
@@ -30,6 +33,7 @@ export interface TabBarCallbacks {
   tabMenu(id: string, at: { x: number; y: number }): void
   toggleImages(): void
   toggleChanges(): void
+  toggleNote(): void
 }
 
 function button(text: string, cls: string, title: string, onClick: (e: MouseEvent) => void): HTMLButtonElement {
@@ -53,6 +57,7 @@ export class TabBar {
   private changesVisible = false
   private changesUnviewed = 0
   private readonly changesButton: HTMLButtonElement
+  private readonly noteButton: HTMLButtonElement
   private list = document.createElement('div')
 
   /** the buttons are built once: a re-render (a busy Claude retitles its tab every second) must not drop a click or a tooltip */
@@ -62,9 +67,11 @@ export class TabBar {
     const more = button('▾', 'tab-menu', 'Profiles', (e) => this.cb.openMenu(e.currentTarget as HTMLElement))
     this.imagesButton = this.createImagesButton()
     this.changesButton = this.createChangesButton()
+    this.noteButton = this.createToggle('tab-note-toggle', `Note (${shortcutLabel('toggleNote', platform)})`, () => this.cb.toggleNote(), noteIcon(16), false)
     this.updateImagesButton()
     this.updateChangesButton()
-    root.replaceChildren(this.list, plus, more, this.changesButton, this.imagesButton)
+    this.setNote(false, false)
+    root.replaceChildren(this.list, plus, more, this.changesButton, this.imagesButton, this.noteButton)
   }
 
   render(items: TabBarItem[], activeId: string | null): void {
@@ -92,6 +99,12 @@ export class TabBar {
     this.updateImagesButton()
   }
 
+  /** the Note button exists only for Claude tabs; it is lit while the note is shown */
+  setNote(available: boolean, visible: boolean): void {
+    this.noteButton.hidden = !available
+    this.noteButton.classList.toggle('active', visible)
+  }
+
   private createImagesButton(): HTMLButtonElement {
     return this.createToggle('tab-images-toggle', `Media (${shortcutLabel('toggleImages', this.platform)})`,() => this.cb.toggleImages(),
       '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
@@ -104,14 +117,16 @@ export class TabBar {
       '<path d="M3.65 1.65h6.2l2.5 2.5v10.2h-8.7z"/><path d="M5.5 6.5h4M7.5 4.5v4"/><path d="M5.5 11.5h4"/></svg>')
   }
 
-  private createToggle(cls: string, title: string, onClick: () => void, icon: string): HTMLButtonElement {
+  private createToggle(cls: string, title: string, onClick: () => void, icon: string, badge = true): HTMLButtonElement {
     const b = document.createElement('button')
     b.className = cls
     b.title = title
     b.innerHTML = icon
-    const badge = document.createElement('span')
-    badge.className = 'badge'
-    b.append(badge)
+    if (badge) {
+      const span = document.createElement('span')
+      span.className = 'badge'
+      b.append(span)
+    }
     b.addEventListener('click', onClick)
     return b
   }
@@ -152,6 +167,13 @@ export class TabBar {
     label.className = 'tab-title'
     label.textContent = item.title
     el.append(icon, label)
+    if (item.note) {
+      const n = document.createElement('span')
+      n.className = 'tab-note'
+      n.title = 'Has a note'
+      n.innerHTML = noteIcon(12)
+      el.append(n)
+    }
     if (item.muted) {
       const m = document.createElement('span')
       m.className = 'tab-muted'

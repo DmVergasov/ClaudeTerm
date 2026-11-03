@@ -12,6 +12,7 @@ import { RecentSessionsWindow } from './recent-sessions'
 import { imagePasteInput, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar } from './search'
 import { closeMenu, showMenu, type MenuItem } from './menu'
+import { NoteOverlay } from './note-overlay'
 import { RestoreBanner } from './restore-banner'
 import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
@@ -43,6 +44,7 @@ let settings: Settings
 let appInfo: AppInfo
 let fontSize = 12
 let tabBar: TabBar
+let noteOverlay: NoteOverlay
 let searchBar: SearchBar
 let toggleImagePanel = (): void => {}
 let restoreInfo: RestoreInfo | null = null
@@ -76,7 +78,7 @@ const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
 function renderTabs(): void {
   const items = order.flatMap((id) => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited }] : []
+    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id) }] : []
   })
   tabBar.render(items, activeId)
   if (imagePanel) refreshPanelButtons()
@@ -97,12 +99,13 @@ function renderTitle(): void {
   document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')
 }
 
-/** the Images and Changes buttons in the tab bar: which panel is shown, the badges, Changes only for a Claude tab */
+/** the Media, Changes and Note buttons in the tab bar: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
 function refreshPanelButtons(): void {
   const unseen = activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0
   tabBar.setImages(sidePanel.isShowing('images'), unseen)
   const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
   tabBar.setChanges(claude, sidePanel.isShowing('changes'), claude && activeId ? reviewUpdates.get(activeId)?.unviewed ?? 0 : 0)
+  tabBar.setNote(claude, claude && noteOverlay.isShown())
 }
 
 function logInput(tabId: string, data: string): void {
@@ -228,6 +231,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'find': searchBar.open(); break
     case 'toggleImages': toggleImagePanel(); break
     case 'toggleChanges': if (t?.info.kind === 'claude') sidePanel.toggle('changes'); break
+    case 'toggleNote': if (t?.info.kind === 'claude') noteOverlay.toggle(); break
     case 'zoomIn': setFontSize(fontSize + 1); break
     case 'zoomOut': setFontSize(fontSize - 1); break
     case 'zoomReset': setFontSize(settings.font.size); break
@@ -333,8 +337,10 @@ function activate(tabId: string): void {
     t.bell = false
     t.attention = false
   }
-  renderTabs()
   const claude = t?.info.kind === 'claude'
+  // before the tabs are drawn: the Note button shows whether this tab's note is shown
+  noteOverlay.show(tabId, claude)
+  renderTabs()
   reviewPanel.show(claude ? reviewUpdates.get(tabId) ?? null : null)
   // the images first: setAvailable can switch a shown Changes panel to Images and fire onChange, which must find this tab's images
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
@@ -430,7 +436,18 @@ async function boot(): Promise<void> {
     toggleChanges: () => {
       runAction({ type: 'toggleChanges' }, activeId)
       if (activeId) tabs.get(activeId)?.view.term.focus()
+    },
+    toggleNote: () => {
+      runAction({ type: 'toggleNote' }, activeId)
+      // the keyboard goes back to the terminal, unless an empty note took it to be written in
+      if (activeId && !document.activeElement?.closest('#note')) tabs.get(activeId)?.view.term.focus()
     }
+  }, ct.platform)
+  noteOverlay = new NoteOverlay(document.getElementById('note')!, {
+    setText: (id, text) => ct.setNoteText(id, text),
+    setView: (id, shown, form) => ct.setNoteView(id, shown, form),
+    focusTerminal: () => { if (activeId) tabs.get(activeId)?.view.term.focus() },
+    changed: () => renderTabs()
   }, ct.platform)
   searchBar = new SearchBar(
     document.getElementById('search')!,
@@ -576,6 +593,11 @@ async function boot(): Promise<void> {
     if (u.tabId === activeId) imagePanel.show(u)
     refreshPanelButtons()
   })
+  // a stored note comes to a tab with its conversation: Restore, Recent sessions, /resume
+  ct.onNote((id, note) => {
+    noteOverlay.set(id, note)
+    renderTabs()
+  })
   ct.onTabOpened(addTab)
   ct.onTabUpdated((info) => {
     const t = tabs.get(info.id)
@@ -596,6 +618,7 @@ async function boot(): Promise<void> {
     planUpdates.delete(id)
     reviewUpdates.delete(id)
     reviewPanel.dropTab(id)
+    noteOverlay.dropTab(id)
     pendingReveal.delete(id)
     inputLog.delete(id)
     sizeLog.delete(id)
@@ -627,7 +650,7 @@ async function boot(): Promise<void> {
   ct.onSettings(applySettings)
   window.addEventListener('focus', () => {
     if (sessionsWindow.isOpen) return
-    if (document.activeElement?.closest('#image-panel')) return
+    if (document.activeElement?.closest('#image-panel, #note')) return
     const t = activeId ? tabs.get(activeId) : undefined
     t?.view.term.focus()
   })
