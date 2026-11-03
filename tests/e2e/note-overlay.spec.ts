@@ -184,6 +184,7 @@ test('each Claude tab shows its own note', async () => {
 
   const second = await openSecondTab(page, work, tabId)
   await expect(card).toBeHidden()
+  await expect(button).not.toHaveClass(/active/)
   await button.click()
   await expect(card).toBeVisible()
   await expect(text).toHaveValue('')
@@ -191,8 +192,21 @@ test('each Claude tab shows its own note', async () => {
 
   await activate(page, tabId)
   await expect(text).toHaveValue('one')
+  await expect(button).toHaveClass(/active/)
   await activate(page, second)
   await expect(text).toHaveValue('two')
+  await expect(button).toHaveClass(/active/)
+
+  // the Note button's highlight follows the tab in front
+  await button.click()
+  await expect(card).toBeHidden()
+  await expect(button).not.toHaveClass(/active/)
+  await activate(page, tabId)
+  await expect(card).toBeVisible()
+  await expect(button).toHaveClass(/active/)
+  await activate(page, second)
+  await expect(card).toBeHidden()
+  await expect(button).not.toHaveClass(/active/)
   await app.close()
 })
 
