@@ -599,7 +599,7 @@ describe('TabManager forks', () => {
   })
 
   it('fork, restart and switchAccount wait for the transcript check: a conversation it finds missing is neither forked nor resumed', async () => {
-    const { tm, ptys, resolveLaunch } = forkSetup({ resumable: async () => false })
+    const { tm, ptys, resolveLaunch } = forkSetup({ resumable: async () => false, restartWaitMs: 0 })
     const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
     expect(await tm.fork(A.id)).toBeNull()
     expect(tm.list()).toHaveLength(1)
