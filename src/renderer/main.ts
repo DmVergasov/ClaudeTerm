@@ -98,10 +98,11 @@ function renderTabs(): void {
 
 /** the tab bar on top or the left panel, whichever the tabs.position setting names; the other one is hidden */
 function showTabs(position: TabPosition): void {
-  tabBar.show(position === 'top')
-  tabPanel.show(position === 'left')
+  // the panel is shown only once its element is: the active row is revealed by scrolling, which a hidden element cannot do
   document.getElementById('tabbar')!.hidden = position !== 'top'
   document.getElementById('tabpanel')!.hidden = position !== 'left'
+  tabBar.show(position === 'top')
+  tabPanel.show(position === 'left')
 }
 
 function renderTitle(): void {
@@ -447,6 +448,7 @@ function applySettings(s: Settings): void {
   // only a change of the position re-attaches the panel: that would reset its scroll
   if (s.tabs.position !== prev.tabs.position) {
     showTabs(s.tabs.position)
+    renderTabs()
     if (s.tabs.position === 'left' && activeId && places.has(activeId)) tabPanel.unfoldFor(activeId)
   }
 }

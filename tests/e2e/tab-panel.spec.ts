@@ -462,6 +462,20 @@ test('switching the tabs to the left unfolds the group of the active tab', async
   await app.close()
 })
 
+test('switching the tabs from the top to the left shows the active row', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await openMany(page, 30)
+  const last = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  const list = page.locator('#tabpanel .tp-list')
+
+  await page.locator('#tabbar .tab-position').click()
+  await expect(page.locator('#tabpanel')).toBeVisible()
+  await expect.poll(() => list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  await expect.poll(() => inList(page, last)).toBe(true)
+  await app.close()
+})
+
 test('a drag that ends off the rows leaves no tab to move, so a later drop reorders nothing', async () => {
   const repo = gitRepo()
   const { app, page } = await launchApp({ settings: left(freshFolder()) })
