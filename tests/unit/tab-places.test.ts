@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,12 @@ import { GitError, type GitResult, type GitRun } from '../../src/main/git-source
 import { pathKey } from '../../src/main/path-key'
 import { folderPlace, parseWorktreeList, TabPlaces, WORKTREE_COLORS, worktreeColors } from '../../src/main/tab-places'
 import type { TabPlace } from '../../src/shared/types'
+
+// the existence check of a folder must not be a blocking call: the spy shows whether one is made
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return { ...actual, existsSync: vi.fn(actual.existsSync) }
+})
 
 const SHA_1 = '1111111111111111111111111111111111111111'
 const SHA_2 = '2222222222222222222222222222222222222222'
@@ -94,7 +100,34 @@ describe('folder place from git', () => {
     const run: GitRun = async () => { throw new GitError('git was not found') }
     expect(await folderPlace(run, folder)).toBeNull()
   })
+
+  it('checks the folder without a blocking existence check, and asks git only for a folder that exists', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'ct-place-unit-'))
+    const porcelain = `worktree ${fwd(folder)}\nHEAD ${SHA_1}\nbranch refs/heads/main\n\n`
+    const run = vi.fn<GitRun>(async (args) => (args[0] === 'rev-parse' ? ok(`${fwd(folder)}\n`) : ok(porcelain)))
+    vi.mocked(existsSync).mockClear()
+    expect((await folderPlace(run, folder))?.branch).toBe('main')
+    expect(existsSync).not.toHaveBeenCalled()
+    const missing = join(folder, 'missing')
+    run.mockClear()
+    expect(await folderPlace(run, missing)).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+  })
 })
+
+/** a git run that counts the asks of each folder (one `rev-parse` per ask) and answers the folder's branch */
+function countingGit(branches: Record<string, string>): { run: GitRun; asks: Map<string, number> } {
+  const asks = new Map<string, number>()
+  const run: GitRun = async (args, cwd) => {
+    const folder = cwd
+    if (args[0] === 'rev-parse') {
+      asks.set(folder, (asks.get(folder) ?? 0) + 1)
+      return ok(`${fwd(folder)}\n`)
+    }
+    return ok(`worktree ${fwd(folder)}\nHEAD ${SHA_1}\nbranch refs/heads/${branches[folder]}\n\n`)
+  }
+  return { run, asks }
+}
 
 describe('TabPlaces', () => {
   const folder = mkdtempSync(join(tmpdir(), 'ct-place-tabs-'))
@@ -133,5 +166,68 @@ describe('TabPlaces', () => {
     const places = new TabPlaces({ run, publish: (id, place) => { published.push([id, place]) } })
     places.addTab('t3', folder)
     await vi.waitFor(() => expect(published).toEqual([['t3', null]]))
+  })
+})
+
+describe('TabPlaces cache', () => {
+  const dirA = mkdtempSync(join(tmpdir(), 'ct-cache-a-'))
+  const dirB = mkdtempSync(join(tmpdir(), 'ct-cache-b-'))
+  const settle = (): Promise<void> => new Promise((done) => setTimeout(done, 20))
+
+  it('publishes a known folder\'s place to a second tab at once, before git answers', async () => {
+    const git = countingGit({ [dirA]: 'main' })
+    let answering = true
+    const run: GitRun = (args, cwd, input) => (answering ? git.run(args, cwd, input) : new Promise<GitResult>(() => {}))
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('a1', dirA)
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+    answering = false
+    places.addTab('a2', dirA)
+    expect(published).toHaveLength(2)
+    expect(published[1]![0]).toBe('a2')
+    expect(published[1]![1]!.branch).toBe('main')
+  })
+
+  it('asks git for each folder once in a refresh of all, and not at all within 10 seconds of the last ask', async () => {
+    const git = countingGit({ [dirA]: 'main', [dirB]: 'dev' })
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run: git.run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('a1', dirA)
+    places.addTab('a2', dirA)
+    places.addTab('b1', dirB)
+    await vi.waitFor(() => expect(new Set(published.map(([id]) => id)).size).toBe(3))
+    await settle()
+    git.asks.clear()
+    places.refreshAll()
+    await settle()
+    expect(git.asks.size).toBe(0)
+
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 10_000)
+    try {
+      places.refreshAll()
+      places.refreshAll()
+      await settle()
+    } finally {
+      clock.mockRestore()
+    }
+    expect(git.asks.get(dirA)).toBe(1)
+    expect(git.asks.get(dirB)).toBe(1)
+  })
+
+  it('asks git for the tab\'s folder in every refresh of the tab', async () => {
+    const git = countingGit({ [dirA]: 'main' })
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run: git.run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('a1', dirA)
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+    await settle()
+    git.asks.clear()
+    places.refresh('a1')
+    await settle()
+    expect(git.asks.get(dirA)).toBe(1)
+    places.refresh('a1')
+    await vi.waitFor(() => expect(git.asks.get(dirA)).toBe(2))
   })
 })

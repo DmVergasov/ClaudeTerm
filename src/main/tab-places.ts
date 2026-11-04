@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { access } from 'node:fs/promises'
 import { type GitRun, GitError } from './git-source'
 import { nativePath, pathKey } from './path-key'
 import type { TabPlace } from '../shared/types'
@@ -70,8 +70,8 @@ export function worktreeColors(paths: string[], size = WORKTREE_COLORS): Map<str
  * names that worktree and its branch; the main worktree's folder names none. Read-only git only, through `run`.
  */
 export async function folderPlace(run: GitRun, folder: string): Promise<TabPlace | null> {
-  // spawning in a missing folder fails like a missing git
-  if (!existsSync(folder)) return null
+  // spawning in a missing folder fails like a missing git; the check is async, a folder on an offline share can take seconds
+  if (!(await access(folder).then(() => true, () => false))) return null
   try {
     // line 2 names the superproject when the folder is a submodule; git's worktree list does not name the submodule's folder
     const top = await run(['rev-parse', '--show-toplevel', '--show-superproject-working-tree'], folder)
@@ -123,50 +123,83 @@ export interface TabPlacesDeps {
   publish(tabId: string, place: TabPlace | null): void
 }
 
+/** a refresh of all tabs (window focus) asks git about a folder again only when its last ask is at least this old */
+export const REFRESH_ALL_MIN_MS = 10_000
+
+interface FolderEntry {
+  /** when git was last asked about the folder (the start of that ask) */
+  asked: number
+  /** git's last answer; undefined until git has answered */
+  answer: TabPlace | null | undefined
+}
+
+interface TabEntry {
+  cwd: string
+  key: string
+  /** the last place published for the tab, as JSON; undefined before the first publish */
+  last: string | undefined
+}
+
 /**
- * Keeps each tab's place up to date: asks git when a tab is added or refreshed and publishes the answer when it differs from
- * the last one published for that tab. Asks for the same folder at the same time share one git run.
+ * Keeps each tab's place up to date. Git is asked per distinct folder and its answer is kept per folder: a tab added to a
+ * known folder gets that place at once, and a place is published to a tab only when it differs from the last one published
+ * for it. Asks for the same folder at the same time share one git run.
  */
 export class TabPlaces {
-  private readonly tabs = new Map<string, { cwd: string; last: string | undefined }>()
-  private readonly asks = new Map<string, Promise<TabPlace | null>>()
+  private readonly tabs = new Map<string, TabEntry>()
+  private readonly folders = new Map<string, FolderEntry>()
+  private readonly asks = new Map<string, Promise<void>>()
 
   constructor(private readonly deps: TabPlacesDeps) {}
 
   addTab(tabId: string, cwd: string): void {
-    this.tabs.set(tabId, { cwd, last: undefined })
-    this.refresh(tabId)
+    const key = pathKey(cwd)
+    const tab: TabEntry = { cwd, key, last: undefined }
+    this.tabs.set(tabId, tab)
+    // a known folder's place is published at once; git is asked about the folder in the background all the same
+    const known = this.folders.get(key)
+    if (known && known.answer !== undefined) this.publish(tabId, tab, known.answer)
+    this.ask(cwd)
   }
 
   removeTab(tabId: string): void {
     this.tabs.delete(tabId)
   }
 
+  /** activation and turn end: the tab's folder is asked about, whatever the last answer was */
   refresh(tabId: string): void {
     const tab = this.tabs.get(tabId)
-    if (!tab) return
-    this.ask(tab.cwd).then((place) => {
-      // the tab closed while git was asked
-      const current = this.tabs.get(tabId)
-      if (!current) return
-      const json = JSON.stringify(place)
-      if (json === current.last) return
-      current.last = json
-      this.deps.publish(tabId, place)
-    })
+    if (tab) this.ask(tab.cwd)
   }
 
+  /** window focus: each folder of the tabs is asked about again, once, unless it was asked less than REFRESH_ALL_MIN_MS ago */
   refreshAll(): void {
-    for (const tabId of [...this.tabs.keys()]) this.refresh(tabId)
+    const now = Date.now()
+    for (const tab of this.tabs.values()) {
+      const known = this.folders.get(tab.key)
+      if (!known || now - known.asked >= REFRESH_ALL_MIN_MS) this.ask(tab.cwd)
+    }
   }
 
-  private ask(folder: string): Promise<TabPlace | null> {
+  private ask(folder: string): void {
     const key = pathKey(folder)
-    const pending = this.asks.get(key)
-    if (pending) return pending
+    if (this.asks.has(key)) return
+    const entry = this.folders.get(key) ?? { asked: 0, answer: undefined }
+    this.folders.set(key, entry)
+    entry.asked = Date.now()
     // any failure answers null: a tab without a place, never an unhandled rejection in the main process
-    const asked = folderPlace(this.deps.run, folder).catch(() => null).finally(() => { this.asks.delete(key) })
+    const asked = folderPlace(this.deps.run, folder).catch(() => null).then((place) => {
+      this.asks.delete(key)
+      entry.answer = place
+      for (const [tabId, tab] of this.tabs) if (tab.key === key) this.publish(tabId, tab, place)
+    })
     this.asks.set(key, asked)
-    return asked
+  }
+
+  private publish(tabId: string, tab: TabEntry, place: TabPlace | null): void {
+    const json = JSON.stringify(place)
+    if (json === tab.last) return
+    tab.last = json
+    this.deps.publish(tabId, place)
   }
 }
