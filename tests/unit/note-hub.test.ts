@@ -1,0 +1,212 @@
+import { describe, expect, it } from 'vitest'
+import { NoteHub } from '../../src/main/note-hub'
+import { hasText, MAX_NOTE_LENGTH, type Note } from '../../src/shared/note'
+
+const A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+const B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
+const C = 'a3c2cf68-2929-4166-9a00-000000000001'
+function setup(stored: Record<string, Note> = {}) {
+  const store = new Map(Object.entries(stored))
+  const published: [string, Note | null, number][] = []
+  const hub = new NoteHub({
+    store: { get: (id) => store.get(id) ?? null, set: (id, n) => { if (n && hasText(n)) store.set(id, { ...n }); else store.delete(id) } },
+    publish: (tabId, n, generation) => published.push([tabId, n, generation])
+  })
+  return { hub, store, published }
+}
+const alpha: Note = { text: 'alpha', shown: true, form: 'label' }
+
+describe('NoteHub', () => {
+  it('a tab opened in a conversation with a note takes it and tells the renderer', () => {
+    const { hub, published } = setup({ [A]: alpha })
+    hub.addTab('t1', A)
+    expect(hub.get('t1')).toEqual(alpha)
+    expect(published).toEqual([['t1', alpha, 1]])
+  })
+  it('a tab without a note publishes nothing', () => {
+    const { hub, published } = setup()
+    hub.addTab('t1', A)
+    hub.addTab('t2', null)
+    expect(published).toEqual([])
+    expect(hub.get('t1')).toBeNull()
+  })
+  it('text and view are stored under the conversation; erasing the text removes the entry', () => {
+    const { hub, store, published } = setup()
+    hub.addTab('t1', A)
+    hub.setView('t1', true, 'card', 0)
+    expect(store.has(A)).toBe(false)
+    hub.setText('t1', 'Goal', 0)
+    expect(store.get(A)).toEqual({ text: 'Goal', shown: true, form: 'card' })
+    hub.setView('t1', true, 'label', 0)
+    expect(store.get(A)?.form).toBe('label')
+    hub.setText('t1', '  ', 0)
+    expect(store.has(A)).toBe(false)
+    expect(published).toEqual([])
+  })
+  it('a note written before the conversation is known is stored once it is', () => {
+    const { hub, store } = setup()
+    hub.addTab('t1', null)
+    hub.setText('t1', 'early', 0)
+    expect(store.size).toBe(0)
+    hub.session('t1', A)
+    expect(store.get(A)?.text).toBe('early')
+  })
+  it('a note written before the conversation is known is appended to the note that conversation already has', () => {
+    const { hub, store, published } = setup({ [A]: alpha })
+    hub.addTab('t1', null)
+    hub.setText('t1', 'early', 0)
+    hub.session('t1', A)
+    const merged: Note = { text: 'alpha\n\nearly', shown: alpha.shown, form: alpha.form }
+    expect(hub.get('t1')).toEqual(merged)
+    expect(store.get(A)).toEqual(merged)
+    expect(published).toEqual([['t1', merged, 1]])
+  })
+  it('the merged text is cut at the length limit', () => {
+    const { hub } = setup({ [A]: { ...alpha, text: 'a'.repeat(MAX_NOTE_LENGTH - 2) } })
+    hub.addTab('t1', null)
+    hub.setText('t1', 'xyz', 0)
+    hub.session('t1', A)
+    expect(hub.get('t1')?.text.length).toBe(MAX_NOTE_LENGTH)
+  })
+  it('a tab with no id and no text takes the stored note unchanged', () => {
+    const { hub, published } = setup({ [A]: alpha })
+    hub.addTab('t1', null)
+    hub.session('t1', A)
+    expect(hub.get('t1')).toEqual(alpha)
+    expect(published).toEqual([['t1', alpha, 1]])
+  })
+  it('a tab closed before its conversation was known takes its note with it', () => {
+    const { hub, store } = setup()
+    hub.addTab('t1', null)
+    hub.setText('t1', 'lost', 0)
+    hub.removeTab('t1')
+    expect(store.size).toBe(0)
+  })
+  it('/clear: the note moves to the new conversation and leaves the old one', () => {
+    const { hub, store, published } = setup()
+    hub.addTab('t1', A)
+    hub.setText('t1', 'mine', 0)
+    hub.session('t1', B)
+    expect(store.has(A)).toBe(false)
+    expect(store.get(B)?.text).toBe('mine')
+    expect(hub.get('t1')?.text).toBe('mine')
+    expect(published).toEqual([])
+  })
+  it('/resume into a conversation with a note: the tab takes it, the one it left keeps the tab\'s own', () => {
+    const { hub, store, published } = setup({ [A]: alpha })
+    hub.addTab('t1', B)
+    hub.setText('t1', 'beta', 0)
+    hub.session('t1', A)
+    expect(hub.get('t1')).toEqual(alpha)
+    expect(published).toEqual([['t1', alpha, 1]])
+    expect(store.get(B)?.text).toBe('beta')
+    expect(store.get(A)).toEqual(alpha)
+  })
+  it('the same conversation again changes nothing', () => {
+    const { hub, store, published } = setup()
+    hub.addTab('t1', A)
+    hub.setText('t1', 'x', 0)
+    hub.session('t1', A)
+    expect(store.get(A)?.text).toBe('x')
+    expect(published).toEqual([])
+  })
+  it('closing a tab keeps its note with the conversation; unknown tabs are ignored', () => {
+    const { hub, store } = setup()
+    hub.addTab('t1', A)
+    hub.setText('t1', 'kept', 0)
+    hub.removeTab('t1')
+    expect(hub.get('t1')).toBeNull()
+    expect(store.get(A)?.text).toBe('kept')
+    hub.setText('shell', 'x', 0)
+    hub.setView('shell', true, 'card', 0)
+    expect(store.size).toBe(1)
+  })
+
+  describe('edits typed against an older note', () => {
+    it('text typed against the note the tab had before /resume goes to the conversation it left', () => {
+      const { hub, store, published } = setup({ [A]: alpha })
+      hub.addTab('t1', B)
+      hub.setView('t1', true, 'card', 0)
+      hub.setText('t1', 'b', 0)
+      hub.session('t1', A)
+      // still in flight when main gave the tab A's note
+      hub.setText('t1', 'beta', 0)
+      expect(hub.get('t1')).toEqual(alpha)
+      expect(store.get(A)).toEqual(alpha)
+      expect(store.get(B)).toEqual({ text: 'beta', shown: true, form: 'card' })
+      expect(published).toEqual([['t1', alpha, 1]])
+      // typed against A's note: A's
+      hub.setText('t1', 'alpha!', 1)
+      expect(store.get(A)).toEqual({ ...alpha, text: 'alpha!' })
+      expect(store.get(B)?.text).toBe('beta')
+    })
+    it('text typed against a note the conversation it left never stored is stored there', () => {
+      const { hub, store } = setup({ [A]: alpha })
+      hub.addTab('t1', B)
+      hub.session('t1', A)
+      hub.setText('t1', 'late', 0)
+      expect(store.get(B)).toEqual({ text: 'late', shown: false, form: 'card' })
+      expect(store.get(A)).toEqual(alpha)
+    })
+    it('text typed against a note held before the first id replaces the tab\'s part of the merged note', () => {
+      const { hub, store, published } = setup({ [A]: alpha })
+      hub.addTab('t1', null)
+      hub.setText('t1', 'ear', 0)
+      hub.session('t1', A)
+      hub.setText('t1', 'early', 0)
+      const merged: Note = { ...alpha, text: 'alpha\n\nearly' }
+      expect(hub.get('t1')).toEqual(merged)
+      expect(store.get(A)).toEqual(merged)
+      expect(published).toEqual([['t1', { ...alpha, text: 'alpha\n\near' }, 1], ['t1', merged, 1]])
+      // erased: the stored note alone
+      hub.setText('t1', '', 0)
+      expect(store.get(A)).toEqual(alpha)
+      expect(published.at(-1)).toEqual(['t1', alpha, 1])
+    })
+    it('text typed before the first id, when none had reached main, joins the stored note the tab took', () => {
+      const { hub, store, published } = setup({ [A]: alpha })
+      hub.addTab('t1', null)
+      hub.session('t1', A)
+      hub.setText('t1', 'early', 0)
+      const merged: Note = { ...alpha, text: 'alpha\n\nearly' }
+      expect(store.get(A)).toEqual(merged)
+      expect(published).toEqual([['t1', alpha, 1], ['t1', merged, 1]])
+    })
+    it('a /clear keeps the note and its number: the next edit lands on the new conversation', () => {
+      const { hub, store, published } = setup({ [A]: alpha })
+      hub.addTab('t1', A)
+      hub.session('t1', B)
+      expect(published).toEqual([['t1', alpha, 1]])
+      hub.setText('t1', 'alpha, cleared', 1)
+      expect(store.has(A)).toBe(false)
+      expect(store.get(B)).toEqual({ ...alpha, text: 'alpha, cleared' })
+      hub.setView('t1', false, 'label', 1)
+      expect(store.get(B)?.shown).toBe(false)
+    })
+    it('a change of the shown note or its form made against an older note is dropped', () => {
+      const { hub, store } = setup({ [A]: alpha })
+      hub.addTab('t1', B)
+      hub.setView('t1', true, 'card', 0)
+      hub.setText('t1', 'beta', 0)
+      hub.session('t1', A)
+      hub.setView('t1', false, 'label', 0)
+      expect(store.get(A)).toEqual(alpha)
+      expect(store.get(B)).toEqual({ text: 'beta', shown: true, form: 'card' })
+      expect(hub.get('t1')).toEqual(alpha)
+    })
+    it('an edit two notes back, or with a number main never gave, is dropped', () => {
+      const { hub, store } = setup({ [A]: alpha, [C]: { ...alpha, text: 'gamma' } })
+      hub.addTab('t1', B)
+      hub.setText('t1', 'beta', 0)
+      hub.session('t1', A)
+      hub.session('t1', C)
+      hub.setText('t1', 'stale', 0)
+      hub.setText('t1', 'future', 3)
+      hub.setView('t1', false, 'card', 3)
+      expect(store.get(A)).toEqual(alpha)
+      expect(store.get(B)?.text).toBe('beta')
+      expect(store.get(C)).toEqual({ ...alpha, text: 'gamma' })
+      expect(hub.get('t1')).toEqual({ ...alpha, text: 'gamma' })
+    })
+  })
+})

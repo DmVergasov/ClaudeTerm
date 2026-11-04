@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path'
 import type { ImageAction } from '../shared/ipc'
+import { MAX_NOTE_LENGTH, NOTE_FORMS, type NoteForm } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 import { REVIEW_SCOPES, type ReviewScope } from '../shared/review'
 
@@ -27,6 +28,13 @@ const IMAGE_ACTIONS: readonly string[] = ['open', 'reveal', 'copy-image', 'copy-
 export const isImageAction = (v: unknown): v is ImageAction => typeof v === 'string' && IMAGE_ACTIONS.includes(v)
 
 export const isReviewScope = (v: unknown): v is ReviewScope => typeof v === 'string' && (REVIEW_SCOPES as readonly string[]).includes(v)
+
+export const isNoteText = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_NOTE_LENGTH
+
+export const isNoteForm = (v: unknown): v is NoteForm => typeof v === 'string' && (NOTE_FORMS as readonly string[]).includes(v)
+
+/** the number of a tab's note an edit was typed against */
+export const isGeneration = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
 
 export const isAbsPath = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && isAbsolute(v)
 

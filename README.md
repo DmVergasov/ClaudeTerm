@@ -98,6 +98,7 @@ Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −)
 
 - **Shell profiles detected automatically** — PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and every WSL distribution, plus your own profiles. On macOS and Linux: your login shell, bash, zsh and fish.
 - **Claude tabs** — `claude` runs inside your shell of choice, and you stay in that shell when it exits.
+- **Notes** — a note of your own on each Claude tab (which feature it is, your TODO list), shown over the terminal as a small label you open into a card; it stays with the conversation through `/clear`, a restart and Recent sessions.
 - **Proper terminal behaviour** — ConPTY on Windows, a real PTY on macOS and Linux, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (`⌘C` / `⌘V` on macOS; pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
 - **Font sizes in points**, exactly like Windows Terminal — `12` looks the same in both.
 
@@ -167,6 +168,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Find in scrollback | `Ctrl+Shift+F` | `⌘F` |
 | Show / hide the Media panel | `Ctrl+Shift+I` | `⌘I` |
 | Show / hide the Changes panel | `Ctrl+Shift+D` | `⌘D` |
+| Show / hide the note of a Claude tab | `Ctrl+Shift+N` | `⌘N` |
 | Find in the Changes panel | `Ctrl+F` (when the panel has the focus) | `⌘F` (when the panel has the focus) |
 | Recent sessions | `Ctrl+Shift+H` | `⌘⇧H` |
 | Star / unstar the selected session | `Ctrl+D` (in the Recent sessions window) | `⌘D` (in the Recent sessions window) |

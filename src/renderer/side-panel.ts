@@ -192,6 +192,8 @@ export class SidePanel {
     this.root.style.width = `${this.isExpanded ? window.innerWidth : width}px`
     // the expanded panel lies over the whole window, terminal and all; the terminal keeps the room it gave the panel
     this.terminals.style.marginRight = `${shown && this.mode !== 'overlay' ? width : 0}px`
+    // what the panel covers of the terminal's right, for the note to sit left of it; the expanded panel covers the note too
+    this.terminals.style.setProperty('--panel-cover', `${shown && this.mode === 'overlay' && !this.isExpanded ? width : 0}px`)
   }
 
   private setupResize(handle: HTMLElement): void {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
+import { MAX_NOTE_LENGTH } from '../../src/shared/note'
+import { isAbsPath, isAccountRef, isGeneration, isHash, isId, isIdList, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -109,5 +110,32 @@ describe('review guards', () => {
     expect(isFlag('yes')).toBe(false)
     expect(isFlag(1)).toBe(false)
     expect(isFlag(undefined)).toBe(false)
+  })
+
+  it('isNoteText accepts strings up to MAX_NOTE_LENGTH', () => {
+    expect(isNoteText('')).toBe(true)
+    expect(isNoteText('x'.repeat(MAX_NOTE_LENGTH))).toBe(true)
+    expect(isNoteText('x'.repeat(MAX_NOTE_LENGTH + 1))).toBe(false)
+    expect(isNoteText(5)).toBe(false)
+  })
+
+  it('isNoteForm accepts label and card only', () => {
+    expect(isNoteForm('label')).toBe(true)
+    expect(isNoteForm('card')).toBe(true)
+    expect(isNoteForm('hidden')).toBe(false)
+    expect(isNoteForm(null)).toBe(false)
+  })
+
+  it('isGeneration accepts a whole number from 0 on', () => {
+    expect(isGeneration(0)).toBe(true)
+    expect(isGeneration(7)).toBe(true)
+    expect(isGeneration(Number.MAX_SAFE_INTEGER)).toBe(true)
+    expect(isGeneration(-1)).toBe(false)
+    expect(isGeneration(1.5)).toBe(false)
+    expect(isGeneration(Number.MAX_SAFE_INTEGER + 1)).toBe(false)
+    expect(isGeneration(Number.NaN)).toBe(false)
+    expect(isGeneration(Number.POSITIVE_INFINITY)).toBe(false)
+    expect(isGeneration('1')).toBe(false)
+    expect(isGeneration(undefined)).toBe(false)
   })
 })

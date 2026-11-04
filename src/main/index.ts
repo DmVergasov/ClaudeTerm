@@ -17,7 +17,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -46,6 +46,8 @@ import { SettingsWindow } from './settings-window'
 import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
+import { NoteHub } from './note-hub'
+import { SessionNotes } from './session-notes'
 import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
@@ -158,6 +160,8 @@ function bootstrap(): void {
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
   const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
   const starred = new StarredSessions(dataDir, toast)
+  const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
+  const noteHub = new NoteHub({ store: notes, publish: (tabId, note, generation) => send(IPC.evNote, tabId, note, generation) })
   const accounts = new AccountStore(nodeAccountFile(join(dataDir, 'accounts.json')), electronVault(safeStorage, process.platform), { onError: (m) => log.warn(m) })
   /** how a message names an account */
   const accountName = (id: string): string => {
@@ -342,7 +346,10 @@ function bootstrap(): void {
   const msysAnchor = anchorFile ? new MsysAnchor(anchorFile, { spawn: spawnAnchor, log }) : null
 
   const tabs = new TabManager({
-    onTabStarted: startTabImages,
+    onTabStarted: (tab) => {
+      startTabImages(tab)
+      if (tab.kind === 'claude') noteHub.addTab(tab.id, tab.claudeSessionId)
+    },
     // a continue armed for the old process would type into the resumed one
     onTabRestarting: (tabId) => {
       autoContinue.forget(tabId)
@@ -357,6 +364,7 @@ function bootstrap(): void {
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
       review.removeTab(tabId)
+      noteHub.removeTab(tabId)
     },
     spawn: spawnPty,
     pipeName,
@@ -546,6 +554,7 @@ function bootstrap(): void {
     notify: (m) => { if (rendererReady) send(IPC.evToast, m) },
     beforeInstall: () => {
       sessions.flush()
+      notes.flush()
       if (!writeUpdateMarker(dataDir, Date.now())) log.warn('cannot write the update restart marker')
     },
     openReleasePage: (version) => void shell.openExternal(releasePage(version)),
@@ -571,6 +580,7 @@ function bootstrap(): void {
       if (!tabs.setClaudeSession(msg.tabId, msg.sessionId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
       planHub.session(msg.tabId, msg.sessionId)
+      noteHub.session(msg.tabId, msg.sessionId)
       // compact keeps the open dialogs: the conversation goes on
       review.sessionStarted(msg.tabId, msg.sessionId, msg.source)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
@@ -655,6 +665,12 @@ function bootstrap(): void {
   })
   ipcMain.handle(IPC.sessionsStar, (_e, id: unknown, on: unknown): void => {
     if (isSessionId(id) && isFlag(on)) starred.set(id, on)
+  })
+  ipcMain.on(IPC.notesSetText, (_e, id: unknown, text: unknown, generation: unknown) => {
+    if (isId(id) && isNoteText(text) && isGeneration(generation)) noteHub.setText(id, text, generation)
+  })
+  ipcMain.on(IPC.notesSetView, (_e, id: unknown, shown: unknown, form: unknown, generation: unknown) => {
+    if (isId(id) && isFlag(shown) && isNoteForm(form) && isGeneration(generation)) noteHub.setView(id, shown, form, generation)
   })
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
   ipcMain.on(IPC.sessionsOpen, (_e, id: unknown) => {
@@ -943,7 +959,7 @@ function bootstrap(): void {
   win.on('unmaximize', refitLater)
   win.on('enter-full-screen', refitLater)
   win.on('leave-full-screen', refitLater)
-  win.on('close', () => sessions.flush())
+  win.on('close', () => { sessions.flush(); notes.flush() })
   win.once('ready-to-show', () => { if (win) showWindow(win, isTest) })
   win.on('focus', () => {
     win?.flashFrame(false)
@@ -965,6 +981,7 @@ function bootstrap(): void {
     if (ptysExited) return
     updater.stop()
     sessions.flush()
+    notes.flush()
     for (const id of [...sources.keys()]) stopTabImages(id)
     for (const t of imageTimers.values()) clearTimeout(t)
     imageTimers.clear()
