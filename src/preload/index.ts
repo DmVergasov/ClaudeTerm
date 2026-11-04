@@ -71,6 +71,7 @@ const api: CtApi = {
   onTabClosed: (cb) => on(IPC.evTabClosed, cb),
   onTabActivated: (cb) => on(IPC.evTabActivated, cb),
   onTabsOrder: (cb) => on(IPC.evTabsOrder, cb),
+  onTabPlace: (cb) => on(IPC.evTabPlace, cb),
   onPtyData: (cb) => on(IPC.evPtyData, cb),
   onPtyExit: (cb) => on(IPC.evPtyExit, cb),
   onPtyReset: (cb) => on(IPC.evPtyReset, cb),

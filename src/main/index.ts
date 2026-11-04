@@ -36,6 +36,7 @@ import { macMenuTemplate } from './mac-menu'
 import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePage, startSwap } from './mac-update'
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
 import { anchorExe, findGitBash, MsysAnchor, spawnAnchor } from './msys-anchor'
+import { execGit } from './git-source'
 import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
 import { buildLaunch, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver } from './profiles'
@@ -51,6 +52,7 @@ import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './so
 import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager } from './tab-manager'
+import { TabPlaces } from './tab-places'
 import { readAgentMeta } from './transcript-agent-info'
 import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, writeUpdateMarker } from './update-marker'
 import { Updater, type UpdaterBackend } from './updater'
@@ -341,8 +343,12 @@ function bootstrap(): void {
   const anchorFile = gitBash ? anchorExe(gitBash, existsSync) : null
   const msysAnchor = anchorFile ? new MsysAnchor(anchorFile, { spawn: spawnAnchor, log }) : null
 
+  const places = new TabPlaces({ run: execGit, publish: (id, place) => send(IPC.evTabPlace, id, place) })
   const tabs = new TabManager({
-    onTabStarted: startTabImages,
+    onTabStarted: (tab) => {
+      startTabImages(tab)
+      places.addTab(tab.id, tab.cwd)
+    },
     // a continue armed for the old process would type into the resumed one
     onTabRestarting: (tabId) => {
       autoContinue.forget(tabId)
@@ -357,6 +363,7 @@ function bootstrap(): void {
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
       review.removeTab(tabId)
+      places.removeTab(tabId)
     },
     spawn: spawnPty,
     pipeName,
@@ -393,7 +400,7 @@ function bootstrap(): void {
       opened: (t) => send(IPC.evTabOpened, t),
       updated: (t) => send(IPC.evTabUpdated, t),
       closed: (id) => send(IPC.evTabClosed, id),
-      activated: (id) => { send(IPC.evTabActivated, id); review.activated(id) },
+      activated: (id) => { send(IPC.evTabActivated, id); review.activated(id); places.refresh(id) },
       order: (ids) => send(IPC.evTabsOrder, ids),
       data: (id, d) => send(IPC.evPtyData, id, d),
       exit: (id, code) => send(IPC.evPtyExit, id, code),
@@ -618,6 +625,7 @@ function bootstrap(): void {
       // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
       if (msg.reason === 'done') {
         review.turnEnded(msg.tabId)
+        places.refresh(msg.tabId)
         tabs.setWorking(msg.tabId, false)
         if (msg.error === undefined) autoContinue.turnEnded(msg.tabId)
         // a response a dropped connection cut off goes on by itself: nobody needs to look yet
@@ -961,6 +969,7 @@ function bootstrap(): void {
   win.once('ready-to-show', () => { if (win) showWindow(win, isTest) })
   win.on('focus', () => {
     win?.flashFrame(false)
+    places.refreshAll()
     const id = tabs.activeTabId()
     if (id) review.trigger(id)
   })

@@ -141,6 +141,14 @@ export interface Settings {
   autoUpdate: boolean
 }
 
+/** where a tab's folder is in git: its project, the linked worktree it is in (null for the main worktree), its branch */
+export interface TabPlace {
+  /** key: pathKey of the main worktree's (or bare repository's) path; name: its folder name (acme.git: acme); parent: the folder holding it */
+  project: { key: string; name: string; parent: string }
+  worktree: { path: string; color: number } | null
+  branch: string
+}
+
 export interface MainStatus {
   model: { id: string; displayName: string }
   effort: string | null

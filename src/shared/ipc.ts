@@ -1,7 +1,7 @@
 import type { AccountResult, AccountsView } from './accounts'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
-import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, UpdateState } from './types'
+import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabPlace, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -65,6 +65,7 @@ export const IPC = {
   evTabClosed: 'ev:tab-closed',
   evTabActivated: 'ev:tab-activated',
   evTabsOrder: 'ev:tabs-order',
+  evTabPlace: 'ev:tab-place',
   evPtyData: 'ev:pty-data',
   evPtyExit: 'ev:pty-exit',
   evPtyReset: 'ev:pty-reset',
@@ -238,6 +239,8 @@ export interface CtApi {
   onTabClosed(cb: (tabId: string) => void): Unsubscribe
   onTabActivated(cb: (tabId: string) => void): Unsubscribe
   onTabsOrder(cb: (ids: string[]) => void): Unsubscribe
+  /** a tab's project, worktree and branch changed; null when its folder is not in git */
+  onTabPlace(cb: (tabId: string, place: TabPlace | null) => void): Unsubscribe
   onPtyData(cb: (tabId: string, data: string) => void): Unsubscribe
   onPtyExit(cb: (tabId: string, code: number) => void): Unsubscribe
   onPtyReset(cb: (tabId: string) => void): Unsubscribe
