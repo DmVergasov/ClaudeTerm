@@ -51,13 +51,25 @@ export const isOpenTabRequest = (v: unknown): v is OpenTabRequest => {
   const r = v as Record<string, unknown>
   const present = (x: unknown, ok: (y: unknown) => boolean): boolean => x === undefined || ok(x)
   return (r.kind === 'claude' || r.kind === 'shell') &&
-    typeof r.cwd === 'string' && r.cwd.length > 0 &&
+    isAbsPath(r.cwd) &&
     present(r.profile, (x) => x === null || typeof x === 'string') &&
     present(r.title, isOptionalTitle) &&
     present(r.resumeSessionId, (x) => x === null || isSessionId(x)) &&
     present(r.account, isAccountRef) &&
     present(r.muted, isFlag)
 }
+
+/** the request as a tab opens from it: the fields the guard checks, and no fork (only Fork session makes one) */
+export const openTabRequestFields = (req: OpenTabRequest): OpenTabRequest => ({
+  kind: req.kind,
+  cwd: req.cwd,
+  ...(req.profile === undefined ? {} : { profile: req.profile }),
+  ...(req.title === undefined ? {} : { title: req.title }),
+  ...(req.resumeSessionId === undefined ? {} : { resumeSessionId: req.resumeSessionId }),
+  ...(req.account === undefined ? {} : { account: req.account }),
+  ...(req.muted === undefined ? {} : { muted: req.muted }),
+  fork: null
+})
 
 export const isHash = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64
 

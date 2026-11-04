@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOpenTabRequest, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
+import type { OpenTabRequest } from '../../src/shared/types'
+import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -134,5 +135,25 @@ describe('open tab request guard', () => {
       { kind: 'shell', cwd: 'C:/Work/acme', muted: 'yes' }
     ]
     for (const v of bad) expect(isOpenTabRequest(v)).toBe(false)
+  })
+})
+
+describe('open tab request fields', () => {
+  it('a relative folder is not an open tab request', () => {
+    expect(isOpenTabRequest({ kind: 'shell', cwd: 'Work/acme' })).toBe(false)
+    expect(isOpenTabRequest({ kind: 'shell', cwd: 'C:/Work/acme' })).toBe(true)
+  })
+
+  it('openTabRequestFields keeps the checked fields only: a renderer cannot pass setupToken or strict into a launch', () => {
+    const sent = { kind: 'shell', cwd: 'C:/Work/acme', setupToken: true, strict: true, fork: { of: 'x', from: 'y' } } as unknown as OpenTabRequest
+    const picked = openTabRequestFields(sent)
+    expect(picked).toEqual({ kind: 'shell', cwd: 'C:/Work/acme', fork: null })
+    expect(picked).not.toHaveProperty('setupToken')
+    expect(picked).not.toHaveProperty('strict')
+  })
+
+  it('openTabRequestFields keeps the optional fields that were sent', () => {
+    const sent: OpenTabRequest = { kind: 'claude', cwd: 'C:/Work/acme', profile: 'work', title: 'Shop', resumeSessionId: '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', account: 'acc', muted: true }
+    expect(openTabRequestFields(sent)).toEqual({ ...sent, fork: null })
   })
 })
