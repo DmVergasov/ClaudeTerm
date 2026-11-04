@@ -34,9 +34,14 @@ export interface TabBarCallbacks {
   switchPosition(): void
 }
 
+/** the drag's data type that names the tab dragged: a drag without it (a file from the OS, say) is no tab drag */
+export const TAB_DRAG = 'application/x-claudeterm-tab'
+
+/** whether a drag carries the data type: only then does a row take it */
+export const dragCarries = (e: DragEvent, type: string): boolean => e.dataTransfer?.types.includes(type) ?? false
+
 export class TabBar {
   private editing: string | null = null
-  private dragId: string | null = null
   private items: TabBarItem[] = []
   private activeId: string | null = null
   private readonly header: TabHeader
@@ -84,19 +89,17 @@ export class TabBar {
     const parts = tabParts(item, this.platform, this.cb)
     el.append(parts.icon, parts.label, ...parts.marks, parts.close)
     bindTab(el, item, this.cb, () => this.startRename(parts.label, item))
-    el.addEventListener('dragstart', () => { this.dragId = item.id })
-    el.addEventListener('dragover', (e) => { if (this.dragId) e.preventDefault() })
+    el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(TAB_DRAG, item.id) })
+    el.addEventListener('dragover', (e) => { if (dragCarries(e, TAB_DRAG)) e.preventDefault() })
     el.addEventListener('drop', (e) => {
       e.preventDefault()
-      this.dropOn(item.id)
+      this.dropOn(item.id, e.dataTransfer?.getData(TAB_DRAG) ?? '')
     })
-    el.addEventListener('dragend', () => { this.dragId = null })
     return el
   }
 
-  private dropOn(targetId: string): void {
-    const from = this.dragId
-    this.dragId = null
+  /** `from` is the tab named in the drop's own data: a drop that names none moves nothing */
+  private dropOn(targetId: string, from: string): void {
     if (!from || from === targetId) return
     const all = this.items.map((i) => i.id)
     const fromIdx = all.indexOf(from)

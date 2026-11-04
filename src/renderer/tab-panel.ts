@@ -2,10 +2,13 @@ import { TAB_PANEL_WIDTH, type TabLayout } from '../shared/types'
 import { groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, pulseDelay, tabParts } from './tab-row'
-import type { TabBarCallbacks, TabBarItem } from './tabbar'
+import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarItem } from './tabbar'
 
 /** a linked worktree's color: TabPlace.worktree.color is an index into this list */
 export const WORKTREE_COLORS = ['#61afef', '#c678dd', '#56b6c2', '#98c379', '#e5c07b', '#be5046']
+
+/** the drag's data type that names the group dragged by its header */
+const GROUP_DRAG = 'application/x-claudeterm-group'
 
 const BRANCH_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
   '<circle cx="5" cy="3.5" r="1.6"/><circle cx="5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5" r="1.6"/><path d="M5 5.1v5.8M11.5 6.6c0 3-6.5 2.2-6.5 4.3"/></svg>'
@@ -27,9 +30,6 @@ export class TabPanel {
   private editing: string | null = null
   private readonly folded: Set<string>
   private width: number
-  /** the row or group header being dragged: a row drops onto a row, a header onto a header */
-  private dragTab: string | null = null
-  private dragGroup: string | null = null
   /** the active tab whose row was last brought into view */
   private revealed: string | null = null
 
@@ -52,14 +52,6 @@ export class TabPanel {
     this.width = clampWidth(layout.width)
     root.style.width = `${this.width}px`
     this.wireResize(this.handle)
-    // a drag ends on the document too: its source row may have been rebuilt meanwhile, and no drag may outlive its end
-    document.addEventListener('dragend', () => this.clearDrag())
-    document.addEventListener('drop', () => this.clearDrag())
-  }
-
-  private clearDrag(): void {
-    this.dragTab = null
-    this.dragGroup = null
   }
 
   /** the panel is in the page only while it is shown: a hidden one would still match the selectors of the shown tab bar */
@@ -121,13 +113,12 @@ export class TabPanel {
     head.className = 'tp-group-head'
     head.addEventListener('click', () => this.toggleFold(group.key))
     head.draggable = true
-    head.addEventListener('dragstart', () => { this.dragGroup = group.key })
-    head.addEventListener('dragover', (e) => { if (this.dragGroup) e.preventDefault() })
+    head.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(GROUP_DRAG, group.key) })
+    head.addEventListener('dragover', (e) => { if (dragCarries(e, GROUP_DRAG)) e.preventDefault() })
     head.addEventListener('drop', (e) => {
       e.preventDefault()
-      this.dropGroup(group.key)
+      this.dropGroup(group.key, e.dataTransfer?.getData(GROUP_DRAG) ?? '')
     })
-    head.addEventListener('dragend', () => { this.dragGroup = null })
     const chevron = document.createElement('span')
     chevron.className = 'tp-chevron'
     chevron.textContent = '▼'
@@ -166,13 +157,12 @@ export class TabPanel {
     el.dataset.tabId = item.id
     if (item.attention) el.style.animationDelay = pulseDelay()
     el.draggable = true
-    el.addEventListener('dragstart', () => { this.dragTab = item.id })
-    el.addEventListener('dragover', (e) => { if (this.dragTab) e.preventDefault() })
+    el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(TAB_DRAG, item.id) })
+    el.addEventListener('dragover', (e) => { if (dragCarries(e, TAB_DRAG)) e.preventDefault() })
     el.addEventListener('drop', (e) => {
       e.preventDefault()
-      this.dropTab(item.id)
+      this.dropTab(item.id, e.dataTransfer?.getData(TAB_DRAG) ?? '')
     })
-    el.addEventListener('dragend', () => { this.dragTab = null })
     const tooltip = [item.title, item.folder]
     if (place) tooltip.push(`branch: ${place.branch}`)
     if (place?.worktree) tooltip.push(`worktree: ${place.worktree.path}`)
@@ -212,19 +202,15 @@ export class TabPanel {
     return el
   }
 
-  /** a row dropped on another row: the tab order the drop answers, when it is allowed, goes to main */
-  private dropTab(targetId: string): void {
-    const from = this.dragTab
-    this.dragTab = null
+  /** a row dropped on another row: the tab order the drop answers, when it is allowed, goes to main; `from` is the drag's own tab id */
+  private dropTab(targetId: string, from: string): void {
     if (!from) return
     const order = moveTab(panelGroups(this.items), from, targetId)
     if (order) this.cb.reorder(order)
   }
 
   /** a group header dropped on another header: the groups move, the tab order goes to main */
-  private dropGroup(targetKey: string): void {
-    const from = this.dragGroup
-    this.dragGroup = null
+  private dropGroup(targetKey: string, from: string): void {
     if (!from) return
     const order = moveGroup(panelGroups(this.items), from, targetKey)
     if (order) this.cb.reorder(order)

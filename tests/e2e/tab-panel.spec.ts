@@ -476,6 +476,56 @@ test('switching the tabs from the top to the left shows the active row', async (
   await app.close()
 })
 
+test("a drag that never ended leaves no tab to move: a file dragged over a row is not a tab drop", async () => {
+  const repo = gitRepo()
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const a1 = await openTab(page, 'shell', repo)
+  const a2 = await openTab(page, 'shell', repo)
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, home])
+
+  // a drag of the second row whose end never reaches the page
+  await page.evaluate((id) => {
+    document.querySelector(`#tabpanel .tp-tab[data-tab-id="${id}"]`)!.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: new DataTransfer() }))
+  }, a2)
+  // later a file from the OS is dragged over the first row and dropped there: no tab moves
+  await page.evaluate((id) => {
+    const files = new DataTransfer()
+    files.items.add(new File(['notes'], 'notes.txt', { type: 'text/plain' }))
+    const row = document.querySelector(`#tabpanel .tp-tab[data-tab-id="${id}"]`)!
+    row.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: files }))
+    row.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: files }))
+  }, a1)
+  await page.waitForTimeout(500)
+  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, home])
+  await app.close()
+})
+
+test("a file dragged over a tab of the top bar is not a tab drop", async () => {
+  const repo = gitRepo()
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const a1 = await openTab(page, 'shell', repo)
+  const a2 = await openTab(page, 'shell', repo)
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([home, a1, a2])
+
+  await page.evaluate((id) => {
+    document.querySelector(`#tabbar .tab[data-tab-id="${id}"]`)!.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: new DataTransfer() }))
+  }, a2)
+  await page.evaluate((id) => {
+    const files = new DataTransfer()
+    files.items.add(new File(['notes'], 'notes.txt', { type: 'text/plain' }))
+    const tab = document.querySelector(`#tabbar .tab[data-tab-id="${id}"]`)!
+    tab.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: files }))
+    tab.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: files }))
+  }, a1)
+  await page.waitForTimeout(500)
+  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([home, a1, a2])
+  await app.close()
+})
+
 test('a drag that ends off the rows leaves no tab to move, so a later drop reorders nothing', async () => {
   const repo = gitRepo()
   const { app, page } = await launchApp({ settings: left(freshFolder()) })
