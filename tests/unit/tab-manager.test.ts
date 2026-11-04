@@ -611,4 +611,15 @@ describe('TabManager forks', () => {
     expect(await tm.switchAccount(A.id, 'work')).toBe(true)
     expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', account: 'work', resumeSessionId: null }))
   })
+
+  it('fork opens nothing when its parent is closed during the transcript check', async () => {
+    const closing: { tm: TabManager | null } = { tm: null }
+    const { tm, log } = forkSetup({ resumable: async (tabId) => { closing.tm!.close(tabId); return true } })
+    closing.tm = tm
+    const A = tm.open({ kind: 'claude', cwd: 'D:/x', resumeSessionId: SID_A })
+    log.length = 0
+    expect(await tm.fork(A.id)).toBeNull()
+    expect(tm.list()).toEqual([])
+    expect(log.filter((l) => l.startsWith('opened:'))).toEqual([])
+  })
 })

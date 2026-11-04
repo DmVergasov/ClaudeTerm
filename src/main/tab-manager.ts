@@ -182,7 +182,8 @@ export class TabManager {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude') return null
     const from = await this.resumeId(rec)
-    if (from === null) return null
+    // the check waited on the disk: a parent closed meanwhile has nothing to fork
+    if (from === null || !this.isLive(rec)) return null
     const info = rec.info
     return this.open({
       kind: 'claude',
