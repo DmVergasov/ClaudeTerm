@@ -461,3 +461,26 @@ test('switching the tabs to the left unfolds the group of the active tab', async
   await expect(row(page, a1)).toBeVisible()
   await app.close()
 })
+
+test('a drag that ends off the rows leaves no tab to move, so a later drop reorders nothing', async () => {
+  const repo = gitRepo()
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const a1 = await openTab(page, 'shell', repo)
+  const a2 = await openTab(page, 'shell', repo)
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, home])
+
+  // a drag of the second row whose end never reaches it (its row was rebuilt meanwhile): the end is on the document
+  await page.evaluate((id) => {
+    document.querySelector(`#tabpanel .tp-tab[data-tab-id="${id}"]`)!.dispatchEvent(new DragEvent('dragstart', { bubbles: true }))
+    document.dispatchEvent(new DragEvent('dragend'))
+  }, a2)
+  // later, a drop on the first row (a file dragged from outside, say) moves nothing
+  await page.evaluate((id) => {
+    document.querySelector(`#tabpanel .tp-tab[data-tab-id="${id}"]`)!.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true }))
+  }, a1)
+  await page.waitForTimeout(500)
+  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, home])
+  await app.close()
+})

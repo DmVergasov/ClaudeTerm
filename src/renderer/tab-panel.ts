@@ -52,6 +52,14 @@ export class TabPanel {
     this.width = clampWidth(layout.width)
     root.style.width = `${this.width}px`
     this.wireResize(this.handle)
+    // a drag ends on the document too: its source row may have been rebuilt meanwhile, and no drag may outlive its end
+    document.addEventListener('dragend', () => this.clearDrag())
+    document.addEventListener('drop', () => this.clearDrag())
+  }
+
+  private clearDrag(): void {
+    this.dragTab = null
+    this.dragGroup = null
   }
 
   /** the panel is in the page only while it is shown: a hidden one would still match the selectors of the shown tab bar */
