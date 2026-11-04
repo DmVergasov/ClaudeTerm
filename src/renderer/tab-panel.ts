@@ -30,6 +30,8 @@ export class TabPanel {
   /** the row or group header being dragged: a row drops onto a row, a header onto a header */
   private dragTab: string | null = null
   private dragGroup: string | null = null
+  /** the active tab whose row was last brought into view */
+  private revealed: string | null = null
 
   constructor(
     private readonly root: HTMLElement,
@@ -55,6 +57,8 @@ export class TabPanel {
   /** the panel is in the page only while it is shown: a hidden one would still match the selectors of the shown tab bar */
   show(visible: boolean): void {
     this.root.replaceChildren(...(visible ? [this.head, this.list, this.handle] : []))
+    // the list's scroll is lost while the panel is out of the page: the active row is brought back into view
+    if (visible) this.revealActive()
   }
 
   /** the tab ids in the order the panel shows them: group by group, folded groups included */
@@ -70,6 +74,15 @@ export class TabPanel {
     const groups = panelGroups(items)
     const labels = groupLabels(groups)
     this.list.replaceChildren(...groups.map((group) => this.renderGroup(group, labels.get(group.key) ?? '', byId)))
+    // a tab that became the active one is brought into view once its row is in the list (a folded group has none yet)
+    if (activeId !== this.revealed && this.list.querySelector('.tp-tab.active')) {
+      this.revealed = activeId
+      this.revealActive()
+    }
+  }
+
+  private revealActive(): void {
+    this.list.querySelector<HTMLElement>('.tp-tab.active')?.scrollIntoView({ block: 'nearest' })
   }
 
   /** the Changes button exists only for Claude tabs; it shows the files not yet viewed */

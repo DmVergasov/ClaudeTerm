@@ -85,6 +85,11 @@ function renderTabs(): void {
   })
   tabBar.render(items, activeId)
   tabPanel.render(items, activeId)
+  // on the left, the order is the panel's: main takes it when it differs, so the tab order follows the groups (the next render finds them equal)
+  if (settings.tabs.position === 'left') {
+    const visual = tabPanel.visualOrder
+    if (visual.length !== order.length || visual.some((id, i) => id !== order[i])) ct.reorderTabs(visual)
+  }
   if (imagePanel) refreshPanelButtons()
   renderTitle()
 }
@@ -437,7 +442,11 @@ function applySettings(s: Settings): void {
   reviewPanel.setTreeShown(s.review.fileTree)
   // only a change of the setting itself: another one must not undo a drag of the tree's edge
   if (s.review.treeWidth !== prev.review.treeWidth) reviewPanel.setTreeWidth(s.review.treeWidth)
-  showTabs(s.tabs.position)
+  // only a change of the position re-attaches the panel: that would reset its scroll
+  if (s.tabs.position !== prev.tabs.position) {
+    showTabs(s.tabs.position)
+    if (s.tabs.position === 'left' && activeId && places.has(activeId)) tabPanel.unfoldFor(activeId)
+  }
 }
 
 async function boot(): Promise<void> {
@@ -473,10 +482,12 @@ async function boot(): Promise<void> {
   tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
   showTabs(settings.tabs.position)
   ct.onTabPlace((id, place) => {
+    // the group is known with the first answer for the tab: a later change of its branch keeps a group the user folded
+    const first = !places.has(id)
     places.set(id, place)
     renderTabs()
     // a new active tab unfolds its group once its place is known: until then it is in No project, which must stay folded
-    if (id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id)
+    if (first && id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id)
   })
   searchBar = new SearchBar(
     document.getElementById('search')!,

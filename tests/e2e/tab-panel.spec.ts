@@ -368,3 +368,96 @@ test('a family moves together, and a fork stays in its family', async () => {
   expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([b, a, a1])
   await app.close()
 })
+
+test("tabs on the left keep the order the panel shows: a project's tabs stay together, and closing the active one goes to the next", async () => {
+  const repoA = gitRepo()
+  const repoB = gitRepo()
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const a1 = await openTab(page, 'shell', repoA)
+  const b1 = await openTab(page, 'shell', repoB)
+  const a2 = await openTab(page, 'shell', repoA)
+  // the panel shows A1, A2, B1 and No project last: main keeps that order too
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, b1, home])
+
+  await page.evaluate((id) => window.ct.activateTab(id), a1)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
+  await page.evaluate((id) => window.ct.closeTab(id), a1)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a2)
+  await app.close()
+})
+
+/** opens shell tabs in one folder outside git, until the panel holds `count` tabs with the home tab */
+async function openMany(page: Page, count: number): Promise<void> {
+  const folder = freshFolder()
+  while ((await page.evaluate(() => window.__ct!.tabIds().length)) < count) await openTab(page, 'shell', folder)
+}
+
+/** whether a row lies within the panel's list as drawn */
+const inList = (page: Page, id: string): Promise<boolean> => page.evaluate((tabId) => {
+  const list = document.querySelector('#tabpanel .tp-list')!.getBoundingClientRect()
+  const r = document.querySelector(`#tabpanel .tp-tab[data-tab-id="${tabId}"]`)!.getBoundingClientRect()
+  return r.top >= list.top && r.bottom <= list.bottom
+}, id)
+
+test("the active tab's row is in view, however far down the list it is", async () => {
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const first = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  await openMany(page, 30)
+  const list = page.locator('#tabpanel .tp-list')
+  await expect.poll(() => list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  const last = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await expect.poll(() => inList(page, last)).toBe(true)
+  await expect.poll(() => inList(page, first)).toBe(false)
+
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press(KEYS.nextTab)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, first)
+  await expect.poll(() => inList(page, first)).toBe(true)
+  await app.close()
+})
+
+test('a setting other than the tabs position keeps the scroll of the panel', async () => {
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await openMany(page, 30)
+  const list = page.locator('#tabpanel .tp-list')
+  // the panel scrolled down to its end: a list that is not scrolled would show nothing
+  await list.evaluate((el) => { el.scrollTop = el.scrollHeight })
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
+  const before = await list.evaluate((el) => el.scrollTop)
+
+  const hide = (await page.evaluate(() => window.ct.getSettings())).review.hideTests
+  await page.evaluate((on) => window.ct.setSetting('review.hideTests', on), !hide)
+  await expect.poll(() => page.evaluate(() => window.ct.getSettings()).then((s) => s.review.hideTests)).toBe(!hide)
+  await page.waitForTimeout(300)
+  expect(await list.evaluate((el) => el.scrollTop)).toBe(before)
+  await app.close()
+})
+
+test('switching the tabs to the left unfolds the group of the active tab', async () => {
+  const repo = gitRepo()
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const a1 = await openTab(page, 'shell', repo)
+  const group = groupNamed(page, basename(repo))
+  await expect(group).toHaveCount(1)
+  await group.locator('.tp-group-head').click()
+  await expect(group).toHaveClass(/\bfolded\b/)
+
+  await page.locator('#tabpanel .tab-position').click()
+  await expect(page.locator('#tabbar')).toBeVisible()
+  await page.evaluate((id) => window.ct.activateTab(id), home)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, home)
+  await page.evaluate((id) => window.ct.activateTab(id), a1)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
+
+  await page.locator('#tabbar .tab-position').click()
+  await expect(page.locator('#tabpanel')).toBeVisible()
+  await expect(group).not.toHaveClass(/\bfolded\b/)
+  await expect(row(page, a1)).toBeVisible()
+  await app.close()
+})
