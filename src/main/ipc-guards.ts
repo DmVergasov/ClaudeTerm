@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path'
 import type { ImageAction } from '../shared/ipc'
 import { isUuid } from '../shared/protocol'
 import { REVIEW_SCOPES, type ReviewScope } from '../shared/review'
-import type { TabLayout } from '../shared/types'
+import type { OpenTabRequest, TabLayout } from '../shared/types'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
@@ -43,6 +43,20 @@ export const isTabLayoutChange = (v: unknown): v is Partial<TabLayout> => {
   if (c.width !== undefined && (typeof c.width !== 'number' || !Number.isFinite(c.width))) return false
   if (c.folded !== undefined && !(Array.isArray(c.folded) && c.folded.length <= 200 && c.folded.every((k) => typeof k === 'string' && k.length <= 4096))) return false
   return true
+}
+
+/** a request to open a tab: its kind and folder, and each optional field of its type when it is present */
+export const isOpenTabRequest = (v: unknown): v is OpenTabRequest => {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  const present = (x: unknown, ok: (y: unknown) => boolean): boolean => x === undefined || ok(x)
+  return (r.kind === 'claude' || r.kind === 'shell') &&
+    typeof r.cwd === 'string' && r.cwd.length > 0 &&
+    present(r.profile, (x) => x === null || typeof x === 'string') &&
+    present(r.title, isOptionalTitle) &&
+    present(r.resumeSessionId, (x) => x === null || isSessionId(x)) &&
+    present(r.account, isAccountRef) &&
+    present(r.muted, isFlag)
 }
 
 export const isHash = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64

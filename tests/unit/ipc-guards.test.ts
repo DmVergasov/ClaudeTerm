@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOpenTabRequest, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -114,5 +114,25 @@ describe('review guards', () => {
     expect(isFlag('yes')).toBe(false)
     expect(isFlag(1)).toBe(false)
     expect(isFlag(undefined)).toBe(false)
+  })
+})
+
+describe('open tab request guard', () => {
+  const SESSION = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+
+  it('isOpenTabRequest accepts a shell or Claude tab with a folder, and the optional fields when they are of their type', () => {
+    expect(isOpenTabRequest({ kind: 'shell', cwd: 'C:/Work/acme' })).toBe(true)
+    expect(isOpenTabRequest({ kind: 'claude', cwd: 'C:/Work/acme', profile: 'work', title: 'Shop', resumeSessionId: SESSION, account: 'acc', muted: true })).toBe(true)
+    expect(isOpenTabRequest({ kind: 'claude', cwd: 'C:/Work/acme', profile: null, title: null, resumeSessionId: null, account: null })).toBe(true)
+  })
+
+  it('isOpenTabRequest rejects another kind, a missing or empty folder, and a field of the wrong type', () => {
+    const bad: unknown[] = [
+      null, 'C:/Work/acme', {}, { kind: 'fork', cwd: 'C:/Work/acme' }, { kind: 'shell' }, { kind: 'shell', cwd: '' },
+      { kind: 'shell', cwd: 'C:/Work/acme', profile: 1 }, { kind: 'shell', cwd: 'C:/Work/acme', title: 1 },
+      { kind: 'claude', cwd: 'C:/Work/acme', resumeSessionId: 'not-a-session' }, { kind: 'claude', cwd: 'C:/Work/acme', account: '' },
+      { kind: 'shell', cwd: 'C:/Work/acme', muted: 'yes' }
+    ]
+    for (const v of bad) expect(isOpenTabRequest(v)).toBe(false)
   })
 })
