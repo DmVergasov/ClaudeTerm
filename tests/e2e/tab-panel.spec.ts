@@ -1,10 +1,10 @@
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, PROMPT } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, makeDataDir, PROMPT } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -241,5 +241,43 @@ test('a tab in a folded group unfolds its group when it becomes the active tab',
   await expect(group).not.toHaveClass(/\bfolded\b/)
   await expect(row(page, a1)).toBeVisible()
   await expect.poll(() => page.evaluate(() => window.ct.getTabLayout())).toMatchObject({ folded: [] })
+  await app.close()
+})
+
+test('with tabs on the left, a new tab unfolds its project group and leaves No project folded', async () => {
+  const repo = gitRepo()
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await openTab(page, 'shell', repo)
+  const groupA = groupNamed(page, basename(repo))
+  const noProject = groupNamed(page, 'No project')
+  await expect(groupA).toHaveCount(1)
+  await groupA.locator('.tp-group-head').click()
+  await noProject.locator('.tp-group-head').click()
+  await expect(groupA).toHaveClass(/\bfolded\b/)
+  await expect(noProject).toHaveClass(/\bfolded\b/)
+
+  // the new tab is in the project's folder: its place arrives after git answers, and only then its group is known
+  const added = await openTab(page, 'shell', repo)
+  await expect(groupA).not.toHaveClass(/\bfolded\b/)
+  await expect(row(page, added)).toBeVisible()
+  await expect(noProject).toHaveClass(/\bfolded\b/)
+  expect(await page.evaluate(() => window.ct.getTabLayout())).toMatchObject({ folded: ['~none'] })
+  await app.close()
+})
+
+test('with tabs on top, activating a tab leaves the saved fold state alone', async () => {
+  const repo = gitRepo()
+  const dataDir = makeDataDir({ ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() })
+  writeFileSync(join(dataDir, 'tab-layout.json'), JSON.stringify({ width: 240, folded: ['~none'] }))
+  const { app, page } = await launchApp({ dataDir })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]
+  const a1 = await openTab(page, 'shell', repo)
+  await page.evaluate((id) => window.ct.activateTab(id), home)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, home)
+  await page.evaluate((id) => window.ct.activateTab(id), a1)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
+  expect(await page.evaluate(() => window.ct.getTabLayout())).toEqual({ width: 240, folded: ['~none'] })
   await app.close()
 })

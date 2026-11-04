@@ -45,8 +45,8 @@ let appInfo: AppInfo
 let fontSize = 12
 let tabBar: TabBar
 let tabPanel: TabPanel
-/** where each tab's folder is in git; a tab without an entry is in no repository */
-const places = new Map<string, TabPlace>()
+/** where each tab's folder is in git, as main last published it: null for a folder outside git; no entry until git has answered */
+const places = new Map<string, TabPlace | null>()
 let searchBar: SearchBar
 let toggleImagePanel = (): void => {}
 let restoreInfo: RestoreInfo | null = null
@@ -351,7 +351,8 @@ function activate(tabId: string): void {
     t.attention = false
   }
   renderTabs()
-  tabPanel.unfoldFor(tabId)
+  // the left panel's group of a tab is known once git has answered for its folder (see onTabPlace)
+  if (settings.tabs.position === 'left' && places.has(tabId)) tabPanel.unfoldFor(tabId)
   const claude = t?.info.kind === 'claude'
   reviewPanel.show(claude ? reviewUpdates.get(tabId) ?? null : null)
   // the images first: setAvailable can switch a shown Changes panel to Images and fire onChange, which must find this tab's images
@@ -461,9 +462,10 @@ async function boot(): Promise<void> {
   tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
   showTabs(settings.tabs.position)
   ct.onTabPlace((id, place) => {
-    if (place) places.set(id, place)
-    else places.delete(id)
+    places.set(id, place)
     renderTabs()
+    // a new active tab unfolds its group once its place is known: until then it is in No project, which must stay folded
+    if (id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id)
   })
   searchBar = new SearchBar(
     document.getElementById('search')!,
