@@ -100,6 +100,8 @@ Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −)
 - **Claude tabs** — `claude` runs inside your shell of choice, and you stay in that shell when it exits.
 - **Proper terminal behaviour** — ConPTY on Windows, a real PTY on macOS and Linux, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (`⌘C` / `⌘V` on macOS; pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
 - **Font sizes in points**, exactly like Windows Terminal — `12` looks the same in both.
+- **Tabs on the left** — **Tabs** in Settings, or the button in the tab bar, moves the tabs into a panel on the left, grouped by project (No project last), with the branch on every tab and a colored bar for a linked worktree. Click a group's header to fold it; drag tabs or groups to reorder them, and `Ctrl+Tab` and `Ctrl+Alt+1` … `9` follow that order.
+- **Fork session** — the right-click menu of a Claude tab with a conversation has **Fork session**: a new tab resumes that conversation from the same point, and in the left panel the fork is shown under its tab.
 
 <p align="center"><img src="docs/images/new-tab-menu.png" width="560" alt="New tab menu with detected shell profiles"></p>
 
@@ -203,6 +205,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "font": { "family": "Cascadia Mono, Consolas, Menlo, monospace", "size": 12 },   // size in points
   "theme": "Campbell",             // "Campbell", "One Half Dark", "One Half Light", or an xterm.js theme object
   "scrollback": 10000,
+  "tabs": { "position": "top" },   // "top": the tab bar above the terminal; "left": a panel on the left, the tabs grouped by project
   "imageWatch": {                  // new images in the session's scratchpad (Claude tabs only)
     "enabled": true,
     "extensions": ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
