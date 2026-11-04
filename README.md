@@ -177,7 +177,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 
 Right-click in the terminal copies the selection, or pastes when nothing is selected. On macOS `⌥`-drag selects text while Claude Code has the mouse (`Shift`-drag elsewhere). Double-click a tab to rename it.
 
-Right-click a tab → **Restart session** restarts Claude Code in the same tab and resumes the conversation — handy after adding an MCP server, a plugin or a settings change that Claude Code only reads at startup. For a shell tab the item is **Restart shell**.
+Right-click a tab → **Restart session** restarts Claude Code in the same tab and resumes the conversation — handy after adding an MCP server, a plugin or a settings change that Claude Code only reads at startup. For a shell tab the item is **Restart shell**. A Claude tab with a conversation also has **Fork session**, which opens a new tab that resumes a copy of that conversation from the same point.
 
 ## Settings
 
