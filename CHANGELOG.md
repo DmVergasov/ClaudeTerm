@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.12.0
+
+### New
+
+- **A note on each Claude tab.** Click the **Note** button in the tab bar, or press `Ctrl+Shift+N` (`⌘N` on macOS), to write a note of your own on a Claude tab: which feature it is building, what is left to do, anything you want to find again tomorrow. The note lies over the top right of the terminal, translucent until you point at it: a one-line label with its first line, which a click opens into a card to edit; **–** folds it back into the label, **×** hides it, and the button brings it back as it was. A tab with a note shows a small note icon in its title, and the terminal keeps its size, so Claude Code does not redraw. The note stays with the conversation: through `/clear`, a restart with Restore, and when Recent sessions reopens the conversation after you closed its tab. `/resume` into a conversation that has a note of its own shows that note, and the tab's note stays with the conversation it left. Claude never sees your notes; they are kept in ClaudeTerm's own data folder.
+
 ## 0.11.1
 
 ### Fixes
