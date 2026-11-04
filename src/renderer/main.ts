@@ -190,10 +190,16 @@ function setFontSize(size: number): void {
   for (const t of tabs.values()) t.view.setFont(settings.font.family, fontSize)
 }
 
+/** the tab ids in the order the shown tab bar lists them: the left panel's when the tabs are on the left */
+function shownOrder(): string[] {
+  return settings.tabs.position === 'left' ? tabPanel.visualOrder : order
+}
+
 function cycleTabs(delta: number): void {
-  if (order.length === 0) return
-  const i = activeId ? order.indexOf(activeId) : -1
-  const next = order[(i + delta + order.length) % order.length]
+  const seq = shownOrder()
+  if (seq.length === 0) return
+  const i = activeId ? seq.indexOf(activeId) : -1
+  const next = seq[(i + delta + seq.length) % seq.length]
   if (next) ct.activateTab(next)
 }
 
@@ -233,7 +239,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'nextTab': cycleTabs(1); break
     case 'prevTab': cycleTabs(-1); break
     case 'gotoTab': {
-      const id = order[a.index]
+      const id = shownOrder()[a.index]
       if (id) ct.activateTab(id)
       break
     }

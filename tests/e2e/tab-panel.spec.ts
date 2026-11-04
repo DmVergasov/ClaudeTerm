@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, makeDataDir, PROMPT } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, makeDataDir, PROMPT, writeTranscript } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -279,5 +279,92 @@ test('with tabs on top, activating a tab leaves the saved fold state alone', asy
   await page.evaluate((id) => window.ct.activateTab(id), a1)
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
   expect(await page.evaluate(() => window.ct.getTabLayout())).toEqual({ width: 240, folded: ['~none'] })
+  await app.close()
+})
+
+test('Ctrl+Tab and Ctrl+Alt+N follow the panel\'s order', async () => {
+  const repoA = gitRepo()
+  const repoB = gitRepo()
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const a1 = await openTab(page, 'shell', repoA)
+  const b1 = await openTab(page, 'shell', repoB)
+  const a2 = await openTab(page, 'shell', repoA)
+  // the panel shows A1, A2, B1 (No project last), though the tabs were opened in another order
+  await expect(groupNamed(page, basename(repoA))).toHaveCount(1)
+  await page.evaluate((id) => window.ct.activateTab(id), a1)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
+  await page.locator('.terminal-host:visible .xterm').click()
+
+  await page.keyboard.press(KEYS.nextTab)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a2)
+  await page.keyboard.press(KEYS.nextTab)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, b1)
+
+  await page.evaluate((id) => window.ct.activateTab(id), a1)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Digit2' : 'Control+Alt+Digit2')
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a2)
+  await app.close()
+})
+
+test('a tab is dragged within its group, not into another', async () => {
+  const repoA = gitRepo()
+  const repoB = gitRepo()
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const a1 = await openTab(page, 'shell', repoA)
+  const b1 = await openTab(page, 'shell', repoB)
+  const a2 = await openTab(page, 'shell', repoA)
+  await expect(row(page, a2)).toBeVisible()
+
+  await row(page, a2).dragTo(row(page, a1))
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a2, a1, b1, home])
+
+  await row(page, a1).dragTo(row(page, b1))
+  await page.waitForTimeout(500)
+  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a2, a1, b1, home])
+  await app.close()
+})
+
+test('a group is dragged by its header', async () => {
+  const repoA = gitRepo()
+  const repoB = gitRepo()
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const a1 = await openTab(page, 'shell', repoA)
+  const a2 = await openTab(page, 'shell', repoA)
+  const b1 = await openTab(page, 'shell', repoB)
+  const groupA = groupNamed(page, basename(repoA))
+  const groupB = groupNamed(page, basename(repoB))
+  await expect(groupA).toHaveCount(1)
+  await expect(groupB).toHaveCount(1)
+
+  await groupB.locator('.tp-group-head').dragTo(groupA.locator('.tp-group-head'))
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([b1, a1, a2, home])
+  await app.close()
+})
+
+test('a family moves together, and a fork stays in its family', async () => {
+  const config = mkdtempSync(join(tmpdir(), 'ct-claude-config-'))
+  const repo = gitRepo()
+  const { app, page, pipeName } = await launchApp({ settings: left(freshFolder()), args: ['--claude', repo], env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const a = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: a, sessionId: SID, source: 'startup', transcriptPath: writeTranscript(config, repo, SID) })).toEqual({ ok: true })
+  const b = await openTab(page, 'shell', repo)
+  await page.evaluate((id) => window.ct.forkTab(id), a)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 3)
+  const [, a1] = await page.evaluate(() => window.__ct!.tabIds())
+  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a, a1, b])
+
+  await row(page, a).dragTo(row(page, b))
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([b, a, a1])
+
+  await row(page, a1!).dragTo(row(page, b))
+  await page.waitForTimeout(500)
+  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([b, a, a1])
   await app.close()
 })

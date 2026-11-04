@@ -1,5 +1,5 @@
 import { TAB_PANEL_WIDTH, type TabLayout } from '../shared/types'
-import { groupLabels, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
+import { groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, pulseDelay, tabParts } from './tab-row'
 import type { TabBarCallbacks, TabBarItem } from './tabbar'
@@ -27,6 +27,9 @@ export class TabPanel {
   private editing: string | null = null
   private readonly folded: Set<string>
   private width: number
+  /** the row or group header being dragged: a row drops onto a row, a header onto a header */
+  private dragTab: string | null = null
+  private dragGroup: string | null = null
 
   constructor(
     private readonly root: HTMLElement,
@@ -96,6 +99,14 @@ export class TabPanel {
     const head = document.createElement('div')
     head.className = 'tp-group-head'
     head.addEventListener('click', () => this.toggleFold(group.key))
+    head.draggable = true
+    head.addEventListener('dragstart', () => { this.dragGroup = group.key })
+    head.addEventListener('dragover', (e) => { if (this.dragGroup) e.preventDefault() })
+    head.addEventListener('drop', (e) => {
+      e.preventDefault()
+      this.dropGroup(group.key)
+    })
+    head.addEventListener('dragend', () => { this.dragGroup = null })
     const chevron = document.createElement('span')
     chevron.className = 'tp-chevron'
     chevron.textContent = '▼'
@@ -133,6 +144,14 @@ export class TabPanel {
     el.className = `tp-tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${row.fork ? ' fork' : ''}`
     el.dataset.tabId = item.id
     if (item.attention) el.style.animationDelay = pulseDelay()
+    el.draggable = true
+    el.addEventListener('dragstart', () => { this.dragTab = item.id })
+    el.addEventListener('dragover', (e) => { if (this.dragTab) e.preventDefault() })
+    el.addEventListener('drop', (e) => {
+      e.preventDefault()
+      this.dropTab(item.id)
+    })
+    el.addEventListener('dragend', () => { this.dragTab = null })
     const tooltip = [item.title, item.folder]
     if (place) tooltip.push(`branch: ${place.branch}`)
     if (place?.worktree) tooltip.push(`worktree: ${place.worktree.path}`)
@@ -170,6 +189,24 @@ export class TabPanel {
 
     bindTab(el, item, this.cb, () => this.startRename(parts.label, item))
     return el
+  }
+
+  /** a row dropped on another row: the tab order the drop answers, when it is allowed, goes to main */
+  private dropTab(targetId: string): void {
+    const from = this.dragTab
+    this.dragTab = null
+    if (!from) return
+    const order = moveTab(panelGroups(this.items), from, targetId)
+    if (order) this.cb.reorder(order)
+  }
+
+  /** a group header dropped on another header: the groups move, the tab order goes to main */
+  private dropGroup(targetKey: string): void {
+    const from = this.dragGroup
+    this.dragGroup = null
+    if (!from) return
+    const order = moveGroup(panelGroups(this.items), from, targetKey)
+    if (order) this.cb.reorder(order)
   }
 
   private toggleFold(key: string): void {
