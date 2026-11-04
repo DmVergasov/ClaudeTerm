@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { OpenTabRequest, SessionSnapshotTab, TabInfo } from '../shared/types'
+import type { OpenTabRequest, SessionSnapshotTab, TabFork, TabInfo } from '../shared/types'
 import { applyEnvPatch, type EnvPatch } from './child-env'
 import type { LaunchSpec } from './profiles'
 import type { PtyHandle, SpawnPty } from './pty-host'
@@ -88,12 +88,17 @@ export class TabManager {
       claudeSessionId: req.kind === 'claude' ? req.resumeSessionId ?? null : null,
       account: req.kind === 'claude' ? launch.account ?? null : null,
       muted: req.muted === true,
+      fork: req.kind === 'claude' ? this.forkFrom(req.fork) : null,
       exited: false
     }
     const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false, working: false }
     this.tabs.set(info.id, rec)
-    this.order.push(info.id)
+    const head = info.fork?.of ?? null
+    // a fork stands right after its family
+    if (head === null) this.order.push(info.id)
+    else this.order.splice(this.familyEnd(head) + 1, 0, info.id)
     this.deps.events.opened({ ...info })
+    if (head !== null) this.deps.events.order([...this.order])
     this.deps.onTabStarted?.({ ...info })
     this.start(rec)
     if (opts.activate ?? true) this.activate(info.id)
@@ -109,6 +114,12 @@ export class TabManager {
     this.order.splice(idx, 1)
     if (rec.timer) clearTimeout(rec.timer)
     rec.pty?.kill()
+    for (const other of this.tabs.values()) {
+      if (other.info.fork?.of !== tabId) continue
+      // the forks of a closed head are ordinary tabs now
+      other.info.fork = { of: null, from: other.info.fork.from }
+      this.deps.events.updated({ ...other.info })
+    }
     this.deps.events.closed(tabId)
     this.deps.onTabClosed?.(tabId)
     if (this.activeId === tabId) {
@@ -155,6 +166,26 @@ export class TabManager {
     this.changed()
   }
 
+  /** a Claude tab with a saved conversation can be forked */
+  canFork(tabId: string): boolean {
+    const rec = this.tabs.get(tabId)
+    return rec !== undefined && rec.info.kind === 'claude' && this.resumeId(rec) !== null
+  }
+
+  /** a new Claude tab that continues a copy of the tab's conversation, in its folder and account */
+  fork(tabId: string): TabInfo | null {
+    if (!this.canFork(tabId)) return null
+    const rec = this.tabs.get(tabId)!
+    const info = rec.info
+    return this.open({
+      kind: 'claude',
+      cwd: info.cwd,
+      account: info.account,
+      title: info.customTitle === null ? null : `${info.customTitle} (fork)`,
+      fork: { of: info.fork?.of ?? info.id, from: this.resumeId(rec)! }
+    })
+  }
+
   /**
    * Starts the tab's process again in the same tab. With `live`, a running process is stopped first (e.g. so
    * Claude Code picks up a newly added MCP server); otherwise only an exited tab restarts. A Claude tab resumes
@@ -165,7 +196,7 @@ export class TabManager {
     if (!rec || rec.restarting || (!rec.info.exited && !opts.live)) return
     if (rec.info.kind === 'claude') {
       try {
-        this.setLaunch(rec, this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: this.resumeId(rec), account: rec.info.account }))
+        this.setLaunch(rec, this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: this.resumeId(rec), account: rec.info.account, fork: rec.info.fork }))
       } catch {
         // keep the previous launch
       }
@@ -182,7 +213,7 @@ export class TabManager {
     if (!rec || rec.info.kind !== 'claude' || rec.restarting) return false
     let launch: ResolvedLaunch
     try {
-      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: this.resumeId(rec), account, strict: true })
+      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: this.resumeId(rec), account, strict: true, fork: rec.info.fork })
     } catch {
       return false
     }
@@ -234,7 +265,10 @@ export class TabManager {
   snapshot(): SessionSnapshotTab[] {
     return this.order.map((id) => {
       const { info: i, working } = this.tabs.get(id)!
-      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working }
+      const head = i.fork?.of ?? null
+      const headAt = head === null ? -1 : this.order.indexOf(head)
+      const fork = i.fork ? { of: headAt < 0 ? null : headAt, from: i.fork.from } : null
+      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, fork }
     })
   }
 
@@ -259,6 +293,21 @@ export class TabManager {
     if (req.account !== undefined) return req.account
     const active = this.activeId ? this.tabs.get(this.activeId)?.info : undefined
     return active?.kind === 'claude' ? active.account : null
+  }
+
+  /** a fork's head, while that tab is open: a fork of a tab that is gone is an ordinary tab */
+  private forkFrom(fork: TabFork | null | undefined): TabFork | null {
+    if (!fork) return null
+    return { of: fork.of !== null && this.tabs.has(fork.of) ? fork.of : null, from: fork.from }
+  }
+
+  /** the position of a family's last tab: the head, or one of its forks */
+  private familyEnd(head: string): number {
+    let end = this.order.indexOf(head)
+    this.order.forEach((id, i) => {
+      if (this.tabs.get(id)?.info.fork?.of === head) end = i
+    })
+    return end
   }
 
   /** the conversation a restart continues: the CURRENT one (it may have changed since open, /clear), once it was saved */

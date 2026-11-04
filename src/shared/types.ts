@@ -7,6 +7,14 @@ export interface ProfileDef {
   args: string[]
 }
 
+/** a Claude tab that continues a copy of another tab's conversation */
+export interface TabFork {
+  /** the family's head while it is open */
+  of: string | null
+  /** the session id the fork was made from */
+  from: string
+}
+
 export interface TabInfo {
   id: string
   kind: TabKind
@@ -18,6 +26,8 @@ export interface TabInfo {
   account: string | null
   /** the user muted the tab: it makes no notification sound */
   muted: boolean
+  /** the Claude tab is a fork of another tab's conversation; null: an ordinary tab */
+  fork: TabFork | null
   exited: boolean
 }
 
@@ -31,6 +41,8 @@ export interface OpenTabRequest {
   account?: string | null
   /** start the tab muted, as it was when its session was saved */
   muted?: boolean
+  /** a fork of another tab's conversation (a Claude tab) */
+  fork?: TabFork | null
 }
 
 export type ImageSource = 'created' | 'shown' | 'read' | 'tool' | 'pasted'
@@ -61,6 +73,8 @@ export interface SessionSnapshotTab {
   muted: boolean
   /** Claude was in the middle of a turn: a prompt had started it, and it had neither ended nor been interrupted */
   working: boolean
+  /** a fork of a Claude tab: `of` is the head's index in this list, null when the head is not kept */
+  fork: { of: number | null; from: string } | null
 }
 
 export interface SessionSnapshot {

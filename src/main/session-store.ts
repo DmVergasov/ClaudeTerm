@@ -29,10 +29,21 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       // written before tabs could be muted: with sound
       muted: x.muted === true,
       // written before ClaudeTerm kept track of it: idle
-      working: x.kind === 'claude' && x.working === true
+      working: x.kind === 'claude' && x.working === true,
+      // written before forks existed: an ordinary tab
+      fork: x.kind === 'claude' ? parseFork(x.fork, tabs) : null
     })
   }
   return { version: 1, savedAt: r.savedAt, tabs }
+}
+
+/** a fork's head is kept only when it is an earlier Claude tab; a bad head leaves the fork without one */
+function parseFork(value: unknown, earlier: SessionSnapshotTab[]): SessionSnapshotTab['fork'] {
+  if (typeof value !== 'object' || value === null) return null
+  const f = value as Record<string, unknown>
+  if (!isUuid(f.from)) return null
+  const of = typeof f.of === 'number' && Number.isInteger(f.of) && f.of >= 0 && f.of < earlier.length && earlier[f.of].kind === 'claude' ? f.of : null
+  return { of, from: f.from }
 }
 
 export interface SessionStoreOptions {

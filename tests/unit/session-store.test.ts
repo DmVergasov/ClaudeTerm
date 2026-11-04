@@ -6,8 +6,8 @@ import { parseSnapshot, SessionStore } from '../../src/main/session-store'
 import type { SessionSnapshot, SessionSnapshotTab } from '../../src/shared/types'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
-const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null, muted: false, working: false }
-const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null, muted: true, working: false }
+const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null, muted: false, working: false, fork: null }
+const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null, muted: true, working: false, fork: null }
 const snap = (tabs: SessionSnapshotTab[]): SessionSnapshot => ({ version: 1, savedAt: '2026-10-05T10:00:00.000Z', tabs })
 const newDir = (): string => mkdtempSync(join(tmpdir(), 'ct-sess-'))
 
@@ -147,5 +147,19 @@ describe('SessionStore', () => {
     writeFileSync(s.previousPath, JSON.stringify(snap([claudeTab])))
     s.clearPrevious()
     expect(s.readPrevious()).toBeNull()
+  })
+})
+
+describe('parseSnapshot forks', () => {
+  it('keeps a fork whose head comes before it, and drops a bad one', () => {
+    const tabsOf = (tabs: unknown[]) => parseSnapshot(JSON.stringify({ version: 1, savedAt: 'x', tabs }))?.tabs
+    expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: SID } }])?.[1].fork).toEqual({ of: 0, from: SID })
+    expect(tabsOf([{ ...claudeTab, fork: { of: 1, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: null, from: SID })
+    expect(tabsOf([{ ...claudeTab, fork: { of: 0.5, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: null, from: SID })
+    expect(tabsOf([shellTab, { ...claudeTab, fork: { of: 0, from: SID } }])?.[1].fork).toEqual({ of: null, from: SID })
+    expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: 'x' } }])?.[1].fork).toBeNull()
+    expect(tabsOf([claudeTab, { ...shellTab, fork: { of: 0, from: SID } }])?.[1].fork).toBeNull()
+    const old = { version: 1, savedAt: 'x', tabs: [{ kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID }] }
+    expect(parseSnapshot(JSON.stringify(old))?.tabs[0].fork).toBeNull()
   })
 })
