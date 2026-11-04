@@ -139,7 +139,14 @@ export function gitRepo(): string {
   return dir
 }
 
-type SavedClipboard = { savedClipboard?: Record<string, Blob | Electron.ClipboardBookmark>[] }
+/** a linked worktree of the repository, on a new branch; its folder is a new temp folder */
+export function gitWorktree(repo: string, branch: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ct-worktree-'))
+  execFileSync('git', ['worktree', 'add', '-q', '-b', branch, dir], { cwd: repo, stdio: 'ignore' })
+  return dir
+}
+
+type SavedClipboard ={ savedClipboard?: Record<string, Blob | Electron.ClipboardBookmark>[] }
 
 /** Runs the steps, then gives the system clipboard back what it held: the tests must not change the machine they run on */
 export async function keepingClipboard(app: ElectronApplication, steps: () => Promise<void>): Promise<void> {

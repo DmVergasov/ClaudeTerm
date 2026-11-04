@@ -2,7 +2,7 @@ import './styles.css'
 import type { AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
-import type { PlanStatus, Settings, TabInfo } from '../shared/types'
+import type { PlanStatus, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
@@ -16,7 +16,8 @@ import { RestoreBanner } from './restore-banner'
 import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
 import { UpdateBanner } from './update-banner'
-import { TabBar } from './tabbar'
+import { TabBar, type TabBarCallbacks, type TabBarItem } from './tabbar'
+import { TabPanel } from './tab-panel'
 import { TerminalView } from './terminal-view'
 import { resolveTheme } from './themes'
 import { showToast } from './toasts'
@@ -43,6 +44,9 @@ let settings: Settings
 let appInfo: AppInfo
 let fontSize = 12
 let tabBar: TabBar
+let tabPanel: TabPanel
+/** where each tab's folder is in git; a tab without an entry is in no repository */
+const places = new Map<string, TabPlace>()
 let searchBar: SearchBar
 let toggleImagePanel = (): void => {}
 let restoreInfo: RestoreInfo | null = null
@@ -68,19 +72,29 @@ const planUpdates = new Map<string, PlanStatus>()
 /** the extra accounts, without their tokens */
 let accounts: AccountView[] = []
 
-const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? folderName(t.info.cwd)
+/** a fork's title gets ` (fork)` after the usual one, unless the user named the tab */
+const titleOf = (t: TabState): string => t.info.customTitle ?? `${t.oscTitle ?? folderName(t.info.cwd)}${t.info.fork ? ' (fork)' : ''}`
 
 /** where a new tab opens: the defaultFolder setting, else the home folder */
 const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
 
 function renderTabs(): void {
-  const items = order.flatMap((id) => {
+  const items = order.flatMap((id): TabBarItem[] => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited }] : []
+    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
   })
   tabBar.render(items, activeId)
+  tabPanel.render(items, activeId)
   if (imagePanel) refreshPanelButtons()
   renderTitle()
+}
+
+/** the tab bar on top or the left panel, whichever the tabs.position setting names; the other one is hidden */
+function showTabs(position: TabPosition): void {
+  tabBar.show(position === 'top')
+  tabPanel.show(position === 'left')
+  document.getElementById('tabbar')!.hidden = position !== 'top'
+  document.getElementById('tabpanel')!.hidden = position !== 'left'
 }
 
 function renderTitle(): void {
@@ -100,9 +114,12 @@ function renderTitle(): void {
 /** the Images and Changes buttons in the tab bar: which panel is shown, the badges, Changes only for a Claude tab */
 function refreshPanelButtons(): void {
   const unseen = activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0
-  tabBar.setImages(sidePanel.isShowing('images'), unseen)
   const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
-  tabBar.setChanges(claude, sidePanel.isShowing('changes'), claude && activeId ? reviewUpdates.get(activeId)?.unviewed ?? 0 : 0)
+  const unviewed = claude && activeId ? reviewUpdates.get(activeId)?.unviewed ?? 0 : 0
+  for (const bar of [tabBar, tabPanel]) {
+    bar.setImages(sidePanel.isShowing('images'), unseen)
+    bar.setChanges(claude, sidePanel.isShowing('changes'), unviewed)
+  }
 }
 
 function logInput(tabId: string, data: string): void {
@@ -334,6 +351,7 @@ function activate(tabId: string): void {
     t.attention = false
   }
   renderTabs()
+  tabPanel.unfoldFor(tabId)
   const claude = t?.info.kind === 'claude'
   reviewPanel.show(claude ? reviewUpdates.get(tabId) ?? null : null)
   // the images first: setAvailable can switch a shown Changes panel to Images and fire onChange, which must find this tab's images
@@ -407,6 +425,7 @@ function applySettings(s: Settings): void {
   reviewPanel.setTreeShown(s.review.fileTree)
   // only a change of the setting itself: another one must not undo a drag of the tree's edge
   if (s.review.treeWidth !== prev.review.treeWidth) reviewPanel.setTreeWidth(s.review.treeWidth)
+  showTabs(s.tabs.position)
 }
 
 async function boot(): Promise<void> {
@@ -415,7 +434,9 @@ async function boot(): Promise<void> {
   // the window must come up even when the accounts cannot be listed
   accounts = (await ct.listAccounts().catch(() => null))?.accounts ?? []
   fontSize = settings.font.size
-  tabBar = new TabBar(document.getElementById('tabbar')!, {
+  const layout = await ct.getTabLayout()
+  // the tab bar and the left panel share these: each one shows the same tabs and does the same things
+  const tabCallbacks: TabBarCallbacks = {
     activate: (id) => ct.activateTab(id),
     close: (id) => ct.closeTab(id),
     rename: (id, title) => ct.renameTab(id, title),
@@ -430,8 +451,20 @@ async function boot(): Promise<void> {
     toggleChanges: () => {
       runAction({ type: 'toggleChanges' }, activeId)
       if (activeId) tabs.get(activeId)?.view.term.focus()
+    },
+    switchPosition: () => {
+      const next: TabPosition = settings.tabs.position === 'top' ? 'left' : 'top'
+      void ct.setSetting('tabs.position', next).then((r) => { if (!r.ok) showToast(r.error) }, (e: unknown) => showToast(`Cannot save tabs.position: ${String(e)}`))
     }
-  }, ct.platform)
+  }
+  tabBar = new TabBar(document.getElementById('tabbar')!, tabCallbacks, ct.platform)
+  tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
+  showTabs(settings.tabs.position)
+  ct.onTabPlace((id, place) => {
+    if (place) places.set(id, place)
+    else places.delete(id)
+    renderTabs()
+  })
   searchBar = new SearchBar(
     document.getElementById('search')!,
     () => (activeId ? tabs.get(activeId)?.view.search ?? null : null),
@@ -591,6 +624,7 @@ async function boot(): Promise<void> {
     if (id === activeId) planList.close()
     t.view.dispose()
     tabs.delete(id)
+    places.delete(id)
     imageUpdates.delete(id)
     statusUpdates.delete(id)
     planUpdates.delete(id)
