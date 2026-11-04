@@ -95,6 +95,14 @@ describe('folder place from git', () => {
     })
   })
 
+  it('names a project at a drive or file-system root by the path itself', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'ct-place-unit-'))
+    const root = process.platform === 'win32' ? 'C:/' : '/'
+    const porcelain = `worktree ${root}\nHEAD ${SHA_1}\nbranch refs/heads/main\n\n`
+    const run: GitRun = async (args) => (args[0] === 'rev-parse' ? ok(`${root}\n`) : ok(porcelain))
+    expect((await folderPlace(run, folder))?.project.name).toBe(root)
+  })
+
   it('answers null when git cannot run', async () => {
     const folder = mkdtempSync(join(tmpdir(), 'ct-place-unit-'))
     const run: GitRun = async () => { throw new GitError('git was not found') }

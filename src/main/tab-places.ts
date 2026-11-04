@@ -87,7 +87,8 @@ export async function folderPlace(run: GitRun, folder: string): Promise<TabPlace
     const bare = main.bare
     const project = {
       key: pathKey(main.path),
-      name: bare ? nativePath.basename(main.path).replace(/\.git$/i, '') : nativePath.basename(main.path),
+      // a drive or file-system root has no folder name: the path names it
+      name: (bare ? nativePath.basename(main.path).replace(/\.git$/i, '') : nativePath.basename(main.path)) || main.path,
       parent: nativePath.basename(nativePath.dirname(main.path))
     }
     const linked = bare ? entries.filter((e) => !e.bare).map((e) => e.path) : entries.slice(1).map((e) => e.path)
