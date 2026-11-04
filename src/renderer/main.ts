@@ -393,13 +393,18 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
   if (!t) return
   const seq = ++tabMenuSeq
   const sessionId = t.info.kind === 'claude' ? t.info.claudeSessionId : null
-  // the star lives in main: ask before showing, so the item says what the click does
-  void (sessionId ? ct.getStarredSessions().catch(() => [] as string[]) : Promise.resolve([] as string[])).then((starred) => {
+  const claude = t.info.kind === 'claude'
+  // the star and the fork live in main: ask before showing, so the items say what the click does
+  void Promise.all([
+    sessionId ? ct.getStarredSessions().catch(() => [] as string[]) : Promise.resolve([] as string[]),
+    claude ? ct.canForkTab(id).catch(() => false) : Promise.resolve(false)
+  ]).then(([starred, canFork]) => {
     if (seq !== tabMenuSeq || !tabs.has(id)) return
     const isStarred = sessionId !== null && starred.includes(sessionId)
     const switches = continueItems(id)
     showMenu(at, [
-      { label: t.info.kind === 'claude' ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
+      { label: claude ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
+      ...(claude ? [{ label: 'Fork session', disabled: !canFork, action: () => ct.forkTab(id) }] : []),
       ...(sessionId ? [{ label: isStarred ? 'Unstar session' : 'Star session', action: () => void ct.setSessionStarred(sessionId, !isStarred) }] : []),
       { label: t.info.muted ? 'Unmute sound' : 'Mute sound', action: () => ct.muteTab(id, !t.info.muted) },
       { label: 'Mark as unread', action: () => markUnread(id) },

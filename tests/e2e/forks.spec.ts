@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,10 +17,10 @@ function snapshotTabs(dataDir: string): SessionSnapshotTab[] {
 }
 
 /** a Claude tab in a fresh folder, with the config folder the app reads its conversations from */
-async function startWithClaudeTab() {
+async function startWithClaudeTab(settings: object = FAKE_CLAUDE_SETTINGS) {
   const config = mkdtempSync(join(tmpdir(), 'ct-claude-config-'))
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
-  const launched = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, args: ['--claude', work], env: { CLAUDE_CONFIG_DIR: config } })
+  const launched = await launchApp({ settings, args: ['--claude', work], env: { CLAUDE_CONFIG_DIR: config } })
   await launched.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await launched.page.evaluate(() => window.__ct!.activeTabId()))!
   return { ...launched, config, work, tabId }
@@ -123,4 +123,90 @@ test('Restore keeps forks under their head, and forks again a fork that had no c
     }
     await app.close()
   }
+})
+
+/** the settings of the left panel, with a default folder outside git so the tabs of the test are in No project */
+const leftSettings = (): object => ({ ...FAKE_CLAUDE_SETTINGS, defaultFolder: mkdtempSync(join(tmpdir(), 'ct-folder-')), tabs: { position: 'left' } })
+
+const panelRow = (page: Page, id: string): Locator => page.locator(`#tabpanel .tp-tab[data-tab-id="${id}"]`)
+
+/** right-clicks the tab's row and picks its Fork session item */
+async function forkFromMenu(page: Page, row: Locator): Promise<void> {
+  await row.click({ button: 'right' })
+  await page.locator('.menu-item', { hasText: 'Fork session' }).click()
+}
+
+test('the tab menu forks a Claude tab, and the fork shows as one', async () => {
+  const { app, page, pipeName, config, work, tabId: a } = await startWithClaudeTab(leftSettings())
+  await panelRow(page, a).click({ button: 'right' })
+  await expect(page.locator('.menu-item', { hasText: 'Fork session' })).toHaveClass(/disabled/)
+  await page.keyboard.press('Escape')
+  await page.mouse.click(300, 300)
+
+  await sessionStarts(pipeName, a, SID_A, 'startup', writeTranscript(config, work, SID_A))
+  await expect.poll(() => page.evaluate((id) => window.ct.canForkTab(id), a)).toBe(true)
+  const parentTitle = (await page.evaluate((id) => window.__ct!.tabTitle(id), a))!
+  await forkFromMenu(page, panelRow(page, a))
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  // the fork's title is the folder's until its shell has set one of its own
+  await expect.poll(() => page.evaluate((id) => window.__ct!.tabTitle(id), f)).toBe(`${parentTitle} (fork)`)
+
+  await expect(panelRow(page, f)).toBeVisible()
+  expect(await page.locator('#tabpanel .tp-tab').evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.tabId))).toEqual([a, f])
+  expect(await panelRow(page, f).evaluate((el) => el.classList.contains('fork'))).toBe(true)
+  await app.close()
+})
+
+test("a renamed tab's fork starts with its name", async () => {
+  const { app, page, pipeName, config, work, tabId: a } = await startWithClaudeTab(leftSettings())
+  await sessionStarts(pipeName, a, SID_A, 'startup', writeTranscript(config, work, SID_A))
+  await expect.poll(() => page.evaluate((id) => window.ct.canForkTab(id), a)).toBe(true)
+  await panelRow(page, a).dblclick()
+  await page.locator('.tab-rename').fill('auth refactor')
+  await page.keyboard.press('Enter')
+  await expect(panelRow(page, a).locator('.tab-title')).toHaveText('auth refactor')
+
+  await forkFromMenu(page, panelRow(page, a))
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  expect(await page.evaluate((id) => window.__ct!.tabTitle(id), f)).toBe('auth refactor (fork)')
+  await app.close()
+})
+
+test('closing the head leaves its forks as ordinary rows that keep (fork)', async () => {
+  const { app, page, pipeName, config, work, tabId: a } = await startWithClaudeTab(leftSettings())
+  await sessionStarts(pipeName, a, SID_A, 'startup', writeTranscript(config, work, SID_A))
+  await expect.poll(() => page.evaluate((id) => window.ct.canForkTab(id), a)).toBe(true)
+  const parentTitle = (await page.evaluate((id) => window.__ct!.tabTitle(id), a))!
+  await forkFromMenu(page, panelRow(page, a))
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  await expect(panelRow(page, f)).toHaveClass(/fork/)
+
+  await panelRow(page, a).hover()
+  await panelRow(page, a).locator('.tab-close').click()
+  await page.waitForFunction((id) => !window.__ct!.tabIds().includes(id), a)
+  await expect(panelRow(page, f)).toBeVisible()
+  expect(await panelRow(page, f).evaluate((el) => el.classList.contains('fork'))).toBe(false)
+  await expect.poll(() => page.evaluate((id) => window.__ct!.tabTitle(id), f)).toBe(`${parentTitle} (fork)`)
+  await app.close()
+})
+
+test('on top, a new fork stands after its family', async () => {
+  const { app, page, pipeName, config, work, tabId: a } = await startWithClaudeTab()
+  await sessionStarts(pipeName, a, SID_A, 'startup', writeTranscript(config, work, SID_A))
+  await openShellTab(page, work)
+  const b = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+
+  await page.evaluate((id) => window.ct.forkTab(id), a)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 3)
+  await page.evaluate((id) => window.ct.forkTab(id), a)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 4)
+  const [head, f1, f2, last] = await page.evaluate(() => window.__ct!.tabIds())
+  expect([head, last]).toEqual([a, b])
+  expect(await page.locator('#tabbar .tab').evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.tabId))).toEqual([a, f1, f2, b])
+  // a fork's title is its own shell's title or the folder's, with the suffix: the shell's title may arrive later
+  for (const f of [f1!, f2!]) expect(await page.evaluate((id) => window.__ct!.tabTitle(id), f)).toMatch(/ \(fork\)$/)
+  await app.close()
 })
