@@ -319,6 +319,8 @@ test('a tab is dragged within its group, not into another', async () => {
   const a2 = await openTab(page, 'shell', repoA)
   await expect(row(page, a2)).toBeVisible()
 
+  // the drag waits for the settled order: a tab in No project until its place arrives cannot be dropped in its group
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, b1, home])
   await row(page, a2).dragTo(row(page, a1))
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a2, a1, b1, home])
 
@@ -342,6 +344,7 @@ test('a group is dragged by its header', async () => {
   await expect(groupA).toHaveCount(1)
   await expect(groupB).toHaveCount(1)
 
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, b1, home])
   await groupB.locator('.tp-group-head').dragTo(groupA.locator('.tp-group-head'))
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([b1, a1, a2, home])
   await app.close()
@@ -360,6 +363,7 @@ test('a family moves together, and a fork stays in its family', async () => {
   const [, a1] = await page.evaluate(() => window.__ct!.tabIds())
   expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a, a1, b])
 
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a, a1, b])
   await row(page, a).dragTo(row(page, b))
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([b, a, a1])
 
