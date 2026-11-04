@@ -18,6 +18,7 @@ import { StatusBar } from './status-bar'
 import { UpdateBanner } from './update-banner'
 import { TabBar, type TabBarCallbacks, type TabBarItem } from './tabbar'
 import { TabPanel } from './tab-panel'
+import { orderToWrite } from './tab-groups'
 import { TerminalView } from './terminal-view'
 import { resolveTheme } from './themes'
 import { showToast } from './toasts'
@@ -85,10 +86,11 @@ function renderTabs(): void {
   })
   tabBar.render(items, activeId)
   tabPanel.render(items, activeId)
-  // on the left, the order is the panel's: main takes it when it differs, so the tab order follows the groups (the next render finds them equal)
+  // on the left, the order is the panel's: main takes it when it differs, so the tab order follows the groups (the next render finds them equal).
+  // Not before every tab's place is known: until then a tab sits in No project and that temporary order must not reach main
   if (settings.tabs.position === 'left') {
-    const visual = tabPanel.visualOrder
-    if (visual.length !== order.length || visual.some((id, i) => id !== order[i])) ct.reorderTabs(visual)
+    const next = orderToWrite(order, tabPanel.visualOrder, order.every((id) => places.has(id)))
+    if (next) ct.reorderTabs(next)
   }
   if (imagePanel) refreshPanelButtons()
   renderTitle()

@@ -44,6 +44,15 @@ export function panelOrder(groups: PanelGroup[]): string[] {
   return groups.flatMap((group) => group.rows.map((row) => row.id))
 }
 
+/**
+ * The tab order to send to main after the left panel was rendered, or null when nothing is to be sent. Nothing is sent
+ * while a tab's place is unknown: its group is then only a guess (No project), and the order main keeps would follow it.
+ */
+export function orderToWrite(order: string[], visualOrder: string[], placesKnown: boolean): string[] | null {
+  if (!placesKnown || sameOrder(order, visualOrder)) return null
+  return visualOrder
+}
+
 /** Each row that is not a fork starts a block; the forks after it belong to that block. */
 function blocksOf(rows: PanelRow[]): string[][] {
   const blocks: string[][] = []

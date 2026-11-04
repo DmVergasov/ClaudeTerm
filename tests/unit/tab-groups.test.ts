@@ -4,6 +4,7 @@ import {
   groupLabels,
   moveGroup,
   moveTab,
+  orderToWrite,
   panelGroups,
   panelOrder,
   type GroupInput,
@@ -160,5 +161,19 @@ describe('group labels', () => {
     expect(labels.get('c:/home/acme')).toBe('acme (home)')
     expect(labels.get('c:/w/blog')).toBe('blog')
     expect(labels.get(NO_PROJECT)).toBe('No project')
+  })
+})
+
+describe('writing the panel order back', () => {
+  it('nothing is written while a place is unknown, whatever the order', () => {
+    expect(orderToWrite(['A', 'B'], ['B', 'A'], false)).toBeNull()
+  })
+
+  it('once every place is known, the panel order is written when it differs', () => {
+    expect(orderToWrite(['A', 'B'], ['B', 'A'], true)).toEqual(['B', 'A'])
+  })
+
+  it('an order that is already the panel order is not written', () => {
+    expect(orderToWrite(['A', 'B'], ['A', 'B'], true)).toBeNull()
   })
 })
