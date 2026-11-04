@@ -186,6 +186,8 @@ export interface ClaudeLaunch {
   /** null: no --settings (the Get a token tab runs `claude setup-token`) */
   settingsPath: string | null
   resumeSessionId: string | null
+  /** with resumeSessionId: start a new session that begins from the resumed one */
+  forkSession: boolean
 }
 
 export function buildClaudeCommandLine(family: ShellFamily, c: ClaudeLaunch): string {
@@ -193,6 +195,10 @@ export function buildClaudeCommandLine(family: ShellFamily, c: ClaudeLaunch): st
   if (c.resumeSessionId !== null) {
     if (!isUuid(c.resumeSessionId)) throw new Error(`invalid session id: ${c.resumeSessionId}`)
     line += ` --resume ${c.resumeSessionId}`
+  }
+  if (c.forkSession) {
+    if (c.resumeSessionId === null) throw new Error('--fork-session needs a session to resume')
+    line += ' --fork-session'
   }
   return line
 }

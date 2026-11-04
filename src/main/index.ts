@@ -371,10 +371,10 @@ function bootstrap(): void {
         const { profile, warning } = pickClaudeProfile(profiles, settings.claude.shellProfile)
         if (warning) toast(warning)
         if (req.setupToken) {
-          return { profileName: profile.name, spec: buildLaunch(profile, 'claude', { command: `${settings.claude.command} setup-token`, settingsPath: null, resumeSessionId: null }) }
+          return { profileName: profile.name, spec: buildLaunch(profile, 'claude', { command: `${settings.claude.command} setup-token`, settingsPath: null, resumeSessionId: null, forkSession: false }) }
         }
         if (acc.unavailable) toast(`${accountName(req.account!)} is not available; the tab started on the main account`)
-        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? null }
+        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? null, forkSession: false }
         return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env }
       }
       const profile = profiles.find((p) => p.name === req.profile) ?? pickProfile(profiles, settings.defaultProfile)
