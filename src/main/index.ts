@@ -668,7 +668,8 @@ function bootstrap(): void {
     if (restoreAfterUpdate) void runRestore()
   })
   ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) attention.notify(tabId, 'bell') })
-  ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => (req?.account === undefined || isAccountRef(req.account) ? openTab(inDefaultFolder(req)) : null))
+  // a fork comes only from Fork session (tabs:fork), never from a request to open a tab
+  ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => (req?.account === undefined || isAccountRef(req.account) ? openTab(inDefaultFolder({ ...req, fork: null })) : null))
   ipcMain.handle(IPC.sessionsList, async (): Promise<RecentSession[]> => {
     const list = await history.list(100, starred.ids())
     listedSessions = new Map(list.map((s) => [s.id, s]))
@@ -714,8 +715,21 @@ function bootstrap(): void {
       .catch((e: Error) => log.warn(`cannot switch the account: ${e.message}`))
   })
   ipcMain.on(IPC.tabsMute, (_e, id: unknown, muted: unknown) => { if (isId(id) && isFlag(muted)) tabs.setMuted(id, muted) })
-  ipcMain.handle(IPC.tabsCanFork, (_e, id: unknown): boolean => isId(id) && tabs.canFork(id))
-  ipcMain.on(IPC.tabsFork, (_e, id: unknown) => { if (isId(id)) tabs.fork(id) })
+  // the transcript is looked for without blocking: the tab menu waits for this answer on every right-click
+  ipcMain.handle(IPC.tabsCanFork, (_e, id: unknown): Promise<boolean> => (isId(id)
+    ? tabs.canForkAsync(id, async (sessionId) => {
+      const p = sources.get(id)?.transcriptPath
+      return p ? (await findTranscript(p, sessionId)) !== null : true
+    })
+    : Promise.resolve(false)))
+  ipcMain.on(IPC.tabsFork, (_e, id: unknown) => {
+    if (!isId(id)) return
+    try {
+      tabs.fork(id)
+    } catch (e) {
+      toast(`Cannot open tab: ${(e as Error).message}`)
+    }
+  })
   ipcMain.on(IPC.ptyWrite, (_e, id: unknown, data: unknown) => {
     if (!isId(id) || !isPtyData(data)) return
     if (id === autoTabId && isUserInput(data)) autoTabId = null

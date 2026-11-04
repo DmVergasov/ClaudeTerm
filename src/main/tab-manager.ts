@@ -52,6 +52,9 @@ export interface TabManagerDeps {
   restartWaitMs?: number
 }
 
+/** the title of a fork: the parent's name with ` (fork)` after it, unless the name has that already */
+const forkTitle = (title: string | null): string | null => title === null || title.endsWith(' (fork)') ? title : `${title} (fork)`
+
 interface TabRecord {
   info: TabInfo
   launch: ResolvedLaunch
@@ -172,6 +175,13 @@ export class TabManager {
     return rec !== undefined && rec.info.kind === 'claude' && this.resumeId(rec) !== null
   }
 
+  /** canFork with the conversation's check answered asynchronously, for a menu that must not wait on the disk */
+  async canForkAsync(tabId: string, resumable: (sessionId: string) => Promise<boolean>): Promise<boolean> {
+    const rec = this.tabs.get(tabId)
+    const sessionId = rec?.info.kind === 'claude' ? rec.info.claudeSessionId : null
+    return sessionId !== null && (await resumable(sessionId))
+  }
+
   /** a new Claude tab that continues a copy of the tab's conversation, in its folder and account */
   fork(tabId: string): TabInfo | null {
     if (!this.canFork(tabId)) return null
@@ -181,7 +191,7 @@ export class TabManager {
       kind: 'claude',
       cwd: info.cwd,
       account: info.account,
-      title: info.customTitle === null ? null : `${info.customTitle} (fork)`,
+      title: forkTitle(info.customTitle),
       fork: { of: info.fork?.of ?? info.id, from: this.resumeId(rec)! }
     })
   }

@@ -213,3 +213,15 @@ test('on top, a new fork stands after its family', async () => {
   for (const f of [f1!, f2!]) expect(await page.evaluate((id) => window.__ct!.tabTitle(id), f)).toMatch(/ \(fork\)$/)
   await app.close()
 })
+
+test('a request to open a tab cannot make it a fork: only Fork session does', async () => {
+  const config = mkdtempSync(join(tmpdir(), 'ct-claude-config-'))
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const tab = await page.evaluate(([cwd, from]) => window.ct.openTab({ kind: 'claude', cwd, fork: { of: null, from } }), [work, SID_A] as const)
+  const id = tab!.id
+  await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain('fake-claude')
+  expect(await bufferText(page, id)).not.toContain('--fork-session')
+  await app.close()
+})

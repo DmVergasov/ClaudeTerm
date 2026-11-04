@@ -502,6 +502,26 @@ describe('TabManager forks', () => {
     expect(tm.fork(plain.id)?.customTitle).toBeNull()
   })
 
+  it('a fork of a tab already named (fork) keeps that name, without a second (fork)', () => {
+    const { tm } = forkSetup()
+    const parent = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, title: 'auth refactor (fork)' })
+    expect(tm.fork(parent.id)?.customTitle).toBe('auth refactor (fork)')
+  })
+
+  it('canForkAsync decides like canFork, asking the given check about the conversation', async () => {
+    const { tm } = forkSetup()
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    const fresh = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const saved = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    const check = vi.fn(async (_sessionId: string) => true)
+    expect(await tm.canForkAsync(shell.id, check)).toBe(false)
+    expect(await tm.canForkAsync(fresh.id, check)).toBe(false)
+    expect(check).not.toHaveBeenCalled()
+    expect(await tm.canForkAsync(saved.id, async () => false)).toBe(false)
+    expect(await tm.canForkAsync(saved.id, check)).toBe(true)
+    expect(check).toHaveBeenCalledWith(SID_A)
+  })
+
   it('a fork stands right after its family, and a fork of a fork joins the family', () => {
     const { tm, log } = forkSetup()
     const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
