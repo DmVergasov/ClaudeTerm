@@ -374,7 +374,9 @@ function bootstrap(): void {
           return { profileName: profile.name, spec: buildLaunch(profile, 'claude', { command: `${settings.claude.command} setup-token`, settingsPath: null, resumeSessionId: null, forkSession: false }) }
         }
         if (acc.unavailable) toast(`${accountName(req.account!)} is not available; the tab started on the main account`)
-        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? null, forkSession: false }
+        // a fork without a conversation of its own starts as a fork of its head's conversation
+        const forkFrom = req.kind === 'claude' && !req.resumeSessionId && req.fork ? req.fork.from : null
+        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? forkFrom, forkSession: forkFrom !== null }
         return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env }
       }
       const profile = profiles.find((p) => p.name === req.profile) ?? pickProfile(profiles, settings.defaultProfile)
@@ -465,7 +467,7 @@ function bootstrap(): void {
     openTab(cmd.kind === 'claude' ? { kind: 'claude', cwd } : { kind: 'shell', cwd, profile: cmd.profile })
   }
 
-  const runRestore = (): void => {
+  const runRestore = async (): Promise<void> => {
     const snap = previous
     if (!snap) return
     previous = null
@@ -480,13 +482,23 @@ function bootstrap(): void {
       autoTabId = null
     }
     let first: string | null = null
+    // the opened tab of each snapshot tab, by its index in the snapshot: a fork finds its head there
+    const openedIds: (string | null)[] = []
     for (const t of snap.tabs) {
       const { cwd, warning } = resolveLaunchDir(t.cwd, homedir(), isDirectory)
       if (warning) toast(warning)
+      let resumeSessionId = t.kind === 'claude' ? t.claudeSessionId : null
+      // a fork whose own conversation was never saved forks its head's again, rather than resuming nothing
+      if (t.kind === 'claude' && t.fork && resumeSessionId !== null) {
+        const transcript = join(claudeProjectsDir(process.env, homedir()), t.cwd.replace(/[^A-Za-z0-9]/g, '-'), `${resumeSessionId}.jsonl`)
+        if ((await findTranscript(transcript, resumeSessionId)) === null) resumeSessionId = null
+      }
+      const fork = t.kind === 'claude' && t.fork ? { of: t.fork.of === null ? null : (openedIds[t.fork.of] ?? null), from: t.fork.from } : null
       const opened = openTab(
-        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId: t.kind === 'claude' ? t.claudeSessionId : null, account: t.kind === 'claude' ? t.account : null, muted: t.muted },
+        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId, account: t.kind === 'claude' ? t.account : null, muted: t.muted, fork },
         false
       )
+      openedIds.push(opened?.id ?? null)
       if (opened && t.working && settings.claude.continueAfterRestore) resumeAfterRestore.add(opened.id)
       if (opened && first === null) first = opened.id
     }
@@ -643,7 +655,7 @@ function bootstrap(): void {
     rendererReady = true
     for (const n of startupNotices.splice(0)) send(IPC.evToast, n)
     for (const cmd of pendingLaunches.splice(0)) openFromLaunch(cmd)
-    if (restoreAfterUpdate) runRestore()
+    if (restoreAfterUpdate) void runRestore()
   })
   ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) attention.notify(tabId, 'bell') })
   ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => (req?.account === undefined || isAccountRef(req.account) ? openTab(inDefaultFolder(req)) : null))
@@ -690,6 +702,8 @@ function bootstrap(): void {
       .catch((e: Error) => log.warn(`cannot switch the account: ${e.message}`))
   })
   ipcMain.on(IPC.tabsMute, (_e, id: unknown, muted: unknown) => { if (isId(id) && isFlag(muted)) tabs.setMuted(id, muted) })
+  ipcMain.handle(IPC.tabsCanFork, (_e, id: unknown): boolean => isId(id) && tabs.canFork(id))
+  ipcMain.on(IPC.tabsFork, (_e, id: unknown) => { if (isId(id)) tabs.fork(id) })
   ipcMain.on(IPC.ptyWrite, (_e, id: unknown, data: unknown) => {
     if (!isId(id) || !isPtyData(data)) return
     if (id === autoTabId && isUserInput(data)) autoTabId = null
@@ -780,7 +794,7 @@ function bootstrap(): void {
     }
   })
   ipcMain.handle(IPC.restoreGet, () => restoreInfo())
-  ipcMain.on(IPC.restoreRun, () => runRestore())
+  ipcMain.on(IPC.restoreRun, () => { void runRestore() })
   ipcMain.on(IPC.updateCheck, () => { void updater.check(true) })
   ipcMain.on(IPC.updateInstall, () => updater.install())
   ipcMain.handle(IPC.updateGet, () => updater.current)

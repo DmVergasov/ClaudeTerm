@@ -15,6 +15,8 @@ export const IPC = {
   tabsRestart: 'tabs:restart',
   tabsSwitchAccount: 'tabs:switch-account',
   tabsMute: 'tabs:mute',
+  tabsCanFork: 'tabs:can-fork',
+  tabsFork: 'tabs:fork',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   promptAnswer: 'prompt:answer',
@@ -159,6 +161,10 @@ export interface CtApi {
   switchAccount(tabId: string, account: string | null): void
   /** a muted tab makes no notification sound; it is still marked and still flashes the taskbar */
   muteTab(tabId: string, muted: boolean): void
+  /** a Claude tab with a saved conversation can be forked */
+  canForkTab(tabId: string): Promise<boolean>
+  /** opens a new Claude tab that forks the tab's conversation, after its family */
+  forkTab(tabId: string): void
   writePty(tabId: string, data: string): void
   resizePty(tabId: string, cols: number, rows: number): void
   /** the answer to a query of onPromptQuery */

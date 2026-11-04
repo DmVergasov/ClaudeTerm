@@ -20,6 +20,8 @@ const api: CtApi = {
   restartTab: (id, live) => ipcRenderer.send(IPC.tabsRestart, id, live === true),
   switchAccount: (id, account) => ipcRenderer.send(IPC.tabsSwitchAccount, id, account),
   muteTab: (id, muted) => ipcRenderer.send(IPC.tabsMute, id, muted),
+  canForkTab: (id) => ipcRenderer.invoke(IPC.tabsCanFork, id),
+  forkTab: (id) => ipcRenderer.send(IPC.tabsFork, id),
   writePty: (id, data) => ipcRenderer.send(IPC.ptyWrite, id, data),
   resizePty: (id, cols, rows) => ipcRenderer.send(IPC.ptyResize, id, cols, rows),
   answerPrompt: (queryId, state) => ipcRenderer.send(IPC.promptAnswer, queryId, state),

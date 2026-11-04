@@ -1,6 +1,6 @@
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { MAC, testPipeName, WIN } from '../fixtures/platform'
@@ -62,6 +62,15 @@ export function processAlive(marker: string): boolean {
 }
 
 export const PNG_1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
+
+/** a conversation as Claude Code keeps it under its config folder: one line, enough for --resume to find it */
+export function writeTranscript(config: string, cwd: string, id: string): string {
+  const dir = join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `${id}.jsonl`)
+  writeFileSync(file, JSON.stringify({ type: 'user', cwd, entrypoint: 'cli', isSidechain: false, message: { role: 'user', content: 'hello' } }) + '\n')
+  return file
+}
 
 export function makeDataDir(settings?: object): string {
   const dir = mkdtempSync(join(tmpdir(), 'ct-e2e-'))
