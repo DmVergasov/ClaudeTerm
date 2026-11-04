@@ -238,4 +238,32 @@ describe('TabPlaces cache', () => {
     places.refresh('a1')
     await vi.waitFor(() => expect(git.asks.get(dirA)).toBe(2))
   })
+
+  it('forgets a folder that no tab uses any more: a tab added to it later waits for git again', async () => {
+    const git = countingGit({ [dirA]: 'main' })
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run: git.run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('a1', dirA)
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+    await settle()
+    places.removeTab('a1')
+    places.addTab('a2', dirA)
+    expect(published).toHaveLength(1)
+    await vi.waitFor(() => expect(published).toHaveLength(2))
+    expect(git.asks.get(dirA)).toBe(2)
+  })
+
+  it('keeps a folder that another tab still uses: a tab added to it gets the place at once', async () => {
+    const git = countingGit({ [dirA]: 'main' })
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run: git.run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('a1', dirA)
+    places.addTab('a2', dirA)
+    await vi.waitFor(() => expect(published).toHaveLength(2))
+    await settle()
+    places.removeTab('a1')
+    places.addTab('a3', dirA)
+    expect(published).toHaveLength(3)
+    expect(published[2]![0]).toBe('a3')
+  })
 })

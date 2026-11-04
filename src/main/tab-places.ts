@@ -164,7 +164,10 @@ export class TabPlaces {
   }
 
   removeTab(tabId: string): void {
+    const tab = this.tabs.get(tabId)
     this.tabs.delete(tabId)
+    // a folder no remaining tab uses is forgotten: its answer would be kept for nothing
+    if (tab && ![...this.tabs.values()].some((t) => t.key === tab.key)) this.folders.delete(tab.key)
   }
 
   /** activation and turn end: the tab's folder is asked about, whatever the last answer was */
