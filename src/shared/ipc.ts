@@ -1,7 +1,7 @@
 import type { AccountResult, AccountsView } from './accounts'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
-import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabPlace, UpdateState } from './types'
+import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabLayout, TabPlace, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -54,6 +54,8 @@ export const IPC = {
   reviewReveal: 'review:reveal',
   reviewCanSend: 'review:can-send',
   panelSet: 'panel:set',
+  layoutGet: 'layout:get',
+  layoutSet: 'layout:set',
   accountsList: 'accounts:list',
   accountsAdd: 'accounts:add',
   accountsRename: 'accounts:rename',
@@ -224,6 +226,10 @@ export interface CtApi {
    * for it and answers how the panel is to be shown. `resize` false: its edge was dragged, the window stays as it is.
    */
   setPanel(width: number, resize: boolean): Promise<PanelMode>
+  /** the left tab panel's width and folded groups */
+  getTabLayout(): Promise<TabLayout>
+  /** saves the part of the left tab panel's layout that is given; the width is kept between 160 and 480 px */
+  setTabLayout(change: Partial<TabLayout>): void
   /** the extra accounts, without their tokens */
   listAccounts(): Promise<AccountsView>
   addAccount(name: string, token: string): Promise<AccountResult>

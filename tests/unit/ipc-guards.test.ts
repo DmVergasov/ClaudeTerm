@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isAccountRef, isHash, isId, isIdList, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -101,6 +101,11 @@ describe('review guards', () => {
     expect(isSessionId(7)).toBe(false)
     expect(isSessionId(null)).toBe(false)
     expect(isSessionId('5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'.repeat(20))).toBe(false)
+  })
+
+  it('isTabLayoutChange checks the width and the folded groups when present', () => {
+    for (const v of [{}, { width: 300 }, { folded: ['k'] }, { width: 300, folded: [] }, { width: 0 }, { width: 9000 }, { folded: ['x'.repeat(4096)] }, { folded: Array.from({ length: 200 }, (_, i) => String(i)) }]) expect(isTabLayoutChange(v)).toBe(true)
+    for (const v of [null, undefined, 'x', { width: NaN }, { width: Infinity }, { width: '300' }, { folded: 'k' }, { folded: [1] }, { folded: ['x'.repeat(4097)] }, { folded: Array.from({ length: 201 }, () => 'k') }]) expect(isTabLayoutChange(v)).toBe(false)
   })
 
   it('isFlag accepts booleans only', () => {

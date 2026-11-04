@@ -7,7 +7,7 @@ import type { AccountResult, AccountsView } from '../shared/accounts'
 import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import { socketDir } from '../shared/protocol'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
-import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo } from '../shared/types'
+import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout } from '../shared/types'
 import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './accounts'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
@@ -17,7 +17,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -47,6 +47,7 @@ import { SettingsWindow } from './settings-window'
 import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
+import { TabLayoutStore } from './tab-layout'
 import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
@@ -160,6 +161,7 @@ function bootstrap(): void {
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
   const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
   const starred = new StarredSessions(dataDir, toast)
+  const tabLayout = new TabLayoutStore(dataDir, toast)
   const accounts = new AccountStore(nodeAccountFile(join(dataDir, 'accounts.json')), electronVault(safeStorage, process.platform), { onError: (m) => log.warn(m) })
   /** how a message names an account */
   const accountName = (id: string): string => {
@@ -677,6 +679,8 @@ function bootstrap(): void {
     if (isSessionId(id) && isFlag(on)) starred.set(id, on)
   })
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
+  ipcMain.handle(IPC.layoutGet, (): TabLayout => tabLayout.get())
+  ipcMain.on(IPC.layoutSet, (_e, c: unknown) => { if (isTabLayoutChange(c)) tabLayout.set(c) })
   ipcMain.on(IPC.sessionsOpen, (_e, id: unknown) => {
     const s = isId(id) ? listedSessions.get(id) : undefined
     if (!s) return

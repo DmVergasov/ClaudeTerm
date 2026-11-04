@@ -2,6 +2,7 @@ import { isAbsolute } from 'node:path'
 import type { ImageAction } from '../shared/ipc'
 import { isUuid } from '../shared/protocol'
 import { REVIEW_SCOPES, type ReviewScope } from '../shared/review'
+import type { TabLayout } from '../shared/types'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
@@ -34,6 +35,15 @@ export const isLineNo = (v: unknown): v is number => typeof v === 'number' && Nu
 
 /** the side panel's width in px; 0: closed */
 export const isPanelWidth = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_DIM
+
+/** a change of the left tab panel's layout: each part that is present is checked */
+export const isTabLayoutChange = (v: unknown): v is Partial<TabLayout> => {
+  if (typeof v !== 'object' || v === null) return false
+  const c = v as Record<string, unknown>
+  if (c.width !== undefined && (typeof c.width !== 'number' || !Number.isFinite(c.width))) return false
+  if (c.folded !== undefined && !(Array.isArray(c.folded) && c.folded.length <= 200 && c.folded.every((k) => typeof k === 'string' && k.length <= 4096))) return false
+  return true
+}
 
 export const isHash = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64
 

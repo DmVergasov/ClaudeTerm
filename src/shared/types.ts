@@ -195,6 +195,15 @@ export type UpdateState =
   | { status: 'ready'; version: string; notes: ReleaseNotes[] }
   | { status: 'available'; version: string; notes: ReleaseNotes[] }
 
+/** the left tab panel's width in px and the folded groups, kept in tab-layout.json */
+export interface TabLayout {
+  width: number
+  /** the keys of the groups the user folded */
+  folded: string[]
+}
+
+export const TAB_PANEL_WIDTH = { min: 160, max: 480, initial: 240 }
+
 /** A Claude Code conversation found in Claude Code's transcripts. */
 export interface SessionSummary {
   id: string
