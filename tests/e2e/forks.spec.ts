@@ -114,6 +114,9 @@ test('Restore keeps forks under their head, and forks again a fork that had no c
     await page.locator('.banner-restore').click()
     await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
     const [h, f] = await page.evaluate(() => window.__ct!.tabIds())
+    // the restored fork stays under its head: the head is the first tab, and the saved snapshot says so
+    expect(await page.evaluate(() => window.__ct!.tabIds().map((id) => window.__ct!.tabTitle(id)))).toEqual(['head', 'fork'])
+    await expect.poll(() => snapshotTabs(dataDir)[1]?.fork).toEqual({ of: 0, from: SID_A })
     await expect.poll(() => bufferText(page, h!), { timeout: 15_000 }).toContain(`--resume ${SID_A}`)
     if (withTranscript) {
       await expect.poll(() => bufferText(page, f!), { timeout: 15_000 }).toContain(`--resume ${SID_B}`)
