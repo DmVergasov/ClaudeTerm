@@ -146,7 +146,7 @@ export function gitWorktree(repo: string, branch: string): string {
   return dir
 }
 
-type SavedClipboard ={ savedClipboard?: Record<string, Blob | Electron.ClipboardBookmark>[] }
+type SavedClipboard = { savedClipboard?: Record<string, Blob | Electron.ClipboardBookmark>[] }
 
 /** Runs the steps, then gives the system clipboard back what it held: the tests must not change the machine they run on */
 export async function keepingClipboard(app: ElectronApplication, steps: () => Promise<void>): Promise<void> {
