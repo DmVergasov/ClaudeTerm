@@ -111,7 +111,7 @@ describe('TabManager', () => {
     expect(ptys[1].killed).toBe(false)
   })
 
-  it('restart of a claude tab re-resolves the launch with the current session id', () => {
+  it('restart of a claude tab re-resolves the launch with the current session id', async () => {
     const resolveLaunch = vi.fn((req: { profile?: string | null }) => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }))
     const { tm, ptys } = setup({ resolveLaunch })
     const A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -120,17 +120,17 @@ describe('TabManager', () => {
     tm.setClaudeSession(tab.id, B)
     ptys[0].emitExit(0)
     resolveLaunch.mockClear()
-    tm.restart(tab.id)
+    await tm.restart(tab.id)
     expect(resolveLaunch).toHaveBeenCalledWith(expect.objectContaining({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: B }))
     expect(ptys).toHaveLength(2)
   })
 
-  it('restart of a claude tab without a session id resumes nothing', () => {
+  it('restart of a claude tab without a session id resumes nothing', async () => {
     const resolveLaunch = vi.fn((req: { profile?: string | null }) => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }))
     const { tm, ptys } = setup({ resolveLaunch })
     const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
     ptys[0].emitExit(0)
-    tm.restart(tab.id)
+    await tm.restart(tab.id)
     expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', resumeSessionId: null }))
   })
 
@@ -285,7 +285,8 @@ describe('TabManager', () => {
     const { tm, ptys } = setup({ onTabRestarting })
     const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
     const done = tm.restart(tab.id, { live: true })
-    expect(onTabRestarting).toHaveBeenCalledWith(tab.id)
+    // a Claude tab's conversation is checked on disk first: the restart is announced once that answers
+    await vi.waitFor(() => expect(onTabRestarting).toHaveBeenCalledWith(tab.id))
     expect(ptys).toHaveLength(1)
     ptys[0].emitExit(0)
     await done
@@ -336,7 +337,7 @@ describe('TabManager', () => {
 
   it('a claude conversation that was never saved restarts as a new one', async () => {
     const resolveLaunch = vi.fn((req: { profile?: string | null }) => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }))
-    const resumable = vi.fn(() => false)
+    const resumable = vi.fn(async () => false)
     const { tm, ptys } = setup({ resolveLaunch, resumable })
     const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
     tm.setClaudeSession(tab.id, SID_A)
@@ -407,7 +408,8 @@ describe('TabManager accounts', () => {
     const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: null })
     tm.setClaudeSession(tab.id, SID_B)
     const done = tm.switchAccount(tab.id, 'work')
-    expect(ptys[0].killed).toBe(true)
+    // the conversation is checked on disk first: the old process is stopped once that answers
+    await vi.waitFor(() => expect(ptys[0].killed).toBe(true))
     expect(log).toContain(`reset:${tab.id}`)
     ptys[0].emitExit(0)
     expect(await done).toBe(true)
@@ -482,60 +484,59 @@ describe('TabManager accounts', () => {
 describe('TabManager forks', () => {
   const forkSetup = (over: Partial<TabManagerDeps> = {}) => {
     const resolveLaunch = vi.fn((req: LaunchRequest): ResolvedLaunch => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] }, account: req.account }))
-    return { ...setup({ resolveLaunch, resumable: () => true, ...over }), resolveLaunch }
+    return { ...setup({ resolveLaunch, resumable: async () => true, ...over }), resolveLaunch }
   }
 
-  it('fork opens a Claude tab in the parent folder and account, with no session id, launched to fork the parent conversation', () => {
+  it('fork opens a Claude tab in the parent folder and account, with no session id, launched to fork the parent conversation', async () => {
     const { tm, resolveLaunch } = forkSetup()
     const parent = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: 'work' })
-    const fork = tm.fork(parent.id)
+    const fork = (await tm.fork(parent.id))
     expect(fork).toMatchObject({ kind: 'claude', cwd: 'D:\\x', account: 'work', claudeSessionId: null, fork: { of: parent.id, from: SID_A } })
     expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', account: 'work', fork: { of: parent.id, from: SID_A } }))
     expect(resolveLaunch.mock.lastCall?.[0].resumeSessionId ?? null).toBeNull()
   })
 
-  it('a fork of a renamed tab starts with its name and (fork); an unnamed parent gives an unnamed fork', () => {
+  it('a fork of a renamed tab starts with its name and (fork); an unnamed parent gives an unnamed fork', async () => {
     const { tm } = forkSetup()
     const parent = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, title: 'auth refactor' })
-    expect(tm.fork(parent.id)?.customTitle).toBe('auth refactor (fork)')
+    expect((await tm.fork(parent.id))?.customTitle).toBe('auth refactor (fork)')
     const plain = tm.open({ kind: 'claude', cwd: 'D:\\y', resumeSessionId: SID_A })
-    expect(tm.fork(plain.id)?.customTitle).toBeNull()
+    expect((await tm.fork(plain.id))?.customTitle).toBeNull()
   })
 
-  it('a fork of a tab already named (fork) keeps that name, without a second (fork)', () => {
+  it('a fork of a tab already named (fork) keeps that name, without a second (fork)', async () => {
     const { tm } = forkSetup()
     const parent = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, title: 'auth refactor (fork)' })
-    expect(tm.fork(parent.id)?.customTitle).toBe('auth refactor (fork)')
+    expect((await tm.fork(parent.id))?.customTitle).toBe('auth refactor (fork)')
   })
 
-  it('canForkAsync decides like canFork, asking the given check about the conversation', async () => {
-    const { tm } = forkSetup()
+  it('canFork asks the transcript check about the conversation, and only for a Claude tab that has one', async () => {
+    const check = vi.fn(async (_sessionId: string) => true)
+    const { tm } = forkSetup({ resumable: check })
     const shell = tm.open({ kind: 'shell', cwd: 'D:\\x' })
     const fresh = tm.open({ kind: 'claude', cwd: 'D:\\x' })
     const saved = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
-    const check = vi.fn(async (_sessionId: string) => true)
-    expect(await tm.canForkAsync(shell.id, check)).toBe(false)
-    expect(await tm.canForkAsync(fresh.id, check)).toBe(false)
+    expect(await tm.canFork(shell.id)).toBe(false)
+    expect(await tm.canFork(fresh.id)).toBe(false)
     expect(check).not.toHaveBeenCalled()
-    expect(await tm.canForkAsync(saved.id, async () => false)).toBe(false)
-    expect(await tm.canForkAsync(saved.id, check)).toBe(true)
-    expect(check).toHaveBeenCalledWith(SID_A)
+    expect(await tm.canFork(saved.id)).toBe(true)
+    expect(check).toHaveBeenCalledWith(saved.id, SID_A)
   })
 
-  it('a fork stands right after its family, and a fork of a fork joins the family', () => {
+  it('a fork stands right after its family, and a fork of a fork joins the family', async () => {
     const { tm, log } = forkSetup()
     const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
     const B = tm.open({ kind: 'claude', cwd: 'D:\\y' })
-    const A1 = tm.fork(A.id)!
+    const A1 = (await tm.fork(A.id))!
     expect(tm.list().map((t) => t.id)).toEqual([A.id, A1.id, B.id])
     expect(log).toContain(`order:${A.id},${A1.id},${B.id}`)
     tm.setClaudeSession(A1.id, SID_B)
-    const A2 = tm.fork(A1.id)!
+    const A2 = (await tm.fork(A1.id))!
     expect(tm.list().map((t) => t.id)).toEqual([A.id, A1.id, A2.id, B.id])
     expect(A2.fork?.of).toBe(A.id)
   })
 
-  it('a fork whose head is gone is an ordinary tab, and opens at the end', () => {
+  it('a fork whose head is gone is an ordinary tab, and opens at the end', async () => {
     const { tm, log } = forkSetup()
     const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
     const B = tm.open({ kind: 'claude', cwd: 'D:\\y' })
@@ -546,26 +547,26 @@ describe('TabManager forks', () => {
     expect(log.filter((l) => l.startsWith('order:'))).toEqual([])
   })
 
-  it('canFork is false for a shell tab, a Claude tab without a session, and one whose conversation cannot be resumed', () => {
+  it('canFork is false for a shell tab, a Claude tab without a session, and one whose conversation cannot be resumed', async () => {
     const { tm } = forkSetup()
     const shell = tm.open({ kind: 'shell', cwd: 'D:\\x' })
     const fresh = tm.open({ kind: 'claude', cwd: 'D:\\x' })
     const saved = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
-    expect([tm.canFork(shell.id), tm.canFork(fresh.id), tm.canFork(saved.id)]).toEqual([false, false, true])
-    expect(tm.fork(shell.id)).toBeNull()
-    expect(tm.fork(fresh.id)).toBeNull()
-    const { tm: unresumable } = forkSetup({ resumable: () => false })
+    expect([(await tm.canFork(shell.id)), (await tm.canFork(fresh.id)), (await tm.canFork(saved.id))]).toEqual([false, false, true])
+    expect((await tm.fork(shell.id))).toBeNull()
+    expect((await tm.fork(fresh.id))).toBeNull()
+    const { tm: unresumable } = forkSetup({ resumable: async () => false })
     const tab = unresumable.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
-    expect(unresumable.canFork(tab.id)).toBe(false)
-    expect(unresumable.fork(tab.id)).toBeNull()
+    expect((await unresumable.canFork(tab.id))).toBe(false)
+    expect((await unresumable.fork(tab.id))).toBeNull()
   })
 
-  it('closing the head turns its forks into ordinary tabs; closing a fork leaves the family', () => {
+  it('closing the head turns its forks into ordinary tabs; closing a fork leaves the family', async () => {
     const { tm, log } = forkSetup()
     const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
-    const A1 = tm.fork(A.id)!
+    const A1 = (await tm.fork(A.id))!
     tm.setClaudeSession(A1.id, SID_A)
-    const A2 = tm.fork(A1.id)!
+    const A2 = (await tm.fork(A1.id))!
     tm.close(A1.id)
     expect(tm.get(A2.id)?.fork).toEqual({ of: A.id, from: SID_A })
     log.length = 0
@@ -574,26 +575,40 @@ describe('TabManager forks', () => {
     expect(log).toContain(`updated:${A2.id}:false`)
   })
 
-  it('restart of a fork without its own conversation forks again; with one it resumes it', () => {
+  it('restart of a fork without its own conversation forks again; with one it resumes it', async () => {
     const { tm, ptys, resolveLaunch } = forkSetup()
     const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
-    const F = tm.fork(A.id)!
+    const F = (await tm.fork(A.id))!
     ptys[1].emitExit(0)
-    tm.restart(F.id)
+    await tm.restart(F.id)
     expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', fork: { of: A.id, from: SID_A } }))
     expect(resolveLaunch.mock.lastCall?.[0].resumeSessionId ?? null).toBeNull()
     tm.setClaudeSession(F.id, SID_B)
     ptys[2].emitExit(0)
-    tm.restart(F.id)
+    await tm.restart(F.id)
     expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', resumeSessionId: SID_B }))
   })
 
-  it('snapshot keeps a fork\'s head as an index', () => {
+  it('snapshot keeps a fork\'s head as an index', async () => {
     const { tm } = forkSetup()
     const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
-    tm.fork(A.id)
+    await tm.fork(A.id)
     expect(tm.snapshot()[1].fork).toEqual({ of: 0, from: SID_A })
     tm.close(A.id)
     expect(tm.snapshot()[0].fork).toEqual({ of: null, from: SID_A })
+  })
+
+  it('fork, restart and switchAccount wait for the transcript check: a conversation it finds missing is neither forked nor resumed', async () => {
+    const { tm, ptys, resolveLaunch } = forkSetup({ resumable: async () => false })
+    const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    expect(await tm.fork(A.id)).toBeNull()
+    expect(tm.list()).toHaveLength(1)
+
+    ptys[0].emitExit(0)
+    await tm.restart(A.id)
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', resumeSessionId: null }))
+
+    expect(await tm.switchAccount(A.id, 'work')).toBe(true)
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', account: 'work', resumeSessionId: null }))
   })
 })

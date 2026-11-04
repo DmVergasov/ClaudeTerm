@@ -58,7 +58,7 @@ import { readAgentMeta } from './transcript-agent-info'
 import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, writeUpdateMarker } from './update-marker'
 import { Updater, type UpdaterBackend } from './updater'
 import { createUpdateBackend } from './update-backend'
-import { cleanupImageCache, findTranscript, locateTranscript, TranscriptFeed } from './transcript-feed'
+import { cleanupImageCache, findTranscript, TranscriptFeed } from './transcript-feed'
 import { showWindow } from './window-show'
 import { loadWindowState, trackWindowState } from './window-state'
 
@@ -394,9 +394,9 @@ function bootstrap(): void {
     },
     onStateChanged: () => sessions.scheduleSave(tabs.snapshot()),
     // Claude Code writes the transcript with the first message; --resume of a conversation without one fails
-    resumable: (tabId, sessionId) => {
+    resumable: async (tabId, sessionId) => {
       const p = sources.get(tabId)?.transcriptPath
-      return p ? locateTranscript(p, sessionId) !== null : true
+      return p ? (await findTranscript(p, sessionId)) !== null : true
     },
     events: {
       opened: (t) => send(IPC.evTabOpened, t),
@@ -716,16 +716,11 @@ function bootstrap(): void {
   })
   ipcMain.on(IPC.tabsMute, (_e, id: unknown, muted: unknown) => { if (isId(id) && isFlag(muted)) tabs.setMuted(id, muted) })
   // the transcript is looked for without blocking: the tab menu waits for this answer on every right-click
-  ipcMain.handle(IPC.tabsCanFork, (_e, id: unknown): Promise<boolean> => (isId(id)
-    ? tabs.canForkAsync(id, async (sessionId) => {
-      const p = sources.get(id)?.transcriptPath
-      return p ? (await findTranscript(p, sessionId)) !== null : true
-    })
-    : Promise.resolve(false)))
-  ipcMain.on(IPC.tabsFork, (_e, id: unknown) => {
+  ipcMain.handle(IPC.tabsCanFork, (_e, id: unknown): Promise<boolean> => (isId(id) ? tabs.canFork(id) : Promise.resolve(false)))
+  ipcMain.on(IPC.tabsFork, async (_e, id: unknown) => {
     if (!isId(id)) return
     try {
-      tabs.fork(id)
+      await tabs.fork(id)
     } catch (e) {
       toast(`Cannot open tab: ${(e as Error).message}`)
     }
