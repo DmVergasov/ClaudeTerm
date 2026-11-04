@@ -89,6 +89,16 @@ describe('SessionStore', () => {
     expect(s.rotateOnStartup()).toEqual(snap([claudeTab]))
   })
 
+  it('a Claude fork still waiting for its session replaces the previous, so Restore can fork it again', () => {
+    const s = new SessionStore(newDir())
+    const head: SessionSnapshotTab = { ...claudeTab, claudeSessionId: null }
+    const fork: SessionSnapshotTab = { ...claudeTab, claudeSessionId: null, fork: { of: 0, from: SID } }
+    writeFileSync(s.previousPath, JSON.stringify(snap([shellTab])))
+    writeFileSync(s.statePath, JSON.stringify(snap([head, fork])))
+    expect(s.rotateOnStartup()).toEqual(snap([head, fork]))
+    expect(existsSync(s.statePath)).toBe(false)
+  })
+
   it('a corrupt state is not rotated and is reported', () => {
     const dir = newDir()
     const onError = vi.fn()

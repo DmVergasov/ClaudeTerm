@@ -70,7 +70,8 @@ export class SessionStore {
   rotateOnStartup(opts: { afterUpdate?: boolean } = {}): SessionSnapshot | null {
     const current = this.read(this.statePath)
     if (opts.afterUpdate && !(current && current.tabs.length > 0)) return null
-    if (current && (opts.afterUpdate || current.tabs.some((t) => t.kind === 'claude' && t.claudeSessionId !== null))) {
+    // a Claude tab with a session, or a fork still waiting for its session, is one Restore can bring back
+    if (current && (opts.afterUpdate || current.tabs.some((t) => t.kind === 'claude' && (t.claudeSessionId !== null || t.fork !== null)))) {
       try {
         renameSync(this.statePath, this.previousPath)
       } catch (e) {
