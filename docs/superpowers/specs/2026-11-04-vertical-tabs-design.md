@@ -1,7 +1,7 @@
 # Vertical tabs, grouped by project and worktree, with forks — design
 
 Date: 2026-11-04
-Status: agreed in chat, waiting for the user to review this document
+Status: approved by the user
 
 ## Goal
 
