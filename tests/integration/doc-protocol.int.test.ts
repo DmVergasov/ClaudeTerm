@@ -42,7 +42,8 @@ describe('resolveDocRequest on disk', () => {
   })
 
   it('serves a file under the report folder at its real path, when the root is a junction', async () => {
-    expect(await resolveDocRequest(`ctdoc://${ID}/assets/app.js`, find, nodeDocFs)).toEqual({ path: realpathSync(join(report, 'assets', 'app.js')), doc })
+    // the native realpath, as main's: the JS one keeps a short 8.3 name (C:\Users\RUNNER~1 on the CI runner)
+    expect(await resolveDocRequest(`ctdoc://${ID}/assets/app.js`, find, nodeDocFs)).toEqual({ path: realpathSync.native(join(report, 'assets', 'app.js')), doc })
   })
 
   it('refuses a file reached through a junction that leads out of the folder', async () => {
