@@ -33,6 +33,7 @@ export interface TabBarCallbacks {
   tabMenu(id: string, at: { x: number; y: number }): void
   toggleImages(): void
   toggleChanges(): void
+  toggleDocs(): void
   toggleNote(): void
 }
 
@@ -57,6 +58,7 @@ export class TabBar {
   private changesVisible = false
   private changesUnviewed = 0
   private readonly changesButton: HTMLButtonElement
+  private readonly docsButton: HTMLButtonElement
   private readonly noteButton: HTMLButtonElement
   private list = document.createElement('div')
 
@@ -67,11 +69,13 @@ export class TabBar {
     const more = button('▾', 'tab-menu', 'Profiles', (e) => this.cb.openMenu(e.currentTarget as HTMLElement))
     this.imagesButton = this.createImagesButton()
     this.changesButton = this.createChangesButton()
+    this.docsButton = this.createDocsButton()
     this.noteButton = this.createToggle('tab-note-toggle', `Note (${shortcutLabel('toggleNote', platform)})`, () => this.cb.toggleNote(), noteIcon(16), false)
     this.updateImagesButton()
     this.updateChangesButton()
+    this.setDocs(false, false)
     this.setNote(false, false)
-    root.replaceChildren(this.list, plus, more, this.changesButton, this.imagesButton, this.noteButton)
+    root.replaceChildren(this.list, plus, more, this.changesButton, this.docsButton, this.imagesButton, this.noteButton)
   }
 
   render(items: TabBarItem[], activeId: string | null): void {
@@ -91,6 +95,12 @@ export class TabBar {
     this.changesVisible = visible
     this.changesUnviewed = unviewed
     this.updateChangesButton()
+  }
+
+  /** the Docs button is hidden while the tab has no document to show; it is lit while the Docs panel is shown */
+  setDocs(available: boolean, visible: boolean): void {
+    this.docsButton.hidden = !available
+    this.docsButton.classList.toggle('active', visible)
   }
 
   setImages(visible: boolean, unseen: number): void {
@@ -115,6 +125,12 @@ export class TabBar {
     return this.createToggle('tab-changes-toggle', `Changes (${shortcutLabel('toggleChanges', this.platform)})`,() => this.cb.toggleChanges(),
       '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
       '<path d="M3.65 1.65h6.2l2.5 2.5v10.2h-8.7z"/><path d="M5.5 6.5h4M7.5 4.5v4"/><path d="M5.5 11.5h4"/></svg>')
+  }
+
+  private createDocsButton(): HTMLButtonElement {
+    return this.createToggle('tab-docs-toggle', `Docs (${shortcutLabel('toggleDocs', this.platform)})`, () => this.cb.toggleDocs(),
+      '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M3.65 1.65h6.2l2.5 2.5v10.2h-8.7z"/><path d="M5.5 7.5h5M5.5 9.75h5M5.5 12h3"/></svg>', false)
   }
 
   private createToggle(cls: string, title: string, onClick: () => void, icon: string, badge = true): HTMLButtonElement {

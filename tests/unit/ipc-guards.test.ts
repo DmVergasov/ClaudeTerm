@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
-import { isAbsPath, isAccountRef, isGeneration, isHash, isId, isIdList, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -137,5 +137,10 @@ describe('review guards', () => {
     expect(isGeneration(Number.POSITIVE_INFINITY)).toBe(false)
     expect(isGeneration('1')).toBe(false)
     expect(isGeneration(undefined)).toBe(false)
+  })
+
+  it('isDocAction accepts the document panel actions only', () => {
+    for (const v of ['open', 'reveal', 'copy-path', 'remove']) expect(isDocAction(v)).toBe(true)
+    for (const v of ['copy-image', '', 1, null]) expect(isDocAction(v)).toBe(false)
   })
 })

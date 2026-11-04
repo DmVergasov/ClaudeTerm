@@ -18,7 +18,8 @@ const okHandlers: PipeHandlers = {
   attention: () => ({ ok: true }),
   turn: () => ({ ok: true }),
   editBefore: () => ({ ok: true }),
-  showDiff: async () => ({ ok: true })
+  showDiff: async () => ({ ok: true }),
+  showDocument: async () => ({ ok: true })
 }
 
 let server: PipeServerHandle | null = null

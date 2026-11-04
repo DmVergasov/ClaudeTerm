@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import { DOC_ACTIONS, type DocAction } from '../shared/docs'
 import type { ImageAction } from '../shared/ipc'
 import { MAX_NOTE_LENGTH, NOTE_FORMS, type NoteForm } from '../shared/note'
 import { isUuid } from '../shared/protocol'
@@ -26,6 +27,8 @@ export const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.eve
 const IMAGE_ACTIONS: readonly string[] = ['open', 'reveal', 'copy-image', 'copy-path', 'remove']
 
 export const isImageAction = (v: unknown): v is ImageAction => typeof v === 'string' && IMAGE_ACTIONS.includes(v)
+
+export const isDocAction = (v: unknown): v is DocAction => typeof v === 'string' && (DOC_ACTIONS as readonly string[]).includes(v)
 
 export const isReviewScope = (v: unknown): v is ReviewScope => typeof v === 'string' && (REVIEW_SCOPES as readonly string[]).includes(v)
 

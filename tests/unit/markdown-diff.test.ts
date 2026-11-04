@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { markdownSegments, segmentOf } from '../../src/renderer/markdown-diff'
+import { docLines } from '../../src/renderer/doc-lines'
 import type { ReviewLine } from '../../src/shared/review'
 
 /** a whole-file hunk from marked lines: ' ' unchanged, '+' added, '-' removed */
@@ -88,6 +89,35 @@ describe('markdownSegments', () => {
     expect(para).toContain('<span class="md-image" title="img/logo.png">logo</span>')
     expect(para).not.toContain('<img')
     expect(para).toContain('&lt;b&gt;')
+  })
+
+  it('shows an image the env gives an address for', () => {
+    const [seg] = markdownSegments(docLines('![shot](img/a.png)\n'), { imageUrl: (src) => (src === 'img/a.png' ? 'ctdoc://id/img/a.png' : null) })
+    expect(seg!.html).toContain('<img class="md-img" src="ctdoc://id/img/a.png" alt="shot" title="img/a.png">')
+  })
+
+  it('escapes a hostile image address and alt text in the img markup', () => {
+    const [seg] = markdownSegments(docLines('![a"><script>](x.png)\n'), { imageUrl: () => 'x" onerror="y' })
+    expect(seg!.html).toContain('src="x&quot; onerror=&quot;y"')
+    expect(seg!.html).not.toContain('onerror="y')
+    expect(seg!.html).not.toContain('<script>')
+  })
+
+  it('gives imageUrl the normalized, percent-encoded address', () => {
+    const seen: string[] = []
+    markdownSegments(docLines('![shot](<img/my shot.png>)\n![b](отчёт/x.png)\n'), {
+      imageUrl: (src) => {
+        seen.push(src)
+        return null
+      }
+    })
+    expect(seen).toEqual(['img/my%20shot.png', '%D0%BE%D1%82%D1%87%D1%91%D1%82/x.png'])
+  })
+
+  it('without an address an image stays text', () => {
+    const [seg] = markdownSegments(docLines('![shot](img/a.png)\n'), { imageUrl: () => null })
+    expect(seg!.html).toContain('class="md-image"')
+    expect(seg!.html).not.toContain('<img')
   })
 
   it('keeps an http link a link', () => {

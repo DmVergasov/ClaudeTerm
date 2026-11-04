@@ -38,6 +38,10 @@ const api: CtApi = {
   listImages: (tabId) => ipcRenderer.invoke(IPC.imagesList, tabId),
   markImagesSeen: (tabId) => ipcRenderer.send(IPC.imagesMarkSeen, tabId),
   imageAction: (cardId, action) => ipcRenderer.send(IPC.imagesAction, cardId, action),
+  readDoc: (docId) => ipcRenderer.invoke(IPC.docsRead, docId),
+  docStamp: (docId) => ipcRenderer.invoke(IPC.docsStamp, docId),
+  docAction: (docId, action) => ipcRenderer.send(IPC.docsAction, docId, action),
+  openDocInEditor: (docId, line) => ipcRenderer.send(IPC.docsOpenEditor, docId, line),
   getRestoreInfo: () => ipcRenderer.invoke(IPC.restoreGet),
   runRestore: () => ipcRenderer.send(IPC.restoreRun),
   listSessions: () => ipcRenderer.invoke(IPC.sessionsList),
@@ -87,7 +91,8 @@ const api: CtApi = {
   onPanelMode: (cb) => on(IPC.evPanelMode, cb),
   onAccounts: (cb) => on(IPC.evAccounts, cb),
   onNote: (cb) => on(IPC.evNote, cb),
-  onPromptQuery: (cb) => on(IPC.evPromptQuery, cb)
+  onPromptQuery: (cb) => on(IPC.evPromptQuery, cb),
+  onDocs: (cb) => on(IPC.evDocs, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

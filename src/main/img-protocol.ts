@@ -1,12 +1,13 @@
-import { net, protocol } from 'electron'
+import { type CustomScheme, net, protocol } from 'electron'
 import { pathToFileURL } from 'node:url'
 import { checkImageFile } from '../shared/image-file'
 import type { ImageHub } from './image-hub'
 
 export const IMG_SCHEME = 'ctimg'
 
-export function registerImgScheme(): void {
-  protocol.registerSchemesAsPrivileged([{ scheme: IMG_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }])
+/** Electron takes the privileged schemes once per app: the other schemes of the app go in `extra`. */
+export function registerImgScheme(extra: CustomScheme[] = []): void {
+  protocol.registerSchemesAsPrivileged([{ scheme: IMG_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }, ...extra])
 }
 
 /** Maps a ctimg:// request to a servable file path, or null (404). */

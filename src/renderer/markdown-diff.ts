@@ -11,14 +11,25 @@ export interface MdSegment {
   to: number
 }
 
+/**
+ * what the caller knows about the document's images: the address to show one at, or null to show its text. Its argument is
+ * markdown-it's normalized image address, percent-encoded as in a URL (a space is %20, "отчёт/x.png" is %D0%BE...%D1%91...).
+ */
+export interface MdEnv {
+  imageUrl?(src: string): string | null
+}
+
 // raw HTML is shown as text; markdown-it leaves out javascript:, vbscript:, file: and data: links
 const md = markdownit({ html: false, linkify: true })
 
-// an image shows its text: the renderer loads images only through ctimg://
+// an image shows its text unless the env gives it an address: the Changes panel loads images only through ctimg://
 md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const t = tokens[idx]!
-  const src = md.utils.escapeHtml(String(t.attrGet('src') ?? ''))
+  const raw = String(t.attrGet('src') ?? '')
+  const src = md.utils.escapeHtml(raw)
   const text = self.renderInlineAsText(t.children ?? [], options, env) || 'image'
+  const url = (env as MdEnv).imageUrl?.(raw) ?? null
+  if (url !== null) return `<img class="md-img" src="${md.utils.escapeHtml(url)}" alt="${md.utils.escapeHtml(text)}" title="${src}">`
   return `<span class="md-image" title="${src}">${md.utils.escapeHtml(text)}</span>`
 }
 
@@ -112,22 +123,21 @@ function units(tokens: Token[]): Unit[] {
  * lines is "added", after its old version ("removed") when it lost lines; blocks removed whole are "removed" where they
  * were. A new file (added lines only) is the plain document.
  */
-export function markdownSegments(lines: ReviewLine[]): MdSegment[] {
+export function markdownSegments(lines: ReviewLine[], env: MdEnv = {}): MdSegment[] {
   const newIdx = lines.flatMap((l, i) => (l.kind === 'del' ? [] : [i]))
   const plain = lines.every((l) => l.kind === 'add')
   const out: MdSegment[] = []
   /** the old version of lines from..to: the removed and unchanged ones */
   const old = (from: number, to: number): string => {
     const texts = lines.slice(from, to + 1).filter((l) => l.kind !== 'add')
-    return md.render(source(texts.map((l) => l.text), texts[0]?.oldNo === 1))
+    return md.render(source(texts.map((l) => l.text), texts[0]?.oldNo === 1), { ...env })
   }
   /** the blocks removed whole between `from` and `to` */
   const removed = (from: number, to: number): void => {
     const dels = lines.slice(from, to + 1).flatMap((l, k) => (l.kind === 'del' ? [from + k] : []))
     if (dels.length > 0) out.push({ kind: 'removed', html: old(dels[0]!, dels[dels.length - 1]!), from: dels[0]!, to: dels[dels.length - 1]! })
   }
-  const env = {}
-  const tokens = md.parse(source(newIdx.map((i) => lines[i]!.text), true), env)
+  const tokens = md.parse(source(newIdx.map((i) => lines[i]!.text), true), { ...env })
   let pos = 0
   for (const u of units(tokens)) {
     const from = newIdx[u.start]!
@@ -136,7 +146,7 @@ export function markdownSegments(lines: ReviewLine[]): MdSegment[] {
     const inside = lines.slice(from, to + 1)
     if (inside.some((l) => l.kind === 'del')) out.push({ kind: 'removed', html: old(from, to), from, to })
     const changed = !plain && inside.some((l) => l.kind !== 'context')
-    out.push({ kind: changed ? 'added' : 'same', html: md.renderer.render(u.tokens, md.options, env), from, to })
+    out.push({ kind: changed ? 'added' : 'same', html: md.renderer.render(u.tokens, md.options, { ...env }), from, to })
     pos = to + 1
   }
   removed(pos, lines.length - 1)

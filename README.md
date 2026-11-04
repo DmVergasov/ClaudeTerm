@@ -94,6 +94,16 @@ Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −)
 
 <p align="center"><img src="docs/images/review-panel.png" width="820" alt="The Changes panel: the file tree and the uncommitted diff of two files beside the conversation, with a comment for Claude under a changed line"></p>
 
+### 📄 Documents Claude shows you
+
+Ask Claude "show me the spec" and it opens the file in the **Docs** panel beside the terminal, with the bundled `show_document` tool. Claude can show a Markdown file, a PDF or an HTML report:
+
+- **Markdown, formatted** — headings, lists, tables and code as the document they are. Hover a block and click **+** to comment on it; **Send to Claude** writes all your comments as one message, as in the Changes panel.
+- **PDF** — in the built-in viewer, with its own zoom, pages and find. No comments.
+- **HTML reports** — coverage and test reports, generated pages — in a sandboxed frame. Their scripts run in the frame, which cannot load anything from outside the report's folder, reach the window or navigate away. The scripts can read the files in that folder, so a report in your home folder or at a drive root is not shown.
+
+The panel follows the file: when it changes, the document is drawn again. A Markdown document keeps your scroll position and comments; a PDF or HTML document reloads. Open or close Docs with the **Docs** button in the tab bar (it shows once a Claude tab has a document) or `Ctrl+Shift+O` (`⌘O` on macOS).
+
 ### 🗂️ A real terminal, with tabs
 
 - **Shell profiles detected automatically** — PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and every WSL distribution, plus your own profiles. On macOS and Linux: your login shell, bash, zsh and fish.
@@ -148,7 +158,7 @@ On macOS ClaudeTerm updates itself as well: it downloads a new release and puts 
 
 From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. **What's new** in the update banner lists what changed. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — check for updates** to check right away.
 
-On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image` and `show_diff` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
+On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff` and `show_document` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
 
 **Requirements:** Windows 10 or 11 (x64), macOS 12 or later (Apple Silicon or Intel), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code (on Windows 2.1.139 or later).
 
@@ -168,6 +178,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Find in scrollback | `Ctrl+Shift+F` | `⌘F` |
 | Show / hide the Media panel | `Ctrl+Shift+I` | `⌘I` |
 | Show / hide the Changes panel | `Ctrl+Shift+D` | `⌘D` |
+| Show / hide the Docs panel | `Ctrl+Shift+O` | `⌘O` |
 | Show / hide the note of a Claude tab | `Ctrl+Shift+N` | `⌘N` |
 | Find in the Changes panel | `Ctrl+F` (when the panel has the focus) | `⌘F` (when the panel has the focus) |
 | Recent sessions | `Ctrl+Shift+H` | `⌘⇧H` |
@@ -254,7 +265,7 @@ flowchart LR
     claude["claude --settings claude-tab-settings.json"]
   end
   claude -- "hooks + statusLine" --> hook["session-hook.js"]
-  claude -- "MCP: show_image" --> mcp["show-image-server.js"]
+  claude -- "MCP: show_image, show_diff, show_document" --> mcp["show-image-server.js"]
   hook -- "named pipe" --> main
   mcp -- "named pipe" --> main
   transcript[("session transcript\n+ subagent transcripts")] --> main

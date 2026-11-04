@@ -205,3 +205,21 @@ describe('parsePipeMessage: review messages', () => {
     expect(parsePipeMessage(JSON.stringify({ ...a, agentId: '../x' }))).toEqual({ ok: true, message: a })
   })
 })
+
+describe('parsePipeMessage: show_document', () => {
+  const abs = WIN ? 'C:\\w\\spec.md' : '/w/spec.md'
+  it('parses a message and cuts a long title', () => {
+    const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'show_document', tabId: TAB, path: abs, title: 'x'.repeat(150) }))
+    expect(r).toEqual({ ok: true, message: { v: 1, type: 'show_document', tabId: TAB, path: abs, title: 'x'.repeat(100) } })
+  })
+
+  it('takes no tab and no title as null', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'show_document', path: abs }))).toEqual({ ok: true, message: { v: 1, type: 'show_document', tabId: null, path: abs, title: null } })
+  })
+
+  it('refuses a relative path, a tab that is not a UUID and a title that is not a string', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'show_document', tabId: TAB, path: 'spec.md' }))).toEqual({ ok: false, error: 'path must be an absolute path' })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'show_document', tabId: 'x', path: abs }))).toEqual({ ok: false, error: 'tabId must be a UUID or null' })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'show_document', tabId: TAB, path: abs, title: 3 }))).toEqual({ ok: false, error: 'title must be a string or null' })
+  })
+})

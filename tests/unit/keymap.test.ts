@@ -33,6 +33,10 @@ describe.each(['win32', 'linux'])('mapKey on %s', (platform) => {
     expect(map(k('KeyD', cs, 'В'))).toEqual({ type: 'toggleChanges' })
   })
 
+  it('maps Ctrl+Shift+O to the Docs panel, in any layout', () => {
+    expect(map(k('KeyO', cs, 'Щ'))).toEqual({ type: 'toggleDocs' })
+  })
+
   it('Shift+Enter sends ESC CR for a newline in the claude prompt', () => {
     expect(map(k('Enter', { shiftKey: true }))).toEqual({ type: 'send', data: '\x1b\r' })
     expect(map(k('NumpadEnter', { shiftKey: true }))).toEqual({ type: 'send', data: '\x1b\r' })
@@ -77,6 +81,7 @@ describe('mapKey on macOS', () => {
     expect(map(k('KeyF', cmd))).toEqual({ type: 'find' })
     expect(map(k('KeyI', cmd))).toEqual({ type: 'toggleImages' })
     expect(map(k('KeyD', cmd, 'в'))).toEqual({ type: 'toggleChanges' })
+    expect(map(k('KeyO', cmd, 'щ'))).toEqual({ type: 'toggleDocs' })
     expect(mapKey(k('KeyN', cmd), 'darwin')).toEqual({ type: 'toggleNote' })
   })
 
@@ -147,5 +152,7 @@ describe('shortcutLabel', () => {
     expect(shortcutLabel('panelFind', 'darwin')).toBe('⌘F')
     expect(shortcutLabel('toggleNote', 'win32')).toBe('Ctrl+Shift+N')
     expect(shortcutLabel('toggleNote', 'darwin')).toBe('⌘N')
+    expect(shortcutLabel('toggleDocs', 'win32')).toBe('Ctrl+Shift+O')
+    expect(shortcutLabel('toggleDocs', 'darwin')).toBe('⌘O')
   })
 })

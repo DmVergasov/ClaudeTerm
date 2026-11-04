@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { sendPipeMessage } from '../shared/pipe-client'
 import { defaultPipeName, isUuid } from '../shared/protocol'
 import { handleShowDiff } from './show-diff-tool'
+import { handleShowDocument } from './show-document-tool'
 import { handleShowImage } from './show-image-tool'
 
 const server = new McpServer({ name: 'claudeterm', version: '0.1.0' })
@@ -60,6 +61,33 @@ server.registerTool(
       // the diff is read before ClaudeTerm answers: git in a big repository takes a while
       send: (pipe, msg) => sendPipeMessage(pipe, msg, 15_000)
     })
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'show_document',
+  {
+    title: 'Show a document in ClaudeTerm',
+    description:
+      'Show a document to the user in the Docs panel next to the terminal in ClaudeTerm: Markdown (formatted; the user can comment on it and send the comments back to you), PDF or HTML (a report, a generated page). ' +
+      'Use it after writing a spec, a plan, a report or another document the user should read, or when the user asks to see one.',
+    inputSchema: {
+      path: z.string().describe('Absolute path (preferred) or a path relative to the current working directory'),
+      title: z.string().optional().describe('A short title shown in the panel instead of the file name')
+    }
+  },
+  async ({ path, title }) => {
+    const tabId = process.env.CLAUDETERM_TAB_ID
+    const r = await handleShowDocument(
+      { path, title },
+      {
+        cwd: process.cwd(),
+        tabId: isUuid(tabId) ? tabId : null,
+        pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+        send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
+      }
+    )
     return { content: [{ type: 'text', text: r.text }], isError: r.isError }
   }
 )

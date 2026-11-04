@@ -1,10 +1,13 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, safeStorage, screen, shell, type Rectangle } from 'electron'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { AccountResult, AccountsView } from '../shared/accounts'
 import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
+import type { DocRead } from '../shared/docs'
+import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
 import { socketDir } from '../shared/protocol'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
 import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo } from '../shared/types'
@@ -17,11 +20,13 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
 import { ReviewHub } from './review-hub'
+import { DocHub, htmlFolderRefused } from './doc-hub'
+import { DOC_SCHEME_PRIVILEGES, frameNavigationAllowed, handleDocProtocol } from './doc-protocol'
 import { createSources, nodeIo } from './review-sources'
 import { checkShowableFile, DEFAULT_IMAGE_EXTENSIONS, MEDIA_EXTENSIONS } from '../shared/image-file'
 import { ImageHub } from './image-hub'
@@ -67,7 +72,7 @@ const pipeName = resolvePipeName()
 const settingsPath = join(dataDir, 'settings.json')
 const isTest = process.env.CLAUDETERM_TEST === '1'
 
-registerImgScheme()
+registerImgScheme([DOC_SCHEME_PRIVILEGES])
 
 function isDirectory(p: string): boolean {
   try {
@@ -277,10 +282,12 @@ function bootstrap(): void {
     testPatterns: () => (settings.review.hideTests ? settings.review.testPatterns : null),
     renderMarkdown: () => settings.review.renderMarkdown
   })
+  const docs = new DocHub({ publish: (u) => send(IPC.evDocs, u), newId: () => randomUUID() })
 
   const startTabImages = (tab: TabInfo): void => {
     images.addTab(tab.id, tab.cwd)
     review.addTab(tab.id, tab.cwd, tab.kind === 'claude')
+    docs.addTab(tab.id, tab.cwd, tab.kind === 'claude')
     sources.set(tab.id, { tempWatcher: null, feed: null, transcriptPath: null })
   }
 
@@ -333,6 +340,7 @@ function bootstrap(): void {
   }
 
   handleImgProtocol(images, () => [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
+  handleDocProtocol((id) => docs.get(id))
 
   let claudeCli: ClaudeCli | null | undefined
   // looked up once: on Linux this starts the login shell
@@ -364,6 +372,7 @@ function bootstrap(): void {
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
       review.removeTab(tabId)
+      docs.removeTab(tabId)
       noteHub.removeTab(tabId)
     },
     spawn: spawnPty,
@@ -638,7 +647,13 @@ function bootstrap(): void {
       review.recordBefore(msg.tabId, msg.sessionId, msg.toolUseId, msg.path)
       return { ok: true }
     },
-    showDiff: (msg) => review.showRequest(msg.tabId, { cwd: msg.cwd, scope: msg.scope, from: msg.from, to: msg.to, paths: msg.paths, title: msg.title })
+    showDiff: (msg) => review.showRequest(msg.tabId, { cwd: msg.cwd, scope: msg.scope, from: msg.from, to: msg.to, paths: msg.paths, title: msg.title }),
+    showDocument: async (msg) => {
+      const check = await checkDocFile(msg.path)
+      if (!check.ok) return { ok: false, error: check.error }
+      if (check.kind === 'html' && htmlFolderRefused(msg.path, homedir())) return { ok: false, error: `an HTML document is not shown from the home folder or a drive root: ${msg.path}` }
+      return docs.show(msg.tabId, msg.path, msg.title, check.kind)
+    }
   })
     .then((h) => { pipe = h })
     .catch((e: unknown) => log.error(`pipe server failed: ${String(e)}`))
@@ -794,6 +809,40 @@ function bootstrap(): void {
         images.remove(cardId)
         break
     }
+  })
+  ipcMain.handle(IPC.docsRead, async (_e, docId: unknown): Promise<DocRead> => {
+    const doc = isId(docId) ? docs.get(docId) : undefined
+    return doc ? readDocText(doc.path) : { ok: false, error: 'unknown document' }
+  })
+  ipcMain.handle(IPC.docsStamp, async (_e, docId: unknown): Promise<string | null> => {
+    const doc = isId(docId) ? docs.get(docId) : undefined
+    return doc ? docStamp(doc.path) : null
+  })
+  ipcMain.on(IPC.docsAction, (_e, docId: unknown, action: unknown) => {
+    if (!isId(docId) || !isDocAction(action)) return
+    const doc = docs.get(docId)
+    if (!doc) return
+    switch (action) {
+      case 'open':
+        void shell.openPath(doc.path).then((answer) => { if (answer) toast(answer) })
+        break
+      case 'reveal':
+        revealInFolder(doc.path, nodeRevealDeps((p) => shell.showItemInFolder(p), (d) => void shell.openPath(d)))
+        break
+      case 'copy-path':
+        void clipboard.writeText(doc.path)
+        break
+      case 'remove':
+        docs.remove(docId)
+        break
+    }
+  })
+  // only a Markdown document the panel shows: the editor gets its text, the other kinds are not opened in an editor
+  ipcMain.on(IPC.docsOpenEditor, (_e, docId: unknown, line: unknown) => {
+    if (!isId(docId) || !isLineNo(line)) return
+    const doc = docs.get(docId)
+    if (!doc || doc.kind !== 'markdown') return
+    launchEditor(settings.review.editor, doc.path, line, { spawn: spawnDetached, reveal: (p) => shell.showItemInFolder(p), onError: toast })
   })
   ipcMain.handle(IPC.restoreGet, () => restoreInfo())
   ipcMain.on(IPC.restoreRun, () => runRestore())
@@ -972,6 +1021,12 @@ function bootstrap(): void {
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (e) => e.preventDefault())
+  // ClaudeTerm uses no WebRTC: a page may send its data over UDP only through a proxy, so a report's script cannot use it to reach the network
+  win.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+  // a document's HTML or PDF may load its own frames; any other frame navigation is refused
+  win.webContents.on('will-frame-navigate', (e) => {
+    if (!e.isMainFrame && !frameNavigationAllowed(e.url, (id) => docs.get(id) !== undefined)) e.preventDefault()
+  })
   if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else void win.loadFile(join(__dirname, '../renderer/index.html'))
 

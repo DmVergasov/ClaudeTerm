@@ -1,11 +1,11 @@
 import type { PanelMode } from '../shared/types'
 
-export type PanelTab = 'images' | 'changes'
+export type PanelTab = 'images' | 'changes' | 'docs'
 
-const TABS: readonly PanelTab[] = ['images', 'changes']
-const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes' }
+const TABS: readonly PanelTab[] = ['images', 'changes', 'docs']
+const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs' }
 /** how wide a drag may make each tab, as a share of the window */
-const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85 }
+const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85 }
 const MIN_WIDTH = 180
 /** how long the terminal waits for the window to take the size main gave it */
 const SETTLE_MS = 300
@@ -19,15 +19,16 @@ export type MakeRoom = (width: number, resize: boolean) => Promise<PanelMode>
  */
 export class SidePanel {
   readonly bodies: Record<PanelTab, HTMLElement>
-  /** Changes puts its buttons here */
-  readonly tools: HTMLElement
+  /** each tab puts its buttons in its own group; only the current tab's group shows */
+  readonly tools: Record<PanelTab, HTMLElement>
   /** shown, hidden, switched or expanded */
   onChange: () => void = () => {}
   private shownTab: PanelTab | null = null
   private currentTab: PanelTab = 'images'
   private isExpanded = false
   private readonly title: HTMLElement
-  private readonly available: Record<PanelTab, boolean> = { images: true, changes: false }
+  private readonly toolsBox: HTMLElement
+  private readonly available: Record<PanelTab, boolean> = { images: true, changes: false, docs: false }
   private mode: PanelMode = 'beside'
   /** the width main was last asked to make room for */
   private asked = 0
@@ -43,21 +44,28 @@ export class SidePanel {
     header.className = 'panel-header'
     this.title = document.createElement('span')
     this.title.className = 'panel-title'
-    this.tools = document.createElement('div')
-    this.tools.className = 'panel-tools'
+    this.toolsBox = document.createElement('div')
+    this.toolsBox.className = 'panel-tools'
+    const group = (): HTMLElement => {
+      const el = document.createElement('span')
+      el.className = 'panel-tool-group'
+      return el
+    }
+    this.tools = { images: group(), changes: group(), docs: group() }
+    this.toolsBox.append(this.tools.images, this.tools.changes, this.tools.docs)
     const hide = document.createElement('button')
     hide.className = 'panel-hide'
     hide.textContent = '–'
     hide.title = 'Hide'
     hide.addEventListener('click', () => this.hide())
-    header.append(this.title, this.tools, hide)
+    header.append(this.title, this.toolsBox, hide)
     const body = (tab: PanelTab): HTMLElement => {
       const el = document.createElement('div')
       el.className = `panel-body panel-${tab}`
       return el
     }
-    this.bodies = { images: body('images'), changes: body('changes') }
-    root.replaceChildren(handle, header, this.bodies.images, this.bodies.changes)
+    this.bodies = { images: body('images'), changes: body('changes'), docs: body('docs') }
+    root.replaceChildren(handle, header, this.bodies.images, this.bodies.changes, this.bodies.docs)
     this.setupResize(handle)
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.isExpanded && !e.defaultPrevented) this.setExpanded(false)
@@ -86,7 +94,7 @@ export class SidePanel {
     if (!this.available[tab] || this.shownTab === tab) return
     this.currentTab = tab
     this.shownTab = tab
-    if (tab !== 'changes') this.isExpanded = false
+    if (tab !== 'changes' && tab !== 'docs') this.isExpanded = false
     this.changed()
   }
 
@@ -102,19 +110,19 @@ export class SidePanel {
     else this.open(tab)
   }
 
-  /** Changes exists only for Claude tabs: a shell tab shows Images in its place */
+  /** Changes exists only for Claude tabs: a shell tab shows Images in its place; a tab that becomes unavailable falls back to the first available one */
   setAvailable(tab: PanelTab, available: boolean): void {
     if (this.available[tab] === available) return
     this.available[tab] = available
     if (available || this.currentTab !== tab) return
-    this.currentTab = tab === 'changes' ? 'images' : 'changes'
+    this.currentTab = TABS.find((t) => t !== tab && this.available[t])!
     if (this.shownTab !== null) this.shownTab = this.currentTab
     this.isExpanded = false
     this.changed()
   }
 
   setExpanded(on: boolean): void {
-    const next = on && this.shownTab === 'changes'
+    const next = on && (this.shownTab === 'changes' || this.shownTab === 'docs')
     if (next === this.isExpanded) return
     this.isExpanded = next
     this.apply()
@@ -187,7 +195,8 @@ export class SidePanel {
     this.root.classList.toggle('overlay', shown && (this.isExpanded || this.mode === 'overlay'))
     for (const t of TABS) this.bodies[t].hidden = this.currentTab !== t
     this.title.textContent = LABELS[this.currentTab]
-    this.tools.hidden = this.currentTab !== 'changes'
+    this.toolsBox.hidden = this.currentTab === 'images'
+    for (const t of TABS) this.tools[t].hidden = this.currentTab !== t
     const width = this.widths[this.currentTab]
     this.root.style.width = `${this.isExpanded ? window.innerWidth : width}px`
     // the expanded panel lies over the whole window, terminal and all; the terminal keeps the room it gave the panel
@@ -203,6 +212,7 @@ export class SidePanel {
       const startX = e.clientX
       const startW = this.root.getBoundingClientRect().width
       this.isExpanded = false
+      this.root.classList.add('resizing')
       const move = (ev: MouseEvent): void => {
         this.widths[tab] = Math.min(Math.max(startW + (startX - ev.clientX), MIN_WIDTH), Math.round(window.innerWidth * MAX_SHARE[tab]))
         this.apply()
@@ -210,6 +220,7 @@ export class SidePanel {
       const up = (): void => {
         document.removeEventListener('mousemove', move)
         document.removeEventListener('mouseup', up)
+        this.root.classList.remove('resizing')
         this.apply()
         // the terminal gave way: the window keeps its size and now holds the panel at this width
         this.asked = this.widths[tab]

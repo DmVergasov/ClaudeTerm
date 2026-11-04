@@ -104,9 +104,18 @@ export interface ShowDiffMessage {
   title: string | null
 }
 
+/** show_document from the MCP server: open a Markdown, PDF or HTML file in the tab's Docs panel. */
+export interface ShowDocumentMessage {
+  v: 1
+  type: 'show_document'
+  tabId: string | null
+  path: string
+  title: string | null
+}
+
 export type PipeMessage =
   | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
-  | TurnMessage | EditBeforeMessage | ShowDiffMessage
+  | TurnMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
 export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
@@ -220,6 +229,14 @@ export function parsePipeMessage(line: string): ParseResult {
     }
     if (m.title !== null && m.title !== undefined && typeof m.title !== 'string') return { ok: false, error: 'title must be a string or null' }
     return { ok: true, message: { v: 1, type: 'show_diff', tabId, cwd: m.cwd, scope, from, to, paths, title: label(m.title) } }
+  }
+
+  if (m.type === 'show_document') {
+    const tabId = m.tabId === null || m.tabId === undefined ? null : isUuid(m.tabId) ? m.tabId : undefined
+    if (tabId === undefined) return { ok: false, error: 'tabId must be a UUID or null' }
+    if (typeof m.path !== 'string' || !isAbsolute(m.path)) return { ok: false, error: 'path must be an absolute path' }
+    if (m.title !== null && m.title !== undefined && typeof m.title !== 'string') return { ok: false, error: 'title must be a string or null' }
+    return { ok: true, message: { v: 1, type: 'show_document', tabId, path: m.path, title: label(m.title) } }
   }
 
   if (m.type === 'status' || m.type === 'subagent' || m.type === 'session_end' || m.type === 'attention') {
