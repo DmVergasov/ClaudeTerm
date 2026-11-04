@@ -204,16 +204,18 @@ export class TabManager {
     if (!rec || rec.restarting || rec.preparing || (!rec.info.exited && !opts.live)) return
     if (rec.info.kind === 'claude') {
       rec.preparing = true
+      let launch: ResolvedLaunch | null = null
       try {
         const resumeSessionId = await this.resumeId(rec)
-        // the check waited on the disk: the tab may have closed or been restarted meanwhile
-        if (this.tabs.get(tabId) !== rec || rec.restarting || (!rec.info.exited && !opts.live)) return
-        this.setLaunch(rec, this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account: rec.info.account, fork: rec.info.fork }))
+        launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account: rec.info.account, fork: rec.info.fork })
       } catch {
         // keep the previous launch
       } finally {
         rec.preparing = false
       }
+      // the check waited on the disk, a failed one too: the tab may have closed or been restarted meanwhile
+      if (this.tabs.get(tabId) !== rec || rec.restarting || (!rec.info.exited && !opts.live)) return
+      if (launch) this.setLaunch(rec, launch)
     }
     await this.relaunch(rec)
   }

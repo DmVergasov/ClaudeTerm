@@ -622,4 +622,20 @@ describe('TabManager forks', () => {
     expect(tm.list()).toEqual([])
     expect(log.filter((l) => l.startsWith('opened:'))).toEqual([])
   })
+
+  it('restart and switchAccount start nothing when the check rejects after the tab closed', async () => {
+    const closing: { tm: TabManager | null } = { tm: null }
+    const { tm, ptys } = forkSetup({ restartWaitMs: 0, resumable: async (tabId) => { closing.tm!.close(tabId); throw new Error('transcript unreadable') } })
+    closing.tm = tm
+    const A = tm.open({ kind: 'claude', cwd: 'D:/x', resumeSessionId: SID_A })
+    ptys[0].emitExit(0)
+    await tm.restart(A.id)
+    expect(tm.list()).toEqual([])
+    expect(ptys).toHaveLength(1)
+
+    const B = tm.open({ kind: 'claude', cwd: 'D:/y', resumeSessionId: SID_B })
+    const started = ptys.length
+    expect(await tm.switchAccount(B.id, 'work')).toBe(false)
+    expect(ptys).toHaveLength(started)
+  })
 })
