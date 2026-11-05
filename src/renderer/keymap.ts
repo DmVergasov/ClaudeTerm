@@ -13,6 +13,8 @@ export type KeyAction =
   | { type: 'find' }
   | { type: 'toggleImages' }
   | { type: 'toggleChanges' }
+  | { type: 'toggleDocs' }
+  | { type: 'toggleNote' }
   | { type: 'zoomIn' }
   | { type: 'zoomOut' }
   | { type: 'zoomReset' }
@@ -45,6 +47,8 @@ const LABELS = {
   closeTab: ['Ctrl+Shift+W', '⌘W'],
   toggleImages: ['Ctrl+Shift+I', '⌘I'],
   toggleChanges: ['Ctrl+Shift+D', '⌘D'],
+  toggleDocs: ['Ctrl+Shift+O', '⌘O'],
+  toggleNote: ['Ctrl+Shift+N', '⌘N'],
   panelFind: ['Ctrl+F', '⌘F'],
   star: ['Ctrl+D', '⌘D']
 } as const
@@ -70,6 +74,8 @@ export function mapKey(e: KeyLike, platform: string): KeyAction | null {
       case 'KeyF': return { type: 'find' }
       case 'KeyI': return { type: 'toggleImages' }
       case 'KeyD': return { type: 'toggleChanges' }
+      case 'KeyO': return { type: 'toggleDocs' }
+      case 'KeyN': return { type: 'toggleNote' }
       case 'KeyH': return { type: 'recentSessions' }
       case 'Tab': return { type: 'prevTab' }
     }
@@ -111,6 +117,8 @@ function mapMacKey(e: KeyLike): KeyAction | null {
       case 'KeyF': return { type: 'find' }
       case 'KeyI': return { type: 'toggleImages' }
       case 'KeyD': return { type: 'toggleChanges' }
+      case 'KeyO': return { type: 'toggleDocs' }
+      case 'KeyN': return { type: 'toggleNote' }
       case 'Equal':
       case 'NumpadAdd': return { type: 'zoomIn' }
       case 'Minus':

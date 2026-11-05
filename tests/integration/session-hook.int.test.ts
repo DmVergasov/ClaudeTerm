@@ -60,7 +60,8 @@ async function listen(): Promise<{ pipe: string; got: PipeMessage[] }> {
   }
   server = await startPipeServer(pipe, {
     showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take, attention: take,
-    turn: take, editBefore: take, showDiff: async (m) => take(m)
+    turn: take, editBefore: take, showDiff: async (m) => take(m),
+    showDocument: async () => ({ ok: true })
   })
   return { pipe, got }
 }

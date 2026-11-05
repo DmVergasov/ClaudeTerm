@@ -18,7 +18,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .tab-icon { font-size: 11px; color: var(--accent); }
 .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-bell { color: var(--accent); font-size: 10px; }
-.tab-muted { display: flex; color: var(--muted); }
+.tab-muted, .tab-note { display: flex; color: var(--muted); }
 /* Claude is waiting in this tab: pulse until it is opened */
 .tab.attention { color: var(--fg); animation: tab-attention 1.2s ease-in-out infinite alternate; }
 @keyframes tab-attention { from { background: transparent; } to { background: color-mix(in srgb, var(--accent) 55%, transparent); } }
@@ -26,12 +26,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .tab-images { font-size: 11px; }
 .tab-close, .tab-new, .tab-menu { background: none; border: 0; color: var(--muted); font-size: 14px; cursor: pointer; padding: 0 6px; }
 .tab-close:hover, .tab-new:hover, .tab-menu:hover { color: var(--fg); }
-.tab-changes-toggle, .tab-images-toggle { position: relative; display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
-.tab-changes-toggle:hover, .tab-images-toggle:hover { color: var(--fg); }
-.tab-changes-toggle.active, .tab-images-toggle.active { color: var(--fg); background: var(--chrome-2); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab-changes-toggle, .tab-images-toggle, .tab-note-toggle { position: relative; display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
+.tab-changes-toggle:hover, .tab-images-toggle:hover, .tab-note-toggle:hover { color: var(--fg); }
+.tab-changes-toggle.active, .tab-images-toggle.active, .tab-note-toggle.active { color: var(--fg); background: var(--chrome-2); box-shadow: inset 0 -2px 0 var(--accent); }
 .tab-changes-toggle .badge, .tab-images-toggle .badge { position: absolute; top: 3px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--accent); color: #111; font-size: 10px; line-height: 14px; font-weight: 600; text-align: center; }
 .tab-changes-toggle .badge[hidden], .tab-images-toggle .badge[hidden] { display: none; }
-.tab-changes-toggle[hidden] { display: none; }
+.tab-changes-toggle[hidden], .tab-note-toggle[hidden] { display: none; }
 .tab-rename { flex: 1; min-width: 0; background: var(--chrome-2); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 1px 4px; }
 .tab-position { display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
 .tab-position:hover { color: var(--fg); }
@@ -100,6 +100,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .panel-title { padding: 7px 10px 7px 4px; color: var(--fg); }
 .panel-tools { margin-left: auto; display: flex; gap: 2px; }
 .panel-tools[hidden] { display: none; }
+.panel-tool-group { display: flex; gap: 2px; align-items: center; }
+.panel-tool-group[hidden] { display: none; }
 .panel-tools button, .panel-hide { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; padding: 4px 6px; }
 .panel-tools button:hover, .panel-hide:hover { color: var(--fg); }
 .panel-tools button.active { color: var(--accent); }
@@ -109,6 +111,13 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .panel-notice { padding: 6px 10px; color: #e5c07b; font-size: 12px; border-bottom: 1px solid var(--border); }
 .panel-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 10px; }
 .panel-empty { color: var(--muted); text-align: center; margin-top: 24px; }
+.doc-content { flex: 1; min-height: 0; overflow: auto; }
+.doc-content.framed { display: flex; flex-direction: column; overflow: hidden; }
+.doc-frame { flex: 1; width: 100%; height: 100%; border: 0; background: #fff; }
+/* a drag of the panel edge: a frame would take the mouse events the drag needs */
+#image-panel.resizing iframe { pointer-events: none; }
+.doc-select { max-width: 220px; min-width: 0; margin: 0 2px; padding: 2px 4px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 12px; }
+.doc-select[hidden], .doc-more[hidden] { display: none; }
 .card { background: var(--chrome-2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; cursor: zoom-in; flex-shrink: 0; }
 .card img { display: block; width: 100%; max-height: 260px; object-fit: contain; background: #111; }
 .card.deleted img { filter: grayscale(1) opacity(0.4); }
@@ -119,6 +128,20 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-sub { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-caption { margin-top: 4px; font-size: 12px; }
+/* The note lies over the top right of the terminal, which keeps its size, and left of a panel lying over the terminal.
+   The card grows with its text up to 40% of the terminal's height, then its text scrolls. */
+#note { position: absolute; top: 10px; right: calc(14px + var(--panel-cover, 0px)); z-index: 5; display: flex; flex-direction: column; align-items: flex-end; max-height: 40%; }
+.note-label, .note-card { background: color-mix(in srgb, var(--chrome-2) 85%, transparent); backdrop-filter: blur(3px); border: 1px solid var(--border); opacity: 0.8; }
+.note-label:hover, .note-label:focus-within, .note-card:hover, .note-card:focus-within { opacity: 1; background: color-mix(in srgb, var(--chrome-2) 97%, transparent); }
+.note-label { display: flex; align-items: center; gap: 6px; max-width: 280px; padding: 3px 10px; border-radius: 12px; cursor: pointer; }
+.note-label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-icon { display: flex; flex: none; color: var(--muted); }
+.note-card { width: 300px; min-height: 0; display: flex; flex-direction: column; border-radius: 6px; }
+.note-head { display: flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; border-bottom: 1px solid var(--border); color: var(--muted); }
+.note-title { flex: 1; padding: 5px 0; color: var(--fg); }
+.note-head button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; padding: 2px 6px; }
+.note-head button:hover { color: var(--fg); }
+.note-text { width: 100%; min-height: 4.5em; field-sizing: content; resize: none; padding: 6px 10px; background: none; color: var(--fg); border: 0; outline: none; font: inherit; color-scheme: dark; }
 #lightbox { position: fixed; inset: 0; z-index: 70; background: #000d; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #lightbox img { max-width: 92vw; max-height: 88vh; cursor: grab; transform-origin: center; }
 .lightbox-caption { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: #ddd; }
@@ -239,6 +262,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .md-body hr { margin: 8px 0; border: 0; border-top: 1px solid var(--border); }
 .md-body a { color: #6cb6ff; text-decoration: none; }
 .md-body a:hover { text-decoration: underline; }
+.md-body img.md-img { max-width: 100%; }
 .md-image { display: inline-block; padding: 0 5px; border: 1px dashed var(--border); border-radius: 3px; color: var(--muted); font-size: 0.9em; }
 .panel-body:focus, .review-files:focus { outline: none; }
 .review-find { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }

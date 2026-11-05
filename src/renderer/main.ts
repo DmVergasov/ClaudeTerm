@@ -1,9 +1,11 @@
 import './styles.css'
 import type { AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
+import type { DocsUpdate } from '../shared/docs'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { PlanStatus, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
+import { DocPanel } from './doc-panel'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
 import { Lightbox } from './lightbox'
@@ -12,6 +14,7 @@ import { RecentSessionsWindow } from './recent-sessions'
 import { imagePasteInput, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar } from './search'
 import { closeMenu, showMenu, type MenuItem } from './menu'
+import { NoteOverlay } from './note-overlay'
 import { RestoreBanner } from './restore-banner'
 import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
@@ -48,6 +51,7 @@ let tabBar: TabBar
 let tabPanel: TabPanel
 /** where each tab's folder is in git, as main last published it: null for a folder outside git; no entry until git has answered */
 const places = new Map<string, TabPlace | null>()
+let noteOverlay: NoteOverlay
 let searchBar: SearchBar
 let toggleImagePanel = (): void => {}
 let restoreInfo: RestoreInfo | null = null
@@ -58,6 +62,10 @@ let reviewPanel: ReviewPanel
 const reviewUpdates = new Map<string, ReviewUpdate>()
 /** tabs whose show_diff should open Changes when they come to the front */
 const pendingReveal = new Set<string>()
+let docPanel: DocPanel
+const docUpdates = new Map<string, DocsUpdate>()
+/** tabs whose show_document should open Docs on the document it showed, when they come to the front: tab id → document id */
+const pendingDocReveal = new Map<string, string>()
 /** what each tab was sent, in test runs: the e2e tests read what Send wrote */
 const inputLog = new Map<string, string>()
 /** every size each tab's terminal gave its process, in test runs */
@@ -82,7 +90,7 @@ const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
 function renderTabs(): void {
   const items = order.flatMap((id): TabBarItem[] => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
+    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id), place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
   })
   tabBar.render(items, activeId)
   tabPanel.render(items, activeId)
@@ -119,7 +127,7 @@ function renderTitle(): void {
   document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')
 }
 
-/** the Images and Changes buttons in the tab bar: which panel is shown, the badges, Changes only for a Claude tab */
+/** the Media, Changes, Docs and Note buttons in the tab bar: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
 function refreshPanelButtons(): void {
   const unseen = activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0
   const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
@@ -128,6 +136,8 @@ function refreshPanelButtons(): void {
     bar.setImages(sidePanel.isShowing('images'), unseen)
     bar.setChanges(claude, sidePanel.isShowing('changes'), unviewed)
   }
+  tabBar.setDocs(claude && (docUpdates.get(activeId ?? '')?.docs.length ?? 0) > 0, sidePanel.isShowing('docs'))
+  tabBar.setNote(claude, claude && noteOverlay.isShown())
 }
 
 function logInput(tabId: string, data: string): void {
@@ -259,6 +269,14 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'find': searchBar.open(); break
     case 'toggleImages': toggleImagePanel(); break
     case 'toggleChanges': if (t?.info.kind === 'claude') sidePanel.toggle('changes'); break
+    case 'toggleDocs': sidePanel.toggle('docs'); break
+    case 'toggleNote': {
+      if (t?.info.kind !== 'claude') break
+      // a note shown under the Changes panel expanded over the whole window would be unseen: the panel takes its width back first
+      if (!noteOverlay.isShown() && sidePanel.expanded) sidePanel.setExpanded(false)
+      noteOverlay.toggle()
+      break
+    }
     case 'zoomIn': setFontSize(fontSize + 1); break
     case 'zoomOut': setFontSize(fontSize - 1); break
     case 'zoomReset': setFontSize(settings.font.size); break
@@ -351,6 +369,16 @@ function markUnread(tabId: string): void {
   renderTabs()
 }
 
+/** the Docs panel shows the tab's documents; a document show_document showed is selected, and the panel opens on it */
+function showDocs(tabId: string, claude: boolean): void {
+  const update = claude ? docUpdates.get(tabId) : undefined
+  const reveal = pendingDocReveal.get(tabId) ?? null
+  pendingDocReveal.delete(tabId)
+  docPanel.show({ tabId, docs: update?.docs ?? [], reveal })
+  sidePanel.setAvailable('docs', (update?.docs.length ?? 0) > 0)
+  if (reveal !== null) sidePanel.open('docs')
+}
+
 function activate(tabId: string): void {
   const left = activeId !== null && activeId !== tabId ? tabs.get(activeId) : undefined
   if (left) leave(left)
@@ -364,15 +392,18 @@ function activate(tabId: string): void {
     t.bell = false
     t.attention = false
   }
+  const claude = t?.info.kind === 'claude'
+  // before the tabs are drawn: the Note button shows whether this tab's note is shown
+  noteOverlay.show(tabId, claude)
   renderTabs()
   // the left panel's group of a tab is known once git has answered for its folder (see onTabPlace)
   if (settings.tabs.position === 'left' && places.has(tabId)) tabPanel.unfoldFor(tabId)
-  const claude = t?.info.kind === 'claude'
   reviewPanel.show(claude ? reviewUpdates.get(tabId) ?? null : null)
   // the images first: setAvailable can switch a shown Changes panel to Images and fire onChange, which must find this tab's images
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
   sidePanel.setAvailable('changes', claude)
   if (pendingReveal.delete(tabId)) sidePanel.open('changes')
+  showDocs(tabId, claude)
   renderStatus(tabId)
 }
 
@@ -477,6 +508,15 @@ async function boot(): Promise<void> {
       runAction({ type: 'toggleChanges' }, activeId)
       if (activeId) tabs.get(activeId)?.view.term.focus()
     },
+    toggleDocs: () => {
+      runAction({ type: 'toggleDocs' }, activeId)
+      if (activeId) tabs.get(activeId)?.view.term.focus()
+    },
+    toggleNote: () => {
+      runAction({ type: 'toggleNote' }, activeId)
+      // the keyboard goes back to the terminal, unless an empty note took it to be written in
+      if (activeId && !document.activeElement?.closest('#note')) tabs.get(activeId)?.view.term.focus()
+    },
     switchPosition: () => {
       const next: TabPosition = settings.tabs.position === 'top' ? 'left' : 'top'
       void ct.setSetting('tabs.position', next).then((r) => { if (!r.ok) showToast(r.error) }, (e: unknown) => showToast(`Cannot save tabs.position: ${String(e)}`))
@@ -485,6 +525,12 @@ async function boot(): Promise<void> {
   tabBar = new TabBar(document.getElementById('tabbar')!, tabCallbacks, ct.platform)
   tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
   showTabs(settings.tabs.position)
+  noteOverlay = new NoteOverlay(document.getElementById('note')!, {
+    setText: (id, text, generation) => ct.setNoteText(id, text, generation),
+    setView: (id, shown, form, generation) => ct.setNoteView(id, shown, form, generation),
+    focusTerminal: () => { if (activeId) tabs.get(activeId)?.view.term.focus() },
+    changed: () => renderTabs()
+  }, ct.platform)
   ct.onTabPlace((id, place) => {
     // the group is known with the first answer for the tab: a later change of its branch keeps a group the user folded
     const first = !places.has(id)
@@ -559,7 +605,7 @@ async function boot(): Promise<void> {
     const text = t ? promptText(t.view.screen().rows) : null
     ct.answerPrompt(queryId, text === null ? 'none' : text === '' ? 'empty' : 'draft')
   })
-  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width }, (width, resize) => ct.setPanel(width, resize))
+  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width }, (width, resize) => ct.setPanel(width, resize))
   ct.onPanelMode((mode) => sidePanel.setMode(mode))
   imagePanel = new ImagePanel(
     sidePanel.bodies.images,
@@ -612,9 +658,24 @@ async function boot(): Promise<void> {
   )
   reviewPanel.setTreeShown(settings.review.fileTree)
   reviewPanel.setTreeWidth(settings.review.treeWidth)
+  docPanel = new DocPanel(
+    sidePanel.bodies.docs,
+    sidePanel,
+    {
+      read: (id) => ct.readDoc(id),
+      stamp: (id) => ct.docStamp(id),
+      action: (id, action) => ct.docAction(id, action),
+      openEditor: (id, line) => ct.openDocInEditor(id, line),
+      copyText: (text) => ct.writeClipboardText(text),
+      openLink: (url) => ct.openExternal(url),
+      send: (id, message) => sendToClaude(id, message)
+    },
+    ct.platform
+  )
   sidePanel.onChange = () => {
     imagePanel.panelChanged()
     reviewPanel.panelChanged()
+    docPanel.panelChanged()
     refreshPanelButtons()
   }
   ct.onReview((u) => {
@@ -626,6 +687,13 @@ async function boot(): Promise<void> {
     if (pendingReveal.delete(u.tabId)) sidePanel.open('changes')
     renderStatus(u.tabId)
   })
+  ct.onDocs((u) => {
+    docUpdates.set(u.tabId, u)
+    if (u.reveal) pendingDocReveal.set(u.tabId, u.reveal)
+    if (u.tabId !== activeId) return
+    showDocs(u.tabId, true)
+    refreshPanelButtons()
+  })
   refreshPanelButtons()
   ct.onImages((u) => {
     imageUpdates.set(u.tabId, u)
@@ -636,6 +704,11 @@ async function boot(): Promise<void> {
     }
     if (u.tabId === activeId) imagePanel.show(u)
     refreshPanelButtons()
+  })
+  // a stored note comes to a tab with its conversation: Restore, Recent sessions, /resume
+  ct.onNote((id, note, generation) => {
+    noteOverlay.set(id, note, generation)
+    renderTabs()
   })
   ct.onTabOpened(addTab)
   ct.onTabUpdated((info) => {
@@ -658,13 +731,19 @@ async function boot(): Promise<void> {
     planUpdates.delete(id)
     reviewUpdates.delete(id)
     reviewPanel.dropTab(id)
+    docUpdates.delete(id)
+    docPanel.dropTab(id)
+    noteOverlay.dropTab(id)
     pendingReveal.delete(id)
+    pendingDocReveal.delete(id)
     inputLog.delete(id)
     sizeLog.delete(id)
     order = order.filter((x) => x !== id)
     if (activeId === id) {
       activeId = null
       statusBar.render(null)
+      // the Docs panel has no tab's documents to show: it falls back to another panel
+      sidePanel.setAvailable('docs', false)
     }
     renderTabs()
   })
@@ -689,7 +768,7 @@ async function boot(): Promise<void> {
   ct.onSettings(applySettings)
   window.addEventListener('focus', () => {
     if (sessionsWindow.isOpen) return
-    if (document.activeElement?.closest('#image-panel')) return
+    if (document.activeElement?.closest('#image-panel, #note')) return
     const t = activeId ? tabs.get(activeId) : undefined
     t?.view.term.focus()
   })

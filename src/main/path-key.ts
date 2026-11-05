@@ -13,3 +13,9 @@ export function pathKey(p: string, path: PlatformPath = nativePath): string {
 export function isWindowsPath(p: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\')
 }
+
+/** `p` is `dir` itself or a path inside it, both compared as pathKey */
+export function isWithin(dir: string, p: string, path: PlatformPath = nativePath): boolean {
+  const rel = path.relative(pathKey(dir, path), pathKey(p, path))
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
+}

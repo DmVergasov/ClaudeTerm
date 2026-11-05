@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { anchorOf, attemptSend, draftAfterSend, formatSendMessage, locate, location, moveAnchor, reanchorComment, sendErrorAfter, type ReviewComment } from '../../src/renderer/review-comments'
+import { anchorOf, attemptSend, draftAfterSend, formatDocMessage, formatSendMessage, locate, location, moveAnchor, reanchorComment, sendErrorAfter, type ReviewComment, withoutSent } from '../../src/renderer/review-comments'
+import { docLines } from '../../src/renderer/doc-lines'
 import type { ReviewFile, ReviewLine } from '../../src/shared/review'
 
 const L = (kind: ReviewLine['kind'], text: string, oldNo: number | null, newNo: number | null): ReviewLine => ({ kind, text, oldNo, newNo })
@@ -122,5 +123,23 @@ describe('Send', () => {
     expect(draftAfterSend({ anchor, text: 'and this', editing: null })).toEqual({ anchor, text: 'and this', editing: null })
     // the comment it edited was sent: the new text becomes a comment of its own
     expect(draftAfterSend({ anchor, text: 'edited', editing: 'c1' })).toEqual({ anchor, text: 'edited', editing: null })
+  })
+})
+
+describe('withoutSent', () => {
+  it('drops the sent comments by id, also when the kept ones are copies of the sent objects', () => {
+    const anchor = anchorOf(file('spec.md', [L('context', 'x', 1, 1)]), [L('context', 'x', 1, 1)], 'doc:1')
+    const sent: ReviewComment[] = [{ ...comment(anchor, 'one'), id: 'c1' }, { ...comment(anchor, 'two'), id: 'c2' }]
+    const copies: ReviewComment[] = [{ ...sent[0]!, anchor: { ...anchor } }, { ...comment(anchor, 'three'), id: 'c3' }]
+    expect(withoutSent(copies, sent)).toEqual([{ ...comment(anchor, 'three'), id: 'c3' }])
+  })
+})
+
+describe('formatDocMessage', () => {
+  it('heads the comments with the document', () => {
+    const lines = docLines('# Spec\n\nBody text.\n')
+    const doc = { path: '/p/notes/spec.md', relPath: 'notes/spec.md', note: null, hunks: [{ lines }] }
+    const c = comment(anchorOf(doc, lines.slice(2, 3), 'doc:x'), 'Clarify this')
+    expect(formatDocMessage('notes/spec.md', [c])).toBe('Comments on notes/spec.md:\n\n1. notes/spec.md:3\n   > Body text.\n   Clarify this')
   })
 })

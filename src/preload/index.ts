@@ -40,12 +40,18 @@ const api: CtApi = {
   listImages: (tabId) => ipcRenderer.invoke(IPC.imagesList, tabId),
   markImagesSeen: (tabId) => ipcRenderer.send(IPC.imagesMarkSeen, tabId),
   imageAction: (cardId, action) => ipcRenderer.send(IPC.imagesAction, cardId, action),
+  readDoc: (docId) => ipcRenderer.invoke(IPC.docsRead, docId),
+  docStamp: (docId) => ipcRenderer.invoke(IPC.docsStamp, docId),
+  docAction: (docId, action) => ipcRenderer.send(IPC.docsAction, docId, action),
+  openDocInEditor: (docId, line) => ipcRenderer.send(IPC.docsOpenEditor, docId, line),
   getRestoreInfo: () => ipcRenderer.invoke(IPC.restoreGet),
   runRestore: () => ipcRenderer.send(IPC.restoreRun),
   listSessions: () => ipcRenderer.invoke(IPC.sessionsList),
   openSession: (id) => ipcRenderer.send(IPC.sessionsOpen, id),
   setSessionStarred: (id, starred) => ipcRenderer.invoke(IPC.sessionsStar, id, starred),
   getStarredSessions: () => ipcRenderer.invoke(IPC.sessionsStarred),
+  setNoteText: (id, text, generation) => ipcRenderer.send(IPC.notesSetText, id, text, generation),
+  setNoteView: (id, shown, form, generation) => ipcRenderer.send(IPC.notesSetView, id, shown, form, generation),
   checkForUpdates: () => ipcRenderer.send(IPC.updateCheck),
   installUpdate: () => ipcRenderer.send(IPC.updateInstall),
   getUpdateState: () => ipcRenderer.invoke(IPC.updateGet),
@@ -89,7 +95,9 @@ const api: CtApi = {
   onReview: (cb) => on(IPC.evReview, cb),
   onPanelMode: (cb) => on(IPC.evPanelMode, cb),
   onAccounts: (cb) => on(IPC.evAccounts, cb),
-  onPromptQuery: (cb) => on(IPC.evPromptQuery, cb)
+  onNote: (cb) => on(IPC.evNote, cb),
+  onPromptQuery: (cb) => on(IPC.evPromptQuery, cb),
+  onDocs: (cb) => on(IPC.evDocs, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

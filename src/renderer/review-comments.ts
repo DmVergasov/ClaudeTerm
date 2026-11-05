@@ -1,4 +1,12 @@
-import type { ReviewFile, ReviewLine, ReviewLineKind, ReviewSendState } from '../shared/review'
+import type { ReviewFileNote, ReviewLine, ReviewLineKind, ReviewSendState } from '../shared/review'
+
+/** a file comments can be anchored in: a Changes file (ReviewFile) or a document, which has one hunk of context lines */
+export interface CommentFile {
+  path: string
+  relPath: string
+  note: ReviewFileNote | null
+  hunks: { lines: ReviewLine[] }[]
+}
 
 export interface AnchorLine {
   kind: ReviewLineKind
@@ -37,14 +45,14 @@ export function viewKeyOf(u: { view: { kind: 'scope'; scope: string } | { kind: 
   return u.view.kind === 'scope' ? `scope:${u.view.scope}` : `request:${u.label}`
 }
 
-export function anchorOf(file: ReviewFile, lines: ReviewLine[], viewKey: string): CommentAnchor {
+export function anchorOf(file: CommentFile, lines: ReviewLine[], viewKey: string): CommentAnchor {
   return { path: file.path, relPath: file.relPath, lines: lines.map((l) => ({ ...l })), viewKey }
 }
 
 const position = (l: { oldNo: number | null; newNo: number | null }, side: 'new' | 'old'): number => (side === 'new' ? l.newNo : l.oldNo) ?? 0
 
 /** The anchor's lines in `files`: the same lines of the same file, nearest to where they were, within 50 lines. */
-export function locate(anchor: CommentAnchor, files: ReviewFile[], samePath: (a: string, b: string) => boolean): Located | null {
+export function locate(anchor: CommentAnchor, files: CommentFile[], samePath: (a: string, b: string) => boolean): Located | null {
   const fi = files.findIndex((f) => samePath(f.path, anchor.path))
   const first = anchor.lines[0]
   if (fi < 0 || !first) return null
@@ -66,7 +74,7 @@ export function locate(anchor: CommentAnchor, files: ReviewFile[], samePath: (a:
 }
 
 /** the anchor moved to where `at` found its lines */
-export function moveAnchor(anchor: CommentAnchor, files: ReviewFile[], at: Located): CommentAnchor {
+export function moveAnchor(anchor: CommentAnchor, files: CommentFile[], at: Located): CommentAnchor {
   return { ...anchor, lines: files[at.file]!.hunks[at.hunk]!.lines.slice(at.from, at.to + 1).map((l) => ({ ...l })) }
 }
 
@@ -74,7 +82,7 @@ export function moveAnchor(anchor: CommentAnchor, files: ReviewFile[], at: Locat
  * A comment of the view after an update: it follows its lines. It is outdated only when its file is still shown with
  * hunks but without its lines; a file that left the view, or shows a row instead of hunks, says nothing about them.
  */
-export function reanchorComment(c: ReviewComment, files: ReviewFile[], samePath: (a: string, b: string) => boolean): ReviewComment {
+export function reanchorComment(c: ReviewComment, files: CommentFile[], samePath: (a: string, b: string) => boolean): ReviewComment {
   const at = locate(c.anchor, files, samePath)
   if (at) return { ...c, anchor: moveAnchor(c.anchor, files, at), outdated: false }
   const file = files.find((f) => samePath(f.path, c.anchor.path))
@@ -93,6 +101,12 @@ export async function attemptSend(send: () => Promise<string | null>): Promise<s
   } catch (e) {
     return e instanceof Error ? e.message : String(e)
   }
+}
+
+/** the comments that were not sent: matched by id, since a read of a document copies every comment */
+export function withoutSent(comments: ReviewComment[], sent: ReviewComment[]): ReviewComment[] {
+  const ids = new Set(sent.map((c) => c.id))
+  return comments.filter((c) => !ids.has(c.id))
 }
 
 /** a comment being typed outlives a Send that took the others; one editing a sent comment becomes a new comment */
@@ -139,12 +153,23 @@ function quote(a: CommentAnchor): string[] {
   return out
 }
 
+/** the numbered blocks of a message: each comment's location, quoted lines and text */
+function commentBlocks(comments: ReviewComment[]): string {
+  return comments
+    .map((c, i) => {
+      const where = location(c.anchor) + (c.outdated ? ' (outdated: the lines changed since)' : '')
+      const body = c.text.trim().split(/\r?\n/).map((l) => `   ${l}`.trimEnd())
+      return [`${i + 1}. ${where}`, ...quote(c.anchor), ...body].join('\n')
+    })
+    .join('\n\n')
+}
+
 /** The message Send writes into Claude's prompt. */
 export function formatSendMessage(label: string, comments: ReviewComment[]): string {
-  const blocks = comments.map((c, i) => {
-    const where = location(c.anchor) + (c.outdated ? ' (outdated: the lines changed since)' : '')
-    const body = c.text.trim().split(/\r?\n/).map((l) => `   ${l}`.trimEnd())
-    return [`${i + 1}. ${where}`, ...quote(c.anchor), ...body].join('\n')
-  })
-  return [`Review comments on the changes (${label}):`, '', blocks.join('\n\n')].join('\n')
+  return [`Review comments on the changes (${label}):`, '', commentBlocks(comments)].join('\n')
+}
+
+/** The message Send writes into Claude's prompt for comments on a document. */
+export function formatDocMessage(relPath: string, comments: ReviewComment[]): string {
+  return [`Comments on ${relPath}:`, '', commentBlocks(comments)].join('\n')
 }

@@ -204,7 +204,7 @@ export class ReviewPanel {
     this.treeBtn.title = 'File tree'
     this.treeBtn.classList.add('active')
     this.treeBtn.addEventListener('click', () => this.cb.setFileTree(!this.treeShown))
-    panel.tools.append(this.findBtn, collapse, expandAll, this.treeBtn, refresh, this.expandBtn)
+    panel.tools.changes.append(this.findBtn, collapse, expandAll, this.treeBtn, refresh, this.expandBtn)
     this.setupFind()
     this.setupTree()
     this.sendBtn.addEventListener('click', () => void this.sendAll())

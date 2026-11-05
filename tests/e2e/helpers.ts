@@ -24,18 +24,18 @@ export const KEYS = MAC
   ? {
       newTab: 'Meta+KeyT', newClaudeTab: 'Meta+KeyL', closeTab: 'Meta+KeyW', nextTab: 'Control+Tab', copy: 'Meta+KeyC', paste: 'Meta+KeyV',
       images: 'Meta+KeyI', changes: 'Meta+KeyD', recentSessions: 'Meta+Shift+KeyH', settings: 'Meta+Comma', zoomIn: 'Meta+Equal',
-      panelFind: 'Meta+KeyF', star: 'Meta+KeyD'
+      panelFind: 'Meta+KeyF', star: 'Meta+KeyD', note: 'Meta+KeyN', docs: 'Meta+KeyO'
     }
   : {
       newTab: 'Control+Shift+KeyT', newClaudeTab: 'Control+Shift+KeyL', closeTab: 'Control+Shift+KeyW', nextTab: 'Control+Tab', copy: 'Control+Shift+KeyC', paste: 'Control+KeyV',
       images: 'Control+Shift+KeyI', changes: 'Control+Shift+KeyD', recentSessions: 'Control+Shift+KeyH', settings: 'Control+Comma', zoomIn: 'Control+Equal',
-      panelFind: 'Control+KeyF', star: 'Control+KeyD'
+      panelFind: 'Control+KeyF', star: 'Control+KeyD', note: 'Control+Shift+KeyN', docs: 'Control+Shift+KeyO'
     }
 
 /** the shortcuts as the window's tooltips write them */
 export const KEY_LABELS = MAC
-  ? { images: '⌘I', changes: '⌘D', panelFind: '⌘F', star: '⌘D' }
-  : { images: 'Ctrl+Shift+I', changes: 'Ctrl+Shift+D', panelFind: 'Ctrl+F', star: 'Ctrl+D' }
+  ? { images: '⌘I', changes: '⌘D', panelFind: '⌘F', star: '⌘D', note: '⌘N', docs: '⌘O' }
+  : { images: 'Ctrl+Shift+I', changes: 'Ctrl+Shift+D', panelFind: 'Ctrl+F', star: 'Ctrl+D', note: 'Ctrl+Shift+N', docs: 'Ctrl+Shift+O' }
 
 // "claude" prints its arguments instead of starting (on Linux also the folder it runs in, as PowerShell's prompt shows it)
 export const FAKE_CLAUDE_SETTINGS = WIN
@@ -63,7 +63,10 @@ export function processAlive(marker: string): boolean {
 
 export const PNG_1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
 
-/** a conversation as Claude Code keeps it under its config folder: one line, enough for --resume to find it */
+/**
+ * a conversation as Claude Code keeps it under its config folder, <config>/projects/<cwd with every non-alphanumeric char
+ * as ->/<id>.jsonl: one line, enough for --resume to find it and for Recent sessions to list it. Returns the file's path
+ */
 export function writeTranscript(config: string, cwd: string, id: string): string {
   const dir = join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
   mkdirSync(dir, { recursive: true })

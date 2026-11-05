@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' ctimg: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' ctimg: ctdoc: data:; frame-src ctdoc:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
     <title>ClaudeTerm</title>
   </head>
   <body>
@@ -13,7 +13,7 @@
       <div id="main-row">
         <div id="tabpanel" hidden></div>
         <div id="workspace">
-          <div id="terminals"></div>
+          <div id="terminals"><div id="note"></div></div>
           <div id="image-panel" class="collapsed"></div>
         </div>
       </div>

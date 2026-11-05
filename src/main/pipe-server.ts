@@ -1,5 +1,5 @@
 import { createServer, type Socket } from 'node:net'
-import { type AttentionMessage, type EditBeforeMessage, encodeMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TurnMessage } from '../shared/protocol'
+import { type AttentionMessage, type EditBeforeMessage, encodeMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TurnMessage } from '../shared/protocol'
 
 export interface PipeHandlers {
   showImage(msg: ShowImageMessage): Promise<PipeResponse>
@@ -11,6 +11,7 @@ export interface PipeHandlers {
   turn(msg: TurnMessage): PipeResponse
   editBefore(msg: EditBeforeMessage): PipeResponse
   showDiff(msg: ShowDiffMessage): Promise<PipeResponse>
+  showDocument(msg: ShowDocumentMessage): Promise<PipeResponse>
 }
 
 export interface PipeServerHandle {
@@ -34,6 +35,7 @@ async function handleLine(line: string, h: PipeHandlers): Promise<PipeResponse> 
       case 'turn': return h.turn(m)
       case 'edit_before': return h.editBefore(m)
       case 'show_diff': return await h.showDiff(m)
+      case 'show_document': return await h.showDocument(m)
     }
   } catch (e) {
     return { ok: false, error: (e as Error).message }
