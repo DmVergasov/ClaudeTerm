@@ -41,7 +41,7 @@ the variant "flat list under project headers, branch on every tab, colored bar f
 
 ### The left panel
 
-- **Header** (34 px, like today's tab bar): **+** and **▾** on the left; on the right the Changes and Media toggles
+- **Header** (34 px, like today's tab bar): **+** and **▾** on the left; on the right the Changes, Docs and Media toggles
   (and Note, when session notes exist on the branch — see "Session notes" below), then the position button. The
   buttons behave exactly as in the tab bar on top.
 - **Width**: 240 px to start; the user drags the panel's right edge to change it, and the width is kept across
@@ -116,7 +116,7 @@ the variant "flat list under project headers, branch on every tab, colored bar f
 ### Session notes
 
 Session notes (PR #15) may land on `master` before or after this work. Where both exist: the Note button joins the
-Changes and Media buttons in the left panel's header, and the note mark shows in the first line of a tab's row.
+Changes, Docs and Media buttons in the left panel's header, and the note mark shows in the first line of a tab's row.
 *(Claude's call.)*
 
 ## How it works
@@ -169,7 +169,7 @@ Changes and Media buttons in the left panel's header, and the note mark shows in
 - A new module for the left panel (header, groups, rows, folding, dragging, resizing), next to `TabBar`; both get the
   same items and callbacks, and `main.ts` shows one or the other by `tabs.position`.
 - `TabBarItem` gets the fields the rows need (project, worktree, branch, fork, family).
-- The Changes / Media / Note toggles and the position button move between the tab bar and the panel header.
+- The Changes / Docs / Media / Note toggles and the position button move between the tab bar and the panel header.
 - The tab menu (`tabMenu` in `main.ts`) gets **Fork session**.
 
 ## Out of scope
