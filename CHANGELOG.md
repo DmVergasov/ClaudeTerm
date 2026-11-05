@@ -2,6 +2,14 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.13.0
+
+### New
+
+- **Documents Claude shows you, in a Docs panel.** Ask Claude to show you the spec, the plan or a report, and it opens the file in a **Docs** panel beside the terminal instead of printing it, with the bundled `show_document` tool. A Markdown file is shown formatted — headings, lists, tables and code — and you comment on it as in the Changes panel: hover a block, click **+**, and **Send to Claude** writes all your comments as one message. A PDF opens in the built-in viewer, with its own zoom, pages and find. An HTML report — coverage, test results, a generated page — runs in a sandboxed frame that cannot load anything from outside the report's folder or navigate away; since its scripts can read the files in that folder, a report in your home folder or at a drive root is not shown. When the file changes, the panel shows the new version. Open or close the panel with the **Docs** button, which shows once a Claude tab has a document, or `Ctrl+Shift+O` (`⌘O` on macOS).
+- **Tabs on the left, grouped by project.** Settings → Appearance → **Tabs** → **On the left**, or the new button at the right end of the tab bar, moves the tabs into a panel on the left of the window. The tabs are grouped by project — the git repository of the folder each tab was opened in, its worktrees included — with **No project** last for folders outside git. Every tab in git shows its branch on a second line, and a tab in a linked worktree has a colored bar, in a color that worktree keeps. Click a group's header to fold it: a folded group shows how many tabs it holds, and a dot that pulses when Claude waits in one of them. Drag tabs within their group, and groups by their header; `Ctrl+Tab` and `Ctrl+Alt+1` … `9` (`⌘` on macOS) follow the panel's order. Drag the panel's edge to make it wider or narrower; the width and the folded groups are kept. The Changes, Docs, Media and Note buttons move to the panel's header.
+- **Fork session.** Right-click a Claude tab → **Fork session** opens a new tab that continues a copy of the tab's conversation from where it is, in the same folder and on the same account; the original conversation stays as it was. The item is available once Claude Code has saved the conversation, after its first message. The fork is titled like its tab with **(fork)** after it. On the left it stands under its tab, indented; on top it lands right after the tab and its other forks. Closing the tab turns its forks into ordinary tabs. Restart and Restore keep each fork with its tab, and a fork you had not written in yet comes back as a fresh fork of the same conversation, with its note.
+
 ## 0.12.0
 
 ### New
