@@ -641,3 +641,20 @@ test('at its narrowest the panel still holds every header button, Docs and Note 
   expect(edges.last).toBeLessThanOrEqual(edges.head)
   await app.close()
 })
+
+test('with the tabs on the left, a side panel dragged wider stops at 70% of the workspace, so the terminal keeps its width', async () => {
+  const { app, page } = await launchClaudeTab(left(freshFolder()))
+  await page.locator('#tabpanel .tp-head .tab-images-toggle').click()
+  await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
+
+  await dragBy(page, page.locator('#image-panel .panel-resize'), -1000)
+  const sizes = await page.evaluate(() => ({
+    panel: document.getElementById('image-panel')!.getBoundingClientRect().width,
+    workspace: document.getElementById('workspace')!.getBoundingClientRect().width,
+    terminal: document.getElementById('terminals')!.getBoundingClientRect().width
+  }))
+  expect(sizes.panel).toBeLessThanOrEqual(Math.round(sizes.workspace * 0.7))
+  expect(sizes.panel).toBeGreaterThan(sizes.workspace * 0.6)
+  expect(sizes.terminal).toBeGreaterThan(0)
+  await app.close()
+})

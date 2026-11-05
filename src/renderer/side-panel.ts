@@ -4,7 +4,7 @@ export type PanelTab = 'images' | 'changes' | 'docs'
 
 const TABS: readonly PanelTab[] = ['images', 'changes', 'docs']
 const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs' }
-/** how wide a drag may make each tab, as a share of the window */
+/** how wide a drag may make each tab, as a share of the workspace (the window less the left tab panel) */
 const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85 }
 const MIN_WIDTH = 180
 /** how long the terminal waits for the window to take the size main gave it */
@@ -214,7 +214,7 @@ export class SidePanel {
       this.isExpanded = false
       this.root.classList.add('resizing')
       const move = (ev: MouseEvent): void => {
-        this.widths[tab] = Math.min(Math.max(startW + (startX - ev.clientX), MIN_WIDTH), Math.round(window.innerWidth * MAX_SHARE[tab]))
+        this.widths[tab] = Math.min(Math.max(startW + (startX - ev.clientX), MIN_WIDTH), Math.round(this.root.parentElement!.clientWidth * MAX_SHARE[tab]))
         this.apply()
       }
       const up = (): void => {
