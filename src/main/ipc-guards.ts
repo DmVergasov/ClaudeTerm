@@ -4,6 +4,7 @@ import type { ImageAction } from '../shared/ipc'
 import { MAX_NOTE_LENGTH, NOTE_FORMS, type NoteForm } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 import { REVIEW_SCOPES, type ReviewScope } from '../shared/review'
+import { MAX_FOLDED_GROUPS, type OpenTabRequest, type TabLayout } from '../shared/types'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
@@ -45,6 +46,41 @@ export const isLineNo = (v: unknown): v is number => typeof v === 'number' && Nu
 
 /** the side panel's width in px; 0: closed */
 export const isPanelWidth = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_DIM
+
+/** a change of the left tab panel's layout: each part that is present is checked */
+export const isTabLayoutChange = (v: unknown): v is Partial<TabLayout> => {
+  if (typeof v !== 'object' || v === null) return false
+  const c = v as Record<string, unknown>
+  if (c.width !== undefined && (typeof c.width !== 'number' || !Number.isFinite(c.width))) return false
+  if (c.folded !== undefined && !(Array.isArray(c.folded) && c.folded.length <= MAX_FOLDED_GROUPS && c.folded.every((k) => typeof k === 'string' && k.length <= 4096))) return false
+  return true
+}
+
+/** a request to open a tab: its kind and folder, and each optional field of its type when it is present */
+export const isOpenTabRequest = (v: unknown): v is OpenTabRequest => {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  const present = (x: unknown, ok: (y: unknown) => boolean): boolean => x === undefined || ok(x)
+  return (r.kind === 'claude' || r.kind === 'shell') &&
+    isAbsPath(r.cwd) &&
+    present(r.profile, (x) => x === null || typeof x === 'string') &&
+    present(r.title, isOptionalTitle) &&
+    present(r.resumeSessionId, (x) => x === null || isSessionId(x)) &&
+    present(r.account, isAccountRef) &&
+    present(r.muted, isFlag)
+}
+
+/** the request as a tab opens from it: the fields the guard checks, and no fork (only Fork session makes one) */
+export const openTabRequestFields = (req: OpenTabRequest): OpenTabRequest => ({
+  kind: req.kind,
+  cwd: req.cwd,
+  ...(req.profile === undefined ? {} : { profile: req.profile }),
+  ...(req.title === undefined ? {} : { title: req.title }),
+  ...(req.resumeSessionId === undefined ? {} : { resumeSessionId: req.resumeSessionId }),
+  ...(req.account === undefined ? {} : { account: req.account }),
+  ...(req.muted === undefined ? {} : { muted: req.muted }),
+  fork: null
+})
 
 export const isHash = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64
 

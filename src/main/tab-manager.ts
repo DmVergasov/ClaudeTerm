@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { OpenTabRequest, SessionSnapshotTab, TabInfo } from '../shared/types'
+import type { OpenTabRequest, SessionSnapshotTab, TabFork, TabInfo } from '../shared/types'
 import { applyEnvPatch, type EnvPatch } from './child-env'
 import type { LaunchSpec } from './profiles'
 import type { PtyHandle, SpawnPty } from './pty-host'
@@ -45,12 +45,15 @@ export interface TabManagerDeps {
   onTabRestarting?(tabId: string): void
   onTabClosed?(tabId: string): void
   onStateChanged?(): void
-  /** whether a Claude conversation can be resumed; one without a message has no transcript yet */
-  resumable?(tabId: string, sessionId: string): boolean
+  /** whether a Claude conversation can be resumed, checked on disk; one without a message has no transcript yet */
+  resumable?(tabId: string, sessionId: string): Promise<boolean>
   flushMs?: number
   /** how long a restart waits for the old process to exit before starting the new one */
   restartWaitMs?: number
 }
+
+/** the title of a fork: the parent's name with ` (fork)` after it, unless the name has that already */
+const forkTitle = (title: string | null): string | null => title === null || title.endsWith(' (fork)') ? title : `${title} (fork)`
 
 interface TabRecord {
   info: TabInfo
@@ -65,6 +68,8 @@ interface TabRecord {
   /** resolves when the current process has exited */
   stopped: Promise<void>
   restarting: boolean
+  /** a restart or a switch of account is waiting for the conversation's check on disk: no other one starts meanwhile */
+  preparing: boolean
   /** Claude is in the middle of a turn, as the session snapshot keeps it */
   working: boolean
 }
@@ -88,12 +93,17 @@ export class TabManager {
       claudeSessionId: req.kind === 'claude' ? req.resumeSessionId ?? null : null,
       account: req.kind === 'claude' ? launch.account ?? null : null,
       muted: req.muted === true,
+      fork: req.kind === 'claude' ? this.forkFrom(req.fork) : null,
       exited: false
     }
-    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false, working: false }
+    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false, preparing: false, working: false }
     this.tabs.set(info.id, rec)
-    this.order.push(info.id)
+    const head = info.fork?.of ?? null
+    // a fork stands right after its family
+    if (head === null) this.order.push(info.id)
+    else this.order.splice(this.familyEnd(head) + 1, 0, info.id)
     this.deps.events.opened({ ...info })
+    if (head !== null) this.deps.events.order([...this.order])
     this.deps.onTabStarted?.({ ...info })
     this.start(rec)
     if (opts.activate ?? true) this.activate(info.id)
@@ -109,6 +119,12 @@ export class TabManager {
     this.order.splice(idx, 1)
     if (rec.timer) clearTimeout(rec.timer)
     rec.pty?.kill()
+    for (const other of this.tabs.values()) {
+      if (other.info.fork?.of !== tabId) continue
+      // the forks of a closed head are ordinary tabs now
+      other.info.fork = { of: null, from: other.info.fork.from }
+      this.deps.events.updated({ ...other.info })
+    }
     this.deps.events.closed(tabId)
     this.deps.onTabClosed?.(tabId)
     if (this.activeId === tabId) {
@@ -155,6 +171,43 @@ export class TabManager {
     this.changed()
   }
 
+  /** a Claude tab with a saved conversation can be forked; the check of the conversation is awaited, so a menu does not block */
+  async canFork(tabId: string): Promise<boolean> {
+    const rec = this.tabs.get(tabId)
+    return rec !== undefined && rec.info.kind === 'claude' && (await this.resumeId(rec)) !== null
+  }
+
+  /** a new Claude tab that continues a copy of the tab's conversation, in its folder and account */
+  async fork(tabId: string): Promise<TabInfo | null> {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.info.kind !== 'claude') return null
+    const from = await this.resumeId(rec)
+    // the check waited on the disk: a parent closed meanwhile has nothing to fork
+    if (from === null || !this.isLive(rec)) return null
+    const info = rec.info
+    return this.open({
+      kind: 'claude',
+      cwd: info.cwd,
+      account: info.account,
+      title: forkTitle(info.customTitle),
+      fork: { of: info.fork?.of ?? info.id, from }
+    })
+  }
+
+  /**
+   * Restore: a restored fork joins its restored head's family. The tabs open in their saved order, the forks without a
+   * head (so each stays where it was, which on top may be before its head), and join their heads once all are open.
+   */
+  joinFamily(tabId: string, headId: string): void {
+    const rec = this.tabs.get(tabId)
+    const head = this.tabs.get(headId)
+    const fork = rec?.info.fork
+    if (!rec || !fork || fork.of !== null || !head || head === rec || head.info.kind !== 'claude' || (head.info.fork?.of ?? null) !== null) return
+    rec.info.fork = { of: headId, from: fork.from }
+    this.deps.events.updated({ ...rec.info })
+    this.changed()
+  }
+
   /**
    * Starts the tab's process again in the same tab. With `live`, a running process is stopped first (e.g. so
    * Claude Code picks up a newly added MCP server); otherwise only an exited tab restarts. A Claude tab resumes
@@ -162,13 +215,21 @@ export class TabManager {
    */
   async restart(tabId: string, opts: { live?: boolean } = {}): Promise<void> {
     const rec = this.tabs.get(tabId)
-    if (!rec || rec.restarting || (!rec.info.exited && !opts.live)) return
+    if (!rec || rec.restarting || rec.preparing || (!rec.info.exited && !opts.live)) return
     if (rec.info.kind === 'claude') {
+      rec.preparing = true
+      let launch: ResolvedLaunch | null = null
       try {
-        this.setLaunch(rec, this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: this.resumeId(rec), account: rec.info.account }))
+        const resumeSessionId = await this.resumeId(rec)
+        launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account: rec.info.account, fork: rec.info.fork })
       } catch {
         // keep the previous launch
+      } finally {
+        rec.preparing = false
       }
+      // the check waited on the disk, a failed one too: the tab may have closed or been restarted meanwhile
+      if (this.tabs.get(tabId) !== rec || rec.restarting || (!rec.info.exited && !opts.live)) return
+      if (launch) this.setLaunch(rec, launch)
     }
     await this.relaunch(rec)
   }
@@ -179,12 +240,18 @@ export class TabManager {
    */
   async switchAccount(tabId: string, account: string | null): Promise<boolean> {
     const rec = this.tabs.get(tabId)
-    if (!rec || rec.info.kind !== 'claude' || rec.restarting) return false
+    if (!rec || rec.info.kind !== 'claude' || rec.restarting || rec.preparing) return false
     let launch: ResolvedLaunch
+    rec.preparing = true
     try {
-      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: this.resumeId(rec), account, strict: true })
+      const resumeSessionId = await this.resumeId(rec)
+      // the check waited on the disk: the tab may have closed or been restarted meanwhile
+      if (this.tabs.get(tabId) !== rec || rec.restarting) return false
+      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account, strict: true, fork: rec.info.fork })
     } catch {
       return false
+    } finally {
+      rec.preparing = false
     }
     this.setLaunch(rec, launch)
     await this.relaunch(rec)
@@ -211,10 +278,17 @@ export class TabManager {
     this.changed()
   }
 
-  setClaudeSession(tabId: string, sessionId: string): boolean {
+  /**
+   * `source`: Claude Code's SessionStart source. Only "fork" is the copy a fork starts with; any other session (resumed,
+   * cleared, another one picked) is a conversation of the tab's own, so the fork is never forked again from its head's.
+   */
+  setClaudeSession(tabId: string, sessionId: string, source?: string): boolean {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude') return false
-    if (rec.info.claudeSessionId !== sessionId) {
+    const fork = rec.info.fork
+    const settled = fork !== null && fork.from !== null && source !== 'fork'
+    if (settled) rec.info.fork = { of: fork.of, from: null }
+    if (rec.info.claudeSessionId !== sessionId || settled) {
       rec.info.claudeSessionId = sessionId
       this.deps.events.updated({ ...rec.info })
       this.changed()
@@ -234,7 +308,10 @@ export class TabManager {
   snapshot(): SessionSnapshotTab[] {
     return this.order.map((id) => {
       const { info: i, working } = this.tabs.get(id)!
-      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working }
+      const head = i.fork?.of ?? null
+      const headAt = head === null ? -1 : this.order.indexOf(head)
+      const fork = i.fork ? { of: headAt < 0 ? null : headAt, from: i.fork.from } : null
+      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, fork }
     })
   }
 
@@ -261,10 +338,26 @@ export class TabManager {
     return active?.kind === 'claude' ? active.account : null
   }
 
+  /** a fork's head, while that tab is open: a fork of a tab that is gone is an ordinary tab */
+  private forkFrom(fork: TabFork | null | undefined): TabFork | null {
+    if (!fork) return null
+    return { of: fork.of !== null && this.tabs.has(fork.of) ? fork.of : null, from: fork.from }
+  }
+
+  /** the position of a family's last tab: the head, or one of its forks */
+  private familyEnd(head: string): number {
+    let end = this.order.indexOf(head)
+    this.order.forEach((id, i) => {
+      if (this.tabs.get(id)?.info.fork?.of === head) end = i
+    })
+    return end
+  }
+
   /** the conversation a restart continues: the CURRENT one (it may have changed since open, /clear), once it was saved */
-  private resumeId(rec: TabRecord): string | null {
+  private async resumeId(rec: TabRecord): Promise<string | null> {
     const id = rec.info.claudeSessionId
-    return id !== null && (this.deps.resumable?.(rec.info.id, id) ?? true) ? id : null
+    if (id === null) return null
+    return (this.deps.resumable ? await this.deps.resumable(rec.info.id, id) : true) ? id : null
   }
 
   private setLaunch(rec: TabRecord, launch: ResolvedLaunch): void {

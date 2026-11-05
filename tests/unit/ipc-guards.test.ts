@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
-import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isUserInput } from '../../src/main/ipc-guards'
+import type { OpenTabRequest } from '../../src/shared/types'
+import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isImageAction, isLineNo, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -104,6 +105,11 @@ describe('review guards', () => {
     expect(isSessionId('5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'.repeat(20))).toBe(false)
   })
 
+  it('isTabLayoutChange checks the width and the folded groups when present', () => {
+    for (const v of [{}, { width: 300 }, { folded: ['k'] }, { width: 300, folded: [] }, { width: 0 }, { width: 9000 }, { folded: ['x'.repeat(4096)] }, { folded: Array.from({ length: 200 }, (_, i) => String(i)) }]) expect(isTabLayoutChange(v)).toBe(true)
+    for (const v of [null, undefined, 'x', { width: NaN }, { width: Infinity }, { width: '300' }, { folded: 'k' }, { folded: [1] }, { folded: ['x'.repeat(4097)] }, { folded: Array.from({ length: 201 }, () => 'k') }]) expect(isTabLayoutChange(v)).toBe(false)
+  })
+
   it('isFlag accepts booleans only', () => {
     expect(isFlag(true)).toBe(true)
     expect(isFlag(false)).toBe(true)
@@ -142,5 +148,48 @@ describe('review guards', () => {
   it('isDocAction accepts the document panel actions only', () => {
     for (const v of ['open', 'reveal', 'copy-path', 'remove']) expect(isDocAction(v)).toBe(true)
     for (const v of ['copy-image', '', 1, null]) expect(isDocAction(v)).toBe(false)
+  })
+})
+
+/** an absolute folder on this system: the guard checks what path.isAbsolute says */
+const FOLDER = process.platform === 'win32' ? 'C:/Work/acme' : '/work/acme'
+
+describe('open tab request guard', () => {
+  const SESSION = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+
+  it('isOpenTabRequest accepts a shell or Claude tab with a folder, and the optional fields when they are of their type', () => {
+    expect(isOpenTabRequest({ kind: 'shell', cwd: FOLDER })).toBe(true)
+    expect(isOpenTabRequest({ kind: 'claude', cwd: FOLDER, profile: 'work', title: 'Shop', resumeSessionId: SESSION, account: 'acc', muted: true })).toBe(true)
+    expect(isOpenTabRequest({ kind: 'claude', cwd: FOLDER, profile: null, title: null, resumeSessionId: null, account: null })).toBe(true)
+  })
+
+  it('isOpenTabRequest rejects another kind, a missing or empty folder, and a field of the wrong type', () => {
+    const bad: unknown[] = [
+      null, FOLDER, {}, { kind: 'fork', cwd: FOLDER }, { kind: 'shell' }, { kind: 'shell', cwd: '' },
+      { kind: 'shell', cwd: FOLDER, profile: 1 }, { kind: 'shell', cwd: FOLDER, title: 1 },
+      { kind: 'claude', cwd: FOLDER, resumeSessionId: 'not-a-session' }, { kind: 'claude', cwd: FOLDER, account: '' },
+      { kind: 'shell', cwd: FOLDER, muted: 'yes' }
+    ]
+    for (const v of bad) expect(isOpenTabRequest(v)).toBe(false)
+  })
+})
+
+describe('open tab request fields', () => {
+  it('a relative folder is not an open tab request', () => {
+    expect(isOpenTabRequest({ kind: 'shell', cwd: 'Work/acme' })).toBe(false)
+    expect(isOpenTabRequest({ kind: 'shell', cwd: FOLDER })).toBe(true)
+  })
+
+  it('openTabRequestFields keeps the checked fields only: a renderer cannot pass setupToken or strict into a launch', () => {
+    const sent = { kind: 'shell', cwd: FOLDER, setupToken: true, strict: true, fork: { of: 'x', from: 'y' } } as unknown as OpenTabRequest
+    const picked = openTabRequestFields(sent)
+    expect(picked).toEqual({ kind: 'shell', cwd: FOLDER, fork: null })
+    expect(picked).not.toHaveProperty('setupToken')
+    expect(picked).not.toHaveProperty('strict')
+  })
+
+  it('openTabRequestFields keeps the optional fields that were sent', () => {
+    const sent: OpenTabRequest = { kind: 'claude', cwd: FOLDER, profile: 'work', title: 'Shop', resumeSessionId: '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', account: 'acc', muted: true }
+    expect(openTabRequestFields(sent)).toEqual({ ...sent, fork: null })
   })
 })

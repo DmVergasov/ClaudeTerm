@@ -29,10 +29,27 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       // written before tabs could be muted: with sound
       muted: x.muted === true,
       // written before ClaudeTerm kept track of it: idle
-      working: x.kind === 'claude' && x.working === true
+      working: x.kind === 'claude' && x.working === true,
+      // written before forks existed: an ordinary tab
+      fork: x.kind === 'claude' ? parseFork(x.fork) : null
     })
   }
+  // a fork's head is another Claude tab of the list, before or after it (tabs on top are dragged freely), and is not
+  // itself a fork with a head; a bad head leaves the fork without one
+  const heads = tabs.map((t) => t.fork?.of ?? null)
+  tabs.forEach((t, i) => {
+    const of = heads[i]
+    if (t.fork && of !== null && !(of < tabs.length && of !== i && tabs[of].kind === 'claude' && heads[of] === null)) t.fork = { of: null, from: t.fork.from }
+  })
   return { version: 1, savedAt: r.savedAt, tabs }
+}
+
+function parseFork(value: unknown): SessionSnapshotTab['fork'] {
+  if (typeof value !== 'object' || value === null) return null
+  const f = value as Record<string, unknown>
+  // null: the fork has a conversation of its own and is not forked again
+  if (f.from !== null && !isUuid(f.from)) return null
+  return { of: typeof f.of === 'number' && Number.isInteger(f.of) && f.of >= 0 ? f.of : null, from: f.from }
 }
 
 export interface SessionStoreOptions {
@@ -59,7 +76,8 @@ export class SessionStore {
   rotateOnStartup(opts: { afterUpdate?: boolean } = {}): SessionSnapshot | null {
     const current = this.read(this.statePath)
     if (opts.afterUpdate && !(current && current.tabs.length > 0)) return null
-    if (current && (opts.afterUpdate || current.tabs.some((t) => t.kind === 'claude' && t.claudeSessionId !== null))) {
+    // a Claude tab with a session, or a fork still waiting for its session, is one Restore can bring back
+    if (current && (opts.afterUpdate || current.tabs.some((t) => t.kind === 'claude' && (t.claudeSessionId !== null || t.fork !== null)))) {
       try {
         renameSync(this.statePath, this.previousPath)
       } catch (e) {

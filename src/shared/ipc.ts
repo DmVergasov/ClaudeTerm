@@ -3,7 +3,7 @@ import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { Note, NoteForm } from './note'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
-import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, UpdateState } from './types'
+import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabLayout, TabPlace, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -17,6 +17,8 @@ export const IPC = {
   tabsRestart: 'tabs:restart',
   tabsSwitchAccount: 'tabs:switch-account',
   tabsMute: 'tabs:mute',
+  tabsCanFork: 'tabs:can-fork',
+  tabsFork: 'tabs:fork',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   promptAnswer: 'prompt:answer',
@@ -60,6 +62,8 @@ export const IPC = {
   reviewReveal: 'review:reveal',
   reviewCanSend: 'review:can-send',
   panelSet: 'panel:set',
+  layoutGet: 'layout:get',
+  layoutSet: 'layout:set',
   accountsList: 'accounts:list',
   accountsAdd: 'accounts:add',
   accountsRename: 'accounts:rename',
@@ -71,6 +75,7 @@ export const IPC = {
   evTabClosed: 'ev:tab-closed',
   evTabActivated: 'ev:tab-activated',
   evTabsOrder: 'ev:tabs-order',
+  evTabPlace: 'ev:tab-place',
   evPtyData: 'ev:pty-data',
   evPtyExit: 'ev:pty-exit',
   evPtyReset: 'ev:pty-reset',
@@ -169,6 +174,10 @@ export interface CtApi {
   switchAccount(tabId: string, account: string | null): void
   /** a muted tab makes no notification sound; it is still marked and still flashes the taskbar */
   muteTab(tabId: string, muted: boolean): void
+  /** a Claude tab with a saved conversation can be forked */
+  canForkTab(tabId: string): Promise<boolean>
+  /** opens a new Claude tab that forks the tab's conversation, after its family */
+  forkTab(tabId: string): void
   writePty(tabId: string, data: string): void
   resizePty(tabId: string, cols: number, rows: number): void
   /** the answer to a query of onPromptQuery */
@@ -242,6 +251,10 @@ export interface CtApi {
    * for it and answers how the panel is to be shown. `resize` false: its edge was dragged, the window stays as it is.
    */
   setPanel(width: number, resize: boolean): Promise<PanelMode>
+  /** the left tab panel's width and folded groups */
+  getTabLayout(): Promise<TabLayout>
+  /** saves the part of the left tab panel's layout that is given; the width is kept within TAB_PANEL_WIDTH (220 to 480 px) */
+  setTabLayout(change: Partial<TabLayout>): void
   /** the extra accounts, without their tokens */
   listAccounts(): Promise<AccountsView>
   addAccount(name: string, token: string): Promise<AccountResult>
@@ -257,6 +270,8 @@ export interface CtApi {
   onTabClosed(cb: (tabId: string) => void): Unsubscribe
   onTabActivated(cb: (tabId: string) => void): Unsubscribe
   onTabsOrder(cb: (ids: string[]) => void): Unsubscribe
+  /** a tab's project, worktree and branch changed; null when its folder is not in git */
+  onTabPlace(cb: (tabId: string, place: TabPlace | null) => void): Unsubscribe
   onPtyData(cb: (tabId: string, data: string) => void): Unsubscribe
   onPtyExit(cb: (tabId: string, code: number) => void): Unsubscribe
   onPtyReset(cb: (tabId: string) => void): Unsubscribe

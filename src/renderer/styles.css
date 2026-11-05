@@ -3,7 +3,8 @@
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px "Segoe UI", system-ui, sans-serif; overflow: hidden; }
 #app { display: flex; flex-direction: column; height: 100vh; }
-#workspace { flex: 1; display: flex; min-height: 0; position: relative; }
+#main-row { flex: 1; display: flex; min-height: 0; }
+#workspace { flex: 1; display: flex; min-width: 0; min-height: 0; position: relative; }
 #terminals { flex: 1; position: relative; min-width: 0; }
 /* No padding here: FitAddon sizes the terminal from this element's computed height/width, which with
    border-box include padding, so padding would yield one row/col too many. The gutter is the inset. */
@@ -25,13 +26,50 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .tab-images { font-size: 11px; }
 .tab-close, .tab-new, .tab-menu { background: none; border: 0; color: var(--muted); font-size: 14px; cursor: pointer; padding: 0 6px; }
 .tab-close:hover, .tab-new:hover, .tab-menu:hover { color: var(--fg); }
-.tab-changes-toggle, .tab-images-toggle, .tab-note-toggle { position: relative; display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
-.tab-changes-toggle:hover, .tab-images-toggle:hover, .tab-note-toggle:hover { color: var(--fg); }
-.tab-changes-toggle.active, .tab-images-toggle.active, .tab-note-toggle.active { color: var(--fg); background: var(--chrome-2); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab-changes-toggle, .tab-docs-toggle, .tab-images-toggle, .tab-note-toggle { position: relative; display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
+.tab-changes-toggle:hover, .tab-docs-toggle:hover, .tab-images-toggle:hover, .tab-note-toggle:hover { color: var(--fg); }
+.tab-changes-toggle.active, .tab-docs-toggle.active, .tab-images-toggle.active, .tab-note-toggle.active { color: var(--fg); background: var(--chrome-2); box-shadow: inset 0 -2px 0 var(--accent); }
 .tab-changes-toggle .badge, .tab-images-toggle .badge { position: absolute; top: 3px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--accent); color: #111; font-size: 10px; line-height: 14px; font-weight: 600; text-align: center; }
 .tab-changes-toggle .badge[hidden], .tab-images-toggle .badge[hidden] { display: none; }
 .tab-changes-toggle[hidden], .tab-note-toggle[hidden] { display: none; }
 .tab-rename { flex: 1; min-width: 0; background: var(--chrome-2); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 1px 4px; }
+.tab-position { display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
+.tab-position:hover { color: var(--fg); }
+
+/* The left panel: the header, the groups of tabs, and the rows of two lines (the title, then the branch) */
+#tabpanel { position: relative; flex: none; min-height: 0; display: flex; flex-direction: column; background: var(--chrome); border-right: 1px solid var(--border); user-select: none; }
+.tp-head { display: flex; align-items: stretch; height: 34px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.tp-spacer { flex: 1; }
+.tp-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 0 8px; }
+.tp-group-head { display: flex; align-items: center; gap: 6px; height: 26px; margin-top: 6px; padding: 0 8px; cursor: pointer; }
+.tp-group-head:hover { background: #ffffff08; }
+.tp-chevron { display: inline-block; width: 10px; color: var(--muted); font-size: 8px; text-align: center; transition: transform 0.12s; }
+.tp-group.folded .tp-chevron { transform: rotate(-90deg); }
+.tp-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; }
+.tp-group-count { color: var(--muted); font-size: 11px; }
+.tp-group-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.tp-group-dot.pulse { animation: tp-dot-pulse 0.8s ease-in-out infinite alternate; }
+@keyframes tp-dot-pulse { from { opacity: 0.25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .tp-group-dot.pulse { animation: none; } }
+.tp-tab { position: relative; display: flex; flex-direction: column; min-width: 0; padding: 4px 4px 4px 14px; color: var(--muted); cursor: default; white-space: nowrap; }
+.tp-tab.fork { padding-left: 28px; }
+.tp-tab:hover { background: #ffffff0a; }
+.tp-tab.active { background: var(--bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+.tp-tab.exited .tab-title { text-decoration: line-through; }
+.tp-tab.attention { color: var(--fg); animation: tab-attention 1.2s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .tp-tab.attention { animation: none; background: color-mix(in srgb, var(--accent) 40%, transparent); } }
+.tp-tab .tab-close { visibility: hidden; }
+.tp-tab:hover .tab-close, .tp-tab.active .tab-close { visibility: visible; }
+.tp-l1 { display: flex; align-items: center; gap: 6px; height: 18px; }
+.tp-fork { color: #70707a; font-size: 12px; margin-right: -2px; }
+.tp-branch { display: flex; align-items: center; gap: 4px; height: 15px; overflow: hidden; color: #7a7a84; font-size: 11px; }
+.tp-branch span { overflow: hidden; text-overflow: ellipsis; }
+.tp-branch svg { flex-shrink: 0; }
+.tp-tab.active .tp-branch { color: #9a9aa4; }
+/* a linked worktree's tab: a colored bar at its left, and its branch in the same color */
+.tp-wtbar { position: absolute; left: 6px; top: 5px; bottom: 5px; width: 3px; border-radius: 2px; }
+.tp-resize { position: absolute; top: 0; bottom: 0; right: -3px; width: 6px; cursor: col-resize; z-index: 5; }
+.tp-resize:hover { background: #ffffff18; }
 .menu { position: fixed; z-index: 50; min-width: 200px; background: var(--chrome-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; box-shadow: 0 8px 24px #0008; }
 .menu-item { padding: 6px 14px; cursor: pointer; white-space: nowrap; }
 .menu-item:hover { background: #ffffff14; }

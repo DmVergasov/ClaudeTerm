@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, win32 } from 'node:path'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import { DEFAULT_TEST_PATTERNS, MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
-import type { NoRoomMode, NotificationSettings, ProfileDef, Settings } from '../shared/types'
+import type { NoRoomMode, NotificationSettings, ProfileDef, Settings, TabPosition } from '../shared/types'
 
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200, renderMarkdown: true },
   sidePanel: { noRoom: 'overlay' },
+  tabs: { position: 'top' },
   autoUpdate: true
 }
 
@@ -52,6 +53,7 @@ const isBool: Guard<boolean> = (v): v is boolean => typeof v === 'boolean'
 const isStrArr: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.every(isStr)
 const isTestPatterns: Guard<string[]> = (v): v is string[] => isStrArr(v) && v.length <= MAX_TEST_PATTERNS && v.every((p) => p.length <= MAX_TEST_PATTERN_LENGTH)
 const isNoRoom: Guard<NoRoomMode> = (v): v is NoRoomMode => v === 'overlay' || v === 'narrow'
+const isTabPosition: Guard<TabPosition> = (v): v is TabPosition => v === 'top' || v === 'left'
 const numIn = (min: number, max: number): Guard<number> => (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
 const wholeIn = (min: number, max: number): Guard<number> => (v): v is number => numIn(min, max)(v) && Number.isInteger(v)
 const isPlainObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -153,6 +155,7 @@ export function parseSettings(text: string | null): ParsedSettings {
       renderMarkdown: take('review.renderMarkdown', rv.renderMarkdown, isBool, d.review.renderMarkdown)
     },
     sidePanel: { noRoom: take('sidePanel.noRoom', sp.noRoom, isNoRoom, d.sidePanel.noRoom) },
+    tabs: { position: take('tabs.position', obj(raw.tabs).position, isTabPosition, d.tabs.position) },
     autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)
   }
   return { settings, errors }

@@ -1,4 +1,4 @@
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -643,4 +643,36 @@ test('a Markdown document that cannot be read shows the error of the read, its f
   await expect(page.locator('.panel-docs .panel-notice')).toContainText('read failed')
   expect(await page.locator('.panel-docs .panel-notice').textContent()).toMatch(/^[A-Z]/)
   await app.close()
+})
+
+test('the Docs toggle looks like the Media toggle in the top bar and in the left panel, and its active state shows', async () => {
+  for (const position of ['top', 'left'] as const) {
+    const settings = position === 'top' ? FAKE_CLAUDE_SETTINGS : { ...FAKE_CLAUDE_SETTINGS, defaultFolder: mkdtempSync(join(tmpdir(), 'ct-folder-')), tabs: { position: 'left' } }
+    const { app, page, pipeName, tabId, notes } = await claudeTab(settings)
+    const bar = position === 'top' ? '#tabbar' : '#tabpanel .tp-head'
+    const docs = page.locator(`${bar} .tab-docs-toggle`)
+    const media = page.locator(`${bar} .tab-images-toggle`)
+    const looks = (el: Locator) => el.evaluate((b) => {
+      const s = getComputedStyle(b)
+      return { background: s.backgroundColor, borderTop: s.borderTopWidth, paddingLeft: s.paddingLeft, shadow: s.boxShadow }
+    })
+    const resting = async (el: Locator) => { const { shadow, ...rest } = await looks(el); return rest }
+    const spec = join(notes, 'spec.md')
+    writeFileSync(spec, '# Spec\n\nBody text.\n')
+
+    expect(await show(pipeName, tabId, spec)).toMatchObject({ ok: true })
+    await expect(docs).toHaveClass(/active/)
+    await docs.click()
+    await expect(panel(page)).toHaveClass(/collapsed/)
+    expect(await resting(docs)).toEqual(await resting(media))
+
+    await media.click()
+    await expect(media).toHaveClass(/active/)
+    const mediaOpen = await looks(media)
+    expect(mediaOpen.shadow).not.toBe('none')
+    expect(await show(pipeName, tabId, spec)).toMatchObject({ ok: true })
+    await expect(docs).toHaveClass(/active/)
+    expect(await looks(docs)).toEqual(mediaOpen)
+    await app.close()
+  }
 })

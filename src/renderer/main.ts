@@ -3,7 +3,7 @@ import type { AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
-import type { PlanStatus, Settings, TabInfo } from '../shared/types'
+import type { PlanStatus, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { DocPanel } from './doc-panel'
 import { ImagePanel } from './image-panel'
@@ -19,7 +19,9 @@ import { RestoreBanner } from './restore-banner'
 import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
 import { UpdateBanner } from './update-banner'
-import { TabBar } from './tabbar'
+import { TabBar, type TabBarCallbacks, type TabBarItem } from './tabbar'
+import { TabPanel } from './tab-panel'
+import { orderToWrite } from './tab-groups'
 import { TerminalView } from './terminal-view'
 import { resolveTheme } from './themes'
 import { showToast } from './toasts'
@@ -46,6 +48,9 @@ let settings: Settings
 let appInfo: AppInfo
 let fontSize = 12
 let tabBar: TabBar
+let tabPanel: TabPanel
+/** where each tab's folder is in git, as main last published it: null for a folder outside git; no entry until git has answered */
+const places = new Map<string, TabPlace | null>()
 let noteOverlay: NoteOverlay
 let searchBar: SearchBar
 let toggleImagePanel = (): void => {}
@@ -76,19 +81,36 @@ const planUpdates = new Map<string, PlanStatus>()
 /** the extra accounts, without their tokens */
 let accounts: AccountView[] = []
 
-const titleOf = (t: TabState): string => t.info.customTitle ?? t.oscTitle ?? folderName(t.info.cwd)
+/** a fork's title gets ` (fork)` after the usual one, unless the user named the tab */
+const titleOf = (t: TabState): string => t.info.customTitle ?? `${t.oscTitle ?? folderName(t.info.cwd)}${t.info.fork ? ' (fork)' : ''}`
 
 /** where a new tab opens: the defaultFolder setting, else the home folder */
 const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
 
 function renderTabs(): void {
-  const items = order.flatMap((id) => {
+  const items = order.flatMap((id): TabBarItem[] => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id) }] : []
+    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id), place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
   })
   tabBar.render(items, activeId)
+  tabPanel.render(items, activeId)
+  // on the left, the order is the panel's: main takes it when it differs, so the tab order follows the groups (the next render finds them equal).
+  // Not before every tab's place is known: until then a tab sits in No project and that temporary order must not reach main
+  if (settings.tabs.position === 'left') {
+    const next = orderToWrite(order, tabPanel.visualOrder, order.every((id) => places.has(id)))
+    if (next) ct.reorderTabs(next)
+  }
   if (imagePanel) refreshPanelButtons()
   renderTitle()
+}
+
+/** the tab bar on top or the left panel, whichever the tabs.position setting names; the other one is hidden */
+function showTabs(position: TabPosition): void {
+  // the panel is shown only once its element is: the active row is revealed by scrolling, which a hidden element cannot do
+  document.getElementById('tabbar')!.hidden = position !== 'top'
+  document.getElementById('tabpanel')!.hidden = position !== 'left'
+  tabBar.show(position === 'top')
+  tabPanel.show(position === 'left')
 }
 
 function renderTitle(): void {
@@ -105,14 +127,18 @@ function renderTitle(): void {
   document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')
 }
 
-/** the Media, Changes, Docs and Note buttons in the tab bar: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
+/** the Media, Changes, Docs and Note buttons in the tab bar and the left panel: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
 function refreshPanelButtons(): void {
   const unseen = activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0
-  tabBar.setImages(sidePanel.isShowing('images'), unseen)
   const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
-  tabBar.setChanges(claude, sidePanel.isShowing('changes'), claude && activeId ? reviewUpdates.get(activeId)?.unviewed ?? 0 : 0)
-  tabBar.setDocs(claude && (docUpdates.get(activeId ?? '')?.docs.length ?? 0) > 0, sidePanel.isShowing('docs'))
-  tabBar.setNote(claude, claude && noteOverlay.isShown())
+  const unviewed = claude && activeId ? reviewUpdates.get(activeId)?.unviewed ?? 0 : 0
+  const docs = claude && (docUpdates.get(activeId ?? '')?.docs.length ?? 0) > 0
+  for (const bar of [tabBar, tabPanel]) {
+    bar.setImages(sidePanel.isShowing('images'), unseen)
+    bar.setChanges(claude, sidePanel.isShowing('changes'), unviewed)
+    bar.setDocs(docs, sidePanel.isShowing('docs'))
+    bar.setNote(claude, claude && noteOverlay.isShown())
+  }
 }
 
 function logInput(tabId: string, data: string): void {
@@ -183,10 +209,16 @@ function setFontSize(size: number): void {
   for (const t of tabs.values()) t.view.setFont(settings.font.family, fontSize)
 }
 
+/** the tab ids in the order the shown tab bar lists them: the left panel's when the tabs are on the left */
+function shownOrder(): string[] {
+  return settings.tabs.position === 'left' ? tabPanel.visualOrder : order
+}
+
 function cycleTabs(delta: number): void {
-  if (order.length === 0) return
-  const i = activeId ? order.indexOf(activeId) : -1
-  const next = order[(i + delta + order.length) % order.length]
+  const seq = shownOrder()
+  if (seq.length === 0) return
+  const i = activeId ? seq.indexOf(activeId) : -1
+  const next = seq[(i + delta + seq.length) % seq.length]
   if (next) ct.activateTab(next)
 }
 
@@ -226,7 +258,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'nextTab': cycleTabs(1); break
     case 'prevTab': cycleTabs(-1); break
     case 'gotoTab': {
-      const id = order[a.index]
+      const id = shownOrder()[a.index]
       if (id) ct.activateTab(id)
       break
     }
@@ -365,6 +397,8 @@ function activate(tabId: string): void {
   // before the tabs are drawn: the Note button shows whether this tab's note is shown
   noteOverlay.show(tabId, claude)
   renderTabs()
+  // the left panel's group of a tab is known once git has answered for its folder (see onTabPlace)
+  if (settings.tabs.position === 'left' && places.has(tabId)) tabPanel.unfoldFor(tabId)
   reviewPanel.show(claude ? reviewUpdates.get(tabId) ?? null : null)
   // the images first: setAvailable can switch a shown Changes panel to Images and fire onChange, which must find this tab's images
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
@@ -405,13 +439,18 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
   if (!t) return
   const seq = ++tabMenuSeq
   const sessionId = t.info.kind === 'claude' ? t.info.claudeSessionId : null
-  // the star lives in main: ask before showing, so the item says what the click does
-  void (sessionId ? ct.getStarredSessions().catch(() => [] as string[]) : Promise.resolve([] as string[])).then((starred) => {
+  const claude = t.info.kind === 'claude'
+  // the star and the fork live in main: ask before showing, so the items say what the click does
+  void Promise.all([
+    sessionId ? ct.getStarredSessions().catch(() => [] as string[]) : Promise.resolve([] as string[]),
+    claude ? ct.canForkTab(id).catch(() => false) : Promise.resolve(false)
+  ]).then(([starred, canFork]) => {
     if (seq !== tabMenuSeq || !tabs.has(id)) return
     const isStarred = sessionId !== null && starred.includes(sessionId)
     const switches = continueItems(id)
     showMenu(at, [
-      { label: t.info.kind === 'claude' ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
+      { label: claude ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
+      ...(claude ? [{ label: 'Fork session', disabled: !canFork, action: () => ct.forkTab(id) }] : []),
       ...(sessionId ? [{ label: isStarred ? 'Unstar session' : 'Star session', action: () => void ct.setSessionStarred(sessionId, !isStarred) }] : []),
       { label: t.info.muted ? 'Unmute sound' : 'Mute sound', action: () => ct.muteTab(id, !t.info.muted) },
       { label: 'Mark as unread', action: () => markUnread(id) },
@@ -438,6 +477,12 @@ function applySettings(s: Settings): void {
   reviewPanel.setTreeShown(s.review.fileTree)
   // only a change of the setting itself: another one must not undo a drag of the tree's edge
   if (s.review.treeWidth !== prev.review.treeWidth) reviewPanel.setTreeWidth(s.review.treeWidth)
+  // only a change of the position re-attaches the panel: that would reset its scroll
+  if (s.tabs.position !== prev.tabs.position) {
+    showTabs(s.tabs.position)
+    renderTabs()
+    if (s.tabs.position === 'left' && activeId && places.has(activeId)) tabPanel.unfoldFor(activeId)
+  }
 }
 
 async function boot(): Promise<void> {
@@ -446,7 +491,9 @@ async function boot(): Promise<void> {
   // the window must come up even when the accounts cannot be listed
   accounts = (await ct.listAccounts().catch(() => null))?.accounts ?? []
   fontSize = settings.font.size
-  tabBar = new TabBar(document.getElementById('tabbar')!, {
+  const layout = await ct.getTabLayout()
+  // the tab bar and the left panel share these: each one shows the same tabs and does the same things
+  const tabCallbacks: TabBarCallbacks = {
     activate: (id) => ct.activateTab(id),
     close: (id) => ct.closeTab(id),
     rename: (id, title) => ct.renameTab(id, title),
@@ -470,14 +517,29 @@ async function boot(): Promise<void> {
       runAction({ type: 'toggleNote' }, activeId)
       // the keyboard goes back to the terminal, unless an empty note took it to be written in
       if (activeId && !document.activeElement?.closest('#note')) tabs.get(activeId)?.view.term.focus()
+    },
+    switchPosition: () => {
+      const next: TabPosition = settings.tabs.position === 'top' ? 'left' : 'top'
+      void ct.setSetting('tabs.position', next).then((r) => { if (!r.ok) showToast(r.error) }, (e: unknown) => showToast(`Cannot save tabs.position: ${String(e)}`))
     }
-  }, ct.platform)
+  }
+  tabBar = new TabBar(document.getElementById('tabbar')!, tabCallbacks, ct.platform)
+  tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
+  showTabs(settings.tabs.position)
   noteOverlay = new NoteOverlay(document.getElementById('note')!, {
     setText: (id, text, generation) => ct.setNoteText(id, text, generation),
     setView: (id, shown, form, generation) => ct.setNoteView(id, shown, form, generation),
     focusTerminal: () => { if (activeId) tabs.get(activeId)?.view.term.focus() },
     changed: () => renderTabs()
   }, ct.platform)
+  ct.onTabPlace((id, place) => {
+    // the group is known with the first answer for the tab: a later change of its branch keeps a group the user folded
+    const first = !places.has(id)
+    places.set(id, place)
+    renderTabs()
+    // a new active tab unfolds its group once its place is known: until then it is in No project, which must stay folded
+    if (first && id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id)
+  })
   searchBar = new SearchBar(
     document.getElementById('search')!,
     () => (activeId ? tabs.get(activeId)?.view.search ?? null : null),
@@ -664,6 +726,7 @@ async function boot(): Promise<void> {
     if (id === activeId) planList.close()
     t.view.dispose()
     tabs.delete(id)
+    places.delete(id)
     imageUpdates.delete(id)
     statusUpdates.delete(id)
     planUpdates.delete(id)

@@ -7,6 +7,17 @@ export interface ProfileDef {
   args: string[]
 }
 
+/** a Claude tab that continues a copy of another tab's conversation */
+export interface TabFork {
+  /** the family's head while it is open */
+  of: string | null
+  /**
+   * the session id the fork was made from: a fork with no conversation of its own saved yet is forked from it again.
+   * Null once the tab has a conversation of its own (it was resumed, cleared or replaced): it is never forked again.
+   */
+  from: string | null
+}
+
 export interface TabInfo {
   id: string
   kind: TabKind
@@ -18,6 +29,8 @@ export interface TabInfo {
   account: string | null
   /** the user muted the tab: it makes no notification sound */
   muted: boolean
+  /** the Claude tab is a fork of another tab's conversation; null: an ordinary tab */
+  fork: TabFork | null
   exited: boolean
 }
 
@@ -31,6 +44,8 @@ export interface OpenTabRequest {
   account?: string | null
   /** start the tab muted, as it was when its session was saved */
   muted?: boolean
+  /** a fork of another tab's conversation (a Claude tab) */
+  fork?: TabFork | null
 }
 
 export type ImageSource = 'created' | 'shown' | 'read' | 'tool' | 'pasted'
@@ -61,6 +76,8 @@ export interface SessionSnapshotTab {
   muted: boolean
   /** Claude was in the middle of a turn: a prompt had started it, and it had neither ended nor been interrupted */
   working: boolean
+  /** a fork of a Claude tab: `of` is the head's index in this list, null when the head is not kept */
+  fork: { of: number | null; from: string | null } | null
 }
 
 export interface SessionSnapshot {
@@ -96,6 +113,9 @@ export type PanelMode = 'beside' | 'overlay' | 'narrow'
 
 export type NoRoomMode = Exclude<PanelMode, 'beside'>
 
+/** where the tab bar sits: across the top, or as a column on the left */
+export type TabPosition = 'top' | 'left'
+
 export interface Settings {
   defaultProfile: string | null
   /** the folder new tabs open in, an absolute path; null: the home folder */
@@ -119,8 +139,17 @@ export interface Settings {
     renderMarkdown: boolean }
   /** where Images and Changes go when the window has no room to widen for them */
   sidePanel: { noRoom: NoRoomMode }
+  tabs: { position: TabPosition }
   /** check GitHub for new versions in the background */
   autoUpdate: boolean
+}
+
+/** where a tab's folder is in git: its project, the linked worktree it is in (null for the main worktree), its branch */
+export interface TabPlace {
+  /** key: pathKey of the main worktree's (or bare repository's) path; name: its folder name (acme.git: acme); parent: the folder holding it */
+  project: { key: string; name: string; parent: string }
+  worktree: { path: string; color: number } | null
+  branch: string
 }
 
 export interface MainStatus {
@@ -168,6 +197,25 @@ export type UpdateState =
   | { status: 'idle' }
   | { status: 'ready'; version: string; notes: ReleaseNotes[] }
   | { status: 'available'; version: string; notes: ReleaseNotes[] }
+
+/** the left tab panel's width in px and the folded groups, kept in tab-layout.json */
+export interface TabLayout {
+  width: number
+  /** the keys of the groups the user folded */
+  folded: string[]
+}
+
+/** at its narrowest the panel's header still holds all its buttons: + and ▾, Changes, Docs, Media, Note and the position */
+export const TAB_PANEL_WIDTH = { min: 220, max: 480, initial: 240 }
+
+/** the left tab panel's width in whole px, within TAB_PANEL_WIDTH */
+export const clampTabPanelWidth = (px: number): number => Math.min(TAB_PANEL_WIDTH.max, Math.max(TAB_PANEL_WIDTH.min, Math.round(px)))
+
+/** the most folded groups tab-layout.json keeps: the groups folded longest ago, likely gone, give way to new ones */
+export const MAX_FOLDED_GROUPS = 200
+
+/** a linked worktree's color in the left tab panel: TabPlace.worktree.color is an index into this list */
+export const WORKTREE_COLORS = ['#61afef', '#c678dd', '#56b6c2', '#98c379', '#e5c07b', '#be5046']
 
 /** A Claude Code conversation found in Claude Code's transcripts. */
 export interface SessionSummary {

@@ -63,6 +63,18 @@ export function processAlive(marker: string): boolean {
 
 export const PNG_1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
 
+/**
+ * a conversation as Claude Code keeps it under its config folder, <config>/projects/<cwd with every non-alphanumeric char
+ * as ->/<id>.jsonl: one line, enough for --resume to find it and for Recent sessions to list it. Returns the file's path
+ */
+export function writeTranscript(config: string, cwd: string, id: string): string {
+  const dir = join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `${id}.jsonl`)
+  writeFileSync(file, JSON.stringify({ type: 'user', cwd, entrypoint: 'cli', isSidechain: false, message: { role: 'user', content: 'hello' } }) + '\n')
+  return file
+}
+
 export function makeDataDir(settings?: object): string {
   const dir = mkdtempSync(join(tmpdir(), 'ct-e2e-'))
   if (settings) writeFileSync(join(dir, 'settings.json'), JSON.stringify(settings))
@@ -130,6 +142,13 @@ export function gitRepo(): string {
   return dir
 }
 
+/** a linked worktree of the repository, on a new branch; its folder is a new temp folder */
+export function gitWorktree(repo: string, branch: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ct-worktree-'))
+  execFileSync('git', ['worktree', 'add', '-q', '-b', branch, dir], { cwd: repo, stdio: 'ignore' })
+  return dir
+}
+
 type SavedClipboard = { savedClipboard?: Record<string, Blob | Electron.ClipboardBookmark>[] }
 
 /** Runs the steps, then gives the system clipboard back what it held: the tests must not change the machine they run on */
@@ -151,12 +170,4 @@ export async function keepingClipboard(app: ElectronApplication, steps: () => Pr
       else clipboard.clear()
     })
   }
-}
-
-/** a conversation of Claude Code on disk, so that Recent sessions lists it: <config>/projects/<cwd with every non-alphanumeric char as ->/<id>.jsonl */
-export function writeTranscript(config: string, cwd: string, id: string): void {
-  const dir = join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
-  mkdirSync(dir, { recursive: true })
-  const entry = { type: 'user', cwd, entrypoint: 'cli', isSidechain: false, message: { role: 'user', content: 'hello' } }
-  writeFileSync(join(dir, `${id}.jsonl`), JSON.stringify(entry) + '\n')
 }

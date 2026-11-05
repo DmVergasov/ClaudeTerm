@@ -6,8 +6,8 @@ import { parseSnapshot, SessionStore } from '../../src/main/session-store'
 import type { SessionSnapshot, SessionSnapshotTab } from '../../src/shared/types'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
-const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null, muted: false, working: false }
-const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null, muted: true, working: false }
+const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null, muted: false, working: false, fork: null }
+const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null, muted: true, working: false, fork: null }
 const snap = (tabs: SessionSnapshotTab[]): SessionSnapshot => ({ version: 1, savedAt: '2026-10-05T10:00:00.000Z', tabs })
 const newDir = (): string => mkdtempSync(join(tmpdir(), 'ct-sess-'))
 
@@ -89,6 +89,16 @@ describe('SessionStore', () => {
     expect(s.rotateOnStartup()).toEqual(snap([claudeTab]))
   })
 
+  it('a Claude fork still waiting for its session replaces the previous, so Restore can fork it again', () => {
+    const s = new SessionStore(newDir())
+    const head: SessionSnapshotTab = { ...claudeTab, claudeSessionId: null }
+    const fork: SessionSnapshotTab = { ...claudeTab, claudeSessionId: null, fork: { of: 0, from: SID } }
+    writeFileSync(s.previousPath, JSON.stringify(snap([shellTab])))
+    writeFileSync(s.statePath, JSON.stringify(snap([head, fork])))
+    expect(s.rotateOnStartup()).toEqual(snap([head, fork]))
+    expect(existsSync(s.statePath)).toBe(false)
+  })
+
   it('a corrupt state is not rotated and is reported', () => {
     const dir = newDir()
     const onError = vi.fn()
@@ -147,5 +157,27 @@ describe('SessionStore', () => {
     writeFileSync(s.previousPath, JSON.stringify(snap([claudeTab])))
     s.clearPrevious()
     expect(s.readPrevious()).toBeNull()
+  })
+})
+
+describe('parseSnapshot forks', () => {
+  it('keeps a fork whose head is another Claude tab, before or after it, and drops a bad one', () => {
+    const tabsOf = (tabs: unknown[]) => parseSnapshot(JSON.stringify({ version: 1, savedAt: 'x', tabs }))?.tabs
+    expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: SID } }])?.[1].fork).toEqual({ of: 0, from: SID })
+    // tabs on top can be dragged: a fork may stand before its head
+    expect(tabsOf([{ ...claudeTab, fork: { of: 1, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: 1, from: SID })
+    // a fork with a conversation of its own is not forked again
+    expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: null } }])?.[1].fork).toEqual({ of: 0, from: null })
+    expect(tabsOf([{ ...claudeTab, fork: { of: 0.5, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: null, from: SID })
+    expect(tabsOf([{ ...claudeTab, fork: { of: 2, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: null, from: SID })
+    expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 1, from: SID } }])?.[1].fork).toEqual({ of: null, from: SID })
+    expect(tabsOf([shellTab, { ...claudeTab, fork: { of: 0, from: SID } }])?.[1].fork).toEqual({ of: null, from: SID })
+    // a head is not itself a fork with a head
+    const chain = tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: SID } }, { ...claudeTab, fork: { of: 1, from: SID } }])
+    expect(chain?.map((t) => t.fork?.of)).toEqual([undefined, 0, null])
+    expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: 'x' } }])?.[1].fork).toBeNull()
+    expect(tabsOf([claudeTab, { ...shellTab, fork: { of: 0, from: SID } }])?.[1].fork).toBeNull()
+    const old = { version: 1, savedAt: 'x', tabs: [{ kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID }] }
+    expect(parseSnapshot(JSON.stringify(old))?.tabs[0].fork).toBeNull()
   })
 })

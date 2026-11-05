@@ -201,6 +201,17 @@ describe('side panel settings', () => {
     expect(narrow.ok && JSON.parse(narrow.text)).toEqual({ sidePanel: { noRoom: 'narrow' } })
     expect(applySettingEdit('{}', 'sidePanel.noRoom', 'beside')).toEqual({ ok: false, error: 'Invalid value for sidePanel.noRoom' })
   })
+
+  it('tabs.position: on top by default, left when set, other values fall back', () => {
+    expect(DEFAULT_SETTINGS.tabs).toEqual({ position: 'top' })
+    expect(parseSettings(JSON.stringify({ tabs: { position: 'left' } })).settings.tabs).toEqual({ position: 'left' })
+    expect(parseSettings(JSON.stringify({ tabs: { position: 'bottom' } })).settings.tabs).toEqual({ position: 'top' })
+  })
+
+  it('applySettingEdit writes tabs.position', () => {
+    const r = applySettingEdit('{}', 'tabs.position', 'left')
+    expect(r.ok && JSON.parse(r.text)).toEqual({ tabs: { position: 'left' } })
+  })
 })
 
 describe('loadSettingsSafe', () => {

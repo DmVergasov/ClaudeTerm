@@ -49,6 +49,23 @@ export class NoteHub {
     if (stored) this.give(tabId, tab, stored)
   }
 
+  /**
+   * A tab with no conversation yet takes the note stored under `fromSessionId` as its own: a fork restored without a
+   * conversation of its own is forked again from its head, and keeps the note it had. The note stays stored under
+   * `fromSessionId`, edits included, until the tab's own conversation starts and takes it, so a fork that never starts
+   * loses nothing.
+   */
+  adopt(tabId: string, fromSessionId: string): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab || tab.sessionId !== null) return
+    const stored = this.deps.store.get(fromSessionId)
+    if (!stored) return
+    const note = joined(stored, tab.note)
+    if (note !== stored) this.deps.store.set(fromSessionId, note)
+    tab.sessionId = fromSessionId
+    this.give(tabId, tab, note)
+  }
+
   /** Forgets the tab; the note stays stored under the tab's last conversation. */
   removeTab(tabId: string): void {
     this.tabs.delete(tabId)

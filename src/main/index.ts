@@ -10,7 +10,7 @@ import type { DocRead } from '../shared/docs'
 import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
 import { socketDir } from '../shared/protocol'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
-import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo } from '../shared/types'
+import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout } from '../shared/types'
 import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './accounts'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
@@ -20,7 +20,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -41,6 +41,7 @@ import { macMenuTemplate } from './mac-menu'
 import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePage, startSwap } from './mac-update'
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
 import { anchorExe, findGitBash, MsysAnchor, spawnAnchor } from './msys-anchor'
+import { execGit } from './git-source'
 import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
 import { buildLaunch, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver } from './profiles'
@@ -53,16 +54,18 @@ import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
 import { NoteHub } from './note-hub'
 import { SessionNotes } from './session-notes'
+import { TabLayoutStore } from './tab-layout'
 import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager } from './tab-manager'
+import { TabPlaces } from './tab-places'
 import { readAgentMeta } from './transcript-agent-info'
 import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, writeUpdateMarker } from './update-marker'
 import { Updater, type UpdaterBackend } from './updater'
 import { createUpdateBackend } from './update-backend'
-import { cleanupImageCache, findTranscript, locateTranscript, TranscriptFeed } from './transcript-feed'
+import { cleanupImageCache, findTranscript, TranscriptFeed } from './transcript-feed'
 import { showWindow } from './window-show'
 import { loadWindowState, trackWindowState } from './window-state'
 
@@ -165,6 +168,7 @@ function bootstrap(): void {
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
   const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
   const starred = new StarredSessions(dataDir, toast)
+  const tabLayout = new TabLayoutStore(dataDir, toast)
   const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
   const noteHub = new NoteHub({ store: notes, publish: (tabId, note, generation) => send(IPC.evNote, tabId, note, generation) })
   const accounts = new AccountStore(nodeAccountFile(join(dataDir, 'accounts.json')), electronVault(safeStorage, process.platform), { onError: (m) => log.warn(m) })
@@ -353,9 +357,11 @@ function bootstrap(): void {
   const anchorFile = gitBash ? anchorExe(gitBash, existsSync) : null
   const msysAnchor = anchorFile ? new MsysAnchor(anchorFile, { spawn: spawnAnchor, log }) : null
 
+  const places = new TabPlaces({ run: execGit, publish: (id, place) => send(IPC.evTabPlace, id, place) })
   const tabs = new TabManager({
     onTabStarted: (tab) => {
       startTabImages(tab)
+      places.addTab(tab.id, tab.cwd)
       if (tab.kind === 'claude') noteHub.addTab(tab.id, tab.claudeSessionId)
     },
     // a continue armed for the old process would type into the resumed one
@@ -372,6 +378,7 @@ function bootstrap(): void {
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
       review.removeTab(tabId)
+      places.removeTab(tabId)
       docs.removeTab(tabId)
       noteHub.removeTab(tabId)
     },
@@ -388,10 +395,12 @@ function bootstrap(): void {
         const { profile, warning } = pickClaudeProfile(profiles, settings.claude.shellProfile)
         if (warning) toast(warning)
         if (req.setupToken) {
-          return { profileName: profile.name, spec: buildLaunch(profile, 'claude', { command: `${settings.claude.command} setup-token`, settingsPath: null, resumeSessionId: null }) }
+          return { profileName: profile.name, spec: buildLaunch(profile, 'claude', { command: `${settings.claude.command} setup-token`, settingsPath: null, resumeSessionId: null, forkSession: false }) }
         }
         if (acc.unavailable) toast(`${accountName(req.account!)} is not available; the tab started on the main account`)
-        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? null }
+        // a fork without a conversation of its own starts as a fork of its head's conversation
+        const forkFrom = req.kind === 'claude' && !req.resumeSessionId && req.fork ? req.fork.from : null
+        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? forkFrom, forkSession: forkFrom !== null }
         return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env }
       }
       const profile = profiles.find((p) => p.name === req.profile) ?? pickProfile(profiles, settings.defaultProfile)
@@ -400,15 +409,15 @@ function bootstrap(): void {
     },
     onStateChanged: () => sessions.scheduleSave(tabs.snapshot()),
     // Claude Code writes the transcript with the first message; --resume of a conversation without one fails
-    resumable: (tabId, sessionId) => {
+    resumable: async (tabId, sessionId) => {
       const p = sources.get(tabId)?.transcriptPath
-      return p ? locateTranscript(p, sessionId) !== null : true
+      return p ? (await findTranscript(p, sessionId)) !== null : true
     },
     events: {
       opened: (t) => send(IPC.evTabOpened, t),
       updated: (t) => send(IPC.evTabUpdated, t),
       closed: (id) => send(IPC.evTabClosed, id),
-      activated: (id) => { send(IPC.evTabActivated, id); review.activated(id) },
+      activated: (id) => { send(IPC.evTabActivated, id); review.activated(id); places.refresh(id) },
       order: (ids) => send(IPC.evTabsOrder, ids),
       data: (id, d) => send(IPC.evPtyData, id, d),
       exit: (id, code) => send(IPC.evPtyExit, id, code),
@@ -482,7 +491,7 @@ function bootstrap(): void {
     openTab(cmd.kind === 'claude' ? { kind: 'claude', cwd } : { kind: 'shell', cwd, profile: cmd.profile })
   }
 
-  const runRestore = (): void => {
+  const runRestore = async (): Promise<void> => {
     const snap = previous
     if (!snap) return
     previous = null
@@ -492,21 +501,42 @@ function bootstrap(): void {
       log.warn(`cannot remove previous session: ${(e as Error).message}`)
     }
     send(IPC.evRestore, null)
+    // a fork whose own conversation was never saved forks its head's again, rather than resuming nothing. The transcripts
+    // are looked for together, before any tab opens, so the restored tabs then open in one go, in their saved order
+    const projects = claudeProjectsDir(process.env, homedir())
+    const unsaved = await Promise.all(snap.tabs.map(async (t) => {
+      const id = t.kind === 'claude' && t.fork?.from ? t.claudeSessionId : null
+      return id !== null && (await findTranscript(join(projects, t.cwd.replace(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`), id)) === null
+    }))
     if (autoTabId) {
       if (tabs.get(autoTabId)) tabs.close(autoTabId)
       autoTabId = null
     }
     let first: string | null = null
-    for (const t of snap.tabs) {
+    // the opened tab of each snapshot tab, by its index in the snapshot: a fork finds its head there
+    const openedIds: (string | null)[] = []
+    snap.tabs.forEach((t, i) => {
       const { cwd, warning } = resolveLaunchDir(t.cwd, homedir(), isDirectory)
       if (warning) toast(warning)
+      const resumeSessionId = t.kind === 'claude' && !unsaved[i] ? t.claudeSessionId : null
+      // a fork opens where it was saved, and joins its head's family below, once the head is open too
+      const fork = t.kind === 'claude' && t.fork ? { of: null, from: t.fork.from } : null
       const opened = openTab(
-        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId: t.kind === 'claude' ? t.claudeSessionId : null, account: t.kind === 'claude' ? t.account : null, muted: t.muted },
+        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId, account: t.kind === 'claude' ? t.account : null, muted: t.muted, fork },
         false
       )
+      // the note stored under the fork's own conversation goes with the tab to the conversation it gets
+      if (opened && unsaved[i] && t.claudeSessionId !== null) noteHub.adopt(opened.id, t.claudeSessionId)
+      openedIds.push(opened?.id ?? null)
       if (opened && t.working && settings.claude.continueAfterRestore) resumeAfterRestore.add(opened.id)
       if (opened && first === null) first = opened.id
-    }
+    })
+    snap.tabs.forEach((t, i) => {
+      const head = t.fork?.of ?? null
+      const id = openedIds[i]
+      const headId = head === null ? null : openedIds[head]
+      if (id && headId) tabs.joinFamily(id, headId)
+    })
     if (first) tabs.activate(first)
   }
 
@@ -586,7 +616,7 @@ function bootstrap(): void {
     },
     session: (msg) => {
       log.info(`session ${msg.source} tab=${msg.tabId} id=${msg.sessionId} transcript=${msg.transcriptPath ?? '-'}`)
-      if (!tabs.setClaudeSession(msg.tabId, msg.sessionId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      if (!tabs.setClaudeSession(msg.tabId, msg.sessionId, msg.source)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
       planHub.session(msg.tabId, msg.sessionId)
       noteHub.session(msg.tabId, msg.sessionId)
@@ -625,6 +655,7 @@ function bootstrap(): void {
       // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
       if (msg.reason === 'done') {
         review.turnEnded(msg.tabId)
+        places.refresh(msg.tabId)
         tabs.setWorking(msg.tabId, false)
         if (msg.error === undefined) autoContinue.turnEnded(msg.tabId)
         // a response a dropped connection cut off goes on by itself: nobody needs to look yet
@@ -668,10 +699,11 @@ function bootstrap(): void {
     rendererReady = true
     for (const n of startupNotices.splice(0)) send(IPC.evToast, n)
     for (const cmd of pendingLaunches.splice(0)) openFromLaunch(cmd)
-    if (restoreAfterUpdate) runRestore()
+    if (restoreAfterUpdate) void runRestore()
   })
   ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) attention.notify(tabId, 'bell') })
-  ipcMain.handle(IPC.tabsOpen, (_e, req: OpenTabRequest) => (req?.account === undefined || isAccountRef(req.account) ? openTab(inDefaultFolder(req)) : null))
+  // a fork comes only from Fork session (tabs:fork), never from a request to open a tab
+  ipcMain.handle(IPC.tabsOpen, (_e, req: unknown) => (isOpenTabRequest(req) ? openTab(inDefaultFolder(openTabRequestFields(req))) : null))
   ipcMain.handle(IPC.sessionsList, async (): Promise<RecentSession[]> => {
     const list = await history.list(100, starred.ids())
     listedSessions = new Map(list.map((s) => [s.id, s]))
@@ -688,6 +720,8 @@ function bootstrap(): void {
     if (isId(id) && isFlag(shown) && isNoteForm(form) && isGeneration(generation)) noteHub.setView(id, shown, form, generation)
   })
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
+  ipcMain.handle(IPC.layoutGet, (): TabLayout => tabLayout.get())
+  ipcMain.on(IPC.layoutSet, (_e, c: unknown) => { if (isTabLayoutChange(c)) tabLayout.set(c) })
   ipcMain.on(IPC.sessionsOpen, (_e, id: unknown) => {
     const s = isId(id) ? listedSessions.get(id) : undefined
     if (!s) return
@@ -721,6 +755,16 @@ function bootstrap(): void {
       .catch((e: Error) => log.warn(`cannot switch the account: ${e.message}`))
   })
   ipcMain.on(IPC.tabsMute, (_e, id: unknown, muted: unknown) => { if (isId(id) && isFlag(muted)) tabs.setMuted(id, muted) })
+  // the transcript is looked for without blocking: the tab menu waits for this answer on every right-click
+  ipcMain.handle(IPC.tabsCanFork, (_e, id: unknown): Promise<boolean> => (isId(id) ? tabs.canFork(id) : Promise.resolve(false)))
+  ipcMain.on(IPC.tabsFork, async (_e, id: unknown) => {
+    if (!isId(id)) return
+    try {
+      await tabs.fork(id)
+    } catch (e) {
+      toast(`Cannot open tab: ${(e as Error).message}`)
+    }
+  })
   ipcMain.on(IPC.ptyWrite, (_e, id: unknown, data: unknown) => {
     if (!isId(id) || !isPtyData(data)) return
     if (id === autoTabId && isUserInput(data)) autoTabId = null
@@ -845,7 +889,7 @@ function bootstrap(): void {
     launchEditor(settings.review.editor, doc.path, line, { spawn: spawnDetached, reveal: (p) => shell.showItemInFolder(p), onError: toast })
   })
   ipcMain.handle(IPC.restoreGet, () => restoreInfo())
-  ipcMain.on(IPC.restoreRun, () => runRestore())
+  ipcMain.on(IPC.restoreRun, () => { void runRestore() })
   ipcMain.on(IPC.updateCheck, () => { void updater.check(true) })
   ipcMain.on(IPC.updateInstall, () => updater.install())
   ipcMain.handle(IPC.updateGet, () => updater.current)
@@ -1012,6 +1056,7 @@ function bootstrap(): void {
   win.once('ready-to-show', () => { if (win) showWindow(win, isTest) })
   win.on('focus', () => {
     win?.flashFrame(false)
+    places.refreshAll()
     const id = tabs.activeTabId()
     if (id) review.trigger(id)
   })

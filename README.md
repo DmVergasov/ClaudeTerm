@@ -102,7 +102,7 @@ Ask Claude "show me the spec" and it opens the file in the **Docs** panel beside
 - **PDF** — in the built-in viewer, with its own zoom, pages and find. No comments.
 - **HTML reports** — coverage and test reports, generated pages — in a sandboxed frame. Their scripts run in the frame, which cannot load anything from outside the report's folder, reach the window or navigate away. The scripts can read the files in that folder, so a report in your home folder or at a drive root is not shown.
 
-The panel follows the file: when it changes, the document is drawn again. A Markdown document keeps your scroll position and comments; a PDF or HTML document reloads. Open or close Docs with the **Docs** button in the tab bar (it shows once a Claude tab has a document) or `Ctrl+Shift+O` (`⌘O` on macOS).
+The panel follows the file: when it changes, the document is drawn again. A Markdown document keeps your scroll position and comments; a PDF or HTML document reloads. Open or close Docs with the **Docs** button in the tab bar, or in the left panel's header when the tabs are on the left (it shows once a Claude tab has a document), or `Ctrl+Shift+O` (`⌘O` on macOS).
 
 ### 🗂️ A real terminal, with tabs
 
@@ -111,6 +111,8 @@ The panel follows the file: when it changes, the document is drawn again. A Mark
 - **Notes** — a note of your own on each Claude tab (which feature it is, your TODO list), shown over the terminal as a small label you open into a card; it stays with the conversation through `/clear`, a restart and Recent sessions.
 - **Proper terminal behaviour** — ConPTY on Windows, a real PTY on macOS and Linux, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (`⌘C` / `⌘V` on macOS; pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
 - **Font sizes in points**, exactly like Windows Terminal — `12` looks the same in both.
+- **Tabs on the left** — **Tabs** in Settings, or the button in the tab bar, moves the tabs into a panel on the left, grouped by project (No project last), with the branch on every tab and a colored bar for a linked worktree. The panel's buttons (Changes, Docs, Media, Note) move to its header. Click a group's header to fold it; drag tabs or groups to reorder them, and `Ctrl+Tab` and `Ctrl+Alt+1` … `9` follow that order.
+- **Fork session** — the right-click menu of a Claude tab with a conversation has **Fork session**: a new tab resumes that conversation from the same point, and in the left panel the fork is shown under its tab.
 
 <p align="center"><img src="docs/images/new-tab-menu.png" width="560" alt="New tab menu with detected shell profiles"></p>
 
@@ -188,7 +190,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 
 Right-click in the terminal copies the selection, or pastes when nothing is selected. On macOS `⌥`-drag selects text while Claude Code has the mouse (`Shift`-drag elsewhere). Double-click a tab to rename it.
 
-Right-click a tab → **Restart session** restarts Claude Code in the same tab and resumes the conversation — handy after adding an MCP server, a plugin or a settings change that Claude Code only reads at startup. For a shell tab the item is **Restart shell**.
+Right-click a tab → **Restart session** restarts Claude Code in the same tab and resumes the conversation — handy after adding an MCP server, a plugin or a settings change that Claude Code only reads at startup. For a shell tab the item is **Restart shell**. A Claude tab with a conversation also has **Fork session**, which opens a new tab that resumes a copy of that conversation from the same point.
 
 ## Settings
 
@@ -216,6 +218,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "font": { "family": "Cascadia Mono, Consolas, Menlo, monospace", "size": 12 },   // size in points
   "theme": "Campbell",             // "Campbell", "One Half Dark", "One Half Light", or an xterm.js theme object
   "scrollback": 10000,
+  "tabs": { "position": "top" },   // "top": the tab bar above the terminal; "left": a panel on the left, the tabs grouped by project
   "imageWatch": {                  // new images in the session's scratchpad (Claude tabs only)
     "enabled": true,
     "extensions": ["png", "jpg", "jpeg", "gif", "webp", "bmp"],

@@ -113,11 +113,16 @@ describe('shell families and quoting', () => {
 })
 
 describe('claude launch', () => {
-  const claude = { command: 'claude', settingsPath: 'C:\\Users\\me\\AppData\\Roaming\\ClaudeTerm\\claude-tab-settings.json', resumeSessionId: null }
+  const claude = { command: 'claude', settingsPath: 'C:\\Users\\me\\AppData\\Roaming\\ClaudeTerm\\claude-tab-settings.json', resumeSessionId: null, forkSession: false }
 
   it('buildClaudeCommandLine adds --settings and optional --resume', () => {
     expect(buildClaudeCommandLine('powershell', claude)).toBe("claude --settings 'C:\\Users\\me\\AppData\\Roaming\\ClaudeTerm\\claude-tab-settings.json'")
     expect(buildClaudeCommandLine('cmd', { ...claude, resumeSessionId: SID })).toBe(`claude --settings "${claude.settingsPath}" --resume ${SID}`)
+  })
+
+  it('buildClaudeCommandLine adds --fork-session after --resume', () => {
+    expect(buildClaudeCommandLine('powershell', { ...claude, resumeSessionId: SID, forkSession: true })).toMatch(new RegExp(` --resume ${SID} --fork-session$`))
+    expect(() => buildClaudeCommandLine('powershell', { ...claude, resumeSessionId: null, forkSession: true })).toThrow('--fork-session needs a session to resume')
   })
 
   it('rejects a non-UUID resume id', () => {
@@ -125,7 +130,7 @@ describe('claude launch', () => {
   })
 
   it('a command line without a settings file has no --settings: the Get a token tab', () => {
-    const setup = { command: 'claude setup-token', settingsPath: null, resumeSessionId: null }
+    const setup = { command: 'claude setup-token', settingsPath: null, resumeSessionId: null, forkSession: false }
     expect(buildClaudeCommandLine('powershell', setup)).toBe('claude setup-token')
     expect(buildLaunch(PS, 'claude', setup)).toEqual({ file: PS.command, args: ['-NoLogo', '-NoExit', '-Command', 'claude setup-token'] })
   })
@@ -191,7 +196,7 @@ describe('detectPosixProfiles', () => {
 })
 
 describe('Linux shells', () => {
-  const claude = { command: 'claude', settingsPath: '/home/me/.config/ClaudeTerm/claude-tab-settings.json', resumeSessionId: SID }
+  const claude = { command: 'claude', settingsPath: '/home/me/.config/ClaudeTerm/claude-tab-settings.json', resumeSessionId: SID, forkSession: false }
   const line = `claude --settings '/home/me/.config/ClaudeTerm/claude-tab-settings.json' --resume ${SID}`
 
   it('families: zsh and fish by name, bash and pwsh as on Windows', () => {

@@ -17,6 +17,7 @@ const CASE_LABELS: Record<NotificationCase, string> = {
 }
 const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sound', flash: 'Taskbar flash', tab: 'Tab highlight', front: 'Even in front' }
 const NO_ROOM_OPTIONS: Option[] = [{ value: 'overlay', label: 'Over the terminal' }, { value: 'narrow', label: 'Narrow the terminal' }]
+const TAB_POSITION_OPTIONS: Option[] = [{ value: 'top', label: 'On top' }, { value: 'left', label: 'On the left' }]
 
 /** one control: shows its part of the view; its inputs are disabled while settings.json is locked */
 interface Control {
@@ -220,7 +221,8 @@ root.append(
     selectField('Theme', 'theme', (v) => themeOptions(v.settings.theme), (s) => (s === CUSTOM_THEME ? undefined : s)),
     textField('Scrollback lines', 'scrollback', 'number', (v) => v.settings.scrollback, (t) => checkNumber('scrollback', t), 'applies to new tabs'),
     selectField('Panels without room', 'sidePanel.noRoom', (v) => ({ options: NO_ROOM_OPTIONS, selected: v.settings.sidePanel.noRoom }), (s) => s,
-      'Media and Changes widen the window; maximized or at the edge of the screen it cannot widen')),
+      'Media and Changes widen the window; maximized or at the edge of the screen it cannot widen'),
+    selectField('Tabs', 'tabs.position', (v) => ({ options: TAB_POSITION_OPTIONS, selected: v.settings.tabs.position }), (s) => s)),
   section('Shells', null,
     selectField('Default shell', 'defaultProfile', (v) => profileOptions(v.profiles, v.settings.defaultProfile), profileValue, automaticHint),
     textField('Default folder', 'defaultFolder', 'text', (v) => v.settings.defaultFolder ?? '', checkOptionalText,
