@@ -267,6 +267,20 @@ test('with tabs on the left, a new tab unfolds its project group and leaves No p
   await app.close()
 })
 
+test('a fold is kept however many groups were folded before: the ones folded longest ago give way', async () => {
+  const dataDir = makeDataDir(left(freshFolder()))
+  // projects folded over a long time, most of them gone since
+  const old = Array.from({ length: 200 }, (_, i) => `gone-project-${i}`)
+  writeFileSync(join(dataDir, 'tab-layout.json'), JSON.stringify({ width: 240, folded: old }))
+  const { app, page } = await launchApp({ dataDir })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const noProject = groupNamed(page, 'No project')
+  await noProject.locator('.tp-group-head').click()
+  await expect(noProject).toHaveClass(/\bfolded\b/)
+  await expect.poll(async () => (await page.evaluate(() => window.ct.getTabLayout())).folded).toEqual([...old.slice(1), '~none'])
+  await app.close()
+})
+
 test('with tabs on top, activating a tab leaves the saved fold state alone', async () => {
   const repo = gitRepo()
   const dataDir = makeDataDir({ ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() })

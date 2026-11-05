@@ -1,19 +1,14 @@
-import { TAB_PANEL_WIDTH, type TabLayout } from '../shared/types'
+import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
 import { groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, pulseDelay, tabParts } from './tab-row'
 import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarItem } from './tabbar'
-
-/** a linked worktree's color: TabPlace.worktree.color is an index into this list */
-export const WORKTREE_COLORS = ['#61afef', '#c678dd', '#56b6c2', '#98c379', '#e5c07b', '#be5046']
 
 /** the drag's data type that names the group dragged by its header */
 const GROUP_DRAG = 'application/x-claudeterm-group'
 
 const BRANCH_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
   '<circle cx="5" cy="3.5" r="1.6"/><circle cx="5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5" r="1.6"/><path d="M5 5.1v5.8M11.5 6.6c0 3-6.5 2.2-6.5 4.3"/></svg>'
-
-const clampWidth = (px: number): number => Math.min(TAB_PANEL_WIDTH.max, Math.max(TAB_PANEL_WIDTH.min, Math.round(px)))
 
 /**
  * The left tab panel: the header buttons, then the tabs as groups by project, each group with its tabs in rows of two
@@ -49,7 +44,7 @@ export class TabPanel {
     this.head.replaceChildren(h.plus, h.more, spacer, h.changes, h.docs, h.images, h.note, h.position)
     this.list.className = 'tp-list'
     this.handle.className = 'tp-resize'
-    this.width = clampWidth(layout.width)
+    this.width = clampTabPanelWidth(layout.width)
     root.style.width = `${this.width}px`
     this.wireResize(this.handle)
   }
@@ -109,8 +104,15 @@ export class TabPanel {
     const group = panelGroups(this.items).find((g) => g.rows.some((r) => r.id === tabId))
     if (!group || !this.folded.has(group.key)) return
     this.folded.delete(group.key)
-    this.saveLayout({ folded: [...this.folded] })
+    this.saveFolded()
     this.render(this.items, this.activeId)
+  }
+
+  /** the folded groups are saved, at most MAX_FOLDED_GROUPS of them: the ones folded longest ago give way */
+  private saveFolded(): void {
+    const keys = [...this.folded]
+    for (const key of keys.slice(0, Math.max(0, keys.length - MAX_FOLDED_GROUPS))) this.folded.delete(key)
+    this.saveLayout({ folded: [...this.folded] })
   }
 
   private renderGroup(group: PanelGroup, label: string, byId: Map<string, TabBarItem>): HTMLElement {
@@ -229,7 +231,7 @@ export class TabPanel {
   private toggleFold(key: string): void {
     if (this.folded.has(key)) this.folded.delete(key)
     else this.folded.add(key)
-    this.saveLayout({ folded: [...this.folded] })
+    this.saveFolded()
     this.render(this.items, this.activeId)
   }
 
@@ -259,7 +261,7 @@ export class TabPanel {
   }
 
   private setWidth(px: number): void {
-    this.width = clampWidth(px)
+    this.width = clampTabPanelWidth(px)
     this.root.style.width = `${this.width}px`
   }
 }

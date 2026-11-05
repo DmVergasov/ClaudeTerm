@@ -31,19 +31,25 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       // written before ClaudeTerm kept track of it: idle
       working: x.kind === 'claude' && x.working === true,
       // written before forks existed: an ordinary tab
-      fork: x.kind === 'claude' ? parseFork(x.fork, tabs) : null
+      fork: x.kind === 'claude' ? parseFork(x.fork) : null
     })
   }
+  // a fork's head is another Claude tab of the list, before or after it (tabs on top are dragged freely), and is not
+  // itself a fork with a head; a bad head leaves the fork without one
+  const heads = tabs.map((t) => t.fork?.of ?? null)
+  tabs.forEach((t, i) => {
+    const of = heads[i]
+    if (t.fork && of !== null && !(of < tabs.length && of !== i && tabs[of].kind === 'claude' && heads[of] === null)) t.fork = { of: null, from: t.fork.from }
+  })
   return { version: 1, savedAt: r.savedAt, tabs }
 }
 
-/** a fork's head is kept only when it is an earlier Claude tab; a bad head leaves the fork without one */
-function parseFork(value: unknown, earlier: SessionSnapshotTab[]): SessionSnapshotTab['fork'] {
+function parseFork(value: unknown): SessionSnapshotTab['fork'] {
   if (typeof value !== 'object' || value === null) return null
   const f = value as Record<string, unknown>
-  if (!isUuid(f.from)) return null
-  const of = typeof f.of === 'number' && Number.isInteger(f.of) && f.of >= 0 && f.of < earlier.length && earlier[f.of].kind === 'claude' ? f.of : null
-  return { of, from: f.from }
+  // null: the fork has a conversation of its own and is not forked again
+  if (f.from !== null && !isUuid(f.from)) return null
+  return { of: typeof f.of === 'number' && Number.isInteger(f.of) && f.of >= 0 ? f.of : null, from: f.from }
 }
 
 export interface SessionStoreOptions {

@@ -4,7 +4,7 @@ import type { ImageAction } from '../shared/ipc'
 import { MAX_NOTE_LENGTH, NOTE_FORMS, type NoteForm } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 import { REVIEW_SCOPES, type ReviewScope } from '../shared/review'
-import type { OpenTabRequest, TabLayout } from '../shared/types'
+import { MAX_FOLDED_GROUPS, type OpenTabRequest, type TabLayout } from '../shared/types'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
@@ -52,7 +52,7 @@ export const isTabLayoutChange = (v: unknown): v is Partial<TabLayout> => {
   if (typeof v !== 'object' || v === null) return false
   const c = v as Record<string, unknown>
   if (c.width !== undefined && (typeof c.width !== 'number' || !Number.isFinite(c.width))) return false
-  if (c.folded !== undefined && !(Array.isArray(c.folded) && c.folded.length <= 200 && c.folded.every((k) => typeof k === 'string' && k.length <= 4096))) return false
+  if (c.folded !== undefined && !(Array.isArray(c.folded) && c.folded.length <= MAX_FOLDED_GROUPS && c.folded.every((k) => typeof k === 'string' && k.length <= 4096))) return false
   return true
 }
 

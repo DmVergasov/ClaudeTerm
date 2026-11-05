@@ -161,12 +161,20 @@ describe('SessionStore', () => {
 })
 
 describe('parseSnapshot forks', () => {
-  it('keeps a fork whose head comes before it, and drops a bad one', () => {
+  it('keeps a fork whose head is another Claude tab, before or after it, and drops a bad one', () => {
     const tabsOf = (tabs: unknown[]) => parseSnapshot(JSON.stringify({ version: 1, savedAt: 'x', tabs }))?.tabs
     expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: SID } }])?.[1].fork).toEqual({ of: 0, from: SID })
-    expect(tabsOf([{ ...claudeTab, fork: { of: 1, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: null, from: SID })
+    // tabs on top can be dragged: a fork may stand before its head
+    expect(tabsOf([{ ...claudeTab, fork: { of: 1, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: 1, from: SID })
+    // a fork with a conversation of its own is not forked again
+    expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: null } }])?.[1].fork).toEqual({ of: 0, from: null })
     expect(tabsOf([{ ...claudeTab, fork: { of: 0.5, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: null, from: SID })
+    expect(tabsOf([{ ...claudeTab, fork: { of: 2, from: SID } }, claudeTab])?.[0].fork).toEqual({ of: null, from: SID })
+    expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 1, from: SID } }])?.[1].fork).toEqual({ of: null, from: SID })
     expect(tabsOf([shellTab, { ...claudeTab, fork: { of: 0, from: SID } }])?.[1].fork).toEqual({ of: null, from: SID })
+    // a head is not itself a fork with a head
+    const chain = tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: SID } }, { ...claudeTab, fork: { of: 1, from: SID } }])
+    expect(chain?.map((t) => t.fork?.of)).toEqual([undefined, 0, null])
     expect(tabsOf([claudeTab, { ...claudeTab, fork: { of: 0, from: 'x' } }])?.[1].fork).toBeNull()
     expect(tabsOf([claudeTab, { ...shellTab, fork: { of: 0, from: SID } }])?.[1].fork).toBeNull()
     const old = { version: 1, savedAt: 'x', tabs: [{ kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID }] }

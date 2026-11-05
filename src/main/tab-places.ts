@@ -1,10 +1,7 @@
 import { access } from 'node:fs/promises'
 import { type GitRun, GitError } from './git-source'
 import { nativePath, pathKey } from './path-key'
-import type { TabPlace } from '../shared/types'
-
-/** the colors a linked worktree gets: the palette of the left tab panel */
-export const WORKTREE_COLORS = 6
+import { WORKTREE_COLORS, type TabPlace } from '../shared/types'
 
 export interface WorktreeEntry {
   path: string
@@ -45,7 +42,7 @@ function fnv1a(s: string): number {
  * A color for each worktree, keyed by pathKey. Paths are taken in key order; each starts at its hash's color and takes the
  * first color after it no earlier path has, so a path keeps its color when others come and go.
  */
-export function worktreeColors(paths: string[], size = WORKTREE_COLORS): Map<string, number> {
+export function worktreeColors(paths: string[], size = WORKTREE_COLORS.length): Map<string, number> {
   const keys = [...new Set(paths.map((p) => pathKey(p)))].sort()
   const used = new Set<number>()
   const colors = new Map<string, number>()
@@ -150,6 +147,8 @@ export class TabPlaces {
   private readonly tabs = new Map<string, TabEntry>()
   private readonly folders = new Map<string, FolderEntry>()
   private readonly asks = new Map<string, Promise<void>>()
+  /** folders refreshed while git was being asked about them: their answer may be older than the refresh, so git is asked again */
+  private readonly again = new Set<string>()
 
   constructor(private readonly deps: TabPlacesDeps) {}
 
@@ -170,10 +169,15 @@ export class TabPlaces {
     if (tab && ![...this.tabs.values()].some((t) => t.key === tab.key)) this.folders.delete(tab.key)
   }
 
-  /** activation and turn end: the tab's folder is asked about, whatever the last answer was */
+  /**
+   * activation and turn end: the tab's folder is asked about, whatever the last answer was; while an ask is in flight, once
+   * more after it, since that ask may have read the folder before the change the refresh is for (a branch switched in a turn)
+   */
   refresh(tabId: string): void {
     const tab = this.tabs.get(tabId)
-    if (tab) this.ask(tab.cwd)
+    if (!tab) return
+    if (this.asks.has(tab.key)) this.again.add(tab.key)
+    else this.ask(tab.cwd)
   }
 
   /** window focus: each folder of the tabs is asked about again, once, unless it was asked less than REFRESH_ALL_MIN_MS ago */
@@ -196,6 +200,8 @@ export class TabPlaces {
       this.asks.delete(key)
       entry.answer = place
       for (const [tabId, tab] of this.tabs) if (tab.key === key) this.publish(tabId, tab, place)
+      // a folder no tab uses any more is not asked about again
+      if (this.again.delete(key) && this.folders.has(key)) this.ask(folder)
     })
     this.asks.set(key, asked)
   }

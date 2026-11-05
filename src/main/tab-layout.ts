@@ -1,8 +1,6 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { TAB_PANEL_WIDTH, type TabLayout } from '../shared/types'
-
-const clampWidth = (width: number): number => Math.min(TAB_PANEL_WIDTH.max, Math.max(TAB_PANEL_WIDTH.min, width))
+import { clampTabPanelWidth as clampWidth, TAB_PANEL_WIDTH, type TabLayout } from '../shared/types'
 
 /** The left tab panel's width and folded groups: ClaudeTerm's own file in the data folder. */
 export class TabLayoutStore {

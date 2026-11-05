@@ -589,6 +589,43 @@ describe('TabManager forks', () => {
     expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', resumeSessionId: SID_B }))
   })
 
+  it('a fork that got a conversation of its own (/clear) is not forked again: a restart before its first message starts a new one', async () => {
+    const SID_C = 'a3c2cf68-2929-4166-9a00-000000000001'
+    // the cleared conversation has no transcript before its first message
+    const { tm, ptys, resolveLaunch } = forkSetup({ resumable: async (_tabId, sessionId) => sessionId !== SID_C })
+    const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    const F = (await tm.fork(A.id))!
+    // Claude's copy of the conversation keeps the fork able to fork again
+    tm.setClaudeSession(F.id, SID_B, 'fork')
+    expect(tm.get(F.id)?.fork).toEqual({ of: A.id, from: SID_A })
+    tm.setClaudeSession(F.id, SID_C, 'clear')
+    expect(tm.get(F.id)?.fork).toEqual({ of: A.id, from: null })
+    expect(tm.snapshot()[1].fork).toEqual({ of: 0, from: null })
+    ptys[1].emitExit(0)
+    await tm.restart(F.id)
+    expect(resolveLaunch.mock.lastCall?.[0]).toMatchObject({ kind: 'claude', resumeSessionId: null, fork: { of: A.id, from: null } })
+  })
+
+  it('a restored fork joins its head wherever the two stand, and keeps its place in the order', () => {
+    const { tm, log } = forkSetup()
+    // opened as Restore opens them: in the saved order, the forks without their head yet
+    const F1 = tm.open({ kind: 'claude', cwd: 'D:\\x', fork: { of: null, from: SID_A } }, { activate: false })
+    const S = tm.open({ kind: 'shell', cwd: 'D:\\x' }, { activate: false })
+    const H = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A }, { activate: false })
+    const F2 = tm.open({ kind: 'claude', cwd: 'D:\\x', fork: { of: null, from: SID_A } }, { activate: false })
+    log.length = 0
+    tm.joinFamily(F1.id, H.id)
+    tm.joinFamily(F2.id, H.id)
+    expect(tm.list().map((t) => t.id)).toEqual([F1.id, S.id, H.id, F2.id])
+    expect([tm.get(F1.id)?.fork, tm.get(F2.id)?.fork]).toEqual([{ of: H.id, from: SID_A }, { of: H.id, from: SID_A }])
+    expect(log).toContain(`updated:${F1.id}:false`)
+    expect(tm.snapshot().map((t) => t.fork?.of ?? null)).toEqual([2, null, null, 2])
+    // a shell tab, a fork with a head, the tab itself and a closed tab are no heads
+    const F3 = tm.open({ kind: 'claude', cwd: 'D:\\x', fork: { of: null, from: SID_A } }, { activate: false })
+    for (const head of [S.id, F1.id, F3.id, 'gone']) tm.joinFamily(F3.id, head)
+    expect(tm.get(F3.id)?.fork).toEqual({ of: null, from: SID_A })
+  })
+
   it('snapshot keeps a fork\'s head as an index', async () => {
     const { tm } = forkSetup()
     const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })

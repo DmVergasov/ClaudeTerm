@@ -195,6 +195,20 @@ export class TabManager {
   }
 
   /**
+   * Restore: a restored fork joins its restored head's family. The tabs open in their saved order, the forks without a
+   * head (so each stays where it was, which on top may be before its head), and join their heads once all are open.
+   */
+  joinFamily(tabId: string, headId: string): void {
+    const rec = this.tabs.get(tabId)
+    const head = this.tabs.get(headId)
+    const fork = rec?.info.fork
+    if (!rec || !fork || fork.of !== null || !head || head === rec || head.info.kind !== 'claude' || (head.info.fork?.of ?? null) !== null) return
+    rec.info.fork = { of: headId, from: fork.from }
+    this.deps.events.updated({ ...rec.info })
+    this.changed()
+  }
+
+  /**
    * Starts the tab's process again in the same tab. With `live`, a running process is stopped first (e.g. so
    * Claude Code picks up a newly added MCP server); otherwise only an exited tab restarts. A Claude tab resumes
    * its current conversation, on its account.
@@ -264,10 +278,17 @@ export class TabManager {
     this.changed()
   }
 
-  setClaudeSession(tabId: string, sessionId: string): boolean {
+  /**
+   * `source`: Claude Code's SessionStart source. Only "fork" is the copy a fork starts with; any other session (resumed,
+   * cleared, another one picked) is a conversation of the tab's own, so the fork is never forked again from its head's.
+   */
+  setClaudeSession(tabId: string, sessionId: string, source?: string): boolean {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude') return false
-    if (rec.info.claudeSessionId !== sessionId) {
+    const fork = rec.info.fork
+    const settled = fork !== null && fork.from !== null && source !== 'fork'
+    if (settled) rec.info.fork = { of: fork.of, from: null }
+    if (rec.info.claudeSessionId !== sessionId || settled) {
       rec.info.claudeSessionId = sessionId
       this.deps.events.updated({ ...rec.info })
       this.changed()

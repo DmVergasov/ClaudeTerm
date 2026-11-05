@@ -128,10 +128,20 @@ describe('NoteHub', () => {
     hub.adopt('t1', B)
     expect(hub.get('t1')).toEqual(alpha)
     expect(published).toEqual([['t1', alpha, 1]])
-    expect(store.has(B)).toBe(false)
     hub.session('t1', C)
     expect(store.get(C)).toEqual(alpha)
     expect(store.has(B)).toBe(false)
+  })
+  it('the adopted note stays stored under the old conversation, with its edits, until the tab gets its own: a fork that never starts loses nothing', () => {
+    const { hub, store } = setup({ [B]: alpha })
+    hub.addTab('t1', null)
+    hub.adopt('t1', B)
+    expect(store.get(B)).toEqual(alpha)
+    hub.setText('t1', 'alpha, edited', 1)
+    expect(store.get(B)?.text).toBe('alpha, edited')
+    // Claude did not start, and the tab is closed: the note is where it was
+    hub.removeTab('t1')
+    expect(store.get(B)?.text).toBe('alpha, edited')
   })
   it('text the tab typed before its conversation was known is joined to the adopted note', () => {
     const { hub, store } = setup({ [B]: alpha })
@@ -140,6 +150,7 @@ describe('NoteHub', () => {
     hub.adopt('t1', B)
     const merged: Note = { text: 'alpha\n\nearly', shown: alpha.shown, form: alpha.form }
     expect(hub.get('t1')).toEqual(merged)
+    expect(store.get(B)).toEqual(merged)
     hub.session('t1', C)
     expect(store.get(C)).toEqual(merged)
     expect(store.has(B)).toBe(false)

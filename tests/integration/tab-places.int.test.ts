@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -51,6 +51,21 @@ describe('tab place from git', () => {
     expect(pathKey(place!.worktree!.path)).toBe(pathKey(realpathSync.native(linked)))
     expect(place!.worktree!.color).toBeGreaterThanOrEqual(0)
     expect(place!.worktree!.color).toBeLessThan(6)
+  })
+
+  it('gives a linked worktree added through a link to its folder (a junction on Windows) the same place as through the real path', async () => {
+    const parent = tempParent()
+    const real = join(parent, 'real')
+    const dir = repo(join(real, 'shop'))
+    const link = join(parent, 'link')
+    symlinkSync(real, link, 'junction')
+    const linked = join(link, 'shop-x')
+    git(join(link, 'shop'), 'worktree', 'add', '-q', '-b', 'feat/x', linked)
+    const place = await folderPlace(execGit, linked)
+    expect(place).toMatchObject({ project: { key: pathKey(realpathSync.native(dir)), name: 'shop' }, branch: 'feat/x' })
+    expect(pathKey(realpathSync.native(place!.worktree!.path))).toBe(pathKey(realpathSync.native(linked)))
+    expect(await folderPlace(execGit, join(real, 'shop-x'))).toEqual(place)
+    expect((await folderPlace(execGit, join(link, 'shop')))?.worktree).toBeNull()
   })
 
   it('gives a subfolder of a linked worktree the same place as the worktree', async () => {

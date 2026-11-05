@@ -253,7 +253,7 @@ export interface CtApi {
   setPanel(width: number, resize: boolean): Promise<PanelMode>
   /** the left tab panel's width and folded groups */
   getTabLayout(): Promise<TabLayout>
-  /** saves the part of the left tab panel's layout that is given; the width is kept between 160 and 480 px */
+  /** saves the part of the left tab panel's layout that is given; the width is kept within TAB_PANEL_WIDTH (220 to 480 px) */
   setTabLayout(change: Partial<TabLayout>): void
   /** the extra accounts, without their tokens */
   listAccounts(): Promise<AccountsView>

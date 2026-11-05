@@ -4,8 +4,8 @@ import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { GitError, type GitResult, type GitRun } from '../../src/main/git-source'
 import { pathKey } from '../../src/main/path-key'
-import { folderPlace, parseWorktreeList, TabPlaces, WORKTREE_COLORS, worktreeColors } from '../../src/main/tab-places'
-import type { TabPlace } from '../../src/shared/types'
+import { folderPlace, parseWorktreeList, TabPlaces, worktreeColors } from '../../src/main/tab-places'
+import { WORKTREE_COLORS, type TabPlace } from '../../src/shared/types'
 
 // the existence check of a folder must not be a blocking call: the spy shows whether one is made
 vi.mock('node:fs', async (importOriginal) => {
@@ -66,7 +66,7 @@ describe('worktree colors', () => {
 
   it('gives six paths six different colors', () => {
     const colors = [...worktreeColors(paths).values()]
-    expect(WORKTREE_COLORS).toBe(6)
+    expect(WORKTREE_COLORS).toHaveLength(6)
     expect(new Set(colors).size).toBe(6)
     for (const c of colors) expect(c).toBeGreaterThanOrEqual(0)
     for (const c of colors) expect(c).toBeLessThan(6)
@@ -237,6 +237,33 @@ describe('TabPlaces cache', () => {
     expect(git.asks.get(dirA)).toBe(1)
     places.refresh('a1')
     await vi.waitFor(() => expect(git.asks.get(dirA)).toBe(2))
+  })
+
+  it('asks git again after the answer in flight when the tab is refreshed meanwhile: a branch switched during the ask shows', async () => {
+    let branch = 'main'
+    let release: () => void = () => {}
+    const held = new Promise<void>((done) => { release = done })
+    let asks = 0
+    // the first ask reads the branch before it is switched, and answers only after the refresh
+    const run: GitRun = async (args) => {
+      if (args[0] === 'rev-parse') {
+        asks++
+        return ok(`${fwd(dirA)}\n`)
+      }
+      const seen = branch
+      if (asks === 1) await held
+      return ok(`worktree ${fwd(dirA)}\nHEAD ${SHA_1}\nbranch refs/heads/${seen}\n\n`)
+    }
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('a1', dirA)
+    await settle()
+    branch = 'feat'
+    places.refresh('a1')
+    places.refresh('a1')
+    release()
+    await vi.waitFor(() => expect(published.at(-1)?.[1]?.branch).toBe('feat'))
+    expect(asks).toBe(2)
   })
 
   it('forgets a folder that no tab uses any more: a tab added to it later waits for git again', async () => {

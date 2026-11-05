@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { SessionSnapshotTab } from '../../src/shared/types'
 import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, makeDataDir, TEST_SHELL, writeTranscript } from './helpers'
@@ -156,6 +156,52 @@ test('Restore forks again a fork without a conversation of its own, and its note
   expect(saved).not.toHaveProperty(SID_B)
 })
 
+test('Restore keeps the saved order and each family, a fork dragged on top before its head or after another tab included', async () => {
+  const config = mkdtempSync(join(tmpdir(), 'ct-claude-config-'))
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  const claude = (title: string, more: object) => ({ kind: 'claude', profile: TEST_SHELL, cwd: work, title, claudeSessionId: null, ...more })
+  const tabs = [
+    claude('f1', { fork: { of: 2, from: SID_A } }),
+    { kind: 'shell', profile: TEST_SHELL, cwd: work, title: 'shell' },
+    claude('head', { claudeSessionId: SID_A }),
+    { kind: 'shell', profile: TEST_SHELL, cwd: work, title: 'other' },
+    claude('f2', { fork: { of: 2, from: SID_A } })
+  ]
+  writeFileSync(join(dataDir, 'session-state.json'), JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs }))
+  const { app, page } = await launchApp({ dataDir, env: { CLAUDE_CONFIG_DIR: config } })
+  await expect.poll(() => page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
+  await page.locator('.banner-restore').click()
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 5)
+  expect(await page.evaluate(() => window.__ct!.tabIds().map((id) => window.__ct!.tabTitle(id)))).toEqual(['f1', 'shell', 'head', 'other', 'f2'])
+  await expect.poll(() => snapshotTabs(dataDir).map((t) => t.fork?.of ?? null)).toEqual([2, null, null, null, 2])
+  const ids = await page.evaluate(() => window.__ct!.tabIds())
+  for (const f of [ids[0]!, ids[4]!]) await expect.poll(() => bufferText(page, f), { timeout: 15_000 }).toContain(`--resume ${SID_A} --fork-session`)
+  await app.close()
+})
+
+test('a fork whose conversation was cleared is not forked again: a restart before its first message starts a new conversation', async () => {
+  const SID_C = 'a3c2cf68-2929-4166-9a00-000000000001'
+  const { app, page, dataDir, pipeName, config, work, tabId: a } = await startWithClaudeTab()
+  await sessionStarts(pipeName, a, SID_A, 'startup', writeTranscript(config, work, SID_A))
+  await page.evaluate((id) => window.ct.forkTab(id), a)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  await expect.poll(() => bufferText(page, f), { timeout: 15_000 }).toContain(`--resume ${SID_A} --fork-session`)
+  const transcriptB = writeTranscript(config, work, SID_B)
+  await sessionStarts(pipeName, f, SID_B, 'fork', transcriptB)
+  // /clear: a conversation of the tab's own, whose transcript Claude Code writes only with its first message
+  await sessionStarts(pipeName, f, SID_C, 'clear', join(dirname(transcriptB), `${SID_C}.jsonl`))
+  await expect.poll(() => snapshotTabs(dataDir)[1]?.fork).toEqual({ of: 0, from: null })
+
+  await page.evaluate((id) => window.ct.restartTab(id, true), f)
+  // the restarted process's line ends with the settings file when it neither resumes nor forks
+  await expect.poll(() => bufferText(page, f), { timeout: 15_000 }).not.toContain('--fork-session')
+  await expect.poll(() => bufferText(page, f), { timeout: 15_000 }).toContain('claude-tab-settings.json')
+  expect(await bufferText(page, f)).not.toContain('--resume')
+  await app.close()
+})
+
 /** the settings of the left panel, with a default folder outside git so the tabs of the test are in No project */
 const leftSettings = (): object => ({ ...FAKE_CLAUDE_SETTINGS, defaultFolder: mkdtempSync(join(tmpdir(), 'ct-folder-')), tabs: { position: 'left' } })
 
@@ -176,14 +222,14 @@ test('the tab menu forks a Claude tab, and the fork shows as one', async () => {
 
   await sessionStarts(pipeName, a, SID_A, 'startup', writeTranscript(config, work, SID_A))
   await expect.poll(() => page.evaluate((id) => window.ct.canForkTab(id), a)).toBe(true)
-  const parentTitle = (await page.evaluate((id) => window.__ct!.tabTitle(id), a))!
   await forkFromMenu(page, panelRow(page, a))
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
   // the panel's rows are in the settled order before they are read
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a, f])
-  // the fork's title is the folder's until its shell has set one of its own
-  await expect.poll(() => page.evaluate((id) => window.__ct!.tabTitle(id), f)).toBe(`${parentTitle} (fork)`)
+  // the fork's title is the head's with (fork): each shell sets its title on its own and may change it later
+  // (an elevated PowerShell adds "Administrator: "), so the two are compared once both have settled
+  await expect.poll(() => page.evaluate(([h, k]) => `${window.__ct!.tabTitle(h)} (fork)` === window.__ct!.tabTitle(k), [a, f] as const)).toBe(true)
 
   await expect(panelRow(page, f)).toBeVisible()
   expect(await page.locator('#tabpanel .tp-tab').evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.tabId))).toEqual([a, f])
@@ -212,7 +258,6 @@ test('closing the head leaves its forks as ordinary rows that keep (fork)', asyn
   const { app, page, pipeName, config, work, tabId: a } = await startWithClaudeTab(leftSettings())
   await sessionStarts(pipeName, a, SID_A, 'startup', writeTranscript(config, work, SID_A))
   await expect.poll(() => page.evaluate((id) => window.ct.canForkTab(id), a)).toBe(true)
-  const parentTitle = (await page.evaluate((id) => window.__ct!.tabTitle(id), a))!
   await forkFromMenu(page, panelRow(page, a))
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
@@ -224,7 +269,9 @@ test('closing the head leaves its forks as ordinary rows that keep (fork)', asyn
   await page.waitForFunction((id) => !window.__ct!.tabIds().includes(id), a)
   await expect(panelRow(page, f)).toBeVisible()
   expect(await panelRow(page, f).evaluate((el) => el.classList.contains('fork'))).toBe(false)
-  await expect.poll(() => page.evaluate((id) => window.__ct!.tabTitle(id), f)).toBe(`${parentTitle} (fork)`)
+  // the title is the fork's own shell's, which may still change (an elevated PowerShell adds "Administrator: "): the suffix stays
+  await expect(panelRow(page, f).locator('.tab-title')).toHaveText(/ \(fork\)$/)
+  expect(await page.evaluate((id) => window.__ct!.tabTitle(id), f)).toMatch(/ \(fork\)$/)
   await app.close()
 })
 

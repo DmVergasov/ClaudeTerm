@@ -501,6 +501,13 @@ function bootstrap(): void {
       log.warn(`cannot remove previous session: ${(e as Error).message}`)
     }
     send(IPC.evRestore, null)
+    // a fork whose own conversation was never saved forks its head's again, rather than resuming nothing. The transcripts
+    // are looked for together, before any tab opens, so the restored tabs then open in one go, in their saved order
+    const projects = claudeProjectsDir(process.env, homedir())
+    const unsaved = await Promise.all(snap.tabs.map(async (t) => {
+      const id = t.kind === 'claude' && t.fork?.from ? t.claudeSessionId : null
+      return id !== null && (await findTranscript(join(projects, t.cwd.replace(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`), id)) === null
+    }))
     if (autoTabId) {
       if (tabs.get(autoTabId)) tabs.close(autoTabId)
       autoTabId = null
@@ -508,30 +515,28 @@ function bootstrap(): void {
     let first: string | null = null
     // the opened tab of each snapshot tab, by its index in the snapshot: a fork finds its head there
     const openedIds: (string | null)[] = []
-    for (const t of snap.tabs) {
+    snap.tabs.forEach((t, i) => {
       const { cwd, warning } = resolveLaunchDir(t.cwd, homedir(), isDirectory)
       if (warning) toast(warning)
-      let resumeSessionId = t.kind === 'claude' ? t.claudeSessionId : null
-      // a fork whose own conversation was never saved forks its head's again, rather than resuming nothing
-      let forkedAgain: string | null = null
-      if (t.kind === 'claude' && t.fork && resumeSessionId !== null) {
-        const transcript = join(claudeProjectsDir(process.env, homedir()), t.cwd.replace(/[^A-Za-z0-9]/g, '-'), `${resumeSessionId}.jsonl`)
-        if ((await findTranscript(transcript, resumeSessionId)) === null) {
-          forkedAgain = resumeSessionId
-          resumeSessionId = null
-        }
-      }
-      const fork = t.kind === 'claude' && t.fork ? { of: t.fork.of === null ? null : (openedIds[t.fork.of] ?? null), from: t.fork.from } : null
+      const resumeSessionId = t.kind === 'claude' && !unsaved[i] ? t.claudeSessionId : null
+      // a fork opens where it was saved, and joins its head's family below, once the head is open too
+      const fork = t.kind === 'claude' && t.fork ? { of: null, from: t.fork.from } : null
       const opened = openTab(
         { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId, account: t.kind === 'claude' ? t.account : null, muted: t.muted, fork },
         false
       )
       // the note stored under the fork's own conversation goes with the tab to the conversation it gets
-      if (opened && forkedAgain !== null) noteHub.adopt(opened.id, forkedAgain)
+      if (opened && unsaved[i] && t.claudeSessionId !== null) noteHub.adopt(opened.id, t.claudeSessionId)
       openedIds.push(opened?.id ?? null)
       if (opened && t.working && settings.claude.continueAfterRestore) resumeAfterRestore.add(opened.id)
       if (opened && first === null) first = opened.id
-    }
+    })
+    snap.tabs.forEach((t, i) => {
+      const head = t.fork?.of ?? null
+      const id = openedIds[i]
+      const headId = head === null ? null : openedIds[head]
+      if (id && headId) tabs.joinFamily(id, headId)
+    })
     if (first) tabs.activate(first)
   }
 
@@ -611,7 +616,7 @@ function bootstrap(): void {
     },
     session: (msg) => {
       log.info(`session ${msg.source} tab=${msg.tabId} id=${msg.sessionId} transcript=${msg.transcriptPath ?? '-'}`)
-      if (!tabs.setClaudeSession(msg.tabId, msg.sessionId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      if (!tabs.setClaudeSession(msg.tabId, msg.sessionId, msg.source)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
       planHub.session(msg.tabId, msg.sessionId)
       noteHub.session(msg.tabId, msg.sessionId)
