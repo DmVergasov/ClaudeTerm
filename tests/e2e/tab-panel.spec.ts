@@ -229,8 +229,9 @@ test('a tab in a folded group unfolds its group when it becomes the active tab',
   const repo = gitRepo()
   const { app, page } = await launchApp({ settings: left(freshFolder()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repo)
-  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, home])
   const group = groupNamed(page, basename(repo))
   await page.evaluate((id) => window.ct.activateTab(id), home)
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, home)
@@ -287,11 +288,14 @@ test('Ctrl+Tab and Ctrl+Alt+N follow the panel\'s order', async () => {
   const repoB = gitRepo()
   const { app, page } = await launchApp({ settings: left(freshFolder()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repoA)
   const b1 = await openTab(page, 'shell', repoB)
   const a2 = await openTab(page, 'shell', repoA)
   // the panel shows A1, A2, B1 (No project last), though the tabs were opened in another order
   await expect(groupNamed(page, basename(repoA))).toHaveCount(1)
+  // the keys go by the settled order: a tab still in No project until its place arrives would be the next one
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, b1, home])
   await page.evaluate((id) => window.ct.activateTab(id), a1)
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
   await page.locator('.terminal-host:visible .xterm').click()
@@ -360,8 +364,7 @@ test('a family moves together, and a fork stays in its family', async () => {
   const b = await openTab(page, 'shell', repo)
   await page.evaluate((id) => window.ct.forkTab(id), a)
   await page.waitForFunction(() => window.__ct!.tabIds().length === 3)
-  const [, a1] = await page.evaluate(() => window.__ct!.tabIds())
-  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a, a1, b])
+  const a1 = (await page.evaluate(() => window.__ct!.tabIds())).find((id) => id !== a && id !== b)!
 
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a, a1, b])
   await row(page, a).dragTo(row(page, b))

@@ -180,6 +180,8 @@ test('the tab menu forks a Claude tab, and the fork shows as one', async () => {
   await forkFromMenu(page, panelRow(page, a))
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  // the panel's rows are in the settled order before they are read
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a, f])
   // the fork's title is the folder's until its shell has set one of its own
   await expect.poll(() => page.evaluate((id) => window.__ct!.tabTitle(id), f)).toBe(`${parentTitle} (fork)`)
 
@@ -201,6 +203,7 @@ test("a renamed tab's fork starts with its name", async () => {
   await forkFromMenu(page, panelRow(page, a))
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a, f])
   expect(await page.evaluate((id) => window.__ct!.tabTitle(id), f)).toBe('auth refactor (fork)')
   await app.close()
 })
@@ -213,6 +216,7 @@ test('closing the head leaves its forks as ordinary rows that keep (fork)', asyn
   await forkFromMenu(page, panelRow(page, a))
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a, f])
   await expect(panelRow(page, f)).toHaveClass(/fork/)
 
   await panelRow(page, a).hover()
