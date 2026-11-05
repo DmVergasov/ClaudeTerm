@@ -1,4 +1,5 @@
 import { shortcutLabel } from './keymap'
+import { noteIcon } from './note-overlay'
 import type { TabBarCallbacks, TabBarItem } from './tabbar'
 
 /** one full fade in and out of the attention pulse: 2 × the 1.2 s alternate animation in styles.css */
@@ -27,7 +28,7 @@ export function pulseDelay(): string {
 export interface TabParts {
   icon: HTMLElement
   label: HTMLElement
-  /** the muted, bell and images marks, in this order */
+  /** the note, muted, bell and images marks, in this order */
   marks: HTMLElement[]
   close: HTMLButtonElement
 }
@@ -41,6 +42,13 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
   label.className = 'tab-title'
   label.textContent = item.title
   const marks: HTMLElement[] = []
+  if (item.note) {
+    const n = document.createElement('span')
+    n.className = 'tab-note'
+    n.title = 'Has a note'
+    n.innerHTML = noteIcon(12)
+    marks.push(n)
+  }
   if (item.muted) {
     const m = document.createElement('span')
     m.className = 'tab-muted'

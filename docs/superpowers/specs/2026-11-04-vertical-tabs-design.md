@@ -45,7 +45,8 @@ the variant "flat list under project headers, branch on every tab, colored bar f
   (and Note, when session notes exist on the branch — see "Session notes" below), then the position button. The
   buttons behave exactly as in the tab bar on top.
 - **Width**: 240 px to start; the user drags the panel's right edge to change it, and the width is kept across
-  restarts. *(Claude's call: between 160 and 480 px.)*
+  restarts. *(Claude's call: between 220 and 480 px; at 220 the header still holds all its buttons, Docs and Note
+  included.)*
 - **Groups**, one per project, in this order: projects, then **No project** last.
   - A **project** is a git repository: every tab whose folder is inside the repository or inside any of its
     worktrees belongs to it. Its header shows the main worktree's folder name, small and uppercase, with a chevron.

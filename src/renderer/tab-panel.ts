@@ -46,7 +46,7 @@ export class TabPanel {
     const spacer = document.createElement('div')
     spacer.className = 'tp-spacer'
     const h = this.header
-    this.head.replaceChildren(h.plus, h.more, spacer, h.changes, h.images, h.position)
+    this.head.replaceChildren(h.plus, h.more, spacer, h.changes, h.docs, h.images, h.note, h.position)
     this.list.className = 'tp-list'
     this.handle.className = 'tp-resize'
     this.width = clampWidth(layout.width)
@@ -90,8 +90,18 @@ export class TabPanel {
     this.header.setChanges(available, visible, unviewed)
   }
 
+  /** the Docs button is hidden while the tab has no document to show; it is lit while the Docs panel is shown */
+  setDocs(available: boolean, visible: boolean): void {
+    this.header.setDocs(available, visible)
+  }
+
   setImages(visible: boolean, unseen: number): void {
     this.header.setImages(visible, unseen)
+  }
+
+  /** the Note button exists only for Claude tabs; it is lit while the note is shown */
+  setNote(available: boolean, visible: boolean): void {
+    this.header.setNote(available, visible)
   }
 
   /** a tab that becomes the active one shows: its group unfolds, and that is kept */

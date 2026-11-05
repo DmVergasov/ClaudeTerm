@@ -27,13 +27,13 @@ describe('TabLayoutStore', () => {
     expect(new TabLayoutStore(d).get()).toEqual({ width: 300, folded: ['k'] })
   })
 
-  it('clamps a width outside 160 to 480 on set and on read', () => {
+  it('clamps a width outside 220 to 480 on set and on read', () => {
     const d = dir()
     const store = new TabLayoutStore(d)
     store.set({ width: 9000 })
     expect(store.get().width).toBe(480)
     store.set({ width: 10 })
-    expect(store.get().width).toBe(160)
+    expect(store.get().width).toBe(220)
     writeFileSync(join(d, 'tab-layout.json'), JSON.stringify({ width: 9999, folded: [] }))
     expect(new TabLayoutStore(d).get().width).toBe(480)
   })
@@ -46,8 +46,8 @@ describe('TabLayoutStore', () => {
     const store = new TabLayoutStore(d, (m) => errors.push(m))
     expect(store.get()).toEqual({ width: 240, folded: [] })
     expect(errors).toEqual([`ignoring corrupt ${path}`])
-    store.set({ width: 200 })
-    expect(new TabLayoutStore(d).get()).toEqual({ width: 200, folded: [] })
+    store.set({ width: 260 })
+    expect(new TabLayoutStore(d).get()).toEqual({ width: 260, folded: [] })
   })
 
   it('a file of the wrong shape means the defaults and is reported', () => {

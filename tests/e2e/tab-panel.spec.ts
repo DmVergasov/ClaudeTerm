@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, makeDataDir, PROMPT, writeTranscript } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, PROMPT, writeTranscript } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -183,11 +183,11 @@ test('the panel\'s width is dragged and kept', async () => {
   await dragBy(page, page.locator('#tabpanel .tp-resize'), 100)
   await expect.poll(() => panelWidth(page)).toBe(340)
   await dragBy(page, page.locator('#tabpanel .tp-resize'), -1000)
-  await expect.poll(() => panelWidth(page)).toBe(160)
+  await expect.poll(() => panelWidth(page)).toBe(220)
   await app.close()
 
   const again = await launchApp({ dataDir })
-  await expect.poll(() => panelWidth(again.page)).toBe(160)
+  await expect.poll(() => panelWidth(again.page)).toBe(220)
   await again.app.close()
 })
 
@@ -550,5 +550,94 @@ test('a drag that ends off the rows leaves no tab to move, so a later drop reord
   }, a1)
   await page.waitForTimeout(500)
   expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, home])
+  await app.close()
+})
+
+test("the panel header's Note button shows and hides a Claude tab's note; a shell tab has no Note button", async () => {
+  const { app, page } = await launchClaudeTab(left(freshFolder()))
+  const button = page.locator('#tabpanel .tp-head .tab-note-toggle')
+  const card = page.locator('#note .note-card')
+  await expect(button).toBeVisible()
+  await expect(button).toHaveAttribute('title', `Note (${KEY_LABELS.note})`)
+  await expect(button).not.toHaveClass(/active/)
+
+  await button.click()
+  await expect(card).toBeVisible()
+  await expect(card.locator('.note-text')).toBeFocused()
+  await expect(button).toHaveClass(/active/)
+  await page.keyboard.type('Goal: payments')
+  await button.click()
+  await expect(card).toBeHidden()
+  await expect(button).not.toHaveClass(/active/)
+  await button.click()
+  await expect(card).toBeVisible()
+  await expect(card.locator('.note-text')).toHaveValue('Goal: payments')
+
+  await openTab(page, 'shell', freshFolder())
+  await expect(button).toBeHidden()
+  await expect(card).toBeHidden()
+  await app.close()
+})
+
+test('a tab whose note has text shows the note mark in the first line of its row', async () => {
+  const { app, page, tabId, work } = await launchClaudeTab(left(freshFolder()))
+  const second = await openTab(page, 'claude', work)
+  const mark = (id: string): Locator => row(page, id).locator('.tp-l1 .tab-note')
+  await expect(row(page, second)).toBeVisible()
+  await expect(mark(second)).toHaveCount(0)
+
+  // the shortcut, not the panel's button: this test is about the mark
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press(KEYS.note)
+  await expect(page.locator('#note .note-text')).toBeFocused()
+  await page.keyboard.type('TODO: tests')
+  await expect(mark(second)).toHaveCount(1)
+  await expect(mark(second)).toHaveAttribute('title', 'Has a note')
+  await expect(mark(tabId)).toHaveCount(0)
+  await app.close()
+})
+
+test("the panel header's Docs button shows once a Claude tab has a document, and opens and hides the Docs panel", async () => {
+  const { app, page, pipeName, tabId, work } = await launchClaudeTab(left(freshFolder()))
+  const button = page.locator('#tabpanel .tp-head .tab-docs-toggle')
+  const panel = page.locator('#image-panel')
+  await expect(page.locator('#tabpanel .tp-head .tab-changes-toggle')).toBeVisible()
+  await expect(button).toBeHidden()
+
+  const spec = join(work, 'spec.md')
+  writeFileSync(spec, '# Spec\n\nBody text.\n')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'show_document', tabId, path: spec, title: null })).toMatchObject({ ok: true })
+  await expect(page.locator('.panel-title')).toHaveText('Docs')
+  await expect(button).toBeVisible()
+  await expect(button).toHaveClass(/active/)
+  await expect(button).toHaveAttribute('title', `Docs (${KEY_LABELS.docs})`)
+  // the side-panel toggles stand as on top: Changes, Docs, Media, Note, then the position button
+  const shown = await page.locator('#tabpanel .tp-head button').evaluateAll((els) => els.filter((el) => !(el as HTMLElement).hidden).map((el) => el.classList[0]))
+  expect(shown).toEqual(['tab-new', 'tab-menu', 'tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-note-toggle', 'tab-position'])
+
+  await button.click()
+  await expect(panel).toHaveClass(/collapsed/)
+  await expect(button).not.toHaveClass(/active/)
+  await button.click()
+  await expect(panel).not.toHaveClass(/collapsed/)
+  await expect(page.locator('.doc-md h1')).toHaveText('Spec')
+  await app.close()
+})
+
+test('at its narrowest the panel still holds every header button, Docs and Note included', async () => {
+  const { app, page, pipeName, tabId, work } = await launchClaudeTab(left(freshFolder()))
+  const spec = join(work, 'spec.md')
+  writeFileSync(spec, '# Spec\n')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'show_document', tabId, path: spec, title: null })).toMatchObject({ ok: true })
+  await expect(page.locator('#tabpanel .tp-head .tab-docs-toggle')).toBeVisible()
+  await expect(page.locator('#tabpanel .tp-head .tab-note-toggle')).toBeVisible()
+
+  await dragBy(page, page.locator('#tabpanel .tp-resize'), -1000)
+  // the right edge of the last button against the header's own: a button past it would lie under the terminal
+  const edges = await page.locator('#tabpanel .tp-head').evaluate((head) => ({
+    head: head.getBoundingClientRect().left + head.clientWidth,
+    last: Math.max(...[...head.querySelectorAll('button')].filter((b) => !b.hidden).map((b) => b.getBoundingClientRect().right))
+  }))
+  expect(edges.last).toBeLessThanOrEqual(edges.head)
   await app.close()
 })

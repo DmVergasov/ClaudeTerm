@@ -202,7 +202,8 @@ export interface TabLayout {
   folded: string[]
 }
 
-export const TAB_PANEL_WIDTH = { min: 160, max: 480, initial: 240 }
+/** at its narrowest the panel's header still holds all its buttons: + and ▾, Changes, Docs, Media, Note and the position */
+export const TAB_PANEL_WIDTH = { min: 220, max: 480, initial: 240 }
 
 /** A Claude Code conversation found in Claude Code's transcripts. */
 export interface SessionSummary {

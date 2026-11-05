@@ -127,17 +127,18 @@ function renderTitle(): void {
   document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')
 }
 
-/** the Media, Changes, Docs and Note buttons in the tab bar: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
+/** the Media, Changes, Docs and Note buttons in the tab bar and the left panel: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
 function refreshPanelButtons(): void {
   const unseen = activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0
   const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
   const unviewed = claude && activeId ? reviewUpdates.get(activeId)?.unviewed ?? 0 : 0
+  const docs = claude && (docUpdates.get(activeId ?? '')?.docs.length ?? 0) > 0
   for (const bar of [tabBar, tabPanel]) {
     bar.setImages(sidePanel.isShowing('images'), unseen)
     bar.setChanges(claude, sidePanel.isShowing('changes'), unviewed)
+    bar.setDocs(docs, sidePanel.isShowing('docs'))
+    bar.setNote(claude, claude && noteOverlay.isShown())
   }
-  tabBar.setDocs(claude && (docUpdates.get(activeId ?? '')?.docs.length ?? 0) > 0, sidePanel.isShowing('docs'))
-  tabBar.setNote(claude, claude && noteOverlay.isShown())
 }
 
 function logInput(tabId: string, data: string): void {

@@ -1,6 +1,4 @@
 import type { TabKind, TabPlace } from '../shared/types'
-import { shortcutLabel } from './keymap'
-import { noteIcon } from './note-overlay'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, pulseDelay, tabParts } from './tab-row'
 
@@ -51,24 +49,18 @@ export class TabBar {
   private items: TabBarItem[] = []
   private activeId: string | null = null
   private readonly header: TabHeader
-  private readonly docsButton: HTMLButtonElement
-  private readonly noteButton: HTMLButtonElement
   private list = document.createElement('div')
 
   /** the buttons are built once: a re-render (a busy Claude retitles its tab every second) must not drop a click or a tooltip */
   constructor(private readonly root: HTMLElement, private readonly cb: TabBarCallbacks, private readonly platform: string) {
     this.list.className = 'tabs'
     this.header = new TabHeader(cb, platform, 'top')
-    this.docsButton = this.createDocsButton()
-    this.noteButton = this.createToggle('tab-note-toggle', `Note (${shortcutLabel('toggleNote', platform)})`, () => this.cb.toggleNote(), noteIcon(16))
-    this.setDocs(false, false)
-    this.setNote(false, false)
   }
 
   /** the bar is in the page only while it is shown: a hidden one would still match the selectors of the shown one */
   show(visible: boolean): void {
     const h = this.header
-    this.root.replaceChildren(...(visible ? [this.list, h.plus, h.more, h.changes, this.docsButton, h.images, this.noteButton, h.position] : []))
+    this.root.replaceChildren(...(visible ? [this.list, h.plus, h.more, h.changes, h.docs, h.images, h.note, h.position] : []))
   }
 
   render(items: TabBarItem[], activeId: string | null): void {
@@ -89,8 +81,7 @@ export class TabBar {
 
   /** the Docs button is hidden while the tab has no document to show; it is lit while the Docs panel is shown */
   setDocs(available: boolean, visible: boolean): void {
-    this.docsButton.hidden = !available
-    this.docsButton.classList.toggle('active', visible)
+    this.header.setDocs(available, visible)
   }
 
   setImages(visible: boolean, unseen: number): void {
@@ -99,24 +90,7 @@ export class TabBar {
 
   /** the Note button exists only for Claude tabs; it is lit while the note is shown */
   setNote(available: boolean, visible: boolean): void {
-    this.noteButton.hidden = !available
-    this.noteButton.classList.toggle('active', visible)
-  }
-
-  private createDocsButton(): HTMLButtonElement {
-    return this.createToggle('tab-docs-toggle', `Docs (${shortcutLabel('toggleDocs', this.platform)})`, () => this.cb.toggleDocs(),
-      '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M3.65 1.65h6.2l2.5 2.5v10.2h-8.7z"/><path d="M5.5 7.5h5M5.5 9.75h5M5.5 12h3"/></svg>')
-  }
-
-  /** a toggle without a badge: the Docs and Note buttons */
-  private createToggle(cls: string, title: string, onClick: () => void, icon: string): HTMLButtonElement {
-    const b = document.createElement('button')
-    b.className = cls
-    b.title = title
-    b.innerHTML = icon
-    b.addEventListener('click', onClick)
-    return b
+    this.header.setNote(available, visible)
   }
 
   private renderTab(item: TabBarItem, active: boolean): HTMLElement {
@@ -127,15 +101,7 @@ export class TabBar {
     el.draggable = true
     el.title = `${item.title}\n${item.folder}`
     const parts = tabParts(item, this.platform, this.cb)
-    el.append(parts.icon, parts.label)
-    if (item.note) {
-      const n = document.createElement('span')
-      n.className = 'tab-note'
-      n.title = 'Has a note'
-      n.innerHTML = noteIcon(12)
-      el.append(n)
-    }
-    el.append(...parts.marks, parts.close)
+    el.append(parts.icon, parts.label, ...parts.marks, parts.close)
     bindTab(el, item, this.cb, () => this.startRename(parts.label, item))
     el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(TAB_DRAG, item.id) })
     el.addEventListener('dragover', (e) => { if (dragCarries(e, TAB_DRAG)) e.preventDefault() })
