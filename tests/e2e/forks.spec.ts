@@ -128,6 +128,34 @@ test('Restore keeps forks under their head, and forks again a fork that had no c
   }
 })
 
+test('Restore forks again a fork without a conversation of its own, and its note goes with the conversation it gets', async () => {
+  const SID_C = 'a3c2cf68-2929-4166-9a00-000000000001'
+  const config = mkdtempSync(join(tmpdir(), 'ct-claude-config-'))
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  const head = { kind: 'claude', profile: TEST_SHELL, cwd: work, title: 'head', claudeSessionId: SID_A }
+  const fork = { kind: 'claude', profile: TEST_SHELL, cwd: work, title: 'fork', claudeSessionId: SID_B, fork: { of: 0, from: SID_A } }
+  writeFileSync(join(dataDir, 'session-state.json'), JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs: [head, fork] }))
+  writeFileSync(join(dataDir, 'session-notes.json'), JSON.stringify({ [SID_B]: { text: 'fork note', shown: true, form: 'card' } }))
+  const { app, page, pipeName } = await launchApp({ dataDir, env: { CLAUDE_CONFIG_DIR: config } })
+  await expect.poll(() => page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
+  await page.locator('.banner-restore').click()
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const f = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  await expect.poll(() => bufferText(page, f), { timeout: 15_000 }).toContain(`--resume ${SID_A} --fork-session`)
+
+  // the fork is forked again from its head: the note it had comes with it
+  await page.evaluate((id) => window.ct.activateTab(id), f)
+  await expect(page.locator('#note .note-card .note-text')).toHaveValue('fork note')
+
+  // the fork's own SessionStart: the note is stored under the new conversation, and the old entry is gone
+  await sessionStarts(pipeName, f, SID_C, 'fork', null)
+  await app.close()
+  const saved = JSON.parse(readFileSync(join(dataDir, 'session-notes.json'), 'utf8')) as Record<string, { text: string }>
+  expect(saved[SID_C]?.text).toBe('fork note')
+  expect(saved).not.toHaveProperty(SID_B)
+})
+
 /** the settings of the left panel, with a default folder outside git so the tabs of the test are in No project */
 const leftSettings = (): object => ({ ...FAKE_CLAUDE_SETTINGS, defaultFolder: mkdtempSync(join(tmpdir(), 'ct-folder-')), tabs: { position: 'left' } })
 

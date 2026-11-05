@@ -513,15 +513,21 @@ function bootstrap(): void {
       if (warning) toast(warning)
       let resumeSessionId = t.kind === 'claude' ? t.claudeSessionId : null
       // a fork whose own conversation was never saved forks its head's again, rather than resuming nothing
+      let forkedAgain: string | null = null
       if (t.kind === 'claude' && t.fork && resumeSessionId !== null) {
         const transcript = join(claudeProjectsDir(process.env, homedir()), t.cwd.replace(/[^A-Za-z0-9]/g, '-'), `${resumeSessionId}.jsonl`)
-        if ((await findTranscript(transcript, resumeSessionId)) === null) resumeSessionId = null
+        if ((await findTranscript(transcript, resumeSessionId)) === null) {
+          forkedAgain = resumeSessionId
+          resumeSessionId = null
+        }
       }
       const fork = t.kind === 'claude' && t.fork ? { of: t.fork.of === null ? null : (openedIds[t.fork.of] ?? null), from: t.fork.from } : null
       const opened = openTab(
         { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId, account: t.kind === 'claude' ? t.account : null, muted: t.muted, fork },
         false
       )
+      // the note stored under the fork's own conversation goes with the tab to the conversation it gets
+      if (opened && forkedAgain !== null) noteHub.adopt(opened.id, forkedAgain)
       openedIds.push(opened?.id ?? null)
       if (opened && t.working && settings.claude.continueAfterRestore) resumeAfterRestore.add(opened.id)
       if (opened && first === null) first = opened.id
