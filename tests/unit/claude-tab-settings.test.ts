@@ -53,6 +53,7 @@ describe('hook files', () => {
     const hook = [{ hooks: [run] }]
     expect(JSON.parse(claudeTabSettingsJson(hookRun, 'status command', 5))).toEqual({
       statusLine: { type: 'command', command: 'status command', refreshInterval: 5 },
+      permissions: { allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list'] },
       hooks: {
         SessionStart: hook,
         SubagentStart: hook,
@@ -65,6 +66,12 @@ describe('hook files', () => {
         StopFailure: hook,
         CwdChanged: hook
       }
+    })
+  })
+
+  it('claudeTabSettingsJson lets Claude use the two task list tools without asking, and nothing else', () => {
+    expect(JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', null)).permissions).toEqual({
+      allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list']
     })
   })
 

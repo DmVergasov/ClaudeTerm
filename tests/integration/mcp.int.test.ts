@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startPipeServer, type PipeServerHandle } from '../../src/main/pipe-server'
-import type { ShowDiffMessage, ShowDocumentMessage, ShowImageMessage } from '../../src/shared/protocol'
+import type { ShowDiffMessage, ShowDocumentMessage, ShowImageMessage, TaskListGetMessage, TaskListMessage } from '../../src/shared/protocol'
 import { testPipeName } from '../fixtures/platform'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
@@ -17,11 +17,13 @@ const pipe = testPipeName('test')
 const got: ShowImageMessage[] = []
 const diffs: ShowDiffMessage[] = []
 const docs: ShowDocumentMessage[] = []
+const taskLists: TaskListMessage[] = []
+const taskListGets: TaskListGetMessage[] = []
 let server: PipeServerHandle
 
 beforeAll(async () => {
   await build({ entryPoints: [resolve(__dirname, '../../src/mcp/show-image-server.ts')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', target: 'node20', logLevel: 'silent' })
-  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), cwd: () => ({ ok: true }), editBefore: () => ({ ok: true }), showDocument: async (m) => { docs.push(m); return { ok: true, info: 'Opened out/spec.md in the Docs panel.' } }, showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } } })
+  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), cwd: () => ({ ok: true }), editBefore: () => ({ ok: true }), showDocument: async (m) => { docs.push(m); return { ok: true, info: 'Opened out/spec.md in the Docs panel.' } }, showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } }, taskList: (m) => { taskLists.push(m); return { ok: true, info: 'Task list updated: 1 of 2 done.' } }, taskListGet: (m) => { taskListGets.push(m); return { ok: true, info: 'Release prep: 1 of 2 done' } } })
   mkdirSync(join(work, 'out'))
   writeFileSync(join(work, 'out', 'plot.png'), Buffer.from([1, 2, 3]))
   writeFileSync(join(work, 'out', 'spec.md'), '# Spec\n')
@@ -40,7 +42,7 @@ describe('show_image MCP server', () => {
     const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['show_diff', 'show_document', 'show_image'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['get_task_list', 'set_task_list', 'show_diff', 'show_document', 'show_image'])
     const res = await client.callTool({ name: 'show_image', arguments: { path: 'out/plot.png', caption: 'Plot' } })
     expect(res.isError).toBeFalsy()
     expect(res.content).toEqual([{ type: 'text', text: `Shown in ClaudeTerm: ${join(work, 'out', 'plot.png')}` }])
@@ -77,6 +79,39 @@ describe('show_image MCP server', () => {
     expect(res.isError).toBeFalsy()
     expect(res.content).toEqual([{ type: 'text', text: 'Opened out/spec.md in the Docs panel.' }])
     expect(docs).toEqual([{ v: 1, type: 'show_document', tabId: TAB, path: join(work, 'out', 'spec.md'), title: null }])
+    await client.close()
+  })
+
+  it('forwards set_task_list to ClaudeTerm and answers what it says', async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [bundle],
+      cwd: work,
+      env: { ...(process.env as Record<string, string>), CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
+    })
+    const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
+    await client.connect(transport)
+    const tasks = [{ title: 'Write the spec', status: 'completed' }, { title: 'Review it', status: 'pending' }]
+    const res = await client.callTool({ name: 'set_task_list', arguments: { title: 'Release prep', tasks } })
+    expect(res.isError).toBeFalsy()
+    expect(res.content).toEqual([{ type: 'text', text: 'Task list updated: 1 of 2 done.' }])
+    expect(taskLists).toEqual([{ v: 1, type: 'task_list', tabId: TAB, list: { title: 'Release prep', tasks } }])
+    await client.close()
+  })
+
+  it('answers get_task_list with the list ClaudeTerm reads', async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [bundle],
+      cwd: work,
+      env: { ...(process.env as Record<string, string>), CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
+    })
+    const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
+    await client.connect(transport)
+    const res = await client.callTool({ name: 'get_task_list', arguments: {} })
+    expect(res.isError).toBeFalsy()
+    expect(res.content).toEqual([{ type: 'text', text: 'Release prep: 1 of 2 done' }])
+    expect(taskListGets).toEqual([{ v: 1, type: 'task_list_get', tabId: TAB }])
     await client.close()
   })
 })

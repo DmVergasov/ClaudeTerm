@@ -1,9 +1,9 @@
 import './styles.css'
 import type { AccountView } from '../shared/accounts'
-import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
+import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
-import type { NotificationCase, PlanStatus, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
+import type { NotificationCase, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { DocPanel } from './doc-panel'
 import { ImagePanel } from './image-panel'
@@ -77,7 +77,7 @@ const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
 let updateBanner: UpdateBanner
 const statusUpdates = new Map<string, StatusUpdate>()
-const planUpdates = new Map<string, PlanStatus>()
+const planUpdates = new Map<string, PlanUpdate>()
 /** the extra accounts, without their tokens */
 let accounts: AccountView[] = []
 
@@ -169,7 +169,7 @@ function accountOf(tabId: string | null): string | null {
 }
 
 function renderStatus(tabId: string): void {
-  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId) ?? null)
+  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null)
 }
 
 /** Continue as …: the tab's conversation restarts on another account */
@@ -634,14 +634,14 @@ async function boot(): Promise<void> {
     setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
     closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
   }, ct.platform)
-  planList = new PlanList(document.getElementById('plan-list')!, () => { if (activeId) tabs.get(activeId)?.view.term.focus() })
+  planList = new PlanList(document.getElementById('plan-list')!, () => { if (activeId) tabs.get(activeId)?.view.term.focus() }, () => { if (activeId) ct.clearTaskList(activeId) })
   statusBar =new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'), (anchor) => {
     const r = anchor.getBoundingClientRect()
     // the menu opens over the status bar, kept inside the window
     if (activeId) showMenu({ x: r.left, y: r.top }, continueItems(activeId))
   }, (anchor) => {
     const p = activeId ? planUpdates.get(activeId) : undefined
-    if (p) planList.toggle(anchor, p)
+    if (p?.plan) planList.toggle(anchor, p.plan, !!p.agentList)
   })
   ct.onAccounts((v) => {
     accounts = v.accounts
@@ -656,11 +656,11 @@ async function boot(): Promise<void> {
     if (u.tabId === activeId) renderStatus(u.tabId)
   })
   ct.onPlan((u) => {
-    if (u.plan) planUpdates.set(u.tabId, u.plan)
+    if (u.plan) planUpdates.set(u.tabId, u)
     else planUpdates.delete(u.tabId)
     if (u.tabId === activeId) {
       renderStatus(u.tabId)
-      planList.update(u.plan)
+      planList.update(u.plan, !!u.agentList)
     }
   })
   ct.onAttention((tabId, reason) => {

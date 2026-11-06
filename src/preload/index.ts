@@ -54,6 +54,7 @@ const api: CtApi = {
   getStarredSessions: () => ipcRenderer.invoke(IPC.sessionsStarred),
   setNoteText: (id, text, generation) => ipcRenderer.send(IPC.notesSetText, id, text, generation),
   setNoteView: (id, shown, form, generation) => ipcRenderer.send(IPC.notesSetView, id, shown, form, generation),
+  clearTaskList: (id) => ipcRenderer.send(IPC.tasksClear, id),
   checkForUpdates: () => ipcRenderer.send(IPC.updateCheck),
   installUpdate: () => ipcRenderer.send(IPC.updateInstall),
   getUpdateState: () => ipcRenderer.invoke(IPC.updateGet),

@@ -67,6 +67,8 @@ When Claude ends its turn with work still running in the background — a shell 
 
 While Claude carries out a superpowers plan (`subagent-driven-development` or `executing-plans`), the status bar shows how far it has got — `3/7 · Save dialog and file writing` — and a click on it lists every task as done, current or still to come. It follows the plan's progress ledger and ends with ✓ when the plan is finished.
 
+Claude can also keep a task list of its own, with the bundled `set_task_list` tool, when it sees fit or you ask. It shows the same way, in the same status bar segment and task box: a superpowers plan in progress comes first, and once the plan is done the list shows. The list stays with the conversation, through `/clear`, Restore and Recent sessions, and the task box's Clear removes it.
+
 <p align="center"><img src="docs/images/status-bar.png" width="720" alt="Status bar: model, effort, context, 5-hour and weekly limits, running subagents"></p>
 
 The limits are shown for Claude Pro and Max subscriptions, where Claude Code reports them.
@@ -169,7 +171,7 @@ On macOS ClaudeTerm updates itself as well: it downloads a new release and puts 
 
 From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. **What's new** in the update banner lists what changed. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — check for updates** to check right away.
 
-On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff` and `show_document` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
+On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff`, `show_document`, `set_task_list` and `get_task_list` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
 
 **Requirements:** Windows 10 or 11 (x64), macOS 12 or later (Apple Silicon or Intel), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code (on Windows 2.1.139 or later).
 
@@ -278,7 +280,7 @@ flowchart LR
     claude["claude --settings claude-tab-settings.json"]
   end
   claude -- "hooks + statusLine" --> hook["session-hook.js"]
-  claude -- "MCP: show_image, show_diff, show_document" --> mcp["show-image-server.js"]
+  claude -- "MCP: show_image, show_diff, show_document, set_task_list, get_task_list" --> mcp["show-image-server.js"]
   hook -- "named pipe" --> main
   mcp -- "named pipe" --> main
   transcript[("session transcript\n+ subagent transcripts")] --> main

@@ -252,3 +252,42 @@ describe('parsePipeMessage: show_document', () => {
     expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'show_document', tabId: TAB, path: abs, title: 3 }))).toEqual({ ok: false, error: 'title must be a string or null' })
   })
 })
+
+describe('parsePipeMessage: task list', () => {
+  const list = { title: 'Release prep', tasks: [{ title: 'A', status: 'completed' }] }
+
+  it('accepts a task_list message with its list', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'task_list', tabId: TAB, list }))).toEqual({
+      ok: true,
+      message: { v: 1, type: 'task_list', tabId: TAB, list: { title: 'Release prep', tasks: [{ title: 'A', status: 'completed' }] } }
+    })
+  })
+
+  it('accepts a task_list message with a null list', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'task_list', tabId: TAB, list: null }))).toEqual({
+      ok: true,
+      message: { v: 1, type: 'task_list', tabId: TAB, list: null }
+    })
+  })
+
+  it('refuses a task_list without a list, or with more tasks than a list holds', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'task_list', tabId: TAB })).ok).toBe(false)
+    const tasks = Array.from({ length: 101 }, (_, i) => ({ title: `T${i}`, status: 'pending' }))
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'task_list', tabId: TAB, list: { tasks } }))).toEqual({
+      ok: false,
+      error: 'A task list holds at most 100 tasks; got 101.'
+    })
+  })
+
+  it('requires a UUID tabId for task_list and task_list_get', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'task_list', tabId: 'x', list }))).toEqual({ ok: false, error: 'tabId must be a UUID' })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'task_list_get' }))).toEqual({ ok: false, error: 'tabId must be a UUID' })
+  })
+
+  it('accepts a task_list_get message', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'task_list_get', tabId: TAB }))).toEqual({
+      ok: true,
+      message: { v: 1, type: 'task_list_get', tabId: TAB }
+    })
+  })
+})

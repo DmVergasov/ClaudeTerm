@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { accountSegment, changesSegment, formatTokens, levelFor, limitPace, modelFamily, planSegment, statusSegments } from '../../src/renderer/status-bar'
 import type { AgentStatus, MainStatus, PlanStatus } from '../../src/shared/types'
+import { taskListStatus } from '../../src/shared/task-list'
 
 const H = 3_600_000
 const FIVE_HOURS = 5 * H
@@ -120,6 +121,11 @@ it('planSegment: done/total and the current task; ✓ when finished; Task N for 
   expect(planSegment(plan(3))).toEqual({ key: 'plan', text: '3/7 · Save dialog and file writing', title: 'CSV Export — 3 of 7 done. Click for the task list', level: 'normal', fill: 3 / 7 })
   expect(planSegment(plan(7, true))).toMatchObject({ text: '✓ 7/7', fill: 1 })
   expect(planSegment(plan(3, false, '')).text).toBe('3/7 · Task 4')
+})
+it('planSegment: a list with no task in progress shows its count alone; ✓ only when every task is done', () => {
+  expect(planSegment(taskListStatus({ title: 'Release prep', tasks: [{ title: 'A', status: 'pending' }, { title: 'B', status: 'pending' }, { title: 'C', status: 'pending' }] })).text).toBe('0/3')
+  expect(planSegment(taskListStatus({ title: 'Release prep', tasks: [{ title: 'A', status: 'completed' }, { title: 'B', status: 'pending' }, { title: 'C', status: 'pending' }] })).text).toBe('1/3')
+  expect(planSegment(taskListStatus({ title: 'Release prep', tasks: [{ title: 'A', status: 'completed' }, { title: 'B', status: 'completed' }, { title: 'C', status: 'completed' }] })).text).toBe('✓ 3/3')
 })
 
 describe('limitPace', () => {

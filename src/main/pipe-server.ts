@@ -1,5 +1,5 @@
 import { createServer, type Socket } from 'node:net'
-import { type AttentionMessage, type CwdMessage, type EditBeforeMessage, encodeMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TurnMessage } from '../shared/protocol'
+import { type AttentionMessage, type CwdMessage, type EditBeforeMessage, encodeMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TaskListGetMessage, type TaskListMessage, type TurnMessage } from '../shared/protocol'
 
 export interface PipeHandlers {
   showImage(msg: ShowImageMessage): Promise<PipeResponse>
@@ -13,6 +13,8 @@ export interface PipeHandlers {
   editBefore(msg: EditBeforeMessage): PipeResponse
   showDiff(msg: ShowDiffMessage): Promise<PipeResponse>
   showDocument(msg: ShowDocumentMessage): Promise<PipeResponse>
+  taskList(msg: TaskListMessage): PipeResponse
+  taskListGet(msg: TaskListGetMessage): PipeResponse
 }
 
 export interface PipeServerHandle {
@@ -38,6 +40,8 @@ async function handleLine(line: string, h: PipeHandlers): Promise<PipeResponse> 
       case 'edit_before': return h.editBefore(m)
       case 'show_diff': return await h.showDiff(m)
       case 'show_document': return await h.showDocument(m)
+      case 'task_list': return h.taskList(m)
+      case 'task_list_get': return h.taskListGet(m)
     }
   } catch (e) {
     return { ok: false, error: (e as Error).message }

@@ -6,6 +6,7 @@ import { sendPipeMessage } from '../shared/pipe-client'
 import { defaultPipeName, isUuid } from '../shared/protocol'
 import { handleShowDiff } from './show-diff-tool'
 import { handleShowDocument } from './show-document-tool'
+import { handleGetTaskList, handleSetTaskList } from './task-list-tool'
 import { handleShowImage } from './show-image-tool'
 
 const server = new McpServer({ name: 'claudeterm', version: '0.1.0' })
@@ -88,6 +89,51 @@ server.registerTool(
         send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
       }
     )
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'set_task_list',
+  {
+    title: 'Show a task list in ClaudeTerm',
+    description:
+      'Show a task list with progress in the status bar of ClaudeTerm, for multi-step work, or when the user asks for one. ' +
+      'Send the whole list each time, every task with its status; an empty list removes it. ' +
+      'A superpowers plan is tracked by ClaudeTerm itself: do not mirror it here.',
+    inputSchema: {
+      title: z.string().optional().describe('A short title shown above the list; default: Tasks'),
+      tasks: z.array(z.object({ title: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })).describe('The whole list, in order')
+    }
+  },
+  async ({ title, tasks }) => {
+    const tabId = process.env.CLAUDETERM_TAB_ID
+    const r = await handleSetTaskList(
+      { title, tasks },
+      {
+        tabId: isUuid(tabId) ? tabId : null,
+        pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+        send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
+      }
+    )
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'get_task_list',
+  {
+    title: 'Read the task list in ClaudeTerm',
+    description: 'Read the task list shown in ClaudeTerm for this conversation, with each task\'s status.',
+    inputSchema: {}
+  },
+  async () => {
+    const tabId = process.env.CLAUDETERM_TAB_ID
+    const r = await handleGetTaskList({
+      tabId: isUuid(tabId) ? tabId : null,
+      pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+      send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
+    })
     return { content: [{ type: 'text', text: r.text }], isError: r.isError }
   }
 )

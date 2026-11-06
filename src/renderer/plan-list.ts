@@ -8,18 +8,19 @@ export function planCountText(p: PlanStatus): string {
 
 /** The box above the status bar that lists every task of a plan run as done, current or still to come. */
 export class PlanList {
-  constructor(private readonly el: HTMLElement, private readonly onClosed: () => void) {}
+  constructor(private readonly el: HTMLElement, private readonly onClosed: () => void, private readonly onClear: () => void) {}
 
   get isOpen(): boolean {
     return !this.el.hidden
   }
 
-  toggle(anchor: HTMLElement, plan: PlanStatus): void {
+  /** `clearable`: the list is Claude's own task list, which the box can remove */
+  toggle(anchor: HTMLElement, plan: PlanStatus, clearable: boolean): void {
     if (this.isOpen) {
       this.close()
       return
     }
-    this.render(plan)
+    this.render(plan, clearable)
     this.el.hidden = false
     this.place(anchor)
     // capture phase: Esc must not reach the terminal, where it would interrupt Claude's turn
@@ -27,13 +28,13 @@ export class PlanList {
     document.addEventListener('mousedown', this.onMouseDown, true)
   }
 
-  update(plan: PlanStatus | null): void {
+  update(plan: PlanStatus | null, clearable: boolean): void {
     if (!this.isOpen) return
     if (!plan) {
       this.close()
       return
     }
-    this.render(plan)
+    this.render(plan, clearable)
     this.place()
   }
 
@@ -60,7 +61,7 @@ export class PlanList {
     this.close()
   }
 
-  private render(plan: PlanStatus): void {
+  private render(plan: PlanStatus, clearable: boolean): void {
     const head = document.createElement('div')
     head.className = 'plan-head'
     const title = document.createElement('span')
@@ -70,6 +71,17 @@ export class PlanList {
     count.className = 'plan-count'
     count.textContent = planCountText(plan)
     head.append(title, count)
+    if (clearable) {
+      const clear = document.createElement('button')
+      clear.className = 'plan-clear'
+      clear.title = 'Remove this task list'
+      clear.textContent = 'Clear'
+      clear.addEventListener('click', () => {
+        this.onClear()
+        this.close()
+      })
+      head.append(clear)
+    }
     const rows = plan.tasks.map((t) => {
       const row = document.createElement('div')
       row.className = `plan-task ${t.state}`

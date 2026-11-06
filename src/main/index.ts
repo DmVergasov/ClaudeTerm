@@ -9,6 +9,7 @@ import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type Resto
 import type { DocRead } from '../shared/docs'
 import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
 import { socketDir } from '../shared/protocol'
+import { describeTaskList, taskListSummary } from '../shared/task-list'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
 import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout } from '../shared/types'
 import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './accounts'
@@ -55,6 +56,8 @@ import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
 import { NoteHub } from './note-hub'
 import { SessionNotes } from './session-notes'
+import { TaskListHub, shownPlan } from './task-list-hub'
+import { TaskListStore } from './task-list-store'
 import { TabLayoutStore } from './tab-layout'
 import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
@@ -174,6 +177,17 @@ function bootstrap(): void {
   const tabLayout = new TabLayoutStore(dataDir, toast)
   const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
   const noteHub = new NoteHub({ store: notes, publish: (tabId, note, generation) => send(IPC.evNote, tabId, note, generation) })
+  const taskListStore = new TaskListStore(dataDir, { onError: (m) => log.warn(m), warn: toast })
+  // the side of a tab's plan and list that changed last: with both finished, the one that finished later shows
+  const newerSide = new Map<string, 'plan' | 'list'>()
+  // the list Claude keeps for the status bar; each change goes out through sendPlan, with the plan
+  const taskLists = new TaskListHub({
+    store: taskListStore,
+    onChange: (tabId) => {
+      if (taskLists.status(tabId)) newerSide.set(tabId, 'list')
+      sendPlan(tabId)
+    }
+  })
   const accounts = new AccountStore(nodeAccountFile(join(dataDir, 'accounts.json')), electronVault(safeStorage, process.platform), { onError: (m) => log.warn(m) })
   /** how a message names an account */
   const accountName = (id: string): string => {
@@ -235,7 +249,15 @@ function bootstrap(): void {
     }
   })
 
-  const planHub = new PlanHub({ read: readPlanFile, onChange: (tabId) => send(IPC.evPlan, planHub.get(tabId)) })
+  // the status bar's plan segment: the superpowers plan, or else the list Claude keeps; every evPlan goes through here
+  const sendPlan = (tabId: string): void => send(IPC.evPlan, { tabId, ...shownPlan(planHub.get(tabId).plan, taskLists.status(tabId), newerSide.get(tabId) ?? 'plan') })
+  const planHub = new PlanHub({
+    read: readPlanFile,
+    onChange: (tabId) => {
+      if (planHub.get(tabId).plan) newerSide.set(tabId, 'plan')
+      sendPlan(tabId)
+    }
+  })
   setInterval(() => void planHub.refresh(), 1000)
 
   // a test run can have each sound written to a file instead of played
@@ -378,7 +400,10 @@ function bootstrap(): void {
     onTabStarted: (tab) => {
       startTabImages(tab)
       places.addTab(tab.id, tab.cwd)
-      if (tab.kind === 'claude') noteHub.addTab(tab.id, tab.claudeSessionId)
+      if (tab.kind === 'claude') {
+        noteHub.addTab(tab.id, tab.claudeSessionId)
+        taskLists.addTab(tab.id, tab.claudeSessionId)
+      }
     },
     // the tab's group and branch are those of the folder Claude works in
     onFolderChanged: (tabId, folder) => places.moveTab(tabId, folder),
@@ -399,6 +424,8 @@ function bootstrap(): void {
       places.removeTab(tabId)
       docs.removeTab(tabId)
       noteHub.removeTab(tabId)
+      taskLists.removeTab(tabId)
+      newerSide.delete(tabId)
     },
     spawn: spawnPty,
     pipeName,
@@ -629,6 +656,7 @@ function bootstrap(): void {
     beforeInstall: () => {
       sessions.flush()
       notes.flush()
+      taskListStore.flush()
       if (!writeUpdateMarker(dataDir, Date.now())) log.warn('cannot write the update restart marker')
     },
     openReleasePage: (version) => void shell.openExternal(releasePage(version)),
@@ -655,6 +683,7 @@ function bootstrap(): void {
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
       planHub.session(msg.tabId, msg.sessionId)
       noteHub.session(msg.tabId, msg.sessionId)
+      taskLists.session(msg.tabId, msg.sessionId, msg.source === 'fork' ? tabs.get(msg.tabId)?.fork?.from ?? null : null)
       // compact keeps the open dialogs: the conversation goes on
       review.sessionStarted(msg.tabId, msg.sessionId, msg.source)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
@@ -684,6 +713,7 @@ function bootstrap(): void {
       log.info(`session end tab=${msg.tabId} id=${msg.sessionId}`)
       statusHub.sessionEnd(msg.tabId, msg.sessionId)
       planHub.sessionEnd(msg.tabId, msg.sessionId)
+      taskLists.sessionEnd(msg.tabId, msg.sessionId)
       // a late SessionEnd of the session before /clear leaves the new one running
       review.sessionEnded(msg.tabId, msg.sessionId)
       // a continue still waiting would be typed into the shell
@@ -729,6 +759,15 @@ function bootstrap(): void {
       review.recordBefore(msg.tabId, msg.sessionId, msg.toolUseId, msg.path)
       return { ok: true }
     },
+    taskList: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: 'set_task_list works only in a ClaudeTerm Claude tab' }
+      taskLists.set(msg.tabId, msg.list)
+      return { ok: true, info: taskListSummary(msg.list) }
+    },
+    taskListGet: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: 'get_task_list works only in a ClaudeTerm Claude tab' }
+      return { ok: true, info: describeTaskList(taskLists.get(msg.tabId)) }
+    },
     showDiff: (msg) => review.showRequest(msg.tabId, { cwd: msg.cwd, scope: msg.scope, from: msg.from, to: msg.to, paths: msg.paths, title: msg.title }),
     showDocument: async (msg) => {
       const check = await checkDocFile(msg.path)
@@ -769,6 +808,9 @@ function bootstrap(): void {
   })
   ipcMain.on(IPC.notesSetView, (_e, id: unknown, shown: unknown, form: unknown, generation: unknown) => {
     if (isId(id) && isFlag(shown) && isNoteForm(form) && isGeneration(generation)) noteHub.setView(id, shown, form, generation)
+  })
+  ipcMain.on(IPC.tasksClear, (_e, id: unknown) => {
+    if (isId(id) && isClaudeTab(id)) taskLists.set(id, null)
   })
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
   ipcMain.handle(IPC.layoutGet, (): TabLayout => tabLayout.get())
@@ -1107,7 +1149,7 @@ function bootstrap(): void {
   win.on('unmaximize', refitLater)
   win.on('enter-full-screen', refitLater)
   win.on('leave-full-screen', refitLater)
-  win.on('close', () => { sessions.flush(); notes.flush() })
+  win.on('close', () => { sessions.flush(); notes.flush(); taskListStore.flush() })
   win.once('ready-to-show', () => { if (win) showWindow(win, isTest) })
   win.on('focus', () => {
     win?.flashFrame(false)
@@ -1137,6 +1179,7 @@ function bootstrap(): void {
     updater.stop()
     sessions.flush()
     notes.flush()
+    taskListStore.flush()
     for (const id of [...sources.keys()]) stopTabImages(id)
     for (const t of imageTimers.values()) clearTimeout(t)
     imageTimers.clear()

@@ -20,7 +20,9 @@ const okHandlers: PipeHandlers = {
   cwd: () => ({ ok: true }),
   editBefore: () => ({ ok: true }),
   showDiff: async () => ({ ok: true }),
-  showDocument: async () => ({ ok: true })
+  showDocument: async () => ({ ok: true }),
+  taskList: () => ({ ok: true }),
+  taskListGet: () => ({ ok: true })
 }
 
 let server: PipeServerHandle | null = null

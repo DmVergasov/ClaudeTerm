@@ -53,6 +53,7 @@ export const IPC = {
   sessionsStarred: 'sessions:starred',
   notesSetText: 'notes:set-text',
   notesSetView: 'notes:set-view',
+  tasksClear: 'tasks:clear',
   updateCheck: 'update:check',
   updateInstall: 'update:install',
   updateGet: 'update:get',
@@ -135,6 +136,8 @@ export interface StatusUpdate {
 export interface PlanUpdate {
   tabId: string
   plan: PlanStatus | null
+  /** the plan shown is the task list Claude keeps with set_task_list, which can be cleared, not a superpowers plan */
+  agentList?: boolean
 }
 
 export interface RestoreInfo {
@@ -240,6 +243,8 @@ export interface CtApi {
   setNoteText(tabId: string, text: string, generation: number): void
   /** whether a Claude tab's note is on show, and how it is drawn; `generation` as for setNoteText */
   setNoteView(tabId: string, shown: boolean, form: NoteForm, generation: number): void
+  /** removes the task list Claude keeps in a Claude tab with set_task_list (the one the task box can clear) */
+  clearTaskList(tabId: string): void
   checkForUpdates(): void
   installUpdate(): void
   getUpdateState(): Promise<UpdateState>

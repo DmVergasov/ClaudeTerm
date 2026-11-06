@@ -156,7 +156,8 @@ export function changesSegment(c: ReviewCounter): Segment {
 /** the superpowers plan being carried out: not part of Claude's status either, so it shows without a statusLine */
 export function planSegment(p: PlanStatus): Segment {
   const current = p.tasks.find((t) => t.state === 'current')
-  const text = p.finished || !current ? `✓ ${p.total}/${p.total}` : `${p.done}/${p.total} · ${current.title || `Task ${current.n}`}`
+  const count = p.finished ? `✓ ${p.total}/${p.total}` : `${p.done}/${p.total}`
+  const text = p.finished || !current ? count : `${count} · ${current.title || `Task ${current.n}`}`
   return { key: 'plan', text, title: `${p.title} — ${p.done} of ${p.total} done. Click for the task list`, level: 'normal', fill: p.done / p.total }
 }
 

@@ -1,5 +1,6 @@
 import { isAbsolute, posix } from 'node:path'
 import { REVIEW_SCOPES, type ReviewScope } from './review'
+import { normalizeTaskList, type TaskList } from './task-list'
 import type { BackgroundTask, MainStatus } from './types'
 
 export const PROTOCOL_VERSION = 1
@@ -127,9 +128,24 @@ export interface ShowDocumentMessage {
   title: string | null
 }
 
+/** set_task_list from the MCP server: the whole task list of the tab, or null to remove it. */
+export interface TaskListMessage {
+  v: 1
+  type: 'task_list'
+  tabId: string
+  list: TaskList | null
+}
+
+/** get_task_list from the MCP server: asks for the task list of the tab. */
+export interface TaskListGetMessage {
+  v: 1
+  type: 'task_list_get'
+  tabId: string
+}
+
 export type PipeMessage =
   | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
-  | TurnMessage | CwdMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
+  | TurnMessage | CwdMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage | TaskListMessage | TaskListGetMessage
 export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
@@ -267,6 +283,14 @@ export function parsePipeMessage(line: string): ParseResult {
     if (typeof m.path !== 'string' || !isAbsolute(m.path)) return { ok: false, error: 'path must be an absolute path' }
     if (m.title !== null && m.title !== undefined && typeof m.title !== 'string') return { ok: false, error: 'title must be a string or null' }
     return { ok: true, message: { v: 1, type: 'show_document', tabId, path: m.path, title: label(m.title) } }
+  }
+
+  if (m.type === 'task_list' || m.type === 'task_list_get') {
+    if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
+    if (m.type === 'task_list_get') return { ok: true, message: { v: 1, type: 'task_list_get', tabId: m.tabId } }
+    const list = normalizeTaskList(m.list)
+    if (!list.ok) return { ok: false, error: list.error }
+    return { ok: true, message: { v: 1, type: 'task_list', tabId: m.tabId, list: list.list } }
   }
 
   if (m.type === 'status' || m.type === 'subagent' || m.type === 'session_end' || m.type === 'attention') {

@@ -61,6 +61,8 @@ export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string, r
       // refreshInterval: Claude Code re-runs statusLine only on new messages, /compact and mode changes,
       // so /effort and /model alone would not show up without it. Each run starts a few processes, so it is a setting.
       statusLine: { type: 'command', command: statusCommand, ...(refreshInterval !== null ? { refreshInterval } : {}) },
+      // the task list tools are ClaudeTerm's own, bundled with it: Claude may keep its list without asking each time
+      permissions: { allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list'] },
       hooks: {
         SessionStart: hook,
         SubagentStart: hook,

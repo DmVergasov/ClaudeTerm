@@ -325,8 +325,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #statusbar .status-plan::before { content: ''; display: inline-block; width: 48px; height: 5px; margin-right: 6px; vertical-align: middle; border-radius: 3px; background: linear-gradient(to right, var(--accent) var(--plan-fill), var(--border) var(--plan-fill)); }
 #plan-list { position: fixed; z-index: 50; width: 340px; max-height: 60vh; overflow: auto; background: var(--chrome); border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; box-shadow: 0 8px 24px #0008; }
 #plan-list .plan-head { display: flex; justify-content: space-between; gap: 10px; padding: 6px 12px 8px; border-bottom: 1px solid var(--border); }
-#plan-list .plan-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+#plan-list .plan-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
 #plan-list .plan-count { flex-shrink: 0; color: var(--muted); }
+#plan-list .plan-clear { flex-shrink: 0; margin: -2px 0; padding: 0 6px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+#plan-list .plan-clear:hover { border-color: var(--border); color: var(--fg); }
 #plan-list .plan-task { display: flex; gap: 8px; padding: 4px 12px; }
 #plan-list .plan-mark { flex-shrink: 0; width: 1.2em; text-align: center; }
 #plan-list .plan-task.done { color: var(--muted); }
