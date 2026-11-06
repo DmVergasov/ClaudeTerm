@@ -252,9 +252,9 @@ describe('TabManager', () => {
     expect(tm.setClaudeSession(s.id, SID_A)).toBe(false)
     expect(tm.setClaudeSession('unknown', SID_A)).toBe(false)
     expect(tm.snapshot()).toEqual([
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null, muted: false, working: false, fork: null },
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null, muted: false, working: false, fork: null },
-      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null, muted: false, working: false, fork: null }
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null, muted: false, working: false, background: false, fork: null },
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null, muted: false, working: false, background: false, fork: null },
+      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null, muted: false, working: false, background: false, fork: null }
     ])
   })
 
@@ -352,6 +352,21 @@ describe('TabManager', () => {
     expect(ptys).toHaveLength(2)
     expect(tm.get(tab.id)!.activity).toBeNull()
     expect(tm.snapshot()[0].working).toBe(false)
+  })
+
+  it('whether work Claude left in the background still runs goes into the snapshot of a claude tab; a shell tab, or no change, saves nothing', () => {
+    const { tm, onStateChanged } = setup()
+    const claude = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\y' })
+    expect(tm.snapshot().map((t) => t.background)).toEqual([false, false])
+    onStateChanged.mockClear()
+    tm.setBackgroundWork(claude.id, true)
+    tm.setBackgroundWork(claude.id, true)
+    tm.setBackgroundWork(shell.id, true)
+    expect(onStateChanged).toHaveBeenCalledTimes(1)
+    expect(tm.snapshot().map((t) => t.background)).toEqual([true, false])
+    tm.setBackgroundWork(claude.id, false)
+    expect(tm.snapshot().map((t) => t.background)).toEqual([false, false])
   })
 
   it('a restart, of a running or an exited tab, says so before the new process starts', async () => {

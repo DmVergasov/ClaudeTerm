@@ -84,6 +84,11 @@ export interface SessionSnapshotTab {
   muted: boolean
   /** Claude was in the middle of a turn: a prompt had started it, and it had neither ended nor been interrupted */
   working: boolean
+  /**
+   * the last turn had ended while work Claude left in the background (agents, background commands) still ran: Claude
+   * waited for it to wake the conversation again
+   */
+  background: boolean
   /** a fork of a Claude tab: `of` is the head's index in this list, null when the head is not kept */
   fork: { of: number | null; from: string | null } | null
 }

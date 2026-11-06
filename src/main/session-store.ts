@@ -30,6 +30,8 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       muted: x.muted === true,
       // written before ClaudeTerm kept track of it: idle
       working: x.kind === 'claude' && x.working === true,
+      // written before ClaudeTerm kept track of it: nothing in the background
+      background: x.kind === 'claude' && x.background === true,
       // written before forks existed: an ordinary tab
       fork: x.kind === 'claude' ? parseFork(x.fork) : null
     })

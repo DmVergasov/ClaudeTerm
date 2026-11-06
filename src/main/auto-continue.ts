@@ -17,6 +17,13 @@ export const CONTINUE_PROMPT = 'Your response above was cut off mid-stream. Resu
 export const CUT_OFF_ERROR = 'server_error'
 /** for a turn that was still running when ClaudeTerm closed, typed into the tab restored with its conversation */
 export const RESUME_PROMPT = 'Your previous turn was cut off when the terminal closed. Resume directly from where it stops - no apology, no recap.'
+/**
+ * for a turn that had ended while work Claude left in the background (agents, background commands) still ran when
+ * ClaudeTerm closed: that work stopped with it, and nothing will wake the restored conversation
+ */
+export const BACKGROUND_PROMPT = 'The terminal closed while work you had left running in the background (agents, background commands) was still going, and it stopped with the terminal. Check what of it finished, start again what did not, and go on - no apology, no recap.'
+/** what ClaudeTerm's closing cut off in a restored tab: a turn under way, or the background work a finished turn left */
+export type RestoreCut = 'turn' | 'background'
 /** time for Claude Code to take input again, and for a dropped connection to come back */
 export const CONTINUE_DELAY_MS = 5000
 /** Enter goes on its own after the text, as Send does: in the same write it would be part of a paste */
@@ -80,18 +87,19 @@ export class AutoContinue {
   }
 
   /**
-   * A restored tab's session started again (SessionStart) after ClaudeTerm closed in the middle of its turn: the turn goes on
-   * once the prompt is empty, as a cut-off response does, and the tab calls the user when it is not
+   * A restored tab's session started again (SessionStart) after ClaudeTerm closed in the middle of its turn (`turn`), or
+   * while work Claude left in the background still ran (`background`): Claude goes on once the prompt is empty, as a
+   * cut-off response does, and the tab calls the user when it is not
    */
-  resumed(tabId: string): void {
+  resumed(tabId: string, cut: RestoreCut = 'turn'): void {
     const s = this.state(tabId)
     this.cancel(s)
     const run = s.run
     s.timer = setTimeout(() => {
       s.timer = null
-      void this.type(tabId, s, run, RESUME_PROMPT)
+      void this.type(tabId, s, run, cut === 'background' ? BACKGROUND_PROMPT : RESUME_PROMPT)
     }, CONTINUE_DELAY_MS)
-    this.d.log.info(`continue after restore tab=${tabId} in ${CONTINUE_DELAY_MS} ms`)
+    this.d.log.info(`continue after restore tab=${tabId} (${cut}) in ${CONTINUE_DELAY_MS} ms`)
   }
 
   /** the tab closed or Claude left it */

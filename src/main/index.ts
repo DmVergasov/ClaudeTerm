@@ -15,7 +15,7 @@ import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './a
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
 import { badgeDescription, dotBitmap } from './app-badge'
-import { AutoContinue } from './auto-continue'
+import { AutoContinue, type RestoreCut } from './auto-continue'
 import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
@@ -228,6 +228,8 @@ function bootstrap(): void {
         const status = statusHub.get(tabId)
         // past the end of a turn, the agents still running are the work Claude left in the background
         tabs.setAgentsRunning(tabId, status.agents.length > 0)
+        // the session snapshot keeps it: a restore must wake a conversation whose background work stopped with ClaudeTerm
+        tabs.setBackgroundWork(tabId, status.background.length > 0)
         send(IPC.evStatus, status)
       }, 50))
     }
@@ -463,8 +465,9 @@ function bootstrap(): void {
     },
     log
   })
-  // restored tabs whose turn ClaudeTerm's closing cut off: they go on once their session has started again
-  const resumeAfterRestore = new Set<string>()
+  // restored tabs whose turn, or the background work a finished turn left, ClaudeTerm's closing cut off: they go on once
+  // their session has started again
+  const resumeAfterRestore = new Map<string, RestoreCut>()
 
   const openTab = (req: OpenTabRequest, activate = true, setupToken = false): TabInfo | null => {
     try {
@@ -538,7 +541,7 @@ function bootstrap(): void {
       // the note stored under the fork's own conversation goes with the tab to the conversation it gets
       if (opened && unsaved[i] && t.claudeSessionId !== null) noteHub.adopt(opened.id, t.claudeSessionId)
       openedIds.push(opened?.id ?? null)
-      if (opened && t.working && settings.claude.continueAfterRestore) resumeAfterRestore.add(opened.id)
+      if (opened && settings.claude.continueAfterRestore && (t.working || t.background)) resumeAfterRestore.set(opened.id, t.working ? 'turn' : 'background')
       if (opened && first === null) first = opened.id
     })
     snap.tabs.forEach((t, i) => {
@@ -647,7 +650,11 @@ function bootstrap(): void {
       // compact keeps the open dialogs: the conversation goes on
       review.sessionStarted(msg.tabId, msg.sessionId, msg.source)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
-      if (resumeAfterRestore.delete(msg.tabId)) autoContinue.resumed(msg.tabId)
+      const cut = resumeAfterRestore.get(msg.tabId)
+      if (cut) {
+        resumeAfterRestore.delete(msg.tabId)
+        autoContinue.resumed(msg.tabId, cut)
+      }
       return { ok: true }
     },
     status: (msg) => {

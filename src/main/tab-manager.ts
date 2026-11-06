@@ -76,6 +76,8 @@ interface TabRecord {
   working: boolean
   /** agents of the tab's Claude run */
   agents: boolean
+  /** work Claude left in the background when its last turn ended still runs, as the session snapshot keeps it */
+  background: boolean
 }
 
 export class TabManager {
@@ -102,7 +104,7 @@ export class TabManager {
       exited: false,
       activity: null
     }
-    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false, preparing: false, working: false, agents: false }
+    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false, preparing: false, working: false, agents: false, background: false }
     this.tabs.set(info.id, rec)
     const head = info.fork?.of ?? null
     // a fork stands right after its family
@@ -306,6 +308,14 @@ export class TabManager {
     this.refreshActivity(rec)
   }
 
+  /** whether work Claude left in the background still runs, as the last end of a turn in a Claude tab said */
+  setBackgroundWork(tabId: string, running: boolean): void {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.info.kind !== 'claude' || rec.background === running) return
+    rec.background = running
+    this.changed()
+  }
+
   /**
    * `source`: Claude Code's SessionStart source. Only "fork" is the copy a fork starts with; any other session (resumed,
    * cleared, another one picked) is a conversation of the tab's own, so the fork is never forked again from its head's.
@@ -335,11 +345,11 @@ export class TabManager {
 
   snapshot(): SessionSnapshotTab[] {
     return this.order.map((id) => {
-      const { info: i, working } = this.tabs.get(id)!
+      const { info: i, working, background } = this.tabs.get(id)!
       const head = i.fork?.of ?? null
       const headAt = head === null ? -1 : this.order.indexOf(head)
       const fork = i.fork ? { of: headAt < 0 ? null : headAt, from: i.fork.from } : null
-      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, fork }
+      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, background, fork }
     })
   }
 

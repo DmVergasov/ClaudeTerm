@@ -2,8 +2,9 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { RESUME_PROMPT } from '../../src/main/auto-continue'
+import { BACKGROUND_PROMPT, RESUME_PROMPT } from '../../src/main/auto-continue'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
+import type { BackgroundTask } from '../../src/shared/types'
 import { DIM, promptBox } from './claude-screen'
 import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, makeDataDir, TEST_SHELL, typeInTerminal } from './helpers'
 
@@ -126,12 +127,13 @@ function screenClaude(): string {
   return `node "${script}"`
 }
 
-async function restoreBusyAndIdle(continueAfterRestore: boolean): Promise<{ app: ElectronApplication; page: Page; busy: string; idle: string }> {
+/** `busyState`: what the snapshot says of the first tab; the second one is idle */
+async function restoreBusyAndIdle(continueAfterRestore: boolean, busyState: { working?: boolean; background?: boolean } = { working: true }): Promise<{ app: ElectronApplication; page: Page; busy: string; idle: string }> {
   const settings = { ...FAKE_CLAUDE_SETTINGS, claude: { ...FAKE_CLAUDE_SETTINGS.claude, command: screenClaude(), continueAfterRestore } }
   const dataDir = makeDataDir(settings)
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
-  const tab = (title: string, working: boolean) => ({ kind: 'claude', profile: TEST_SHELL, cwd: work, title, claudeSessionId: SID, working })
-  writeFileSync(join(dataDir, 'session-state.json'), JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs: [tab('busy', true), tab('idle', false)] }))
+  const tab = (title: string, state: { working?: boolean; background?: boolean }) => ({ kind: 'claude', profile: TEST_SHELL, cwd: work, title, claudeSessionId: SID, ...state })
+  writeFileSync(join(dataDir, 'session-state.json'), JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs: [tab('busy', busyState), tab('idle', { working: false, background: false })] }))
   const { app, page, pipeName } = await launchApp({ dataDir })
   await expect.poll(() => page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
   await page.locator('.banner-restore').click()
@@ -149,6 +151,14 @@ test('a tab Claude was working in when ClaudeTerm closed goes on by itself once 
   const { app, page, busy, idle } = await restoreBusyAndIdle(true)
   await expect.poll(() => bufferText(page, busy), { timeout: 20_000 }).toContain(RESUME_PROMPT)
   expect(await bufferText(page, idle)).not.toContain(RESUME_PROMPT)
+  await app.close()
+})
+
+test('a tab whose turn had ended while work Claude left in the background still ran goes on by itself once restored, told that work stopped', async () => {
+  const { app, page, busy, idle } = await restoreBusyAndIdle(true, { working: false, background: true })
+  await expect.poll(() => bufferText(page, busy), { timeout: 20_000 }).toContain(BACKGROUND_PROMPT)
+  expect(await bufferText(page, busy)).not.toContain(RESUME_PROMPT)
+  expect(await bufferText(page, idle)).not.toContain(BACKGROUND_PROMPT)
   await app.close()
 })
 
@@ -175,5 +185,21 @@ test('the snapshot keeps whether Claude is working: a prompt starts a turn, its 
   await expect.poll(working).toBe(true)
   await page.evaluate((id) => window.ct.writePty(id, '\x1b'), tabId)
   await expect.poll(working).toBe(false)
+  await app.close()
+})
+
+test('the snapshot keeps whether work Claude left in the background still runs: each end of a turn says it anew', async () => {
+  const { app, tabId, dataDir, pipeName } = await launchClaudeTab()
+  const background = (): boolean | undefined => {
+    if (!existsSync(join(dataDir, 'session-state.json'))) return undefined
+    const saved = JSON.parse(readFileSync(join(dataDir, 'session-state.json'), 'utf8')) as { tabs: { background?: boolean }[] }
+    return saved.tabs[0]?.background
+  }
+  const turnEnd = (tasks: BackgroundTask[]) => sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', ...(tasks.length > 0 ? { background: true } : {}), tasks })
+  expect(await turnEnd([{ id: 'b1', type: 'local_agent', description: 'Implement task 3', command: null }])).toEqual({ ok: true })
+  await expect.poll(background).toBe(true)
+  // the agent ended, Claude took up its result in a turn of its own, and nothing runs in the background any more
+  expect(await turnEnd([])).toEqual({ ok: true })
+  await expect.poll(background).toBe(false)
   await app.close()
 })

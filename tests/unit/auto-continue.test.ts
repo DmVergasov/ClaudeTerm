@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AutoContinue, CONTINUE_DELAY_MS, CONTINUE_PROMPT, ENTER_DELAY_MS, RESUME_PROMPT } from '../../src/main/auto-continue'
+import { AutoContinue, BACKGROUND_PROMPT, CONTINUE_DELAY_MS, CONTINUE_PROMPT, ENTER_DELAY_MS, RESUME_PROMPT } from '../../src/main/auto-continue'
 import type { PromptState } from '../../src/shared/ipc'
 import { MAX_AUTO_CONTINUES as MAX_CONTINUES } from '../../src/shared/settings-keys'
 
@@ -39,6 +39,16 @@ describe('AutoContinue', () => {
     expect(writes).toEqual([])
     await runAll()
     expect(writes).toEqual([`t1:${RESUME_PROMPT}`, 't1:\r'])
+    expect(notified).toEqual([])
+  })
+
+  it('a restored tab whose turn had ended while its background work ran is told that work stopped, after the same pause', async () => {
+    const { ac, writes, notified } = setup(false)
+    ac.resumed('t1', 'background')
+    await vi.advanceTimersByTimeAsync(CONTINUE_DELAY_MS - 1)
+    expect(writes).toEqual([])
+    await runAll()
+    expect(writes).toEqual([`t1:${BACKGROUND_PROMPT}`, 't1:\r'])
     expect(notified).toEqual([])
   })
 
