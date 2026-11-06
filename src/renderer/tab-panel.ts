@@ -1,7 +1,7 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
 import { groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
 import { TabHeader } from './tab-header'
-import { beginRename, bindTab, pulseDelay, tabParts } from './tab-row'
+import { beginRename, bindTab, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
 import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarItem } from './tabbar'
 
 /** the drag's data type that names the group dragged by its header */
@@ -147,6 +147,10 @@ export class TabPanel {
       count.className = 'tp-group-count'
       count.textContent = String(members.length)
       head.append(count)
+      // and the spinning icon while Claude works in one of them; grey when only agents left in the background run
+      const activities = members.map(shownActivity)
+      const activity = activities.includes('working') ? 'working' : activities.includes('background') ? 'background' : null
+      if (activity) head.append(spinner('tp-group-spin', activity))
       const attention = members.some((m) => m.attention)
       if (attention || members.some((m) => m.bell)) {
         const dot = document.createElement('span')

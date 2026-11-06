@@ -310,6 +310,50 @@ describe('TabManager', () => {
     expect(tm.snapshot().map((t) => t.working)).toEqual([false, false])
   })
 
+  it('a Claude tab is working through a turn, in the background while its agents outlast the turn, and idle after', () => {
+    const { tm, log } = setup()
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\y' })
+    const activity = (): string | null => tm.get(tab.id)!.activity
+    const updates = (): number => log.filter((l) => l.startsWith(`updated:${tab.id}:`)).length
+    expect(tab.activity).toBeNull()
+
+    tm.setWorking(tab.id, true)
+    expect(activity()).toBe('working')
+    expect(updates()).toBe(1)
+    // a subagent of the turn changes nothing the window shows
+    tm.setAgentsRunning(tab.id, true)
+    expect(activity()).toBe('working')
+    expect(updates()).toBe(1)
+    // the turn ended, and the agent it left in the background still runs
+    tm.setWorking(tab.id, false)
+    expect(activity()).toBe('background')
+    expect(updates()).toBe(2)
+    tm.setAgentsRunning(tab.id, false)
+    expect(activity()).toBeNull()
+    expect(updates()).toBe(3)
+
+    tm.setWorking(shell.id, true)
+    tm.setAgentsRunning(shell.id, true)
+    expect(tm.get(shell.id)!.activity).toBeNull()
+  })
+
+  it('a tab whose process exits in a turn is not working, nor is the process a restart starts', async () => {
+    const { tm, ptys } = setup()
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    tm.setWorking(tab.id, true)
+    tm.setAgentsRunning(tab.id, true)
+    ptys[0].emitExit(1)
+    expect(tm.get(tab.id)!.activity).toBeNull()
+    // the snapshot still has the turn that was cut off: a restore goes on with it
+    expect(tm.snapshot()[0].working).toBe(true)
+
+    await tm.restart(tab.id)
+    expect(ptys).toHaveLength(2)
+    expect(tm.get(tab.id)!.activity).toBeNull()
+    expect(tm.snapshot()[0].working).toBe(false)
+  })
+
   it('a restart, of a running or an exited tab, says so before the new process starts', async () => {
     const onTabRestarting = vi.fn()
     const { tm, ptys } = setup({ onTabRestarting })

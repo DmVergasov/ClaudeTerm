@@ -27,7 +27,7 @@ import { resolveTheme } from './themes'
 import { showToast } from './toasts'
 import { promptText } from './claude-screen'
 import { leftUnfinished } from './unread'
-import { folderName } from './util'
+import { claudeTitle, folderName } from './util'
 
 interface TabState {
   info: TabInfo
@@ -90,7 +90,7 @@ const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
 function renderTabs(): void {
   const items = order.flatMap((id): TabBarItem[] => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), folder: t.info.folder, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id), place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
+    return t ? [{ id, title: titleOf(t), folder: t.info.folder, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, activity: t.info.activity, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id), place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
   })
   tabBar.render(items, activeId)
   tabPanel.render(items, activeId)
@@ -407,7 +407,7 @@ function addTab(info: TabInfo): void {
     onTitle: (title) => {
       const t = tabs.get(info.id)
       if (!t) return
-      t.oscTitle = title.trim() || null
+      t.oscTitle = (t.info.kind === 'claude' ? claudeTitle(title.trim()) : title.trim()) || null
       renderTabs()
     },
     onBell: () => ct.bell(info.id),

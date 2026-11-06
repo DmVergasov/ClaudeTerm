@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { OpenTabRequest, SessionSnapshotTab, TabFork, TabInfo } from '../shared/types'
+import type { OpenTabRequest, SessionSnapshotTab, TabActivity, TabFork, TabInfo } from '../shared/types'
 import { applyEnvPatch, type EnvPatch } from './child-env'
 import type { LaunchSpec } from './profiles'
 import type { PtyHandle, SpawnPty } from './pty-host'
@@ -74,6 +74,8 @@ interface TabRecord {
   preparing: boolean
   /** Claude is in the middle of a turn, as the session snapshot keeps it */
   working: boolean
+  /** agents of the tab's Claude run */
+  agents: boolean
 }
 
 export class TabManager {
@@ -97,9 +99,10 @@ export class TabManager {
       account: req.kind === 'claude' ? launch.account ?? null : null,
       muted: req.muted === true,
       fork: req.kind === 'claude' ? this.forkFrom(req.fork) : null,
-      exited: false
+      exited: false,
+      activity: null
     }
-    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false, preparing: false, working: false }
+    const rec: TabRecord = { info, launch, pty: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), restarting: false, preparing: false, working: false, agents: false }
     this.tabs.set(info.id, rec)
     const head = info.fork?.of ?? null
     // a fork stands right after its family
@@ -291,7 +294,16 @@ export class TabManager {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude' || rec.working === working) return
     rec.working = working
+    this.refreshActivity(rec)
     this.changed()
+  }
+
+  /** whether agents of the tab's Claude run: past the end of the turn, they are the work it left in the background */
+  setAgentsRunning(tabId: string, running: boolean): void {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.info.kind !== 'claude' || rec.agents === running) return
+    rec.agents = running
+    this.refreshActivity(rec)
   }
 
   /**
@@ -412,6 +424,13 @@ export class TabManager {
   }
 
   private start(rec: TabRecord): void {
+    // a new process is in no turn yet, and runs none of the last one's agents
+    if (rec.working) {
+      rec.working = false
+      this.changed()
+    }
+    rec.agents = false
+    this.refreshActivity(rec)
     // a new process works in the folder the tab was opened in, wherever the last one had moved to
     this.moveTo(rec, rec.info.cwd)
     const env = applyEnvPatch({ ...this.deps.baseEnv(), CLAUDETERM_TAB_ID: rec.info.id, CLAUDETERM_PIPE: this.deps.pipeName }, rec.launch.env)
@@ -466,7 +485,22 @@ export class TabManager {
     this.flush(rec)
     rec.pty = null
     rec.info.exited = true
+    // the snapshot keeps the turn the exit cut off; the window shows an exited tab idle
+    rec.info.activity = this.activityOf(rec)
     this.deps.events.exit(rec.info.id, code)
+    this.deps.events.updated({ ...rec.info })
+  }
+
+  private activityOf(rec: TabRecord): TabActivity {
+    if (rec.info.kind !== 'claude' || rec.info.exited) return null
+    return rec.working ? 'working' : rec.agents ? 'background' : null
+  }
+
+  /** the window hears of the tab's activity when it changes */
+  private refreshActivity(rec: TabRecord): void {
+    const activity = this.activityOf(rec)
+    if (activity === rec.info.activity) return
+    rec.info.activity = activity
     this.deps.events.updated({ ...rec.info })
   }
 }

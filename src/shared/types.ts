@@ -35,7 +35,12 @@ export interface TabInfo {
   /** the Claude tab is a fork of another tab's conversation; null: an ordinary tab */
   fork: TabFork | null
   exited: boolean
+  /** what Claude is doing in the tab; null while it is idle, and in a shell tab */
+  activity: TabActivity
 }
+
+/** working: Claude is in a turn; background: the turn ended, and an agent it left in the background still runs */
+export type TabActivity = 'working' | 'background' | null
 
 export interface OpenTabRequest {
   kind: TabKind

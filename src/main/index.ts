@@ -225,7 +225,10 @@ function bootstrap(): void {
       if (statusTimers.has(tabId)) return
       statusTimers.set(tabId, setTimeout(() => {
         statusTimers.delete(tabId)
-        send(IPC.evStatus, statusHub.get(tabId))
+        const status = statusHub.get(tabId)
+        // past the end of a turn, the agents still running are the work Claude left in the background
+        tabs.setAgentsRunning(tabId, status.agents.length > 0)
+        send(IPC.evStatus, status)
       }, 50))
     }
   })

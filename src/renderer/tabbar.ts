@@ -1,4 +1,4 @@
-import type { TabKind, TabPlace } from '../shared/types'
+import type { TabActivity, TabKind, TabPlace } from '../shared/types'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, pulseDelay, tabParts } from './tab-row'
 
@@ -13,6 +13,8 @@ export interface TabBarItem {
   bell: boolean
   /** Claude in this tab is waiting for the user */
   attention: boolean
+  /** what Claude is doing in the tab; the icon spins for it unless Claude waits for the user */
+  activity: TabActivity
   images: number
   exited: boolean
   /** the tab's note has text */
