@@ -1,6 +1,7 @@
 import { isMarkdownPath, type ReviewFile, type ReviewFileNote, type ReviewHunk, type ReviewLine, type ReviewScope, type ReviewUpdate } from '../shared/review'
 import { isPrimaryKey, shortcutLabel } from './keymap'
 import { markdownSegments, segmentOf, type MdSegment } from './markdown-diff'
+import { expandHunks, expandWays, gapsOf, linesToShow, type ExpandWay, type Gap } from './review-expand'
 import { showMenu } from './menu'
 import {
   anchorOf, attemptSend, describeLines, draftAfterSend, formatSendMessage, locate, location, moveAnchor, reanchorComment, sendErrorAfter, viewKeyOf,
@@ -29,6 +30,8 @@ export interface ReviewPanelCallbacks {
   setFileTree(on: boolean): void
   /** writes the message into Claude's prompt and presses Enter; resolves to null, or to why it was not sent */
   send(tabId: string, message: string): Promise<string | null>
+  /** lines from..to of a file of the tab's view, the content with that hash; null when the view does not hold it now */
+  contextLines(tabId: string, path: string, hash: string, from: number, to: number): Promise<string[] | null>
 }
 
 const SCOPES: { scope: ReviewScope; label: string }[] = [
@@ -48,6 +51,8 @@ const NOTES: Record<ReviewFileNote, string> = {
   'too-many': 'not shown'
 }
 const STATUS: Record<ReviewFile['status'], string> = { added: 'A', modified: 'M', deleted: 'D' }
+const GAP_ICONS: Record<ExpandWay, string> = { up: '↑', down: '↓', all: '↕' }
+const GAP_TITLES: Record<ExpandWay, string> = { up: 'Expand up', down: 'Expand down', all: 'Expand all' }
 
 interface Draft {
   anchor: CommentAnchor
@@ -78,6 +83,8 @@ interface TabComments {
   dirs: Set<string>
   /** the file filter: the files whose path holds it */
   filter: string
+  /** the hidden lines the expand buttons show, by file path: the new side's lines by number, of the content with that hash */
+  context: Map<string, { hash: string; lines: Map<number, string> }>
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
@@ -139,6 +146,9 @@ const TREE_MIN_WIDTH = 120
 
 /** The Changes panel: scopes, files, hunks, comments and Send. */
 export class ReviewPanel {
+  /** the view as main sent it */
+  private raw: ReviewUpdate | null = null
+  /** the view as the panel shows it: with the hidden lines the expand buttons show in its hunks */
   private update: ReviewUpdate | null = null
   private readonly perTab = new Map<string, TabComments>()
   private readonly scopeBar = el('div', 'review-scope')
@@ -509,13 +519,53 @@ export class ReviewPanel {
   /** the active tab's review; null for a shell tab. While Changes is hidden it is only kept: the rows are built when it shows */
   show(update: ReviewUpdate | null): void {
     this.sendError = sendErrorAfter(this.sendError, this.update?.tabId ?? null, update)
-    this.update = update
+    this.raw = update
+    this.update = this.expanded(update)
     // a scope switch waits for a view of that scope (a notice or an error comes as that scope's view too), a Refresh for the next update
     // of the tab; a state-only update (viewed, Send) is the same shape, so it ends a Refresh early. The timer ends any wait
     const l = this.loading
     if (!l || !update || update.tabId !== l.tabId || l.scope === null || update.view.kind !== 'scope' || update.view.scope === l.scope) this.endLoading()
-    if (update) this.reanchor(update)
+    if (this.update) this.reanchor(this.update)
     if (this.panel.isShowing('changes')) this.render()
+  }
+
+  /** the view with the lines the expand buttons show put into its hunks; a file whose content changed shows its diff as it comes */
+  private expanded(u: ReviewUpdate | null): ReviewUpdate | null {
+    if (!u) return null
+    const context = this.state(u.tabId).context
+    if (context.size === 0) return u
+    let changed = false
+    const files = u.files.map((f) => {
+      const c = context.get(f.path)
+      if (!c) return f
+      if (c.hash !== f.hash) {
+        context.delete(f.path)
+        return f
+      }
+      if (f.note !== null || f.markdown) return f
+      changed = true
+      return { ...f, hunks: expandHunks(f.hunks, f.lineCount, c.lines) }
+    })
+    return changed ? { ...u, files } : u
+  }
+
+  /** an expand button: the lines come from main, then show; when the view no longer holds them, it is built again */
+  private expand(u: ReviewUpdate, f: ReviewFile, g: Gap, way: ExpandWay): void {
+    const [from, to] = linesToShow(g, way)
+    void this.cb.contextLines(u.tabId, f.path, f.hash, from, to).then((lines) => {
+      if (!lines) {
+        this.cb.refresh(u.tabId)
+        return
+      }
+      const s = this.state(u.tabId)
+      const kept = s.context.get(f.path)
+      const c = kept && kept.hash === f.hash ? kept : { hash: f.hash, lines: new Map<number, string>() }
+      s.context.set(f.path, c)
+      lines.forEach((text, i) => c.lines.set(from + i, text))
+      if (this.raw?.tabId !== u.tabId) return
+      this.update = this.expanded(this.raw)
+      if (this.panel.isShowing('changes')) this.render()
+    }, () => {})
   }
 
   /** the click is sent first, then only classes change: the clicked scope is active and the list dims until its view arrives */
@@ -555,7 +605,7 @@ export class ReviewPanel {
   private state(tabId: string): TabComments {
     let s = this.perTab.get(tabId)
     if (!s) {
-      s = { comments: [], draft: null, folds: new Map(), dirs: new Set(), filter: '' }
+      s = { comments: [], draft: null, folds: new Map(), dirs: new Set(), filter: '', context: new Map() }
       this.perTab.set(tabId, s)
     }
     return s
@@ -771,8 +821,33 @@ export class ReviewPanel {
       return box
     }
     const doc = f.markdown && f.hunks.length === 1 ? this.segmentsOf(f.hunks[0]!) : []
-    if (doc.length > 0) box.append(this.renderMarkdown(u, s, f, fi, doc, placed, draftAt, marks))
-    else f.hunks.forEach((h, hi) => box.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt, marks)))
+    if (doc.length > 0) {
+      box.append(this.renderMarkdown(u, s, f, fi, doc, placed, draftAt, marks))
+      return box
+    }
+    // the lines the hunks hide: each gap's buttons sit in the header of the hunk under it, the last one's in a row of its own
+    const gaps = new Map(gapsOf(f.hunks, f.lineCount).map((g) => [g.before, g]))
+    f.hunks.forEach((h, hi) => box.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt, marks, gaps.get(hi))))
+    const tail = gaps.get(f.hunks.length)
+    if (tail) {
+      const row = el('div', 'review-hunk-head review-gap-tail')
+      row.append(this.gapButtons(u, f, tail))
+      box.append(row)
+    }
+    return box
+  }
+
+  /** the expand buttons of a gap, in a column as wide as the line numbers'; an empty column without a gap */
+  private gapButtons(u: ReviewUpdate, f: ReviewFile, g: Gap | undefined): HTMLElement {
+    const box = el('div', 'review-gap-btns')
+    for (const way of g ? expandWays(g, f.hunks.length) : []) {
+      const [from, to] = linesToShow(g!, way)
+      const n = to - from + 1
+      const b = el('button', `review-gap-${way}`, GAP_ICONS[way])
+      b.title = `${GAP_TITLES[way]} (${n} line${n === 1 ? '' : 's'})`
+      b.addEventListener('click', () => this.expand(u, f, g!, way))
+      box.append(b)
+    }
     return box
   }
 
@@ -847,9 +922,14 @@ export class ReviewPanel {
     return box
   }
 
-  private renderHunk(u: ReviewUpdate, s: TabComments, f: ReviewFile, fi: number, h: ReviewHunk, hi: number, placed: Map<string, ReviewComment[]>, draftAt: Located | null, marks?: FileMarks): HTMLElement {
+  private renderHunk(
+    u: ReviewUpdate, s: TabComments, f: ReviewFile, fi: number, h: ReviewHunk, hi: number, placed: Map<string, ReviewComment[]>, draftAt: Located | null,
+    marks: FileMarks | undefined, gap: Gap | undefined
+  ): HTMLElement {
     const box = el('div', 'review-hunk')
-    box.append(el('div', 'review-hunk-head', h.header))
+    const head = el('div', 'review-hunk-head')
+    head.append(this.gapButtons(u, f, gap), el('span', 'review-hunk-text', h.header))
+    box.append(head)
     h.lines.forEach((line: ReviewLine, li) => {
       const row = el('div', `review-line ${line.kind}`)
       row.dataset.file = String(fi)

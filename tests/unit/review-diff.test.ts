@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildFile, buildFiles, DIFF_TIMEOUT_MS, MAX_FORCED_BYTES, toHunks, VIEW_DIFF_MS, type DiffInput, type Side } from '../../src/main/review-diff'
+import { buildFile, buildFiles, DIFF_TIMEOUT_MS, MAX_FORCED_BYTES, sliceLines, toHunks, VIEW_DIFF_MS, type DiffInput, type Side } from '../../src/main/review-diff'
 
 const text = (s: string): Side => ({ kind: 'data', data: Buffer.from(s) })
 const input = (before: Side, after: Side, o: Partial<DiffInput> = {}): DiffInput => ({ path: '/r/a.ts', relPath: 'a.ts', before, after, forced: false, ...o })
@@ -167,5 +167,51 @@ describe('Markdown files shown formatted', () => {
     expect(buildFile(md('a\n', null), false, true)).toMatchObject({ status: 'deleted', markdown: false })
     expect(buildFile(md('a\r\n', 'a\n'), false, true)).toMatchObject({ note: 'eol-only', markdown: false })
     expect(buildFile(md(null, ''), false, true)).toMatchObject({ hunks: [], markdown: false })
+  })
+})
+
+describe('the lines a hunk hides', () => {
+  const lines = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`)
+  const before = `${lines.join('\r\n')}\r\n`
+  const after = `${lines.map((l, i) => (i === 19 ? 'changed' : l)).join('\r\n')}\r\n`
+
+  it('counts the new side\'s lines for the panel\'s expand buttons; a file without hunks has none', () => {
+    expect(buildFile(input(text(before), text(after)))!.lineCount).toBe(40)
+    // a last line without a newline counts
+    expect(buildFile(input(text('a\nb'), text('a\nB')))!.lineCount).toBe(2)
+    expect(buildFile(input({ kind: 'absent' }, text('x\ny\n')))!.lineCount).toBe(2)
+    expect(buildFile(input({ kind: 'binary' }, text('a')))!.lineCount).toBe(0)
+    expect(buildFile(input(text('a\r\n'), text('a\n')))!.lineCount).toBe(0)
+  })
+
+  it('keeps the new side of each changed file with hunks hidden around them, line endings as the diff read them', async () => {
+    const r = await buildFiles([
+      input(text(before), text(after), { path: '/r/a.ts', relPath: 'a.ts' }),
+      input({ kind: 'absent' }, text('new\n'), { path: '/r/new.ts', relPath: 'new.ts' }),
+      input(text('gone\n'), { kind: 'absent' }, { path: '/r/gone.ts', relPath: 'gone.ts' }),
+      input({ kind: 'binary' }, text('a'), { path: '/r/b.bin', relPath: 'b.bin' })
+    ])
+    expect([...r.texts.keys()]).toEqual(['/r/a.ts'])
+    expect(r.texts.get('/r/a.ts')).toBe(after.replace(/\r\n/g, '\n'))
+  })
+
+  it('keeps no text of a Markdown file shown whole', async () => {
+    const r = await buildFiles([input(text(before), text(after), { path: '/r/a.md', relPath: 'a.md' })], Date.now, true)
+    expect(r.files[0]!.markdown).toBe(true)
+    expect(r.texts.size).toBe(0)
+  })
+})
+
+describe('sliceLines', () => {
+  it('gives lines from..to, counted from 1, without their newlines', () => {
+    expect(sliceLines('a\nb\nc\n', 2, 3)).toEqual(['b', 'c'])
+    expect(sliceLines('a\nb\nc', 1, 3)).toEqual(['a', 'b', 'c'])
+    expect(sliceLines('a\n\nc\n', 2, 2)).toEqual([''])
+  })
+
+  it('gives null for lines the text does not have', () => {
+    expect(sliceLines('a\nb\n', 2, 3)).toBeNull()
+    expect(sliceLines('a\nb', 3, 3)).toBeNull()
+    expect(sliceLines('', 1, 1)).toBeNull()
   })
 })

@@ -43,6 +43,27 @@ export interface DiffInput {
 }
 
 export const normalizeEol = (s: string): string => s.replace(/\r\n/g, '\n')
+
+/** a text's lines as the diff counts them: a last line without a newline counts */
+const linesIn = (s: string): number => {
+  let n = 0
+  for (let at = s.indexOf('\n'); at >= 0; at = s.indexOf('\n', at + 1)) n++
+  return s === '' || s.endsWith('\n') ? n : n + 1
+}
+
+/** lines `from`..`to` of a text, counted from 1, without their newlines; null when it has fewer lines */
+export function sliceLines(text: string, from: number, to: number): string[] | null {
+  const out: string[] = []
+  let start = 0
+  for (let n = 1; n <= to; n++) {
+    if (start >= text.length) return null
+    const end = text.indexOf('\n', start)
+    if (n >= from) out.push(text.slice(start, end < 0 ? text.length : end))
+    if (end < 0) return n === to ? out : null
+    start = end + 1
+  }
+  return out
+}
 /** names the current content for Viewed; a too large file is named by its size, so a change still clears the mark */
 const hashOf = (s: Side): string =>
   s.kind === 'data' ? contentSha(s.data) : s.kind === 'too-large' ? `too-large:${s.size}` : s.kind === 'binary' && s.id ? `binary:${s.id}` : s.kind
@@ -75,56 +96,72 @@ export function toHunks(before: string, after: string, timeoutMs: number, whole 
   return { hunks, additions, deletions }
 }
 
-/**
- * The review entry for one file; null when there is nothing to show (both sides the same, or absent). `skip`: list it without diffing.
- * `markdown` (review.renderMarkdown): a Markdown file that is not deleted comes whole, in one hunk, for the panel to format.
- */
-export function buildFile(input: DiffInput, skip = false, markdown = false): ReviewFile | null {
+/** a file's entry, and the text of its new side when the panel may show lines its hunks hide (a changed file with hunks, not a formatted Markdown one) */
+function build(input: DiffInput, skip: boolean, markdown: boolean): { file: ReviewFile; text: string | null } | null {
   const { before, after } = input
   if (before.kind === 'absent' && after.kind === 'absent') return null
   const status: ReviewFileStatus = input.status ?? (before.kind === 'absent' ? 'added' : after.kind === 'absent' ? 'deleted' : 'modified')
   const file: ReviewFile = {
     path: input.path, relPath: input.relPath, status, additions: 0, deletions: 0, hunks: [], note: null, canForce: false, hash: hashOf(after), viewed: false,
-    markdown: false
+    markdown: false, lineCount: 0
   }
+  const row = (o: Partial<ReviewFile>): { file: ReviewFile; text: null } => ({ file: { ...file, ...o }, text: null })
   const kinds = [before.kind, after.kind]
-  if (skip || kinds.includes('skipped')) return { ...file, note: 'too-many' }
-  if (before.kind === 'none') return { ...file, note: 'no-baseline' }
-  if (kinds.includes('unreadable')) return { ...file, note: 'unreadable' }
-  if (kinds.includes('dir')) return { ...file, note: 'submodule' }
-  if (kinds.includes('binary')) return { ...file, note: 'binary' }
+  if (skip || kinds.includes('skipped')) return row({ note: 'too-many' })
+  if (before.kind === 'none') return row({ note: 'no-baseline' })
+  if (kinds.includes('unreadable')) return row({ note: 'unreadable' })
+  if (kinds.includes('dir')) return row({ note: 'submodule' })
+  if (kinds.includes('binary')) return row({ note: 'binary' })
   if (before.kind === 'too-large' || after.kind === 'too-large') {
     const fits = [before, after].every((s) => s.kind !== 'too-large' || s.size <= MAX_FORCED_BYTES)
-    return { ...file, note: 'too-large', canForce: fits && !input.forced }
+    return row({ note: 'too-large', canForce: fits && !input.forced })
   }
   const b = before.kind === 'data' ? before.data : Buffer.alloc(0)
   const a = after.kind === 'data' ? after.data : Buffer.alloc(0)
-  if (isBinary(b) || isBinary(a)) return { ...file, note: 'binary' }
+  if (isBinary(b) || isBinary(a)) return row({ note: 'binary' })
   const bt = normalizeEol(b.toString('utf8'))
   const at = normalizeEol(a.toString('utf8'))
-  if (status === 'modified' && bt === at) return b.equals(a) ? null : { ...file, note: 'eol-only' }
+  if (status === 'modified' && bt === at) return b.equals(a) ? null : row({ note: 'eol-only' })
   const whole = markdown && status !== 'deleted' && isMarkdownPath(input.relPath)
   const diff = toHunks(bt, at, input.forced ? FORCED_DIFF_TIMEOUT_MS : DIFF_TIMEOUT_MS, whole)
   // too slow to diff: shown like a too large file, and "show anyway" gives it longer
-  if (!diff) return { ...file, note: 'too-large', canForce: !input.forced && b.length <= MAX_FORCED_BYTES && a.length <= MAX_FORCED_BYTES }
-  return { ...file, ...diff, markdown: whole && diff.hunks.length > 0 }
+  if (!diff) return row({ note: 'too-large', canForce: !input.forced && b.length <= MAX_FORCED_BYTES && a.length <= MAX_FORCED_BYTES })
+  const shownWhole = whole && diff.hunks.length > 0
+  return {
+    file: { ...file, ...diff, markdown: shownWhole, lineCount: diff.hunks.length > 0 ? linesIn(at) : 0 },
+    text: status === 'modified' && diff.hunks.length > 0 && !shownWhole ? at : null
+  }
+}
+
+/**
+ * The review entry for one file; null when there is nothing to show (both sides the same, or absent). `skip`: list it without diffing.
+ * `markdown` (review.renderMarkdown): a Markdown file that is not deleted comes whole, in one hunk, for the panel to format.
+ */
+export function buildFile(input: DiffInput, skip = false, markdown = false): ReviewFile | null {
+  return build(input, skip, markdown)?.file ?? null
 }
 
 /**
  * A view's files. It yields to the event loop between files, so pipe messages (an edit waiting for its baseline)
  * and IPC are served during a long build; after VIEW_DIFF_MS of diffing the files left are listed without hunks.
+ * `texts`: the new side of each file whose hunks hide lines, by its path, as the diff read it (LF line endings).
  */
-export async function buildFiles(inputs: DiffInput[], now: () => number = Date.now, markdown = false): Promise<{ files: ReviewFile[]; tooMany: boolean }> {
+export async function buildFiles(
+  inputs: DiffInput[], now: () => number = Date.now, markdown = false
+): Promise<{ files: ReviewFile[]; tooMany: boolean; texts: Map<string, string> }> {
   const files: ReviewFile[] = []
+  const texts = new Map<string, string>()
   let spent = 0
   let tooMany = false
   for (const [i, input] of inputs.entries()) {
     if (i > 0) await new Promise<void>((r) => setImmediate(r))
     tooMany ||= spent >= VIEW_DIFF_MS
     const start = now()
-    const f = buildFile(input, tooMany, markdown)
+    const built = build(input, tooMany, markdown)
     spent += now() - start
-    if (f) files.push(f)
+    if (!built) continue
+    files.push(built.file)
+    if (built.text !== null) texts.set(built.file.path, built.text)
   }
-  return { files, tooMany }
+  return { files, tooMany, texts }
 }

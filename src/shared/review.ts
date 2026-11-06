@@ -48,6 +48,8 @@ export interface ReviewFile {
   viewed: boolean
   /** a Markdown file the panel shows formatted (review.renderMarkdown): its one hunk holds every line of the file */
   markdown: boolean
+  /** the new side's lines (a last line without a newline counts): the panel's expand buttons show the hidden ones up to it; 0 without hunks */
+  lineCount: number
 }
 
 /** a Markdown file by its name: .md or .markdown, in any case */

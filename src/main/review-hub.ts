@@ -3,7 +3,7 @@ import type { PipeResponse } from '../shared/protocol'
 import { IN_DIALOG, NOT_RUNNING, SCOPE_LABELS, type ReviewCounter, type ReviewFile, type ReviewScope, type ReviewSendState, type ReviewUpdate } from '../shared/review'
 import type { EditLedger } from './edit-ledger'
 import { pathKey } from './path-key'
-import { buildFiles, type DiffInput } from './review-diff'
+import { buildFiles, sliceLines, type DiffInput } from './review-diff'
 import { testMatcher } from '../shared/test-files'
 import { EMPTY_LEDGER, relPathFor, type Inputs, type ReviewSources, type Totals, type TranscriptLog } from './review-sources'
 import type { TranscriptEditEvent } from './transcript-edits'
@@ -75,6 +75,11 @@ interface TabState {
   recount: boolean
   timer: ReturnType<typeof setTimeout> | null
   last: ReviewUpdate | null
+  /**
+   * pathKey → the new side of a file of `last` whose hunks hide lines, and the hash it has there: the panel's expand buttons
+   * show its lines. Only the tab whose view was built last keeps them; a tab coming to the front builds its view again
+   */
+  texts: Map<string, { hash: string; text: string }>
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -104,7 +109,7 @@ export class ReviewHub {
     this.tabs.set(tabId, {
       tabId, folder: cwd, claude, sessionId: null, ledger: null, log: { prompts: [], edits: [] }, logIds: new Set(), keptOriginal: new Set(),
       scope: null, request: null, forced: new Set(), viewed: new Map(), running: false,
-      dialogs: new Map(), gen: 0, computing: false, rerun: false, countJob: null, counting: false, recount: false, timer: null, last: null
+      dialogs: new Map(), gen: 0, computing: false, rerun: false, countJob: null, counting: false, recount: false, timer: null, last: null, texts: new Map()
     })
   }
 
@@ -222,6 +227,15 @@ export class ReviewHub {
     return t ? this.sendState(t) : { ok: false, reason: NOT_RUNNING }
   }
 
+  /**
+   * Lines `from`..`to` (from 1) of a file the tab's view shows, as the view read it: the lines its hunks hide, for the panel's
+   * expand buttons. Null when the view does not hold that content (the file changed, the view was rebuilt, the tab is behind)
+   */
+  contextLines(tabId: string, path: string, hash: string, from: number, to: number): string[] | null {
+    const kept = this.tabs.get(tabId)?.texts.get(pathKey(path))
+    return kept && kept.hash === hash ? sliceLines(kept.text, from, to) : null
+  }
+
   /** "Open in editor" takes only a file the tab's view shows (the last one published, a show_diff view too) */
   hasFile(tabId: string, path: string): boolean {
     const key = pathKey(path)
@@ -301,7 +315,7 @@ export class ReviewHub {
         }
       }
     }
-    const { update, counting } = await this.build(t, req, new Set())
+    const { update, counting, texts } = await this.build(t, req, new Set())
     if (this.tabs.get(t.tabId) !== t) return { ok: false, error: 'the tab was closed' }
     if (update.files.length === 0 && update.notice) return { ok: false, error: update.notice }
     // Claude must not take a hidden file for an unchanged one
@@ -316,6 +330,7 @@ export class ReviewHub {
     t.forced.clear()
     t.gen++
     t.last = update
+    this.keepTexts(t, texts)
     this.d.publish({ ...this.withState(t, update), reveal: true })
     this.countLater(t, counting)
     const n = update.files.length
@@ -361,13 +376,14 @@ export class ReviewHub {
       do {
         t.rerun = false
         const gen = t.gen
-        const { update, counting } = await this.build(t, t.request, t.forced)
+        const { update, counting, texts } = await this.build(t, t.request, t.forced)
         if (this.tabs.get(t.tabId) !== t) return
         if (gen !== t.gen) {
           t.rerun = true
           continue
         }
         t.last = update
+        this.keepTexts(t, texts)
         this.d.publish(this.withState(t, update))
         this.countLater(t, counting)
       } while (t.rerun)
@@ -382,7 +398,7 @@ export class ReviewHub {
    */
   private async build(
     t: TabState, request: ReviewRequest | null, forcedKeys: ReadonlySet<string>
-  ): Promise<{ update: ReviewUpdate; counting: (() => Promise<ReviewCounter | null>) | null }> {
+  ): Promise<{ update: ReviewUpdate; counting: (() => Promise<ReviewCounter | null>) | null; texts: Map<string, string> }> {
     const chosen = t.scope
     const cwd = request?.cwd ?? t.folder
     const r = await this.d.sources.root(cwd)
@@ -396,7 +412,7 @@ export class ReviewHub {
     const patterns = this.d.testPatterns()
     const markdown = this.d.renderMarkdown()
     const view = await this.inputs(t, request, scope, root, problem, base, forced, patterns)
-    const { files, tooMany } = await buildFiles(view.inputs, this.d.now, markdown)
+    const { files, tooMany, texts } = await buildFiles(view.inputs, this.d.now, markdown)
     // the status bar counts all the changes: a view that left test files out cannot give the counter
     const own = !request && scope === (root ? 'uncommitted' : 'session') && view.tests.length === 0
     const update: ReviewUpdate = {
@@ -421,7 +437,16 @@ export class ReviewHub {
       counter: own ? this.counterOf(root, totalsOf(files)) : (t.last?.counter ?? null),
       reveal: false
     }
-    return { update, counting: own ? null : () => this.otherCounter(t, root, base) }
+    return { update, counting: own ? null : () => this.otherCounter(t, root, base), texts }
+  }
+
+  /** the texts of the view `t` just published (by path); every other tab's go: only the tab in front builds its view */
+  private keepTexts(t: TabState, texts: Map<string, string>): void {
+    for (const o of this.tabs.values()) o.texts.clear()
+    for (const f of t.last?.files ?? []) {
+      const text = texts.get(f.path)
+      if (text !== undefined) t.texts.set(pathKey(f.path), { hash: f.hash, text })
+    }
   }
 
   /**

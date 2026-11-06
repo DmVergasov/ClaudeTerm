@@ -67,6 +67,7 @@ const api: CtApi = {
   openInEditor: (tabId, path, line) => ipcRenderer.send(IPC.reviewOpenEditor, tabId, path, line),
   revealFile: (tabId, path) => ipcRenderer.send(IPC.reviewReveal, tabId, path),
   reviewCanSend: (tabId) => ipcRenderer.invoke(IPC.reviewCanSend, tabId),
+  reviewLines: (tabId, path, hash, from, to) => ipcRenderer.invoke(IPC.reviewLines, tabId, path, hash, from, to),
   setPanel: (width, resize) => ipcRenderer.invoke(IPC.panelSet, width, resize),
   getTabLayout: () => ipcRenderer.invoke(IPC.layoutGet),
   setTabLayout: (change) => ipcRenderer.send(IPC.layoutSet, change),

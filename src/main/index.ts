@@ -21,7 +21,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -848,6 +848,8 @@ function bootstrap(): void {
     if (openTab({ kind: 'shell', cwd: homedir(), title: 'Get a token' }, true, true)) focusWindow()
   })
   ipcMain.handle(IPC.reviewCanSend, (_e, tabId: unknown) => (isId(tabId) ? review.canSend(tabId) : { ok: false, reason: NOT_RUNNING }))
+  ipcMain.handle(IPC.reviewLines, (_e, tabId: unknown, path: unknown, hash: unknown, from: unknown, to: unknown) =>
+    isId(tabId) && isAbsPath(path) && isHash(hash) && isLineSpan(from, to) ? review.contextLines(tabId, path, hash, from as number, to as number) : null)
   ipcMain.on(IPC.imagesMarkSeen, (_e, tabId: unknown) => { if (isId(tabId)) images.markSeen(tabId) })
   ipcMain.on(IPC.imagesAction, (_e, cardId: unknown, action: unknown) => {
     if (!isId(cardId) || !isImageAction(action)) return

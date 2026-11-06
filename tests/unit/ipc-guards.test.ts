@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
-import { isAbsPath, isAccountRef, isDocAction, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isAccountRef, isDocAction, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -93,6 +93,17 @@ describe('review guards', () => {
     expect(isLineNo(1.5)).toBe(false)
     expect(isHash('0123456789abcdef0123456789abcdef01234567')).toBe(true)
     expect(isHash('x'.repeat(65))).toBe(false)
+  })
+
+  it('isLineSpan takes the lines of one expand click: whole numbers from 1, in order, at most 1000 of them', () => {
+    expect(isLineSpan(1, 20)).toBe(true)
+    expect(isLineSpan(5, 5)).toBe(true)
+    expect(isLineSpan(1, 1000)).toBe(true)
+    expect(isLineSpan(0, 5)).toBe(false)
+    expect(isLineSpan(6, 5)).toBe(false)
+    expect(isLineSpan(1.5, 5)).toBe(false)
+    expect(isLineSpan(1, 1001)).toBe(false)
+    expect(isLineSpan('1', 5)).toBe(false)
   })
 
   it('isSessionId accepts a session id (UUID) only', () => {

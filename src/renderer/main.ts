@@ -724,7 +724,8 @@ async function boot(): Promise<void> {
       setFileTree: (on) => {
         ct.setSetting('review.fileTree', on).then((r) => { if (!r.ok) showToast(r.error) }, (e: unknown) => showToast(`Cannot save review.fileTree: ${String(e)}`))
       },
-      send: (id, message) => sendToClaude(id, message)
+      send: (id, message) => sendToClaude(id, message),
+      contextLines: (id, path, hash, from, to) => ct.reviewLines(id, path, hash, from, to)
     },
     ct.platform
   )

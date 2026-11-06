@@ -4,7 +4,7 @@ import type { ReviewFile, ReviewLine } from '../../src/shared/review'
 
 const L = (kind: ReviewLine['kind'], text: string, no: number): ReviewLine => ({ kind, text, oldNo: kind === 'add' ? null : no, newNo: kind === 'del' ? null : no })
 const file = (relPath: string, lines: ReviewLine[], extra: Partial<ReviewFile> = {}): ReviewFile => ({
-  path: `/r/${relPath}`, relPath, status: 'modified', additions: 1, deletions: 0, hunks: [{ header: '@@', lines }], note: null, canForce: false, hash: 'h', viewed: false, markdown: false, ...extra
+  path: `/r/${relPath}`, relPath, status: 'modified', additions: 1, deletions: 0, hunks: [{ header: '@@', lines }], note: null, canForce: false, hash: 'h', viewed: false, markdown: false, lineCount: 0, ...extra
 })
 
 /** the matches only; the cap is tested on its own */

@@ -927,3 +927,81 @@ describe('ReviewHub and review.renderMarkdown', () => {
     expect(last().files.map((f) => f.markdown)).toEqual([false, false])
   })
 })
+
+describe('ReviewHub hidden lines', () => {
+  const lines = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`)
+  const before = `${lines.join('\n')}\n`
+  const after = (changed: number): string => `${lines.map((l, i) => (i === changed - 1 ? 'changed' : l)).join('\n')}\n`
+  const A = join(ROOT, 'a.ts')
+
+  it('gives the lines a hunk hides from the content the view was built from', async () => {
+    const { hub, last } = setup({ git: async () => result(input('a.ts', before, after(30))) })
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const f = last().files[0]!
+    expect(f.lineCount).toBe(60)
+    expect(hub.contextLines(TAB, A, f.hash, 1, 3)).toEqual(['line 1', 'line 2', 'line 3'])
+    expect(hub.contextLines(TAB, A, f.hash, 58, 60)).toEqual(['line 58', 'line 59', 'line 60'])
+  })
+
+  it('gives nothing for content the view no longer shows, a file it does not show, lines past the end or a tab it does not know', async () => {
+    let changed = 30
+    const { hub, last } = setup({ git: async () => result(input('a.ts', before, after(changed))) })
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const old = last().files[0]!.hash
+    changed = 40
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const now = last().files[0]!.hash
+    expect(now).not.toBe(old)
+    expect(hub.contextLines(TAB, A, old, 1, 1)).toBeNull()
+    expect(hub.contextLines(TAB, A, now, 40, 40)).toEqual(['changed'])
+    expect(hub.contextLines(TAB, join(ROOT, 'b.ts'), now, 1, 1)).toBeNull()
+    expect(hub.contextLines(TAB, A, now, 60, 61)).toBeNull()
+    expect(hub.contextLines('nope', A, now, 1, 1)).toBeNull()
+  })
+
+  it('takes the path in any case on Windows', async () => {
+    const { hub, last } = setup({ git: async () => result(input('a.ts', before, after(30))) })
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const asked = process.platform === 'win32' ? A.toUpperCase() : A
+    expect(hub.contextLines(TAB, asked, last().files[0]!.hash, 2, 2)).toEqual(['line 2'])
+  })
+
+  it('keeps the content of one tab\'s view only: the tab in front, which computes again when it comes back', async () => {
+    const { hub, last, setActive } = setup({ git: async () => result(input('a.ts', before, after(30))) })
+    hub.addTab('other', ROOT, true)
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const hash = last().files[0]!.hash
+    setActive('other')
+    hub.activated('other')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(last().tabId).toBe('other')
+    expect(hub.contextLines(TAB, A, hash, 1, 1)).toBeNull()
+    expect(hub.contextLines('other', A, hash, 1, 1)).toEqual(['line 1'])
+    setActive(TAB)
+    hub.activated(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(hub.contextLines(TAB, A, hash, 1, 1)).toEqual(['line 1'])
+    expect(hub.contextLines('other', A, hash, 1, 1)).toBeNull()
+  })
+
+  it('gives the lines of a show_diff view', async () => {
+    const { hub, last } = setup({ git: async () => result(input('a.ts', before, after(30))) })
+    expect(await hub.showRequest(TAB, { cwd: ROOT, scope: null, from: 'HEAD~1', to: 'HEAD', paths: [], title: null })).toMatchObject({ ok: true })
+    expect(last().view).toEqual({ kind: 'request' })
+    expect(hub.contextLines(TAB, A, last().files[0]!.hash, 5, 5)).toEqual(['line 5'])
+  })
+
+  it('forgets the lines of a closed tab', async () => {
+    const { hub, last } = setup({ git: async () => result(input('a.ts', before, after(30))) })
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const hash = last().files[0]!.hash
+    hub.removeTab(TAB)
+    expect(hub.contextLines(TAB, A, hash, 1, 1)).toBeNull()
+  })
+})

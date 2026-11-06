@@ -885,3 +885,80 @@ test('a link in a formatted Markdown file opens in the browser', async () => {
   expect(page.url()).toBe(url)
   await app.close()
 })
+
+/** long.ts, 100 numbered lines, committed; then lines 30 and 70 changed: two hunks, with lines hidden above, between and below them */
+function longFile(repo: string): void {
+  const lines = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`)
+  writeFileSync(join(repo, 'long.ts'), `${lines.join('\n')}\n`)
+  execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' })
+  execFileSync('git', ['commit', '-qm', 'long'], { cwd: repo, stdio: 'ignore' })
+  lines[29] = 'line 30 changed'
+  lines[69] = 'line 70 changed'
+  writeFileSync(join(repo, 'long.ts'), `${lines.join('\n')}\n`)
+}
+/** the numbers of a file's unchanged lines, as its gutter shows them */
+const contextNumbers = async (page: Page, rel: string): Promise<number[]> =>
+  (await file(page, rel).locator('.review-line.context .review-no').allTextContents()).map(Number)
+const span = (from: number, to: number): number[] => Array.from({ length: to - from + 1 }, (_, i) => from + i)
+
+test('the expand buttons show the lines a hunk hides above and below it, 20 at a time, and two hunks join when every line between them shows', async () => {
+  const { app, page, repo } = await reviewTab(longFile)
+  await page.keyboard.press(KEYS.changes)
+  const long = file(page, 'long.ts')
+  const hunks = long.locator('.review-hunk')
+  await expect(long.locator('.review-hunk-text')).toHaveText(['@@ -27,7 +27,7 @@', '@@ -67,7 +67,7 @@'])
+  expect(await contextNumbers(page, 'long.ts')).toEqual([...span(27, 29), ...span(31, 33), ...span(67, 69), ...span(71, 73)])
+  // above the first hunk only ↑, between the two ↓ and ↑, below the last only ↓
+  await expect(hunks.first().locator('.review-gap-btns button')).toHaveText(['↑'])
+  await expect(hunks.nth(1).locator('.review-gap-btns button')).toHaveText(['↓', '↑'])
+  await expect(long.locator('.review-gap-tail button')).toHaveText(['↓'])
+
+  // above the first hunk: 20 lines a click, up to the first line of the file
+  await hunks.first().locator('.review-gap-up').click()
+  await expect.poll(() => contextNumbers(page, 'long.ts')).toEqual([...span(7, 29), ...span(31, 33), ...span(67, 69), ...span(71, 73)])
+  await expect(hunks.first().locator('.review-hunk-text')).toHaveText('@@ -7,27 +7,27 @@')
+  await hunks.first().locator('.review-gap-up').click()
+  await expect(hunks.first().locator('.review-hunk-text')).toHaveText('@@ -1,33 +1,33 @@')
+  await expect(hunks.first().locator('.review-gap-btns button')).toHaveCount(0)
+
+  // between the hunks: ↓ shows 20 lines under the first; the 13 left show with ↕, and the hunks become one
+  await hunks.nth(1).locator('.review-gap-down').click()
+  await expect(hunks.nth(1).locator('.review-gap-btns button')).toHaveText(['↕'])
+  await expect(hunks.nth(1).locator('.review-hunk-text')).toHaveText('@@ -67,7 +67,7 @@')
+  expect((await contextNumbers(page, 'long.ts')).slice(0, 52)).toEqual([...span(1, 29), ...span(31, 53)])
+  await hunks.nth(1).locator('.review-gap-all').click()
+  await expect(hunks).toHaveCount(1)
+  await expect(long.locator('.review-hunk-text')).toHaveText('@@ -1,73 +1,73 @@')
+
+  // below the last hunk: 20 lines, then the 7 left; the row goes with the last of them
+  await long.locator('.review-gap-tail .review-gap-down').click()
+  await expect.poll(async () => (await contextNumbers(page, 'long.ts')).at(-1)).toBe(93)
+  await long.locator('.review-gap-tail .review-gap-down').click()
+  await expect(long.locator('.review-gap-tail')).toHaveCount(0)
+  expect(await contextNumbers(page, 'long.ts')).toEqual([...span(1, 29), ...span(31, 69), ...span(71, 100)])
+  await expect(long.locator('.review-line.add .review-code')).toHaveText(['line 30 changed', 'line 70 changed'])
+
+  // a shown line takes a comment like any other
+  const fifth = long.locator('.review-line.context').nth(4)
+  await fifth.hover()
+  await fifth.locator('.review-plus').click()
+  await expect(page.locator('.review-comment-box .review-comment-meta')).toHaveText('Line 5')
+  await page.locator('.review-comment-input').fill('Why here?')
+  await page.locator('.review-btn.primary').click()
+  await expect(long.locator('.review-comment .review-comment-meta')).toHaveText('long.ts · Line 5')
+
+  // a new view of the same content keeps the lines shown
+  await page.locator('.review-refresh').click()
+  await expect(page.locator('.review-loading')).toHaveCount(0)
+  await expect(long.locator('.review-line')).toHaveCount(102)
+
+  // changed content shows its new diff, with the lines hidden again
+  const lines = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`)
+  lines[29] = 'line 30 changed'
+  lines[69] = 'line 70 changed'
+  lines[0] = 'line 1 changed'
+  writeFileSync(join(repo, 'long.ts'), `${lines.join('\n')}\n`)
+  await page.locator('.review-refresh').click()
+  await expect(long.locator('.review-hunk-text')).toHaveText(['@@ -1,4 +1,4 @@', '@@ -27,7 +27,7 @@', '@@ -67,7 +67,7 @@'])
+  await app.close()
+})

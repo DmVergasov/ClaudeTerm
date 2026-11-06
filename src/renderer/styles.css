@@ -228,7 +228,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .review-note { padding: 6px 12px; color: var(--muted); font-size: 12px; }
 .review-force { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
 .review-hunk { width: max-content; min-width: 100%; }
-.review-hunk-head { padding: 2px 8px; color: var(--muted); background: #ffffff08; font: 11px Consolas, monospace; }
+.review-hunk-head { display: flex; min-height: 19px; color: var(--muted); background: #ffffff08; font: 11px Consolas, monospace; }
+.review-hunk-text { align-self: center; padding: 2px 8px 2px 6px; white-space: pre; }
+/* the expand buttons of the lines a hunk hides, in the line numbers' column: ↑ above the hunk, ↓ under the hunk before, ↕ all of them */
+.review-gap-btns { flex: none; width: 46px; display: flex; flex-direction: column; }
+.review-gap-btns button { flex: 1; min-height: 19px; padding: 0; border: 0; background: rgba(217, 119, 87, 0.14); color: var(--muted); font: 12px/1 sans-serif; cursor: pointer; }
+.review-gap-btns button:hover { background: var(--accent); color: #111; }
 .review-line { display: flex; font: 12px/1.5 Consolas, "Cascadia Mono", monospace; white-space: pre; }
 .review-line.add { background: rgba(46, 160, 67, 0.15); }
 .review-line.del { background: rgba(248, 81, 73, 0.15); }

@@ -47,6 +47,9 @@ export const isAbsPath = (v: unknown): v is string => typeof v === 'string' && v
 
 export const isLineNo = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10_000_000
 
+/** the lines one expand click in the Changes panel asks for: from..to, at most 1000 of them */
+export const isLineSpan = (from: unknown, to: unknown): boolean => isLineNo(from) && isLineNo(to) && from <= to && to - from < 1000
+
 /** the side panel's width in px; 0: closed */
 export const isPanelWidth = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_DIM
 

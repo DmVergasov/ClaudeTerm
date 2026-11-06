@@ -89,6 +89,7 @@ Press `Ctrl+Shift+D` — or click the **Changes** button (a page with + and −)
 
 - **Uncommitted** — everything not committed yet, untracked files included. **Last turn** — what Claude changed in its latest turn with edits. **Session** — everything it changed in this conversation. Last turn and Session show the files inside the tab's folder (Claude's edits elsewhere are counted, not shown) and work without git too: ClaudeTerm keeps each file as it was right before Claude's first change.
 - **Comment on lines** — hover a line and click **+**, or drag along the margin for several lines. **Send to Claude** writes all your comments as one message — file, line and the quoted code — and sends it. The diff updates while Claude works on them.
+- **Lines around a change** — as on GitHub, ↑ over a hunk and ↓ under it show 20 more lines of the file, ↕ all of a short gap; two hunks with every line between them shown become one. These lines take comments too.
 - **File tree** — the changed files by folder on the left of the diff: click a file to jump to it, type in **Filter files** to show only the files whose path holds the text, and fold or unfold every file at once with ⊟ and ⊞. ☰ hides the tree.
 - **Viewed** folds the files you are done with; a file Claude changes again unfolds.
 - **Hide tests** — the checkbox in the panel leaves test files out of every view and says how many it hid; which files count as tests is a list of patterns in the settings.

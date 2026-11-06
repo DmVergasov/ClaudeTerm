@@ -65,6 +65,7 @@ export const IPC = {
   reviewOpenEditor: 'review:open-editor',
   reviewReveal: 'review:reveal',
   reviewCanSend: 'review:can-send',
+  reviewLines: 'review:lines',
   panelSet: 'panel:set',
   layoutGet: 'layout:get',
   layoutSet: 'layout:set',
@@ -257,6 +258,11 @@ export interface CtApi {
   revealFile(tabId: string, path: string): void
   /** whether Send may write into the tab now */
   reviewCanSend(tabId: string): Promise<ReviewSendState>
+  /**
+   * lines from..to (from 1, at most 1000) of a file of that tab's Changes view, the content with that hash: the lines its hunks
+   * hide. Null when the view does not hold that content now
+   */
+  reviewLines(tabId: string, path: string, hash: string, from: number, to: number): Promise<string[] | null>
   /**
    * The side panel opened at `width` px, closed (0) or switched to a panel of another width: main widens or narrows the window
    * for it and answers how the panel is to be shown. `resize` false: its edge was dragged, the window stays as it is.
