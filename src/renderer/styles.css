@@ -159,6 +159,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #statusbar .status-agents { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #statusbar .warn { color: #e5c07b; }
 #statusbar .crit { color: #e06c75; }
+/* a usage limit's bar: what is used, in the segment's color, and a mark where the time gone by stands */
+#statusbar .status-limit::before, #statusbar .status-week::before { content: ''; display: inline-block; width: 36px; height: 5px; margin-right: 6px; vertical-align: middle; border-radius: 3px; background: linear-gradient(to right, transparent calc(var(--elapsed) - 1px), var(--fg) calc(var(--elapsed) - 1px), var(--fg) calc(var(--elapsed) + 1px), transparent calc(var(--elapsed) + 1px)), linear-gradient(to right, currentColor var(--used), var(--border) var(--used)); }
 #sessions { position: fixed; inset: 0; z-index: 45; display: flex; justify-content: center; align-items: flex-start; padding: 60px 16px 0; background: #0007; }
 .sessions-box { color-scheme: dark; width: min(640px, 100%); max-height: calc(100vh - 120px); display: flex; flex-direction: column; background: var(--chrome-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 32px #0009; overflow: hidden; }
 .sessions-heading { padding: 10px 14px 0; color: var(--muted); font-size: 12px; }

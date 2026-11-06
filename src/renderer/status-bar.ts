@@ -11,6 +11,8 @@ export interface Segment {
   level: Level
   /** 0..1, drawn as a progress bar before the text */
   fill?: number
+  /** a usage limit's bar before the text: the % used, and a mark at the % of its window gone by */
+  bar?: { used: number; elapsed: number }
 }
 
 export function formatTokens(n: number): string {
@@ -20,6 +22,38 @@ export function formatTokens(n: number): string {
 }
 
 export const levelFor = (pct: number): Level => (pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : 'normal')
+
+const FIVE_HOURS_MS = 5 * 3_600_000
+const SEVEN_DAYS_MS = 7 * 86_400_000
+/** before this share of a window has gone by, its pace says too little: the fixed 70% and 90% apply */
+const PACE_FROM = 0.08
+
+export interface LimitPace {
+  /** the share of the window gone by, 0 to 1 */
+  elapsed: number
+  /** when the limit is used up at the pace so far, in ms, when that comes before the reset; null otherwise */
+  runsOutAt: number | null
+  /** the % used by the reset at the pace so far, when the limit lasts until then; null otherwise */
+  atReset: number | null
+  level: Level
+}
+
+/**
+ * How a usage limit is being spent: the pace so far, carried on to the reset. Normal when the limit lasts until the
+ * reset; warn when it would run out in the second half of the time left, or 90% is used; crit when it would run out
+ * sooner, or is used up. Early in the window, and once the reset time has passed, the fixed 70% and 90% apply.
+ */
+export function limitPace(usedPct: number, resetsAt: number, windowMs: number, now: number): LimitPace {
+  const left = resetsAt * 1000 - now
+  const gone = windowMs - left
+  const elapsed = Math.min(1, Math.max(0, gone / windowMs))
+  if (usedPct >= 100) return { elapsed, runsOutAt: null, atReset: null, level: 'crit' }
+  if (left <= 0 || elapsed < PACE_FROM) return { elapsed, runsOutAt: null, atReset: null, level: levelFor(usedPct) }
+  const atReset = (usedPct * windowMs) / gone
+  if (atReset <= 100) return { elapsed, runsOutAt: null, atReset, level: usedPct >= 90 ? 'warn' : 'normal' }
+  const runsOutIn = ((100 - usedPct) * gone) / usedPct
+  return { elapsed, runsOutAt: now + runsOutIn, atReset: null, level: runsOutIn >= left / 2 ? 'warn' : 'crit' }
+}
 
 /** claude-opus-5-5 → opus; anything else as is */
 export function modelFamily(id: string): string {
@@ -37,6 +71,34 @@ const agentKind = (a: AgentStatus): string => (a.model === null ? '…' : a.effo
 function minutes(ms: number): string {
   const m = Math.floor(ms / 60_000)
   return m < 1 ? '<1 min' : `${m} min`
+}
+
+/** 42 min, 1 h 20 min, 3 d 18 h */
+function duration(ms: number): string {
+  const m = Math.floor(ms / 60_000)
+  if (m < 60) return minutes(ms)
+  const h = Math.floor(m / 60)
+  if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`
+  return h % 24 ? `${Math.floor(h / 24)} d ${h % 24} h` : `${Math.floor(h / 24)} d`
+}
+
+const hoursAndMinutes = (d: Date): string => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+
+/** a usage limit's segment: its color, forecast and bar from the pace it is spent at */
+function limitSegment(key: 'limit' | 'week', label: string, limit: { usedPct: number; resetsAt: number }, windowMs: number, now: number, at: (d: Date) => string): Segment {
+  const reset = limit.resetsAt * 1000
+  const pace = limitPace(limit.usedPct, limit.resetsAt, windowMs, now)
+  const lines = [`resets ${at(new Date(reset))}${reset > now ? `, in ${duration(reset - now)}` : ''}`]
+  if (limit.usedPct >= 100) lines.push('used up')
+  else if (pace.runsOutAt !== null) lines.push(`at this pace: runs out ${at(new Date(pace.runsOutAt))}, ${duration(reset - pace.runsOutAt)} before the reset`)
+  else if (pace.atReset !== null) lines.push(`at this pace: lasts until the reset, about ${Math.round(pace.atReset)}% by then`)
+  return {
+    key,
+    text: `${label} ${Math.round(limit.usedPct)}%`,
+    title: lines.join('\n'),
+    level: pace.level,
+    bar: { used: Math.min(100, Math.max(0, Math.round(limit.usedPct))), elapsed: Math.round(pace.elapsed * 100) }
+  }
 }
 
 function agentGroups(agents: AgentStatus[]): string {
@@ -66,15 +128,8 @@ export function statusSegments(u: StatusUpdate, now: number): Segment[] {
       level: levelFor(c.usedPct)
     })
   }
-  if (main.fiveHour) {
-    const f = main.fiveHour
-    const reset = new Date(f.resetsAt * 1000)
-    segments.push({ key: 'limit', text: `5h ${Math.round(f.usedPct)}%`, title: `resets at ${pad2(reset.getHours())}:${pad2(reset.getMinutes())}`, level: levelFor(f.usedPct) })
-  }
-  if (main.sevenDay) {
-    const w = main.sevenDay
-    segments.push({ key: 'week', text: `7d ${Math.round(w.usedPct)}%`, title: `resets ${dayAndTime(new Date(w.resetsAt * 1000))}`, level: levelFor(w.usedPct) })
-  }
+  if (main.fiveHour) segments.push(limitSegment('limit', '5h', main.fiveHour, FIVE_HOURS_MS, now, (d) => `at ${hoursAndMinutes(d)}`))
+  if (main.sevenDay) segments.push(limitSegment('week', '7d', main.sevenDay, SEVEN_DAYS_MS, now, dayAndTime))
   if (u.agents.length > 0) {
     segments.push({ key: 'agents', text: `⚙ ${u.agents.length}: ${agentGroups(u.agents)}`, title: u.agents.map((a) => agentLine(a, now)).join('\n'), level: 'normal' })
   }
@@ -146,4 +201,8 @@ function fill(span: HTMLElement, s: Segment): void {
   if (span.textContent !== s.text) span.textContent = s.text
   if (span.title !== s.title) span.title = s.title
   if (s.fill !== undefined) span.style.setProperty('--plan-fill', `${Math.round(s.fill * 100)}%`)
+  if (s.bar) {
+    span.style.setProperty('--used', `${s.bar.used}%`)
+    span.style.setProperty('--elapsed', `${s.bar.elapsed}%`)
+  }
 }

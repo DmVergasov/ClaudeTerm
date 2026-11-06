@@ -51,6 +51,27 @@ test('a claude tab shows model, context, the 5h and weekly limits and running su
   await app.close()
 })
 
+test('the 5h limit takes its color from the pace it is spent at, says the forecast in its tooltip, and shows the time gone by on its bar', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  const now = Math.floor(Date.now() / 1000)
+  const limit = page.locator('#statusbar .status-limit')
+  const bar = (): Promise<string[]> => limit.evaluate((el) => [el.style.getPropertyValue('--used'), el.style.getPropertyValue('--elapsed')])
+
+  // half the limit in the first of the five hours: the rest goes in the next hour
+  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), fiveHour: { usedPct: 50, resetsAt: now + 4 * 3600 } })).toEqual({ ok: true })
+  await expect(limit).toHaveText('5h 50%')
+  await expect(limit).toHaveClass(/\bcrit\b/)
+  await expect(limit).toHaveAttribute('title', /\nat this pace: runs out at \d\d:\d\d, /)
+  await expect.poll(bar).toEqual(['50%', '20%'])
+
+  // the same half four hours into the window lasts until the reset
+  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), fiveHour: { usedPct: 50, resetsAt: now + 3600 } })).toEqual({ ok: true })
+  await expect(limit).toHaveAttribute('title', /\nat this pace: lasts until the reset, about 6\d% by then$/)
+  await expect(limit).not.toHaveClass(/\b(warn|crit)\b/)
+  await expect.poll(bar).toEqual(['50%', '80%'])
+  await app.close()
+})
+
 test('a new status updates the segments in place, so an open tooltip is not dismissed', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })

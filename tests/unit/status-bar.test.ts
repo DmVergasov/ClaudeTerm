@@ -1,26 +1,43 @@
 import { describe, expect, it } from 'vitest'
-import { accountSegment, changesSegment, formatTokens, levelFor, modelFamily, planSegment, statusSegments } from '../../src/renderer/status-bar'
+import { accountSegment, changesSegment, formatTokens, levelFor, limitPace, modelFamily, planSegment, statusSegments } from '../../src/renderer/status-bar'
 import type { AgentStatus, MainStatus, PlanStatus } from '../../src/shared/types'
+
+const H = 3_600_000
+const FIVE_HOURS = 5 * H
+/** the 5h window resets at 21:40; the status is read at 19:40, three hours into it */
+const RESET = new Date(2026, 9, 5, 21, 40).getTime()
+const NOW = RESET - 2 * H
 
 const main: MainStatus = {
   model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
   effort: 'xhigh',
   context: { usedTokens: 82_314, size: 200_000, usedPct: 41.2 },
-  fiveHour: { usedPct: 23.5, resetsAt: new Date(2026, 9, 5, 21, 40).getTime() / 1000 },
+  fiveHour: { usedPct: 23.5, resetsAt: RESET / 1000 },
   sevenDay: { usedPct: 41.2, resetsAt: new Date(2026, 9, 9, 14, 0).getTime() / 1000 }
 }
 const agent = (over: Partial<AgentStatus>): AgentStatus => ({ agentId: 'a', type: 'Explore', description: null, model: 'claude-opus-5-5', effort: 'high', startedAt: 0, ...over })
 
 describe('statusSegments', () => {
   it('formats all five segments', () => {
-    const agents = [agent({ type: 'code-reviewer', description: 'Review font fix' })]
-    expect(statusSegments({ tabId: 't', main, agents }, 3 * 60_000 + 5_000)).toEqual([
+    const agents = [agent({ type: 'code-reviewer', description: 'Review font fix', startedAt: NOW - 3 * 60_000 - 5_000 })]
+    expect(statusSegments({ tabId: 't', main, agents }, NOW)).toEqual([
       { key: 'model', text: 'Opus 5.5 · xhigh', title: 'claude-opus-5-5', level: 'normal' },
       { key: 'context', text: 'ctx 41% · 82k/200k', title: '82,314 of 200,000 tokens', level: 'normal' },
-      { key: 'limit', text: '5h 24%', title: 'resets at 21:40', level: 'normal' },
-      { key: 'week', text: '7d 41%', title: 'resets Fri 9 Oct, 14:00', level: 'normal' },
+      // 23.5% in 3 of the 5 hours: about 39% by the reset
+      { key: 'limit', text: '5h 24%', title: 'resets at 21:40, in 2 h\nat this pace: lasts until the reset, about 39% by then', level: 'normal', bar: { used: 24, elapsed: 60 } },
+      // 41.2% in 77 h 40 min of the 168: about 89% by the reset
+      { key: 'week', text: '7d 41%', title: 'resets Fri 9 Oct, 14:00, in 3 d 18 h\nat this pace: lasts until the reset, about 89% by then', level: 'normal', bar: { used: 41, elapsed: 46 } },
       { key: 'agents', text: '⚙ 1: opus·high', title: 'code-reviewer · opus·high · 3 min · "Review font fix"', level: 'normal' }
     ])
+  })
+
+  it('a limit that runs out before its reset says when, and one used up says so', () => {
+    const at = (usedPct: number, now: number) => statusSegments({ tabId: 't', main: { ...main, fiveHour: { usedPct, resetsAt: RESET / 1000 } }, agents: [] }, now)[2]
+    // 50% in the first hour: the rest goes in the next hour, at 18:40, three hours before the reset
+    expect(at(50, RESET - 4 * H)).toEqual({ key: 'limit', text: '5h 50%', title: 'resets at 21:40, in 4 h\nat this pace: runs out at 18:40, 3 h before the reset', level: 'crit', bar: { used: 50, elapsed: 20 } })
+    expect(at(100, NOW)).toEqual({ key: 'limit', text: '5h 100%', title: 'resets at 21:40, in 2 h\nused up', level: 'crit', bar: { used: 100, elapsed: 60 } })
+    // too early in the window for a pace: no forecast
+    expect(at(10, RESET - FIVE_HOURS + 18 * 60_000)).toMatchObject({ title: 'resets at 21:40, in 4 h 42 min', level: 'normal' })
   })
 
   it('shows only the model early in a session', () => {
@@ -32,7 +49,7 @@ describe('statusSegments', () => {
     expect(statusSegments({ tabId: 't', main: null, agents: [agent({})] }, 0)).toEqual([])
   })
 
-  it('marks context and the limits warn from 70% and crit from 90%', () => {
+  it('marks context warn from 70% and crit from 90%, and the limits too while their pace is not known', () => {
     const s = statusSegments({ tabId: 't', main: { ...main, context: { usedTokens: 1, size: 2, usedPct: 91 }, fiveHour: { usedPct: 70, resetsAt: 0 }, sevenDay: { usedPct: 90, resetsAt: 0 } }, agents: [] }, 0)
     expect(s.map((x) => x.level)).toEqual(['normal', 'crit', 'warn', 'crit'])
   })
@@ -89,4 +106,39 @@ it('planSegment: done/total and the current task; ✓ when finished; Task N for 
   expect(planSegment(plan(3))).toEqual({ key: 'plan', text: '3/7 · Save dialog and file writing', title: 'CSV Export — 3 of 7 done. Click for the task list', level: 'normal', fill: 3 / 7 })
   expect(planSegment(plan(7, true))).toMatchObject({ text: '✓ 7/7', fill: 1 })
   expect(planSegment(plan(3, false, '')).text).toBe('3/7 · Task 4')
+})
+
+describe('limitPace', () => {
+  /** the 5h window, read `elapsedH` hours into it, with `used` % spent */
+  const pace = (used: number, elapsedH: number) => limitPace(used, RESET / 1000, FIVE_HOURS, RESET - FIVE_HOURS + elapsedH * H)
+
+  it('a limit that lasts until the reset at the pace so far is normal, and says how much it reaches by then', () => {
+    expect(pace(30, 2)).toEqual({ elapsed: 0.4, runsOutAt: null, atReset: 75, level: 'normal' })
+  })
+
+  it('one that would run out in the second half of the time left warns, and says when it runs out', () => {
+    // 85% in 4 hours: the last 15% go in 42 of the 60 minutes left
+    const p = pace(85, 4)
+    expect(p.level).toBe('warn')
+    expect(p.runsOutAt! - (RESET - H)).toBeCloseTo((15 / 85) * 4 * H, -3)
+  })
+
+  it('one that would run out in the first half of the time left is crit', () => {
+    expect(pace(50, 1)).toMatchObject({ runsOutAt: RESET - 3 * H, level: 'crit' })
+  })
+
+  it('90% used warns even when the rest lasts until the reset', () => {
+    expect(pace(92, 4.8)).toMatchObject({ runsOutAt: null, level: 'warn' })
+  })
+
+  it('a limit used up is crit', () => {
+    expect(pace(100, 3)).toEqual({ elapsed: 0.6, runsOutAt: null, atReset: null, level: 'crit' })
+  })
+
+  it('in the first 8% of the window, and with the reset time passed, the fixed 70% and 90% apply', () => {
+    // 75% in the first 18 minutes would run out at once: too early to tell
+    expect(pace(75, 0.3)).toEqual({ elapsed: 0.06, runsOutAt: null, atReset: null, level: 'warn' })
+    expect(pace(95, 0.3).level).toBe('crit')
+    expect(limitPace(75, RESET / 1000, FIVE_HOURS, RESET + 1000)).toEqual({ elapsed: 1, runsOutAt: null, atReset: null, level: 'warn' })
+  })
 })
