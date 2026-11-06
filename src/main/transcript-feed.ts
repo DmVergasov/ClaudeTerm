@@ -4,7 +4,7 @@ import { access, open, readdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { assistantInfo, type AgentModelInfo } from './transcript-agent-info'
-import { assistantTime, interruptTime, parseEditEvents, type TranscriptEditEvent } from './transcript-edits'
+import { assistantTime, interruptTime, parseEditEvents, turnReport, type TranscriptEditEvent } from './transcript-edits'
 import { PlanWorkspaceFinder } from './transcript-plan'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
 
@@ -128,6 +128,8 @@ export interface TranscriptFeedOptions {
   onAssistant?(agentId: string | null, at: number): void
   /** the user interrupted that agent's turn (Esc, a denied permission prompt); `agentId` and `at` as for onAssistant */
   onInterrupt?(agentId: string | null, at: number): void
+  /** a prompt of the main transcript: its turn's index, and whether a message from another session started the turn (see turnReport) */
+  onTurn?(turnIndex: number, peer: boolean): void
   /** a tool call in any of the session's transcripts named this plan workspace (see PlanWorkspaceFinder); `at` is the time of its result (0 when it has none) */
   onPlanWorkspace?(printed: string, at: number): void
   /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
@@ -203,6 +205,8 @@ export class TranscriptFeed {
   /** a transcript brought new lines since the subagents folder was listed */
   private moved = false
   private busy = false
+  /** the read in progress, if any */
+  private running: Promise<void> | null = null
   private stopped = false
   private missingReported = false
   private lastLocate = -Infinity
@@ -258,7 +262,25 @@ export class TranscriptFeed {
 
   /** Reads every transcript now */
   poll(): Promise<void> {
-    return this.exclusive(() => this.read(() => true, this.ticks))
+    return this.readNow(() => true)
+  }
+
+  /**
+   * Reads the main transcript now, for the end of a turn, whose origin is in the main transcript only: the subagents'
+   * transcripts are not opened and keep the waits they have
+   */
+  pollMain(): Promise<void> {
+    return this.readNow((s) => s === this.main)
+  }
+
+  /**
+   * A read that starts after this call and has finished when the promise resolves. A read in progress may have looked at
+   * a file before the lines asked for were written, so this waits for it; callers that waited together take turns, each
+   * after the read before it (the check is made again after every wait).
+   */
+  private async readNow(due: (s: Source) => boolean): Promise<void> {
+    while (this.running) await this.running.catch(() => undefined)
+    return this.exclusive(() => this.read(due, this.ticks))
   }
 
   /** The timer: lists the subagents folder and reads the transcripts when it is their turn */
@@ -287,14 +309,15 @@ export class TranscriptFeed {
   }
 
   /** one read at a time, none after stop() */
-  private async exclusive(work: () => Promise<void>): Promise<void> {
-    if (this.busy || this.stopped) return
+  private exclusive(work: () => Promise<void>): Promise<void> {
+    if (this.busy || this.stopped) return Promise.resolve()
     this.busy = true
-    try {
-      await work()
-    } finally {
+    const run = work().finally(() => {
       this.busy = false
-    }
+      this.running = null
+    })
+    this.running = run
+    return run
   }
 
   /** Reads the main transcript, then the subagents' ones, each that `due` picks */
@@ -367,6 +390,7 @@ export class TranscriptFeed {
       this.reportInfo(src, line)
       this.reportReview(src, line)
       this.reportPlan(src, line)
+      this.reportTurn(src, line)
       try {
         for (const img of src.parser.parseLine(line)) {
           if (this.stopped) return
@@ -396,6 +420,16 @@ export class TranscriptFeed {
     try {
       const found = src.plan.parseLine(line)
       if (found !== null) this.o.onPlanWorkspace(found.printed, found.at)
+    } catch (e) {
+      this.report(e)
+    }
+  }
+
+  private reportTurn(src: Source, line: string): void {
+    if (!this.o.onTurn) return
+    try {
+      const turn = turnReport(line, { main: src.agentId === null })
+      if (turn !== null) this.o.onTurn(turn.turnIndex, turn.peer)
     } catch (e) {
       this.report(e)
     }

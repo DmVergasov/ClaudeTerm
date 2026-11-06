@@ -103,3 +103,29 @@ export function assistantTime(line: string): number | null {
     return null
   }
 }
+
+/** The turn a user entry of the main transcript belongs to: its index, and whether a message from another session started it */
+export interface TurnReport {
+  turnIndex: number
+  peer: boolean
+}
+
+/**
+ * The turn of a user entry in the main transcript, from the turnPosition Claude Code writes on it. A message from another
+ * root session starts a peer turn; a subagent's report to its parent (origin.handback) does not. Null for any other line,
+ * a subagent's or sidechain's entry, and an entry without a valid turn index (an older Claude Code writes none).
+ */
+export function turnReport(line: string, opts: { main: boolean }): TurnReport | null {
+  if (!opts.main || !line.includes('"turnPosition"')) return null
+  try {
+    const o: unknown = JSON.parse(line)
+    if (!isObj(o) || o.type !== 'user' || o.isSidechain === true || !isObj(o.turnPosition)) return null
+    const pos = o.turnPosition
+    const turnIndex = pos.turnIndex
+    if (typeof turnIndex !== 'number' || !Number.isInteger(turnIndex) || turnIndex < 0) return null
+    const origin = o.origin
+    return { turnIndex, peer: isObj(origin) && origin.kind === 'peer' && origin.handback !== true }
+  } catch {
+    return null
+  }
+}

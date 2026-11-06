@@ -58,6 +58,7 @@ import { NoteHub } from './note-hub'
 import { SessionNotes } from './session-notes'
 import { TaskListHub, shownPlan } from './task-list-hub'
 import { TaskListStore } from './task-list-store'
+import { TurnOrigins } from './turn-origins'
 import { TabLayoutStore } from './tab-layout'
 import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
@@ -226,6 +227,8 @@ function bootstrap(): void {
     transcriptPath: string | null
   }
   const sources = new Map<string, TabImageSources>()
+  // what started each turn of a tab's conversation, from its transcript: the end of a turn another session started is its own signal
+  const turns = new TurnOrigins()
 
   const statusTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const statusHub = new StatusHub({
@@ -359,6 +362,7 @@ function bootstrap(): void {
       onEditEvent: (ev) => review.transcriptEvent(tabId, ev),
       onAssistant: (agentId, at) => review.assistantEntry(tabId, agentId, at),
       onInterrupt: (agentId, at) => review.interrupted(tabId, agentId, at),
+      onTurn: (turnIndex, peer) => turns.report(tabId, turnIndex, peer),
       onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at),
       pollMaxMs: testFeedMaxMs,
       subagentPollMaxMs: testFeedMaxMs,
@@ -418,6 +422,7 @@ function bootstrap(): void {
       planHub.removeTab(tabId)
       stopTabStatus(tabId)
       attention.removeTab(tabId)
+      turns.removeTab(tabId)
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
       review.removeTab(tabId)
@@ -686,6 +691,7 @@ function bootstrap(): void {
       taskLists.session(msg.tabId, msg.sessionId, msg.source === 'fork' ? tabs.get(msg.tabId)?.fork?.from ?? null : null)
       // compact keeps the open dialogs: the conversation goes on
       review.sessionStarted(msg.tabId, msg.sessionId, msg.source)
+      turns.session(msg.tabId, msg.sessionId)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
       const cut = resumeAfterRestore.get(msg.tabId)
       if (cut) {
@@ -734,8 +740,17 @@ function bootstrap(): void {
         // a response a dropped connection cut off goes on by itself: nobody needs to look yet
         else if (autoContinue.failed(msg.tabId, msg.error)) return { ok: true }
       } else review.dialogOpened(msg.tabId, msg.agentId ?? null)
-      const signalled = attention.notify(msg.tabId, msg.reason, msg.background === true)
-      log.info(`attention ${msg.reason} tab=${msg.tabId}${msg.background ? ' with background work' : ''}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
+      const signal = (): void => {
+        if (!isClaudeTab(msg.tabId)) return
+        // a turn a message from another session started has its own settings: the transcript tells which turn this is
+        const reason = msg.reason === 'done' && turns.lastTurnIsPeer(msg.tabId) ? 'peer' : msg.reason
+        const signalled = attention.notify(msg.tabId, reason, msg.background === true)
+        log.info(`attention ${reason} tab=${msg.tabId}${msg.background ? ' with background work' : ''}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
+      }
+      // the end of a turn waits for the main transcript to be read up to it: the pipe answers at once, the signal follows
+      const feed = msg.reason === 'done' ? sources.get(msg.tabId)?.feed : undefined
+      if (feed) void feed.pollMain().then(signal, signal)
+      else signal()
       return { ok: true }
     },
     turn: (msg) => {

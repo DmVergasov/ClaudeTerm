@@ -206,4 +206,35 @@ describe('TranscriptFeed polling', () => {
     expect(io.opened.length + io.listed.length).toBe(seen)
     expect(edits.map((e) => e.id)).toEqual(['m0', 's1', 'm1'])
   })
+
+  // fails when the end of a turn reads the subagents' transcripts as well: they keep their waits and none is opened
+  it('pollMain reads only the main transcript now and leaves the subagents\' waits as they were', async () => {
+    const { transcriptPath, agent, feed } = setup()
+    const sub = agent('a1', 's1')
+    feed.start()
+    await vi.advanceTimersByTimeAsync(3200)
+    await feed.pollMain()
+    expect(opens(transcriptPath)).toContain(3200)
+    await vi.advanceTimersByTimeAsync(4800)
+    expect(opens(sub)).toEqual([0, 100, 300, 700, 1500, 3100, 4700, 6300, 7900])
+  })
+
+  // fails when a poll that waits behind a read in progress resolves before a read started after it has finished
+  it('two polls made while a read is in progress both read the lines written before they were called', async () => {
+    const late: Promise<void>[] = []
+    const { transcriptPath, feed, edits } = setup({
+      onEdit: (id, f) => {
+        // inside the first read, after it has looked at the file: a line written now is not in that read
+        if (id !== 'm0') return
+        appendFileSync(transcriptPath, edit('m1'))
+        late.push(f.pollMain(), f.pollMain())
+      }
+    })
+    await feed.pollMain()
+    // the second caller first: it must not resolve before the read that takes its line has consumed it
+    await late[1]
+    expect(edits.map((e) => e.id)).toEqual(['m0', 'm1'])
+    await late[0]
+    expect(edits.map((e) => e.id)).toEqual(['m0', 'm1'])
+  })
 })

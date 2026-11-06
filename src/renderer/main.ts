@@ -240,6 +240,7 @@ const BANNER_TEXT: Record<NotificationCase, string> = {
   permission: 'Claude is waiting for your permission',
   question: 'Claude has a question for you',
   done: 'Claude finished its turn',
+  peer: 'Claude finished replying to another session',
   bell: 'The bell rang in this tab'
 }
 

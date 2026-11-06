@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { assistantTime, interruptTime, parseEditEvents } from '../../src/main/transcript-edits'
-import { assistantLine, editResultLine, interruptLine, promptLine, textLine, toolResultLine } from '../fixtures/transcript'
+import { assistantTime, interruptTime, parseEditEvents, turnReport } from '../../src/main/transcript-edits'
+import { assistantLine, editResultLine, HANDBACK_ORIGIN, interruptLine, PEER_ORIGIN, promptLine, textLine, toolResultLine, turnPromptLine } from '../fixtures/transcript'
 
 const HUNK = { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-a', '+b'] }
 
@@ -70,5 +70,38 @@ describe('interruptTime', () => {
     const said = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '[Request interrupted by user]' }] } })
     expect(interruptTime(said)).toBeNull()
     expect(interruptTime('[Request interrupted by user] not json')).toBeNull()
+  })
+})
+
+describe('turnReport', () => {
+  it('gives the turn index of a prompt, and whether a message from another session started it', () => {
+    expect(turnReport(turnPromptLine('fix the bug', { turnIndex: 4 }), { main: true })).toEqual({ turnIndex: 4, peer: false })
+    expect(turnReport(turnPromptLine('build is green', { turnIndex: 5, origin: PEER_ORIGIN }), { main: true })).toEqual({ turnIndex: 5, peer: true })
+  })
+
+  it('a subagent report to its parent is not a message from another session', () => {
+    expect(turnReport(turnPromptLine('review done', { turnIndex: 6, origin: HANDBACK_ORIGIN }), { main: true })).toEqual({ turnIndex: 6, peer: false })
+  })
+
+  it('a turn without a valid position gives nothing: an older Claude Code, or a malformed entry', () => {
+    expect(turnReport(promptLine('no position'), { main: true })).toBeNull()
+    expect(turnReport(turnPromptLine('x', { turnIndex: '2' }), { main: true })).toBeNull()
+    expect(turnReport(turnPromptLine('x', { turnIndex: -1 }), { main: true })).toBeNull()
+    expect(turnReport(turnPromptLine('x', { turnIndex: 1.5 }), { main: true })).toBeNull()
+    expect(turnReport(turnPromptLine('x', { turnIndex: null }), { main: true })).toBeNull()
+    expect(turnReport('{"type":"user","turnPosition": ', { main: true })).toBeNull()
+  })
+
+  it('an origin that is missing or malformed is a human turn', () => {
+    expect(turnReport(turnPromptLine('x', { turnIndex: 2, origin: null }), { main: true })).toEqual({ turnIndex: 2, peer: false })
+    expect(turnReport(turnPromptLine('x', { turnIndex: 2, origin: 'peer' }), { main: true })).toEqual({ turnIndex: 2, peer: false })
+  })
+
+  it('reads only the main transcript\'s user entries, never a subagent\'s or a sidechain\'s', () => {
+    expect(turnReport(turnPromptLine('x', { turnIndex: 3, origin: PEER_ORIGIN }), { main: false })).toBeNull()
+    const sidechain = JSON.parse(turnPromptLine('x', { turnIndex: 3, origin: PEER_ORIGIN }))
+    expect(turnReport(JSON.stringify({ ...sidechain, isSidechain: true }), { main: true })).toBeNull()
+    const assistant = JSON.stringify({ type: 'assistant', turnPosition: { promptIndex: 0, turnIndex: 3 }, message: { role: 'assistant', content: 'x' } })
+    expect(turnReport(assistant, { main: true })).toBeNull()
   })
 })

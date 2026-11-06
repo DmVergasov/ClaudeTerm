@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, KEYS, launchApp, launchClaudeTab, PROMPT } from './helpers'
+import { PEER_ORIGIN, turnPromptLine } from '../fixtures/transcript'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, KEYS, launchApp, launchClaudeTab, type Launched, PROMPT } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // the mark is what these tests check; keep the desktop quiet while they run
@@ -236,5 +237,45 @@ test('the app icon counts the tabs that need you, and the next-waiting-tab short
   await page.keyboard.press(KEYS.nextWaiting)
   await page.waitForTimeout(200)
   expect(await page.evaluate(() => window.__ct!.activeTabId())).toBe(tabId)
+  await app.close()
+})
+
+/** a Claude tab in the background, its session's transcript written with the given prompts (one per turn) */
+async function backgroundClaudeTab(settings: object, turns: string[]): Promise<Launched & { tabId: string; transcriptPath: string }> {
+  const launched = await launchClaudeTab(settings)
+  const { page, tabId, work, pipeName } = launched
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
+  mkdirSync(projectDir, { recursive: true })
+  const transcriptPath = join(projectDir, `${SID}.jsonl`)
+  writeFileSync(transcriptPath, turns.join('\n') + '\n')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
+  return { ...launched, tabId, transcriptPath }
+}
+
+test('a turn that another session started with a message gets the peer settings, off by default; a turn the user started still highlights the tab', async () => {
+  const { app, page, tabId, pipeName, transcriptPath } = await backgroundClaudeTab(quietNotifications(), [
+    turnPromptLine('review the diff', { turnIndex: 0 }),
+    turnPromptLine('the build is green', { turnIndex: 1, origin: PEER_ORIGIN })
+  ])
+  const claudeTab = page.locator(`[data-tab-id="${tabId}"]`)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  // the mark would arrive right after the transcript is read; give it time to show up if it were sent
+  await page.waitForTimeout(300)
+  await expect(claudeTab).not.toHaveClass(/\battention\b/)
+
+  appendFileSync(transcriptPath, turnPromptLine('thanks, commit it', { turnIndex: 2 }) + '\n')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(claudeTab).toHaveClass(/\battention\b/)
+  await app.close()
+})
+
+test('with the peer tab highlight on, the end of a turn another session started highlights the tab', async () => {
+  const { app, page, tabId, pipeName } = await backgroundClaudeTab(quietNotifications({ done: { sound: false, flash: false, tab: false }, peer: { sound: false, flash: false, tab: true } }), [
+    turnPromptLine('the build is green', { turnIndex: 0, origin: PEER_ORIGIN })
+  ])
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(page.locator(`[data-tab-id="${tabId}"]`)).toHaveClass(/\battention\b/)
   await app.close()
 })

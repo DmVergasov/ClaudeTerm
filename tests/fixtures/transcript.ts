@@ -43,6 +43,30 @@ export function promptLine(text: string, o: { timestamp?: string; uuid?: string;
   })
 }
 
+/** what Claude Code records as the origin of a message another root session sent */
+export const PEER_ORIGIN = { kind: 'peer', from: 'uds:build-session', msg_id: 'msg-7', name: 'Build session', fromMode: 'prompting' }
+/** the origin of a subagent's report to its parent: a peer entry, but not a message from another session */
+export const HANDBACK_ORIGIN = { kind: 'peer', from: 'uds:agent-3', msg_id: 'msg-8', name: 'Review agent', fromMode: 'prompting', handback: true }
+
+/**
+ * A prompt Claude Code writes with its turn position (turnPosition, turnOrigin, origin); `origin` is what started the turn
+ * (a human prompt when omitted, null or any other value as given).
+ */
+export function turnPromptLine(text: string, o: { turnIndex?: unknown; origin?: unknown; uuid?: string } = {}): string {
+  const origin = o.origin === undefined ? { kind: 'human' } : o.origin
+  const peer = typeof origin === 'object' && origin !== null && (origin as { kind?: unknown }).kind === 'peer'
+  return JSON.stringify({
+    type: 'user',
+    uuid: o.uuid ?? `t-${text.length}-${String(o.turnIndex)}`,
+    timestamp: '2026-10-08T10:00:00.000Z',
+    isSidechain: false,
+    turnPosition: { promptIndex: 0, turnIndex: o.turnIndex === undefined ? 0 : o.turnIndex },
+    turnOrigin: peer ? 'peer' : 'human',
+    origin,
+    message: { role: 'user', content: text }
+  })
+}
+
 /** The result of an Edit or Write, with Claude Code's toolUseResult. */
 export function editResultLine(o: {
   toolUseId: string

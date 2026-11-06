@@ -86,9 +86,21 @@ describe('parseSettings', () => {
       permission: { sound: true, flash: true, tab: true, front: false, banner: true },
       question: { sound: true, flash: true, tab: true, front: false, banner: true },
       done: { sound: true, flash: true, tab: true, front: false, banner: true },
+      peer: { sound: false, flash: false, tab: false, front: false, banner: false },
       bell: { sound: false, flash: true, tab: true, front: false, banner: false }
     })
     expect(parseSettings('{}').settings.notifications).toEqual(DEFAULT_SETTINGS.notifications)
+  })
+
+  it('notifications.peer (a turn another session started with a message) is off for every channel unless turned on, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.notifications.peer).toEqual({ sound: false, flash: false, tab: false, front: false, banner: false })
+    const on = parseSettings(JSON.stringify({ notifications: { peer: { sound: true, tab: true } } }))
+    expect(on.errors).toEqual([])
+    expect(on.settings.notifications.peer).toEqual({ sound: true, flash: false, tab: true, front: false, banner: false })
+    expect(on.settings.notifications.done).toEqual(DEFAULT_SETTINGS.notifications.done)
+    const r = parseSettings(JSON.stringify({ notifications: { peer: { banner: 'yes' } } }))
+    expect(r.settings.notifications.peer.banner).toBe(false)
+    expect(r.errors).toEqual(['settings.json: invalid value for "notifications.peer.banner", using default'])
   })
 
   it('notifications: each field is read on its own and an invalid one falls back with a notice naming it', () => {
@@ -118,6 +130,7 @@ describe('parseSettings', () => {
       permission: { sound: false, flash: false, tab: true, front: false, banner: false },
       question: { sound: false, flash: false, tab: true, front: false, banner: false },
       done: { sound: false, flash: false, tab: true, front: false, banner: false },
+      peer: { sound: false, flash: false, tab: false, front: false, banner: false },
       bell: { sound: false, flash: true, tab: true, front: false, banner: false }
     })
     const wav = parseSettings(JSON.stringify({ attention: { sound: 'D:\\s\\ding.wav' } })).settings.notifications
@@ -306,6 +319,7 @@ describe('applySettingEdit', () => {
       permission: { sound: false, flash: false, tab: true, front: false, banner: false },
       question: { sound: false, flash: false, tab: true, front: false, banner: false },
       done: { sound: false, flash: false, tab: false, front: false, banner: false },
+      peer: { sound: false, flash: false, tab: false, front: false, banner: false },
       bell: { sound: false, flash: true, tab: true, front: false, banner: false }
     })
   })

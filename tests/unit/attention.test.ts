@@ -212,4 +212,13 @@ describe('Attention', () => {
     a.notify('t1', 'done')
     expect(calls).toContain('play:system')
   })
+
+  it('a turn another session started (peer) gives the signals of its own case, all off by default', () => {
+    const { a, calls, state } = setup({ focused: false, active: 't2' })
+    expect(a.notify('t1', 'peer')).toBe(false)
+    expect(calls).toEqual([])
+    state.n.peer = { sound: true, flash: false, tab: true, front: false, banner: false }
+    expect(a.notify('t1', 'peer')).toBe(true)
+    expect(calls).toEqual(['mark:t1:peer', 'play:system'])
+  })
 })

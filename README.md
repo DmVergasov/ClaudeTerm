@@ -75,7 +75,7 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 ### 🔔 Know when Claude is waiting for you
 
-When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. While the window is in the background it also shows a system notification with the tab's name: a click on it brings ClaudeTerm forward with that tab open, and opening the tab takes the notification away. Nothing happens while that tab is in front of you, unless you switch on **Even in front** for that case: then its sound plays there too. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash, notification and tab highlight switches, and the sound can be your own `.wav`.
+When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. While the window is in the background it also shows a system notification with the tab's name: a click on it brings ClaudeTerm forward with that tab open, and opening the tab takes the notification away. Nothing happens while that tab is in front of you, unless you switch on **Even in front** for that case: then its sound plays there too. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash, notification and tab highlight switches, and the sound can be your own `.wav`. The end of a turn that another Claude Code session started with a message is a case of its own as well, and it is off by default: switch it on to hear when such a turn finishes.
 
 The app icon counts the tabs that need you: a number on the Dock icon (macOS) and the launcher (Linux), a dot over the taskbar button (Windows) with the number in its tooltip. `Ctrl+Shift+J` (`⌘J` on macOS) opens the next of them.
 
@@ -245,6 +245,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "permission": { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks for a permission
     "question":   { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude asks a question
     "done":       { "sound": true,  "flash": true, "tab": true, "front": false },   // Claude finished its turn
+    "peer":       { "sound": false, "flash": false, "tab": false, "front": false }, // Claude finished a turn another session started with a message (off by default)
     "bell":       { "sound": false, "flash": true, "tab": true, "front": false }    // a terminal bell (BEL) from any program
   },                               // flash: the taskbar button; tab: highlight the tab (a dot for the bell); front: the sound also while you look at the tab
   "review": {                      // the Changes panel

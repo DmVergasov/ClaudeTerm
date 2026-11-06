@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS: Settings = {
     permission: { sound: true, flash: true, tab: true, front: false, banner: true },
     question: { sound: true, flash: true, tab: true, front: false, banner: true },
     done: { sound: true, flash: true, tab: true, front: false, banner: true },
+    peer: { sound: false, flash: false, tab: false, front: false, banner: false },
     bell: { sound: false, flash: true, tab: true, front: false, banner: false }
   },
   review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200, renderMarkdown: true },

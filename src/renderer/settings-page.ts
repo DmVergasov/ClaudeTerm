@@ -13,6 +13,7 @@ const CASE_LABELS: Record<NotificationCase, string> = {
   permission: 'Claude asks for permission',
   question: 'Claude asks a question',
   done: 'Claude finished its answer',
+  peer: 'Claude finished a turn another session started with a message',
   bell: 'Terminal bell (BEL)'
 }
 const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sound', flash: 'Taskbar flash', banner: 'Notification', tab: 'Tab highlight', front: 'Even in front' }

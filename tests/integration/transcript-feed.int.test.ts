@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
-import { assistantLine, bashResultLine, editResultLine, interruptLine, PNG_B64, pastedLine, promptLine, textLine, toolResultLine, toolUseLine } from '../fixtures/transcript'
+import { assistantLine, bashResultLine, editResultLine, interruptLine, PEER_ORIGIN, PNG_B64, pastedLine, promptLine, textLine, toolResultLine, toolUseLine, turnPromptLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -122,6 +122,44 @@ describe('TranscriptFeed', () => {
     await feed.scanSubagents()
     await feed.poll()
     expect(events).toEqual([[null, Date.parse('2026-10-08T10:00:07.000Z')], ['a1', Date.parse('2026-10-08T10:00:09.000Z')]])
+  })
+
+  it('reports the turn of each main transcript prompt with whether another session started it; a subagent\'s turns and malformed positions are left out', async () => {
+    const { projectDir, transcriptPath, cacheRoot } = setup()
+    writeFileSync(transcriptPath, [
+      turnPromptLine('go', { turnIndex: 0 }),
+      turnPromptLine('build is green', { turnIndex: 1, origin: PEER_ORIGIN }),
+      turnPromptLine('bad position', { turnIndex: -2, origin: PEER_ORIGIN })
+    ].join('\n') + '\n')
+    const subagents = join(projectDir, SID, 'subagents')
+    mkdirSync(subagents, { recursive: true })
+    writeFileSync(join(subagents, 'agent-a1.jsonl'), turnPromptLine('sub', { turnIndex: 2, origin: PEER_ORIGIN }) + '\n')
+    const turns: [number, boolean][] = []
+    const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, onTurn: (i, peer) => turns.push([i, peer]) })
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(turns).toEqual([[0, false], [1, true]])
+  })
+
+  it('a poll made while a read is in progress waits for it, then reads the lines written meanwhile', async () => {
+    const { transcriptPath, cacheRoot } = setup()
+    writeFileSync(transcriptPath, turnPromptLine('first', { turnIndex: 0 }) + '\n')
+    const turns: number[] = []
+    let late: Promise<void> | null = null
+    const feed = new TranscriptFeed({
+      transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {},
+      onTurn: (turnIndex) => {
+        turns.push(turnIndex)
+        // written and asked for while the first read is still going on
+        if (turnIndex === 0) {
+          appendFileSync(transcriptPath, turnPromptLine('second', { turnIndex: 1 }) + '\n')
+          late = feed.poll()
+        }
+      }
+    })
+    await feed.poll()
+    await late
+    expect(turns).toEqual([0, 1])
   })
 
   it('reports the workspace an sdd-workspace run printed, in the main transcript and in a subagent\'s', async () => {

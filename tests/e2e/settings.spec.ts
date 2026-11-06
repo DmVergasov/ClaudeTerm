@@ -215,6 +215,21 @@ test('cleared, the background work checkbox leaves a turn that ends with backgro
   await app.close()
 })
 
+test('the Notifications table has a row for a turn another session started, after the finished answer, with every box off; its boxes save', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  await expect(win.locator('table.notify tbody th')).toHaveText([
+    'Claude asks for permission', 'Claude asks a question', 'Claude finished its answer',
+    'Claude finished a turn another session started with a message', 'Terminal bell (BEL)'
+  ])
+  const tab = win.locator('[data-key="notifications.peer.tab"]')
+  await expect(tab).not.toBeChecked()
+  await tab.check()
+  await expect.poll(() => readSettings(dataDir).notifications?.peer?.tab).toBe(true)
+  await app.close()
+})
+
 test('quick clicks all reach the file', async () => {
   const { app, page, dataDir } = await launchApp({ settings: QUIET })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)

@@ -99,7 +99,8 @@ export interface SessionSnapshot {
   tabs: SessionSnapshotTab[]
 }
 
-export type NotificationCase = 'permission' | 'question' | 'done' | 'bell'
+/** peer: the end of a turn that a message from another Claude Code session started */
+export type NotificationCase = 'permission' | 'question' | 'done' | 'peer' | 'bell'
 
 export interface NotificationChannels {
   sound: boolean
