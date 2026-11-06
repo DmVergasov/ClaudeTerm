@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { WIN } from '../fixtures/platform'
-import { bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, launchApp, launchClaudeTab, PROMPT } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, launchApp, launchClaudeTab } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const AGENT = 'a3f1c2d4e5b60718'
@@ -26,12 +26,18 @@ const turnEnd = (pipeName: string, tabId: string): Promise<unknown> => sendPipeM
 const agent = (pipeName: string, tabId: string, event: 'start' | 'stop'): Promise<unknown> =>
   sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event, agentId: AGENT, agentType: 'general-purpose' })
 
-/** what to type in the test shell so that it titles its terminal with the mark and the text, as Claude Code does */
+/**
+ * what to type in the test shell so that it titles its terminal with the mark and the text, as Claude Code does. A
+ * system's prompt may set the title too (Ubuntu's does): the shell then waits in `read` until Enter, with no prompt
+ */
 function titleCommand(mark: string, text: string): string {
   if (WIN) return `$Host.UI.RawUI.WindowTitle = [char]0x${mark.codePointAt(0)!.toString(16)} + ' ${text}'\r`
   const bytes = [...Buffer.from(mark)].map((b) => `\\${b.toString(8)}`).join('')
-  return `printf '\\033]0;${bytes} ${text}\\007'\r`
+  return `printf '\\033]0;${bytes} ${text}\\007'; read x\r`
 }
+
+/** the fake claude has run in the Claude tab, and the shell waits at its prompt, whichever prompt the system gives it */
+const CLAUDE_TAB_READY = /fake-claude[\s\S]*[$#%>]\s*$/
 
 /** opens a tab in the folder and waits until main has it; the new tab is the active one */
 async function openTab(page: Page, kind: 'shell' | 'claude', cwd: string): Promise<string> {
@@ -141,11 +147,13 @@ test('the spin keeps its phase when the tab bar is redrawn', async () => {
 
 test('a Claude tab shows its title without the mark Claude Code puts before it', async () => {
   const { app, page, tabId } = await launchClaudeTab(QUIET)
-  await expect.poll(() => bufferText(page, tabId), { timeout: 20_000 }).toMatch(PROMPT)
+  await expect.poll(() => bufferText(page, tabId), { timeout: 20_000 }).toMatch(CLAUDE_TAB_READY)
   const title = page.locator(`[data-tab-id="${tabId}"] .tab-title`)
 
   await page.evaluate(([id, text]) => window.ct.writePty(id, text), [tabId, titleCommand('◐', 'Revenue CSV export')] as const)
   await expect(title).toHaveText('Revenue CSV export')
+  // Enter ends the wait in `read`
+  await page.evaluate((id) => window.ct.writePty(id, '\r'), tabId)
   await page.evaluate(([id, text]) => window.ct.writePty(id, text), [tabId, titleCommand('✳', 'Invoice PDF layout')] as const)
   await expect(title).toHaveText('Invoice PDF layout')
   await app.close()
