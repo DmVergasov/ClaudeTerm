@@ -3,7 +3,7 @@ import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { Note, NoteForm } from './note'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { SettingKey, SettingValue } from './settings-keys'
-import type { AgentStatus, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabLayout, TabPlace, UpdateState } from './types'
+import type { AgentStatus, BackgroundTask, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabLayout, TabPlace, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -127,6 +127,8 @@ export interface StatusUpdate {
   tabId: string
   main: MainStatus | null
   agents: AgentStatus[]
+  /** the background work still running when Claude's last turn ended */
+  background: BackgroundTask[]
 }
 
 export interface PlanUpdate {

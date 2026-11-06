@@ -678,6 +678,8 @@ function bootstrap(): void {
         review.turnEnded(msg.tabId)
         places.refresh(msg.tabId)
         tabs.setWorking(msg.tabId, false)
+        // the status bar shows the background work still running; a turn end that does not say leaves the last list
+        if (msg.tasks !== undefined) statusHub.background(msg.tabId, msg.sessionId, msg.tasks)
         if (msg.error === undefined) autoContinue.turnEnded(msg.tabId)
         // a response a dropped connection cut off goes on by itself: nobody needs to look yet
         else if (autoContinue.failed(msg.tabId, msg.error)) return { ok: true }

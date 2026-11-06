@@ -1,6 +1,6 @@
 import type { StatusUpdate } from '../shared/ipc'
 import type { StatusMessage, SubagentMessage } from '../shared/protocol'
-import type { AgentStatus, MainStatus } from '../shared/types'
+import type { AgentStatus, BackgroundTask, MainStatus } from '../shared/types'
 import type { AgentMeta, AgentModelInfo } from './transcript-agent-info'
 
 export interface StatusHubDeps {
@@ -22,6 +22,8 @@ interface TabState {
   early: Map<string, AgentModelInfo>
   /** sessions this tab left (replaced or ended); their late statusLine/hook messages are dropped until they start again */
   retired: Set<string>
+  /** the background work still running when the last turn ended */
+  background: BackgroundTask[]
 }
 
 export class StatusHub {
@@ -40,11 +42,23 @@ export class StatusHub {
     }
     // a new claude process (restart after a crash) resuming the same session: agents of the old process
     // never got SubagentStop. Compaction keeps them — background agents run through it.
-    if ((source === 'startup' || source === 'resume') && (t.agents.size > 0 || t.early.size > 0)) {
+    // Its background shells and monitors ended with the old process too.
+    if ((source === 'startup' || source === 'resume') && (t.agents.size > 0 || t.early.size > 0 || t.background.length > 0)) {
       t.agents.clear()
       t.early.clear()
+      t.background = []
       this.deps.onChange(tabId)
     }
+  }
+
+  /** a turn ended (Stop): the background work Claude started that still runs; each turn end says it anew */
+  background(tabId: string, sessionId: string, tasks: BackgroundTask[]): void {
+    const t = this.tab(tabId)
+    if (t.retired.has(sessionId)) return
+    if (t.sessionId === null) t.sessionId = sessionId
+    else if (t.sessionId !== sessionId) return // a late hook of a previous session
+    t.background = tasks
+    this.deps.onChange(tabId)
   }
 
   status(m: StatusMessage): void {
@@ -111,13 +125,13 @@ export class StatusHub {
   get(tabId: string): StatusUpdate {
     const t = this.tabs.get(tabId)
     const agents = t ? [...t.agents.values()].map(({ agentId, type, description, model, effort, startedAt }) => ({ agentId, type, description, model, effort, startedAt })) : []
-    return { tabId, main: t?.main ?? null, agents }
+    return { tabId, main: t?.main ?? null, agents, background: t ? [...t.background] : [] }
   }
 
   private tab(tabId: string): TabState {
     let t = this.tabs.get(tabId)
     if (!t) {
-      t = { sessionId: null, main: null, agents: new Map(), early: new Map(), retired: new Set() }
+      t = { sessionId: null, main: null, agents: new Map(), early: new Map(), retired: new Set(), background: [] }
       this.tabs.set(tabId, t)
     }
     return t
@@ -133,6 +147,7 @@ export class StatusHub {
     t.main = null
     t.agents.clear()
     t.early.clear()
+    t.background = []
   }
 
   private loadMeta(tabId: string, a: TrackedAgent): void {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { StatusHub } from '../../src/main/status-hub'
 import type { AgentMeta } from '../../src/main/transcript-agent-info'
 import type { StatusMessage, SubagentMessage } from '../../src/shared/protocol'
+import type { BackgroundTask } from '../../src/shared/types'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const TAB2 = '1c9f9d2f-4a8b-4d52-8e1b-3c7a2b8f0d22'
@@ -25,11 +26,13 @@ function makeHub(meta: Record<string, AgentMeta> = {}) {
 }
 const meta = (description: string): AgentMeta => ({ description, toolUseId: null, background: false })
 
+const task = (id: string, description: string | null = 'build'): BackgroundTask => ({ id, type: 'shell', description, command: 'make' })
+
 describe('StatusHub', () => {
   it('status sets the main part and notifies', () => {
     const { hub, changes } = makeHub()
     hub.status(status())
-    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: { model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null, sevenDay: null }, agents: [] })
+    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: { model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null, sevenDay: null }, agents: [], background: [] })
     expect(changes).toEqual([TAB])
   })
 
@@ -69,7 +72,7 @@ describe('StatusHub', () => {
     expect(hub.get(TAB).agents).toEqual([])
     hub.subagent(sub('start', 'a2', { sessionId: SID2 }))
     hub.session(TAB, SID, 'startup')
-    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: null, agents: [] })
+    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: null, agents: [], background: [] })
   })
 
   it('late hooks of a previous session leave the new session alone', () => {
@@ -126,7 +129,7 @@ describe('StatusHub', () => {
     hub.sessionEnd(TAB, SID2)
     expect(hub.get(TAB).main).not.toBe(null)
     hub.sessionEnd(TAB, SID)
-    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: null, agents: [] })
+    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: null, agents: [], background: [] })
   })
 
   it('tabs are independent; removeTab forgets a tab', () => {
@@ -136,7 +139,7 @@ describe('StatusHub', () => {
     hub.subagent(sub('start', 'a1'))
     expect(hub.get(TAB2)).toMatchObject({ main: { effort: 'low' }, agents: [] })
     hub.removeTab(TAB)
-    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: null, agents: [] })
+    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: null, agents: [], background: [] })
     expect(hub.get(TAB2).main?.effort).toBe('low')
   })
 
@@ -148,6 +151,38 @@ describe('StatusHub', () => {
     hub.subagent(sub('stop', 'zz'))
     hub.subagent(sub('start', 'a1'))
     expect(changes).toEqual([])
+  })
+
+  it('keeps the background tasks a turn ended with until a later turn end lists others', () => {
+    const { hub, changes } = makeHub()
+    hub.status(status())
+    expect(hub.get(TAB).background).toEqual([])
+    hub.background(TAB, SID, [task('b1'), task('m1', null)])
+    expect(hub.get(TAB).background).toEqual([task('b1'), task('m1', null)])
+    hub.background(TAB, SID, [task('m1', null)])
+    expect(hub.get(TAB).background).toEqual([task('m1', null)])
+    hub.background(TAB, SID, [])
+    expect(hub.get(TAB).background).toEqual([])
+    expect(changes).toEqual([TAB, TAB, TAB, TAB])
+  })
+
+  it('a new claude process, another session or the end of the session drops the background tasks; a late report of an ended session is ignored', () => {
+    const { hub } = makeHub()
+    hub.status(status())
+    hub.background(TAB, SID, [task('b1')])
+    // background shells end with the process that started them
+    hub.session(TAB, SID, 'resume')
+    expect(hub.get(TAB).background).toEqual([])
+    hub.background(TAB, SID, [task('b1')])
+    hub.session(TAB, SID, 'compact')
+    expect(hub.get(TAB).background).toEqual([task('b1')])
+    hub.session(TAB, SID2, 'clear')
+    expect(hub.get(TAB).background).toEqual([])
+    hub.background(TAB, SID, [task('late')])
+    expect(hub.get(TAB).background).toEqual([])
+    hub.background(TAB, SID2, [task('b2')])
+    hub.sessionEnd(TAB, SID2)
+    expect(hub.get(TAB).background).toEqual([])
   })
 
   it('a throwing readMeta leaves the description empty', () => {

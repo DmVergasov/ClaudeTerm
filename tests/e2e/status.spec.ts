@@ -72,6 +72,31 @@ test('the 5h limit takes its color from the pace it is spent at, says the foreca
   await app.close()
 })
 
+test('the background work a turn ended with shows in the status bar until a later turn end, or the end of the session, says it is over', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  const segment = page.locator('#statusbar .status-background')
+  await expect(page.locator('#statusbar .status-model')).toHaveText('Opus 5.5 · xhigh')
+  await expect(segment).toHaveCount(0)
+
+  const tasks = [{ id: 'b1', type: 'shell', description: 'Run the e2e suite', command: 'npx playwright test' }, { id: 'm1', type: 'monitor', description: null, command: 'tail -f server.log' }]
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks })).toEqual({ ok: true })
+  await expect(segment).toHaveText('2 in background: Run the e2e suite, tail -f server.log')
+  await expect(segment).toHaveAttribute('title', 'Still running after the turn:\nshell · Run the e2e suite · npx playwright test\nmonitor · tail -f server.log')
+
+  // the next turn ends with the monitor alone, the one after it with nothing in the background
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks: [tasks[1]!] })).toEqual({ ok: true })
+  await expect(segment).toHaveText('1 in background: tail -f server.log')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', tasks: [] })).toEqual({ ok: true })
+  await expect(segment).toHaveCount(0)
+
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks })).toEqual({ ok: true })
+  await expect(segment).toHaveCount(1)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'session_end', tabId, sessionId: SID })).toEqual({ ok: true })
+  await expect(segment).toHaveCount(0)
+  await app.close()
+})
+
 test('a new status updates the segments in place, so an open tooltip is not dismissed', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })

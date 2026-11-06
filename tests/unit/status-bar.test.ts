@@ -20,7 +20,7 @@ const agent = (over: Partial<AgentStatus>): AgentStatus => ({ agentId: 'a', type
 describe('statusSegments', () => {
   it('formats all five segments', () => {
     const agents = [agent({ type: 'code-reviewer', description: 'Review font fix', startedAt: NOW - 3 * 60_000 - 5_000 })]
-    expect(statusSegments({ tabId: 't', main, agents }, NOW)).toEqual([
+    expect(statusSegments({ tabId: 't', main, agents, background: [] }, NOW)).toEqual([
       { key: 'model', text: 'Opus 5.5 · xhigh', title: 'claude-opus-5-5', level: 'normal' },
       { key: 'context', text: 'ctx 41% · 82k/200k', title: '82,314 of 200,000 tokens', level: 'normal' },
       // 23.5% in 3 of the 5 hours: about 39% by the reset
@@ -32,7 +32,7 @@ describe('statusSegments', () => {
   })
 
   it('a limit that runs out before its reset says when, and one used up says so', () => {
-    const at = (usedPct: number, now: number) => statusSegments({ tabId: 't', main: { ...main, fiveHour: { usedPct, resetsAt: RESET / 1000 } }, agents: [] }, now)[2]
+    const at = (usedPct: number, now: number) => statusSegments({ tabId: 't', main: { ...main, fiveHour: { usedPct, resetsAt: RESET / 1000 } }, agents: [], background: [] }, now)[2]
     // 50% in the first hour: the rest goes in the next hour, at 18:40, three hours before the reset
     expect(at(50, RESET - 4 * H)).toEqual({ key: 'limit', text: '5h 50%', title: 'resets at 21:40, in 4 h\nat this pace: runs out at 18:40, 3 h before the reset', level: 'crit', bar: { used: 50, elapsed: 20 } })
     expect(at(100, NOW)).toEqual({ key: 'limit', text: '5h 100%', title: 'resets at 21:40, in 2 h\nused up', level: 'crit', bar: { used: 100, elapsed: 60 } })
@@ -42,15 +42,29 @@ describe('statusSegments', () => {
 
   it('shows only the model early in a session', () => {
     const early: MainStatus = { model: { id: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5' }, effort: null, context: null, fiveHour: null, sevenDay: null }
-    expect(statusSegments({ tabId: 't', main: early, agents: [] }, 0)).toEqual([{ key: 'model', text: 'Haiku 4.5', title: 'claude-haiku-4-5-20251001', level: 'normal' }])
+    expect(statusSegments({ tabId: 't', main: early, agents: [], background: [] }, 0)).toEqual([{ key: 'model', text: 'Haiku 4.5', title: 'claude-haiku-4-5-20251001', level: 'normal' }])
+  })
+
+  it('lists the background work still running after the turn: how many and what, and on hover each with its kind and command', () => {
+    const background = [
+      { id: 'b1', type: 'shell', description: 'build', command: 'npm run build' },
+      { id: 'm1', type: 'monitor', description: null, command: 'tail -f server.log' },
+      { id: 'a1', type: 'agent', description: null, command: null }
+    ]
+    expect(statusSegments({ tabId: 't', main, agents: [], background }, 0).at(-1)).toEqual({
+      key: 'background',
+      text: '3 in background: build, tail -f server.log, agent',
+      title: 'Still running after the turn:\nshell · build · npm run build\nmonitor · tail -f server.log\nagent',
+      level: 'normal'
+    })
   })
 
   it('returns nothing without the main status', () => {
-    expect(statusSegments({ tabId: 't', main: null, agents: [agent({})] }, 0)).toEqual([])
+    expect(statusSegments({ tabId: 't', main: null, agents: [agent({})], background: [] }, 0)).toEqual([])
   })
 
   it('marks context warn from 70% and crit from 90%, and the limits too while their pace is not known', () => {
-    const s = statusSegments({ tabId: 't', main: { ...main, context: { usedTokens: 1, size: 2, usedPct: 91 }, fiveHour: { usedPct: 70, resetsAt: 0 }, sevenDay: { usedPct: 90, resetsAt: 0 } }, agents: [] }, 0)
+    const s = statusSegments({ tabId: 't', main: { ...main, context: { usedTokens: 1, size: 2, usedPct: 91 }, fiveHour: { usedPct: 70, resetsAt: 0 }, sevenDay: { usedPct: 90, resetsAt: 0 } }, agents: [], background: [] }, 0)
     expect(s.map((x) => x.level)).toEqual(['normal', 'crit', 'warn', 'crit'])
   })
 
@@ -62,11 +76,11 @@ describe('statusSegments', () => {
       agent({ agentId: '9', model: 'claude-haiku-4-5-20251001', effort: null }),
       agent({ agentId: '10', model: null, effort: null })
     ]
-    expect(statusSegments({ tabId: 't', main, agents }, 0).at(-1)?.text).toBe('⚙ 10: sonnet·medium ×6, opus·xhigh ×2, haiku, …')
+    expect(statusSegments({ tabId: 't', main, agents, background: [] }, 0).at(-1)?.text).toBe('⚙ 10: sonnet·medium ×6, opus·xhigh ×2, haiku, …')
   })
 
   it('agent tooltip: under a minute, no description', () => {
-    expect(statusSegments({ tabId: 't', main, agents: [agent({ startedAt: 1000 })] }, 30_000).at(-1)?.title).toBe('Explore · opus·high · <1 min')
+    expect(statusSegments({ tabId: 't', main, agents: [agent({ startedAt: 1000 })], background: [] }, 30_000).at(-1)?.title).toBe('Explore · opus·high · <1 min')
   })
 })
 

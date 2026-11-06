@@ -1,6 +1,6 @@
 import { isAbsolute, posix } from 'node:path'
 import { REVIEW_SCOPES, type ReviewScope } from './review'
-import type { MainStatus } from './types'
+import type { BackgroundTask, MainStatus } from './types'
 
 export const PROTOCOL_VERSION = 1
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -8,6 +8,9 @@ const MAX_CAPTION = 500
 const AGENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 const ERROR_RE = /^[a-z_]{1,64}$/
 const MAX_LABEL = 100
+/** the background tasks of a turn end, at most, and how much of each command is kept */
+const MAX_TASKS = 50
+const MAX_TASK_COMMAND = 300
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,200}$/
 const MAX_REF = 200
 const MAX_PATHS = 100
@@ -69,6 +72,8 @@ export interface AttentionMessage {
   background?: true
   /** done only: the API error the turn ended in (StopFailure), e.g. server_error for a response cut off mid-stream */
   error?: string
+  /** done only (Stop): the background work still running as the turn ended; absent when Claude Code does not say */
+  tasks?: BackgroundTask[]
 }
 
 /** Claude Code took a prompt (UserPromptSubmit): a turn starts. */
@@ -171,6 +176,18 @@ function parseLimit(v: unknown): MainStatus['fiveHour'] {
   return { usedPct: v.usedPct, resetsAt: v.resetsAt }
 }
 
+/** the background tasks of a turn end: an entry without a usable id is left out, the texts are cut to size */
+function parseTasks(raw: unknown[]): BackgroundTask[] {
+  const tasks: BackgroundTask[] = []
+  for (const t of raw) {
+    if (tasks.length === MAX_TASKS) break
+    if (!isObj(t) || typeof t.id !== 'string' || !AGENT_ID_RE.test(t.id)) continue
+    const command = typeof t.command === 'string' && t.command.length > 0 ? t.command.slice(0, MAX_TASK_COMMAND) : null
+    tasks.push({ id: t.id, type: label(t.type) ?? 'task', description: label(t.description), command })
+  }
+  return tasks
+}
+
 export function parsePipeMessage(line: string): ParseResult {
   let raw: unknown
   try {
@@ -262,7 +279,8 @@ export function parsePipeMessage(line: string): ParseResult {
       const agent = typeof m.agentId === 'string' && AGENT_ID_RE.test(m.agentId) ? { agentId: m.agentId } : {}
       const background = m.reason === 'done' && m.background === true ? { background: true as const } : {}
       const error = m.reason === 'done' && typeof m.error === 'string' && ERROR_RE.test(m.error) ? { error: m.error } : {}
-      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background, ...error } }
+      const tasks = m.reason === 'done' && Array.isArray(m.tasks) ? { tasks: parseTasks(m.tasks) } : {}
+      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background, ...error, ...tasks } }
     }
     if (m.type === 'subagent') {
       if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }

@@ -117,6 +117,14 @@ describe('session hook end to end', () => {
     expect(got).toEqual([{ v: 1, type: 'cwd', tabId: TAB, sessionId: SID, cwd: to }])
   })
 
+  it('node bundle: Stop forwards the background work still running as the turn ended, and prints nothing', async () => {
+    const { pipe, got } = await listen()
+    const stop = JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [{ id: 'bmv6531d6', type: 'shell', status: 'running', description: 'build', command: 'make' }] })
+    const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, stop)
+    expect(r).toEqual({ code: 0, stdout: '' })
+    expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true, tasks: [{ id: 'bmv6531d6', type: 'shell', description: 'build', command: 'make' }] }])
+  })
+
   it.runIf(WIN)('the exec-form hook from the settings file runs with no shell and no batch file, and passes stdin through', async () => {
     const { pipe, got } = await listen()
     const { settingsPath } = writeClaudeTabFiles(join(work, 'data-exec'), process.execPath, bundle, 5)

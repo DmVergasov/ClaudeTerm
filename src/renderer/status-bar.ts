@@ -1,11 +1,11 @@
 import type { StatusUpdate } from '../shared/ipc'
 import type { ReviewCounter } from '../shared/review'
-import type { AgentStatus, PlanStatus } from '../shared/types'
+import type { AgentStatus, BackgroundTask, PlanStatus } from '../shared/types'
 
 export type Level = 'normal' | 'warn' | 'crit'
 
 export interface Segment {
-  key: 'account' | 'model' | 'context' | 'limit' | 'week' | 'agents' | 'plan' | 'changes'
+  key: 'account' | 'model' | 'context' | 'limit' | 'week' | 'agents' | 'background' | 'plan' | 'changes'
   text: string
   title: string
   level: Level
@@ -110,6 +110,10 @@ function agentGroups(agents: AgentStatus[]): string {
     .join(', ')
 }
 
+/** a background task in a few words: what Claude called it, else its command, else its kind */
+const taskName = (t: BackgroundTask): string => t.description ?? t.command ?? t.type
+const taskLine = (t: BackgroundTask): string => [t.type, t.description, t.command].filter((x) => x !== null).join(' · ')
+
 const agentLine = (a: AgentStatus, now: number): string =>
   [a.type, agentKind(a), minutes(now - a.startedAt), ...(a.description ? [`"${a.description}"`] : [])].join(' · ')
 
@@ -132,6 +136,14 @@ export function statusSegments(u: StatusUpdate, now: number): Segment[] {
   if (main.sevenDay) segments.push(limitSegment('week', '7d', main.sevenDay, SEVEN_DAYS_MS, now, dayAndTime))
   if (u.agents.length > 0) {
     segments.push({ key: 'agents', text: `⚙ ${u.agents.length}: ${agentGroups(u.agents)}`, title: u.agents.map((a) => agentLine(a, now)).join('\n'), level: 'normal' })
+  }
+  if (u.background.length > 0) {
+    segments.push({
+      key: 'background',
+      text: `${u.background.length} in background: ${u.background.map(taskName).join(', ')}`,
+      title: ['Still running after the turn:', ...u.background.map(taskLine)].join('\n'),
+      level: 'normal'
+    })
   }
   return segments
 }

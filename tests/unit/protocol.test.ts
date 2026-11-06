@@ -151,6 +151,27 @@ describe('status, subagent and session_end messages', () => {
     const permission = { ...ids, type: 'attention', reason: 'permission' }
     expect(parsePipeMessage(JSON.stringify({ ...permission, error: 'server_error' }))).toEqual({ ok: true, message: permission })
   })
+
+  it('keeps the background tasks a turn ended with, cut to size; drops an entry without a usable id', () => {
+    const done = { ...ids, type: 'attention', reason: 'done' }
+    const task = { id: 'bmv6531d6', type: 'shell', description: 'build', command: 'make' }
+    expect(parsePipeMessage(JSON.stringify({ ...done, background: true, tasks: [task] }))).toEqual({ ok: true, message: { ...done, background: true, tasks: [task] } })
+    expect(parsePipeMessage(JSON.stringify({ ...done, tasks: [] }))).toEqual({ ok: true, message: { ...done, tasks: [] } })
+    const odd = [{ type: 'shell' }, { id: 'a b', type: 'shell' }, 7, { id: 'm1', type: 'x'.repeat(200), description: null, command: 'y'.repeat(5000) }]
+    expect(parsePipeMessage(JSON.stringify({ ...done, tasks: odd }))).toEqual({ ok: true, message: { ...done, tasks: [{ id: 'm1', type: 'x'.repeat(100), description: null, command: 'y'.repeat(300) }] } })
+    // at most 50 of them
+    const many = Array.from({ length: 60 }, (_, i) => ({ id: `t${i}`, type: 'shell', description: null, command: null }))
+    const r = parsePipeMessage(JSON.stringify({ ...done, tasks: many }))
+    expect(r.ok && r.message.type === 'attention' ? r.message.tasks : null).toHaveLength(50)
+  })
+
+  it('leaves out a task list that is not a list, or that comes with a case other than done', () => {
+    const task = { id: 'b1', type: 'shell', description: null, command: null }
+    const done = { ...ids, type: 'attention', reason: 'done' }
+    expect(parsePipeMessage(JSON.stringify({ ...done, tasks: 'b1' }))).toEqual({ ok: true, message: done })
+    const permission = { ...ids, type: 'attention', reason: 'permission' }
+    expect(parsePipeMessage(JSON.stringify({ ...permission, tasks: [task] }))).toEqual({ ok: true, message: permission })
+  })
 })
 
 describe('parsePipeMessage: review messages', () => {

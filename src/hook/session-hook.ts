@@ -1,6 +1,7 @@
 import { userInfo } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
 import { type AttentionMessage, type AttentionReason, defaultPipeName, isUuid, type PipeMessage, type PipeResponse } from '../shared/protocol'
+import type { BackgroundTask } from '../shared/types'
 import { statusFromStatusLine } from './status-line'
 
 export type Sender = (pipeName: string, msg: PipeMessage) => Promise<PipeResponse>
@@ -17,6 +18,13 @@ function parseInput(stdinText: string): Obj | null {
   } catch {
     return null
   }
+}
+
+/** an entry of a Stop's background_tasks, or none when it has no id */
+function backgroundTask(t: unknown): BackgroundTask[] {
+  if (!isObj(t) || typeof t.id !== 'string' || t.id === '') return []
+  const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null)
+  return [{ id: t.id, type: text(t.type) ?? 'task', description: text(t.description), command: text(t.command) }]
 }
 
 /** Pipe message for a hook event; SessionStart is assumed when hook_event_name is missing. */
@@ -69,7 +77,11 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
   if (event === 'PermissionRequest') return attention('permission')
   if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') return attention('question')
   // background_tasks: the background work still in flight, which wakes the session again when it ends
-  if (event === 'Stop') return attention('done', Array.isArray(input.background_tasks) && input.background_tasks.length > 0)
+  if (event === 'Stop') {
+    if (!Array.isArray(input.background_tasks)) return attention('done')
+    const tasks = input.background_tasks.flatMap(backgroundTask)
+    return { ...attention('done', input.background_tasks.length > 0), tasks }
+  }
   if (event === 'StopFailure') return { ...attention('done'), error: typeof input.error === 'string' ? input.error : 'unknown' }
   return null
 }

@@ -165,6 +165,15 @@ export interface MainStatus {
   sevenDay: { usedPct: number; resetsAt: number } | null
 }
 
+/** background work Claude started (a shell command, a monitor, an agent) that still ran when its turn ended */
+export interface BackgroundTask {
+  id: string
+  /** shell, monitor, agent, …: as Claude Code names it */
+  type: string
+  description: string | null
+  command: string | null
+}
+
 export interface AgentStatus {
   agentId: string
   type: string
