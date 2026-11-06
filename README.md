@@ -67,7 +67,7 @@ When Claude ends its turn with work still running in the background — a shell 
 
 While Claude carries out a superpowers plan (`subagent-driven-development` or `executing-plans`), the status bar shows how far it has got — `3/7 · Save dialog and file writing` — and a click on it lists every task as done, current or still to come. It follows the plan's progress ledger and ends with ✓ when the plan is finished.
 
-<p align="center"><img src="docs/images/status-bar.png" width="640" alt="Status bar: model, effort, context, 5-hour and weekly limits, running subagents"></p>
+<p align="center"><img src="docs/images/status-bar.png" width="720" alt="Status bar: model, effort, context, 5-hour and weekly limits, running subagents"></p>
 
 The limits are shown for Claude Pro and Max subscriptions, where Claude Code reports them.
 
