@@ -82,7 +82,7 @@ const planUpdates = new Map<string, PlanStatus>()
 let accounts: AccountView[] = []
 
 /** a fork's title gets ` (fork)` after the usual one, unless the user named the tab */
-const titleOf = (t: TabState): string => t.info.customTitle ?? `${t.oscTitle ?? folderName(t.info.cwd)}${t.info.fork ? ' (fork)' : ''}`
+const titleOf = (t: TabState): string => t.info.customTitle ?? `${t.oscTitle ?? folderName(t.info.folder)}${t.info.fork ? ' (fork)' : ''}`
 
 /** where a new tab opens: the defaultFolder setting, else the home folder */
 const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
@@ -90,7 +90,7 @@ const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
 function renderTabs(): void {
   const items = order.flatMap((id): TabBarItem[] => {
     const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), folder: t.info.cwd, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id), place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
+    return t ? [{ id, title: titleOf(t), folder: t.info.folder, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id), place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
   })
   tabBar.render(items, activeId)
   tabPanel.render(items, activeId)
@@ -121,7 +121,7 @@ function renderTitle(): void {
   }
   // the folder's name tells the projects of several windows and tabs apart, in the taskbar and Alt+Tab too
   const title = titleOf(active)
-  const folder = folderName(active.info.cwd)
+  const folder = folderName(active.info.folder)
   // and an extra account the subscription; the main account is the usual one and is left out
   const account = active.info.kind === 'claude' && active.info.account !== null ? accountLabel(active.info.account, accounts) : null
   document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')

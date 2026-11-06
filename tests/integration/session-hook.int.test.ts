@@ -60,7 +60,7 @@ async function listen(): Promise<{ pipe: string; got: PipeMessage[] }> {
   }
   server = await startPipeServer(pipe, {
     showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take, attention: take,
-    turn: take, editBefore: take, showDiff: async (m) => take(m),
+    turn: take, cwd: take, editBefore: take, showDiff: async (m) => take(m),
     showDocument: async () => ({ ok: true })
   })
   return { pipe, got }
@@ -103,6 +103,18 @@ describe('session hook end to end', () => {
     const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, failure)
     expect(r).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error' }])
+  })
+
+  it('node bundle: CwdChanged forwards the folder Claude moved to, for the CwdChanged hook of the settings file, and prints nothing', async () => {
+    const { pipe, got } = await listen()
+    const { settingsPath } = writeClaudeTabFiles(join(work, 'data-cwd'), process.execPath, bundle, 5)
+    expect(settingsHook(settingsPath, 'CwdChanged')).toEqual(settingsHook(settingsPath, 'SessionStart'))
+    const from = WIN ? 'D:\\proj' : '/proj'
+    const to = WIN ? 'D:\\proj\\.claude\\worktrees\\feat' : '/proj/.claude/worktrees/feat'
+    const changed = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: to, hook_event_name: 'CwdChanged', old_cwd: from, new_cwd: to })
+    const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, changed)
+    expect(r).toEqual({ code: 0, stdout: '' })
+    expect(got).toEqual([{ v: 1, type: 'cwd', tabId: TAB, sessionId: SID, cwd: to }])
   })
 
   it.runIf(WIN)('the exec-form hook from the settings file runs with no shell and no batch file, and passes stdin through', async () => {

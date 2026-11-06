@@ -164,6 +164,14 @@ describe('parsePipeMessage: review messages', () => {
     expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn', tabId: 'x' })).ok).toBe(false)
   })
 
+  it('accepts a change of folder only to an absolute folder, for UUIDs', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: CWD }))).toEqual({ ok: true, message: { ...ids, type: 'cwd', cwd: CWD } })
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: 'relative' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: 7 })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: CWD, tabId: 'x' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: CWD, sessionId: 'x' })).ok).toBe(false)
+  })
+
   it('accepts edit_before with a tool use id and an absolute path', () => {
     const m = { ...ids, type: 'edit_before', toolUseId: 'toolu_01AbC-d_9', path: FILE }
     expect(parsePipeMessage(JSON.stringify(m))).toEqual({ ok: true, message: m })

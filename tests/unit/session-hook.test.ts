@@ -125,6 +125,26 @@ describe('runStatusLine', () => {
   })
 })
 
+describe('runSessionHook: a change of folder', () => {
+  const OLD = process.platform === 'win32' ? 'D:\\proj' : '/proj'
+  const NEW = process.platform === 'win32' ? 'D:\\proj\\.claude\\worktrees\\feat' : '/proj/.claude/worktrees/feat'
+  const changed = (extra: object): string => JSON.stringify({ session_id: SID, hook_event_name: 'CwdChanged', cwd: NEW, old_cwd: OLD, new_cwd: NEW, ...extra })
+
+  it('maps CwdChanged to the folder Claude moved to', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    await runSessionHook(changed({}), ENV, send)
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'cwd', tabId: TAB, sessionId: SID, cwd: NEW })
+  })
+
+  it('sends nothing for a folder that is not absolute, or for a subagent that changed its own folder', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    await runSessionHook(changed({ new_cwd: 'relative' }), ENV, send)
+    await runSessionHook(changed({ new_cwd: undefined }), ENV, send)
+    await runSessionHook(changed({ agent_id: AGENT }), ENV, send)
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
 describe('runSessionHook: review events', () => {
   const CWD = process.platform === 'win32' ? 'D:\\proj' : '/proj'
   const ABS = process.platform === 'win32' ? 'D:\\proj\\src\\a.ts' : '/proj/src/a.ts'

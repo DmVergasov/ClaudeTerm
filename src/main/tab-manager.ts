@@ -44,6 +44,8 @@ export interface TabManagerDeps {
   /** the tab gets a new process (Restart session, another account): what waited on the old one must not reach the new one */
   onTabRestarting?(tabId: string): void
   onTabClosed?(tabId: string): void
+  /** the folder the tab works in changed: Claude Code moved, or a restart went back to the tab's cwd */
+  onFolderChanged?(tabId: string, folder: string): void
   onStateChanged?(): void
   /** whether a Claude conversation can be resumed, checked on disk; one without a message has no transcript yet */
   resumable?(tabId: string, sessionId: string): Promise<boolean>
@@ -89,6 +91,7 @@ export class TabManager {
       kind: req.kind,
       profile: launch.profileName,
       cwd: req.cwd,
+      folder: req.cwd,
       customTitle: req.title ?? null,
       claudeSessionId: req.kind === 'claude' ? req.resumeSessionId ?? null : null,
       account: req.kind === 'claude' ? launch.account ?? null : null,
@@ -152,6 +155,19 @@ export class TabManager {
     rec.info.customTitle = t ? t : null
     this.deps.events.updated({ ...rec.info })
     this.changed()
+  }
+
+  /** Claude Code works in another folder now: the tab shows it; the conversation still resumes in cwd */
+  setFolder(tabId: string, folder: string): void {
+    const rec = this.tabs.get(tabId)
+    if (rec) this.moveTo(rec, folder)
+  }
+
+  private moveTo(rec: TabRecord, folder: string): void {
+    if (rec.info.folder === folder) return
+    rec.info.folder = folder
+    this.deps.events.updated({ ...rec.info })
+    this.deps.onFolderChanged?.(rec.info.id, folder)
   }
 
   /** a muted tab makes no notification sound */
@@ -396,6 +412,8 @@ export class TabManager {
   }
 
   private start(rec: TabRecord): void {
+    // a new process works in the folder the tab was opened in, wherever the last one had moved to
+    this.moveTo(rec, rec.info.cwd)
     const env = applyEnvPatch({ ...this.deps.baseEnv(), CLAUDETERM_TAB_ID: rec.info.id, CLAUDETERM_PIPE: this.deps.pipeName }, rec.launch.env)
     const gen = ++rec.gen
     let markStopped = (): void => {}

@@ -364,6 +364,8 @@ function bootstrap(): void {
       places.addTab(tab.id, tab.cwd)
       if (tab.kind === 'claude') noteHub.addTab(tab.id, tab.claudeSessionId)
     },
+    // the tab's group and branch are those of the folder Claude works in
+    onFolderChanged: (tabId, folder) => places.moveTab(tabId, folder),
     // a continue armed for the old process would type into the resumed one
     onTabRestarting: (tabId) => {
       autoContinue.forget(tabId)
@@ -670,6 +672,12 @@ function bootstrap(): void {
       review.turn(msg.tabId, msg.sessionId)
       tabs.setWorking(msg.tabId, true)
       autoContinue.turnStarted(msg.tabId)
+      return { ok: true }
+    },
+    cwd: (msg) => {
+      if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      log.info(`folder tab=${msg.tabId} ${msg.cwd}`)
+      tabs.setFolder(msg.tabId, msg.cwd)
       return { ok: true }
     },
     editBefore: (msg) => {

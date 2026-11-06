@@ -203,6 +203,36 @@ describe('TabManager', () => {
     expect(onStateChanged).toHaveBeenCalledTimes(2)
   })
 
+  it('setFolder follows the folder Claude moved to, tells the window, and leaves the folder the conversation resumes in', () => {
+    const onFolderChanged = vi.fn()
+    const { tm, log } = setup({ onFolderChanged })
+    const t = tm.open({ kind: 'claude', cwd: 'D:\\repo', resumeSessionId: SID_A })
+    expect(t.folder).toBe('D:\\repo')
+    log.length = 0
+    tm.setFolder(t.id, 'D:\\repo\\.claude\\worktrees\\feat')
+    expect(tm.get(t.id)).toMatchObject({ cwd: 'D:\\repo', folder: 'D:\\repo\\.claude\\worktrees\\feat' })
+    expect(log).toEqual([`updated:${t.id}:false`])
+    expect(onFolderChanged).toHaveBeenCalledWith(t.id, 'D:\\repo\\.claude\\worktrees\\feat')
+    expect(tm.snapshot()[0]).toMatchObject({ cwd: 'D:\\repo' })
+    // the same folder again, or an unknown tab, changes nothing
+    tm.setFolder(t.id, 'D:\\repo\\.claude\\worktrees\\feat')
+    tm.setFolder('unknown', 'D:\\other')
+    expect(log).toHaveLength(1)
+    expect(onFolderChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('a restart starts Claude in the folder the tab was opened in, and the tab shows that folder again', async () => {
+    const onFolderChanged = vi.fn()
+    const { tm, ptys } = setup({ onFolderChanged, restartWaitMs: 0 })
+    const t = tm.open({ kind: 'claude', cwd: 'D:\\repo', resumeSessionId: SID_A })
+    tm.setFolder(t.id, 'D:\\repo\\.claude\\worktrees\\feat')
+    await tm.restart(t.id, { live: true })
+    expect(ptys).toHaveLength(2)
+    expect(ptys[1]!.opts.cwd).toBe('D:\\repo')
+    expect(tm.get(t.id)?.folder).toBe('D:\\repo')
+    expect(onFolderChanged).toHaveBeenLastCalledWith(t.id, 'D:\\repo')
+  })
+
   it('a tab opened muted stays muted through a restart', async () => {
     const { tm, ptys } = setup({ restartWaitMs: 0 })
     const t = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, muted: true })

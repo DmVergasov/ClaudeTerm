@@ -21,7 +21,7 @@ let server: PipeServerHandle
 
 beforeAll(async () => {
   await build({ entryPoints: [resolve(__dirname, '../../src/mcp/show-image-server.ts')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', target: 'node20', logLevel: 'silent' })
-  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), editBefore: () => ({ ok: true }), showDocument: async (m) => { docs.push(m); return { ok: true, info: 'Opened out/spec.md in the Docs panel.' } }, showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } } })
+  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), cwd: () => ({ ok: true }), editBefore: () => ({ ok: true }), showDocument: async (m) => { docs.push(m); return { ok: true, info: 'Opened out/spec.md in the Docs panel.' } }, showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } } })
   mkdirSync(join(work, 'out'))
   writeFileSync(join(work, 'out', 'plot.png'), Buffer.from([1, 2, 3]))
   writeFileSync(join(work, 'out', 'spec.md'), '# Spec\n')

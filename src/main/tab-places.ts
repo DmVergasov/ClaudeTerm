@@ -153,8 +153,21 @@ export class TabPlaces {
   constructor(private readonly deps: TabPlacesDeps) {}
 
   addTab(tabId: string, cwd: string): void {
+    this.place(tabId, cwd, undefined)
+  }
+
+  /** the tab works in another folder now (Claude Code entered a worktree, a cd): its place is that folder's */
+  moveTab(tabId: string, cwd: string): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab || tab.key === pathKey(cwd)) return
+    this.removeTab(tabId)
+    // what the tab was last given stays: a folder with the same place publishes nothing new
+    this.place(tabId, cwd, tab.last)
+  }
+
+  private place(tabId: string, cwd: string, last: string | undefined): void {
     const key = pathKey(cwd)
-    const tab: TabEntry = { cwd, key, last: undefined }
+    const tab: TabEntry = { cwd, key, last }
     this.tabs.set(tabId, tab)
     // a known folder's place is published at once; git is asked about the folder in the background all the same
     const known = this.folders.get(key)

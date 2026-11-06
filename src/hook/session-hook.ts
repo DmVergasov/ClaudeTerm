@@ -50,6 +50,11 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
   if (event === 'UserPromptSubmit') {
     return { v: 1, type: 'turn', tabId, sessionId, cwd: typeof input.cwd === 'string' && isAbsolute(input.cwd) ? input.cwd : null }
   }
+  // the conversation's folder changed (a worktree entered or left, a cd); a subagent's own folder is not the tab's
+  if (event === 'CwdChanged') {
+    if (input.agent_id !== undefined) return null
+    return typeof input.new_cwd === 'string' && isAbsolute(input.new_cwd) ? { v: 1, type: 'cwd', tabId, sessionId, cwd: input.new_cwd } : null
+  }
   if (event === 'PreToolUse' && typeof input.tool_name === 'string' && EDIT_TOOLS.has(input.tool_name)) {
     const ti = isObj(input.tool_input) ? input.tool_input : {}
     const p = typeof ti.file_path === 'string' ? ti.file_path : typeof ti.notebook_path === 'string' ? ti.notebook_path : null

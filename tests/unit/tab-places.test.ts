@@ -294,3 +294,53 @@ describe('TabPlaces cache', () => {
     expect(published[2]![0]).toBe('a3')
   })
 })
+
+describe('TabPlaces: a tab whose folder changes', () => {
+  const dirA = mkdtempSync(join(tmpdir(), 'ct-move-a-'))
+  const dirB = mkdtempSync(join(tmpdir(), 'ct-move-b-'))
+  const settle = (): Promise<void> => new Promise((done) => setTimeout(done, 20))
+
+  it('publishes the place of the folder the tab moved to, and the place of the old one never again', async () => {
+    const git = countingGit({ [dirA]: 'main', [dirB]: 'feat/x' })
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run: git.run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('t1', dirA)
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+    places.moveTab('t1', dirB)
+    await vi.waitFor(() => expect(published).toHaveLength(2))
+    expect(published[1]).toEqual(['t1', expect.objectContaining({ branch: 'feat/x' })])
+    // a refresh asks about the new folder, not the old one
+    places.refresh('t1')
+    await settle()
+    expect(git.asks.get(dirB)).toBe(2)
+    expect(git.asks.get(dirA)).toBe(1)
+  })
+
+  it('a move to the folder the tab is in, written another way, changes nothing', async () => {
+    const git = countingGit({ [dirA]: 'main' })
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run: git.run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('t1', dirA)
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+    const same = `${dirname(dirA)}/./${basename(dirA)}`
+    places.moveTab('t1', process.platform === 'win32' ? same.toUpperCase() : same)
+    await settle()
+    expect(published).toHaveLength(1)
+    expect(git.asks.get(dirA)).toBe(1)
+  })
+
+  it('a move to a folder another tab is in publishes that place at once; an unknown tab is ignored', async () => {
+    const git = countingGit({ [dirA]: 'main', [dirB]: 'feat/x' })
+    const published: [string, TabPlace | null][] = []
+    const places = new TabPlaces({ run: git.run, publish: (id, place) => { published.push([id, place]) } })
+    places.addTab('t1', dirA)
+    places.addTab('t2', dirB)
+    await vi.waitFor(() => expect(published).toHaveLength(2))
+    places.moveTab('t1', dirB)
+    expect(published).toHaveLength(3)
+    expect(published[2]).toEqual(['t1', expect.objectContaining({ branch: 'feat/x' })])
+    places.moveTab('nope', dirA)
+    await settle()
+    expect(published.filter(([id]) => id === 'nope')).toEqual([])
+  })
+})

@@ -1,5 +1,5 @@
 import { createServer, type Socket } from 'node:net'
-import { type AttentionMessage, type EditBeforeMessage, encodeMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TurnMessage } from '../shared/protocol'
+import { type AttentionMessage, type CwdMessage, type EditBeforeMessage, encodeMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TurnMessage } from '../shared/protocol'
 
 export interface PipeHandlers {
   showImage(msg: ShowImageMessage): Promise<PipeResponse>
@@ -9,6 +9,7 @@ export interface PipeHandlers {
   sessionEnd(msg: SessionEndMessage): PipeResponse
   attention(msg: AttentionMessage): PipeResponse
   turn(msg: TurnMessage): PipeResponse
+  cwd(msg: CwdMessage): PipeResponse
   editBefore(msg: EditBeforeMessage): PipeResponse
   showDiff(msg: ShowDiffMessage): Promise<PipeResponse>
   showDocument(msg: ShowDocumentMessage): Promise<PipeResponse>
@@ -33,6 +34,7 @@ async function handleLine(line: string, h: PipeHandlers): Promise<PipeResponse> 
       case 'session_end': return h.sessionEnd(m)
       case 'attention': return h.attention(m)
       case 'turn': return h.turn(m)
+      case 'cwd': return h.cwd(m)
       case 'edit_before': return h.editBefore(m)
       case 'show_diff': return await h.showDiff(m)
       case 'show_document': return await h.showDocument(m)

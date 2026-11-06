@@ -128,6 +128,24 @@ test('every tab in git shows its branch; a linked worktree\'s tab has a colored 
   await app.close()
 })
 
+test('a Claude tab follows Claude into another folder: its row shows that folder\'s branch, and the tooltip and window title the folder', async () => {
+  const repo = gitRepo()
+  const branch = currentBranch(repo)
+  const worktree = gitWorktree(repo, 'feat/moved')
+  const { app, page, pipeName, tabId } = await launchClaudeTab(left(freshFolder()), repo)
+  await expect(row(page, tabId).locator('.tp-branch')).toHaveText(branch)
+  await expect(row(page, tabId).locator('.tp-wtbar')).toHaveCount(0)
+
+  // what the CwdChanged hook reports when Claude Code enters a worktree
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'cwd', tabId, sessionId: SID, cwd: worktree })).toMatchObject({ ok: true })
+  await expect(row(page, tabId).locator('.tp-branch')).toHaveText('feat/moved')
+  await expect(row(page, tabId).locator('.tp-wtbar')).toHaveCount(1)
+  // the tooltip's second line is the tab's folder
+  await expect.poll(async () => (await row(page, tabId).getAttribute('title'))?.split('\n')[1]).toBe(worktree)
+  await expect.poll(() => page.title()).toContain(basename(worktree))
+  await app.close()
+})
+
 test('a folded group shows its count and a dot, and stays folded after a restart', async () => {
   const folder = freshFolder()
   const repoA = gitRepo()

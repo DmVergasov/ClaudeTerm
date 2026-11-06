@@ -22,7 +22,10 @@ export interface TabInfo {
   id: string
   kind: TabKind
   profile: string
+  /** the folder the tab was opened in: its process starts there, and a Claude conversation resumes there */
   cwd: string
+  /** the folder the tab works in: cwd, until Claude Code reports another (a worktree it entered, a cd) */
+  folder: string
   customTitle: string | null
   claudeSessionId: string | null
   /** the extra account a Claude tab runs on; null: the main account (and every shell tab) */

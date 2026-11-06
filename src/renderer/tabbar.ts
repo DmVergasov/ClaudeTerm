@@ -5,7 +5,7 @@ import { beginRename, bindTab, pulseDelay, tabParts } from './tab-row'
 export interface TabBarItem {
   id: string
   title: string
-  /** the folder the tab was opened in */
+  /** the folder the tab works in: the one it was opened in, or the one Claude moved to */
   folder: string
   kind: TabKind
   /** the tab makes no notification sound */
