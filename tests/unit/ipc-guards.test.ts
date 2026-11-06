@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
-import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isImageAction, isLineNo, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isAccountRef, isDocAction, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -130,6 +130,17 @@ describe('review guards', () => {
     expect(isNoteForm('card')).toBe(true)
     expect(isNoteForm('hidden')).toBe(false)
     expect(isNoteForm(null)).toBe(false)
+  })
+
+  it('isTabCount accepts a whole number of tabs from 0 to 10000', () => {
+    expect(isTabCount(0)).toBe(true)
+    expect(isTabCount(3)).toBe(true)
+    expect(isTabCount(10_000)).toBe(true)
+    expect(isTabCount(10_001)).toBe(false)
+    expect(isTabCount(-1)).toBe(false)
+    expect(isTabCount(1.5)).toBe(false)
+    expect(isTabCount(Number.NaN)).toBe(false)
+    expect(isTabCount('2')).toBe(false)
   })
 
   it('isGeneration accepts a whole number from 0 on', () => {

@@ -20,6 +20,7 @@ export type KeyAction =
   | { type: 'zoomReset' }
   | { type: 'openSettings' }
   | { type: 'recentSessions' }
+  | { type: 'nextWaiting' }
 
 export interface KeyLike {
   type: string
@@ -49,6 +50,7 @@ const LABELS = {
   toggleChanges: ['Ctrl+Shift+D', '⌘D'],
   toggleDocs: ['Ctrl+Shift+O', '⌘O'],
   toggleNote: ['Ctrl+Shift+N', '⌘N'],
+  nextWaiting: ['Ctrl+Shift+J', '⌘J'],
   panelFind: ['Ctrl+F', '⌘F'],
   star: ['Ctrl+D', '⌘D']
 } as const
@@ -77,6 +79,7 @@ export function mapKey(e: KeyLike, platform: string): KeyAction | null {
       case 'KeyO': return { type: 'toggleDocs' }
       case 'KeyN': return { type: 'toggleNote' }
       case 'KeyH': return { type: 'recentSessions' }
+      case 'KeyJ': return { type: 'nextWaiting' }
       case 'Tab': return { type: 'prevTab' }
     }
     return null
@@ -119,6 +122,7 @@ function mapMacKey(e: KeyLike): KeyAction | null {
       case 'KeyD': return { type: 'toggleChanges' }
       case 'KeyO': return { type: 'toggleDocs' }
       case 'KeyN': return { type: 'toggleNote' }
+      case 'KeyJ': return { type: 'nextWaiting' }
       case 'Equal':
       case 'NumpadAdd': return { type: 'zoomIn' }
       case 'Minus':

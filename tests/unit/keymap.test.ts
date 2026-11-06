@@ -26,6 +26,7 @@ describe.each(['win32', 'linux'])('mapKey on %s', (platform) => {
     expect(map(k('KeyI', cs, 'Ш'))).toEqual({ type: 'toggleImages' })
     expect(map(k('KeyH', cs, 'Р'))).toEqual({ type: 'recentSessions' })
     expect(map(k('KeyN', cs, 'Т'))).toEqual({ type: 'toggleNote' })
+    expect(map(k('KeyJ', cs, 'О'))).toEqual({ type: 'nextWaiting' })
   })
 
   it('maps Ctrl+Shift+D to the Changes panel, in any layout', () => {
@@ -96,6 +97,11 @@ describe('mapKey on macOS', () => {
     expect(map(k('KeyV', { ctrlKey: true }))).toBeNull()
     expect(map(k('KeyT', cs))).toBeNull()
     expect(map(k('KeyD', cs))).toBeNull()
+  })
+
+  it('the next tab that needs you is ⌘J', () => {
+    expect(map(k('KeyJ', cmd))).toEqual({ type: 'nextWaiting' })
+    expect(map(k('KeyJ', { ctrlKey: true, shiftKey: true }))).toBeNull()
   })
 
   it('recent sessions are ⌘⇧H: ⌘H hides the app', () => {

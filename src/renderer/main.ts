@@ -3,7 +3,7 @@ import type { AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
-import type { PlanStatus, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
+import type { NotificationCase, PlanStatus, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { DocPanel } from './doc-panel'
 import { ImagePanel } from './image-panel'
@@ -102,6 +102,7 @@ function renderTabs(): void {
   }
   if (imagePanel) refreshPanelButtons()
   renderTitle()
+  reportAttentionCount()
 }
 
 /** the tab bar on top or the left panel, whichever the tabs.position setting names; the other one is hidden */
@@ -222,6 +223,73 @@ function cycleTabs(delta: number): void {
   if (next) ct.activateTab(next)
 }
 
+/** the next tab after the active one, in the order shown, that needs the user; none: nothing changes */
+function nextWaiting(): void {
+  const seq = shownOrder()
+  const i = activeId ? seq.indexOf(activeId) : -1
+  for (let k = 1; k <= seq.length; k++) {
+    const id = seq[(i + k) % seq.length]!
+    if (id !== activeId && tabs.get(id)?.attention) {
+      ct.activateTab(id)
+      return
+    }
+  }
+}
+
+const BANNER_TEXT: Record<NotificationCase, string> = {
+  permission: 'Claude is waiting for your permission',
+  question: 'Claude has a question for you',
+  done: 'Claude finished its turn',
+  bell: 'The bell rang in this tab'
+}
+
+interface Banner {
+  title: string
+  body: string
+  click(): void
+  close(): void
+}
+
+/** the system notification of each tab, until the tab is opened or closed; a newer one of the tab takes its place */
+const banners = new Map<string, Banner>()
+
+function showBanner(tabId: string, reason: NotificationCase): void {
+  const t = tabs.get(tabId)
+  if (!t) return
+  closeBanner(tabId)
+  const title = titleOf(t)
+  const body = BANNER_TEXT[reason]
+  const click = (): void => {
+    ct.focusWindow()
+    ct.activateTab(tabId)
+  }
+  // a test run shows none on the desktop: it keeps them for the test to read and click
+  if (appInfo.test) {
+    banners.set(tabId, { title, body, click, close: () => {} })
+    return
+  }
+  // silent: the sound, if any, is the one set for the case
+  const n = new Notification(title, { body, silent: true })
+  n.onclick = click
+  banners.set(tabId, { title, body, click, close: () => n.close() })
+}
+
+function closeBanner(tabId: string): void {
+  banners.get(tabId)?.close()
+  banners.delete(tabId)
+}
+
+/** the count on the app icon, as main was last told it */
+let attentionCount = 0
+
+function reportAttentionCount(): void {
+  let count = 0
+  for (const t of tabs.values()) if (t.attention) count++
+  if (count === attentionCount) return
+  attentionCount = count
+  ct.setAttentionCount(count)
+}
+
 function copySelection(t: TabState): boolean {
   if (!t.view.term.hasSelection()) return false
   ct.writeClipboardText(t.view.term.getSelection())
@@ -283,6 +351,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'zoomReset': setFontSize(settings.font.size); break
     case 'openSettings': ct.openSettingsWindow(); break
     case 'recentSessions': void sessionsWindow.open(); break
+    case 'nextWaiting': nextWaiting(); break
   }
 }
 
@@ -393,6 +462,7 @@ function activate(tabId: string): void {
     t.bell = false
     t.attention = false
   }
+  closeBanner(tabId)
   const claude = t?.info.kind === 'claude'
   // before the tabs are drawn: the Note button shows whether this tab's note is shown
   noteOverlay.show(tabId, claude)
@@ -600,6 +670,7 @@ async function boot(): Promise<void> {
     else t.attention = true
     renderTabs()
   })
+  ct.onBanner(showBanner)
   // before main types a continue into a Claude tab: only this window has the terminal's screen
   ct.onPromptQuery((queryId, tabId) => {
     const t = tabs.get(tabId)
@@ -721,6 +792,7 @@ async function boot(): Promise<void> {
     if (info.id === activeId) renderStatus(info.id)
   })
   ct.onTabClosed((id) => {
+    closeBanner(id)
     const t = tabs.get(id)
     if (!t) return
     if (id === activeId) planList.close()
@@ -793,7 +865,9 @@ async function boot(): Promise<void> {
       ptyInput: (id) => inputLog.get(id ?? activeId ?? '') ?? '',
       ptySizes: (id) => [...sizeLog.get(id ?? activeId ?? '') ?? []],
       bufferText: (id) => tabs.get(id ?? activeId ?? '')?.view.bufferText() ?? '',
-      themeBackground: () => (activeId ? tabs.get(activeId)?.view.term.options.theme?.background ?? null : null)
+      themeBackground: () => (activeId ? tabs.get(activeId)?.view.term.options.theme?.background ?? null : null),
+      banners: () => [...banners].map(([tabId, b]) => ({ tabId, title: b.title, body: b.body })),
+      clickBanner: (id) => banners.get(id)?.click()
     }
   }
   ct.rendererReady()

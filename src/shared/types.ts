@@ -95,6 +95,8 @@ export interface NotificationChannels {
   sound: boolean
   /** flash the taskbar button when the window is not focused */
   flash: boolean
+  /** show a system notification when the window is not focused; a click on it opens the tab */
+  banner: boolean
   /** mark the tab when it is not the active one */
   tab: boolean
   /** signal also while the tab is in front of the user (window focused, tab active): there only the sound can */

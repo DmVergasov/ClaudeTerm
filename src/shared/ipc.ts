@@ -12,6 +12,10 @@ export const IPC = {
   tabsOpen: 'tabs:open',
   tabsClose: 'tabs:close',
   tabsActivate: 'tabs:activate',
+  /** a click on a system notification: the window comes forward */
+  windowFocus: 'window:focus',
+  /** how many tabs need the user: the app icon shows it */
+  attentionCount: 'attention:count',
   tabsRename: 'tabs:rename',
   tabsReorder: 'tabs:reorder',
   tabsRestart: 'tabs:restart',
@@ -87,6 +91,7 @@ export const IPC = {
   evStatus: 'ev:status',
   evPlan: 'ev:plan',
   evAttention: 'ev:attention',
+  evBanner: 'ev:banner',
   evUpdate: 'ev:update',
   evReview: 'ev:review',
   evPanelMode: 'ev:panel-mode',
@@ -166,6 +171,10 @@ export interface CtApi {
   openTab(req: OpenTabRequest): Promise<TabInfo | null>
   closeTab(tabId: string): void
   activateTab(tabId: string): void
+  /** brings the window forward, as a click on a system notification does */
+  focusWindow(): void
+  /** how many tabs need the user now: the Dock icon, the launcher or the taskbar button shows it */
+  setAttentionCount(count: number): void
   renameTab(tabId: string, title: string | null): void
   reorderTabs(ids: string[]): void
   /** `live` also restarts a tab whose process is still running */
@@ -284,6 +293,8 @@ export interface CtApi {
   onPlan(cb: (update: PlanUpdate) => void): Unsubscribe
   /** mark that tab: the bell dot for 'bell', the pulse for the Claude cases */
   onAttention(cb: (tabId: string, reason: NotificationCase) => void): Unsubscribe
+  /** show a system notification for that tab: the window is in the background */
+  onBanner(cb: (tabId: string, reason: NotificationCase) => void): Unsubscribe
   onUpdate(cb: (state: UpdateState) => void): Unsubscribe
   onReview(cb: (update: ReviewUpdate) => void): Unsubscribe
   /** the window was maximized, restored, or entered or left full screen, or sidePanel.noRoom changed */

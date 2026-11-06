@@ -13,6 +13,7 @@ function setup(o: { focused?: boolean; active?: string | null } = {}) {
     flash: () => calls.push('flash'),
     play: (sound) => calls.push(`play:${sound}`),
     markTab: (id, reason) => calls.push(`mark:${id}:${reason}`),
+    banner: (id, reason) => calls.push(`banner:${id}:${reason}`),
     muted: (id) => state.muted.has(id),
     now: () => state.t
   })
@@ -27,10 +28,10 @@ describe('Attention', () => {
     expect(calls).toEqual([])
   })
 
-  it('window in the background: plays the sound and flashes the taskbar', () => {
+  it('window in the background: flashes the taskbar, shows a system notification and plays the sound', () => {
     const { a, calls } = setup({ focused: false, active: 't1' })
     expect(a.notify('t1', 'permission')).toBe(true)
-    expect(calls).toEqual(['flash', 'play:system'])
+    expect(calls).toEqual(['flash', 'banner:t1:permission', 'play:system'])
   })
 
   it('another tab is open in the focused window: marks the tab with the reason and plays the sound, no flashing', () => {
@@ -39,16 +40,16 @@ describe('Attention', () => {
     expect(calls).toEqual(['mark:t1:question', 'play:system'])
   })
 
-  it('window in the background with another tab open: marks, flashes and plays', () => {
+  it('window in the background with another tab open: marks, flashes, shows a system notification and plays', () => {
     const { a, calls } = setup({ focused: false, active: 't2' })
     a.notify('t1', 'done')
-    expect(calls).toEqual(['mark:t1:done', 'flash', 'play:system'])
+    expect(calls).toEqual(['mark:t1:done', 'flash', 'banner:t1:done', 'play:system'])
   })
 
   it('each case gives only the signals switched on for it', () => {
     const { a, calls, state } = setup({ focused: false, active: 't2' })
-    state.n.done = { sound: false, flash: true, tab: false, front: false }
-    state.n.question = { sound: true, flash: false, tab: true, front: false }
+    state.n.done = { sound: false, flash: true, tab: false, front: false, banner: false }
+    state.n.question = { sound: true, flash: false, tab: true, front: false, banner: false }
     a.notify('t1', 'done')
     expect(calls).toEqual(['flash'])
     calls.length = 0
@@ -68,7 +69,7 @@ describe('Attention', () => {
 
   it('Even in front without the sound gives nothing in front', () => {
     const { a, calls, state } = setup({ focused: true, active: 't1' })
-    state.n.done = { sound: false, flash: true, tab: true, front: true }
+    state.n.done = { sound: false, flash: true, tab: true, front: true, banner: true }
     expect(a.notify('t1', 'done')).toBe(false)
     expect(calls).toEqual([])
   })
@@ -76,7 +77,7 @@ describe('Attention', () => {
   it('a turn that ends with background work still running is signalled like any other by default', () => {
     const { a, calls } = setup({ focused: false, active: 't2' })
     expect(a.notify('t1', 'done', true)).toBe(true)
-    expect(calls).toEqual(['mark:t1:done', 'flash', 'play:system'])
+    expect(calls).toEqual(['mark:t1:done', 'flash', 'banner:t1:done', 'play:system'])
   })
 
   it('with doneWithBackgroundWork off, such a turn gives no signal, even in front, while the turn after it does', () => {
@@ -94,7 +95,7 @@ describe('Attention', () => {
 
   it('a case with every signal off gives none and reports it', () => {
     const { a, calls, state } = setup({ focused: false, active: 't2' })
-    state.n.permission = { sound: false, flash: false, tab: false, front: false }
+    state.n.permission = { sound: false, flash: false, tab: false, front: false, banner: false }
     expect(a.notify('t1', 'permission')).toBe(false)
     expect(calls).toEqual([])
   })
@@ -103,10 +104,10 @@ describe('Attention', () => {
     const { a, calls, state } = setup({ focused: false })
     state.n.sound = 'D:\\s\\ding.wav'
     a.notify('t1', 'done')
-    expect(calls).toEqual(['flash', 'play:D:\\s\\ding.wav'])
+    expect(calls).toEqual(['flash', 'banner:t1:done', 'play:D:\\s\\ding.wav'])
   })
 
-  it('the terminal bell: by default a dot and a flash, no sound', () => {
+  it('the terminal bell: by default a dot and a flash, no sound and no system notification', () => {
     const { a, calls } = setup({ focused: false, active: 't2' })
     expect(a.notify('t1', 'bell')).toBe(true)
     expect(calls).toEqual(['mark:t1:bell', 'flash'])
@@ -118,7 +119,7 @@ describe('Attention', () => {
     state.t += ATTENTION_REPEAT_MS - 1
     calls.length = 0
     expect(a.notify('t1', 'permission')).toBe(true)
-    expect(calls).toEqual(['mark:t1:permission', 'flash'])
+    expect(calls).toEqual(['mark:t1:permission', 'flash', 'banner:t1:permission'])
     calls.length = 0
     a.notify('t2', 'permission')
     expect(calls).toContain('play:system')
@@ -154,13 +155,13 @@ describe('Attention', () => {
     expect(calls).toContain('play:system')
   })
 
-  it('a muted tab gives no sound; it is still marked and the taskbar still flashes', () => {
+  it('a muted tab gives no sound; it is still marked, the taskbar still flashes and the system notification still shows', () => {
     const { a, calls, state } = setup({ focused: false, active: 't2' })
     state.n.bell.sound = true
     state.muted.add('t1')
     expect(a.notify('t1', 'permission')).toBe(true)
     a.notify('t1', 'bell')
-    expect(calls).toEqual(['mark:t1:permission', 'flash', 'mark:t1:bell', 'flash'])
+    expect(calls).toEqual(['mark:t1:permission', 'flash', 'banner:t1:permission', 'mark:t1:bell', 'flash'])
     calls.length = 0
     a.notify('t3', 'done')
     expect(calls).toContain('play:system')
@@ -168,7 +169,7 @@ describe('Attention', () => {
 
   it('a muted tab with only the sound on for the case gives no signal and reports it', () => {
     const { a, calls, state } = setup({ focused: true, active: 't2' })
-    state.n.done = { sound: true, flash: true, tab: false, front: false }
+    state.n.done = { sound: true, flash: true, tab: false, front: false, banner: true }
     state.muted.add('t1')
     expect(a.notify('t1', 'done')).toBe(false)
     expect(calls).toEqual([])
@@ -183,6 +184,24 @@ describe('Attention', () => {
     calls.length = 0
     a.notify('t1', 'permission')
     expect(calls).toContain('play:system')
+  })
+
+  it('a system notification shows only while the window is in the background, whichever tab is in front', () => {
+    const { a, calls, state } = setup({ focused: true, active: 't2' })
+    expect(a.notify('t1', 'question')).toBe(true)
+    expect(calls).toEqual(['mark:t1:question', 'play:system'])
+    calls.length = 0
+    state.focused = false
+    state.t += ATTENTION_REPEAT_MS
+    a.notify('t1', 'question')
+    expect(calls).toContain('banner:t1:question')
+  })
+
+  it('a case with only the system notification on gives it and reports a signal', () => {
+    const { a, calls, state } = setup({ focused: false, active: 't1' })
+    state.n.done = { sound: false, flash: false, tab: false, front: false, banner: true }
+    expect(a.notify('t1', 'done')).toBe(true)
+    expect(calls).toEqual(['banner:t1:done'])
   })
 
   it('removeTab forgets the repeat window', () => {

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, PROMPT } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, KEYS, launchApp, launchClaudeTab, PROMPT } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // the mark is what these tests check; keep the desktop quiet while they run
@@ -163,5 +163,78 @@ test('with the bell tab highlight off, a terminal bell in a background tab leave
   // the bell goes renderer → main → renderer; give that round trip time before checking it left no dot
   await page.waitForTimeout(500)
   await expect(page.locator(`[data-tab-id="${shell}"] .tab-bell`)).toHaveCount(0)
+  await app.close()
+})
+
+/** a Claude tab left in the background: a shell tab opened after it is the active one */
+async function claudeInBackground(settings: object): ReturnType<typeof launchClaudeTab> {
+  const launched = await launchClaudeTab(settings)
+  const { page, tabId, work } = launched
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  return launched
+}
+
+type MainTestState = { ctFocusRequests?: number; ctBadgeCount?: number }
+
+test('Claude waiting while the window is in the background shows a system notification; a click on it brings the window forward and opens that tab, which takes the notification away', async () => {
+  const { app, page, tabId, pipeName } = await claudeInBackground(quietNotifications({ permission: { ...OFF, banner: true } }))
+  const banners = () => page.evaluate(() => window.__ct!.banners!())
+  // a test run never takes the focus (smoke.spec.ts): the window is in the background
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
+  await expect.poll(banners).toEqual([{ tabId, title: expect.any(String), body: 'Claude is waiting for your permission' }])
+
+  await page.evaluate((id) => window.__ct!.clickBanner!(id), tabId)
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(tabId)
+  expect(await app.evaluate(() => (globalThis as MainTestState).ctFocusRequests)).toBe(1)
+  await expect.poll(banners).toEqual([])
+  await app.close()
+})
+
+test('a case with its system notification off shows none; a tab opened another way, or closed, takes its notification away', async () => {
+  const { app, page, tabId, pipeName } = await claudeInBackground(quietNotifications({ permission: { ...OFF, banner: false }, done: { ...OFF, banner: true } }))
+  const banners = () => page.evaluate(() => window.__ct!.banners!())
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  // the one notification is the turn's end: the permission had none, and a newer one of the tab takes the place of an older
+  await expect.poll(banners).toEqual([{ tabId, title: expect.any(String), body: 'Claude finished its turn' }])
+  await page.evaluate((id) => window.ct.activateTab(id), tabId)
+  await expect.poll(banners).toEqual([])
+
+  const shell = (await page.evaluate(() => window.__ct!.tabIds()))[1]!
+  await page.evaluate((id) => window.ct.activateTab(id), shell)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect.poll(banners).toHaveLength(1)
+  await page.evaluate((id) => window.ct.closeTab(id), tabId)
+  await expect.poll(banners).toEqual([])
+  await app.close()
+})
+
+test('the app icon counts the tabs that need you, and the next-waiting-tab shortcut opens them in turn', async () => {
+  const { app, page, tabId, work, pipeName } = await claudeInBackground(quietNotifications())
+  const badge = () => app.evaluate(() => (globalThis as MainTestState).ctBadgeCount ?? 0)
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'claude', cwd }), work)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 3)
+  const [, shell, second] = await page.evaluate(() => window.__ct!.tabIds())
+  await page.evaluate((id) => window.ct.activateTab(id), shell!)
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(shell)
+
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'question' })).toEqual({ ok: true })
+  await expect.poll(badge).toBe(1)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId: second!, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect.poll(badge).toBe(2)
+
+  // from the shell tab, the next waiting tab after it is the second Claude tab, then the first
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press(KEYS.nextWaiting)
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(second)
+  await expect.poll(badge).toBe(1)
+  await page.keyboard.press(KEYS.nextWaiting)
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(tabId)
+  await expect.poll(badge).toBe(0)
+  // with no tab waiting the shortcut stays where it is
+  await page.keyboard.press(KEYS.nextWaiting)
+  await page.waitForTimeout(200)
+  expect(await page.evaluate(() => window.__ct!.activeTabId())).toBe(tabId)
   await app.close()
 })

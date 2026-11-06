@@ -59,8 +59,8 @@ test('a notifications edit turns the old attention section into notifications', 
   expect(await page.evaluate(() => window.ct.setSetting('notifications.done.tab', false))).toEqual({ ok: true })
   const file = readSettings(dataDir)
   expect(file.attention).toBeUndefined()
-  expect(file.notifications.permission).toEqual({ sound: false, flash: false, tab: true, front: false })
-  expect(file.notifications.done).toEqual({ sound: false, flash: false, tab: false, front: false })
+  expect(file.notifications.permission).toEqual({ sound: false, flash: false, tab: true, front: false, banner: false })
+  expect(file.notifications.done).toEqual({ sound: false, flash: false, tab: false, front: false, banner: false })
   await app.close()
 })
 

@@ -23,10 +23,10 @@ export const DEFAULT_SETTINGS: Settings = {
     sound: 'system',
     doneWithBackgroundWork: true,
     autoUnread: false,
-    permission: { sound: true, flash: true, tab: true, front: false },
-    question: { sound: true, flash: true, tab: true, front: false },
-    done: { sound: true, flash: true, tab: true, front: false },
-    bell: { sound: false, flash: true, tab: true, front: false }
+    permission: { sound: true, flash: true, tab: true, front: false, banner: true },
+    question: { sound: true, flash: true, tab: true, front: false, banner: true },
+    done: { sound: true, flash: true, tab: true, front: false, banner: true },
+    bell: { sound: false, flash: true, tab: true, front: false, banner: false }
   },
   review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200, renderMarkdown: true },
   sidePanel: { noRoom: 'overlay' },
@@ -100,7 +100,8 @@ export function parseSettings(text: string | null): ParsedSettings {
     const sound = take('attention.sound', at.sound, isLegacySound, 'system')
     const flash = take('attention.flash', at.flash, isBool, true)
     if (sound !== 'none') notifications.sound = sound
-    for (const c of CLAUDE_CASES) notifications[c] = { sound: sound !== 'none', flash, tab: true, front: false }
+    // flash: false asked for no signal while the window is in the background: a system notification is one too
+    for (const c of CLAUDE_CASES) notifications[c] = { sound: sound !== 'none', flash, tab: true, front: false, banner: flash && notifications[c].banner }
   } else {
     const nt = obj(raw.notifications)
     notifications.sound = take('notifications.sound', nt.sound, isSoundFile, notifications.sound)

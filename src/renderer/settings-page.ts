@@ -15,7 +15,7 @@ const CASE_LABELS: Record<NotificationCase, string> = {
   done: 'Claude finished its answer',
   bell: 'Terminal bell (BEL)'
 }
-const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sound', flash: 'Taskbar flash', tab: 'Tab highlight', front: 'Even in front' }
+const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sound', flash: 'Taskbar flash', banner: 'Notification', tab: 'Tab highlight', front: 'Even in front' }
 const NO_ROOM_OPTIONS: Option[] = [{ value: 'overlay', label: 'Over the terminal' }, { value: 'narrow', label: 'Narrow the terminal' }]
 const TAB_POSITION_OPTIONS: Option[] = [{ value: 'top', label: 'On top' }, { value: 'left', label: 'On the left' }]
 

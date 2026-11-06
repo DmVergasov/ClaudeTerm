@@ -13,6 +13,10 @@ export interface CtTestHook {
   restoreVisible?(): boolean
   /** the active terminal's theme background */
   themeBackground?(): string | null
+  /** the system notifications shown, one per tab (test runs keep them instead of showing them) */
+  banners?(): { tabId: string; title: string; body: string }[]
+  /** a click on the tab's system notification */
+  clickBanner?(id: string): void
 }
 
 declare global {

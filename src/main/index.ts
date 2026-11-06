@@ -14,13 +14,14 @@ import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Setting
 import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './accounts'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
+import { badgeDescription, dotBitmap } from './app-badge'
 import { AutoContinue } from './auto-continue'
 import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
 import { NOT_RUNNING } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -74,6 +75,8 @@ const log = createLogger(join(dataDir, 'logs'))
 const pipeName = resolvePipeName()
 const settingsPath = join(dataDir, 'settings.json')
 const isTest = process.env.CLAUDETERM_TEST === '1'
+/** what a test run reads back from the main process: the window it would have brought forward, the badge it set */
+const testState = globalThis as { ctFocusRequests?: number; ctBadgeCount?: number }
 
 registerImgScheme([DOC_SCHEME_PRIVILEGES])
 
@@ -435,6 +438,8 @@ function bootstrap(): void {
     flash: () => { if (win && !win.isDestroyed()) win.flashFrame(true) },
     play: playSound,
     markTab: (tabId, reason) => send(IPC.evAttention, tabId, reason),
+    // the window shows it: it knows the tab's title, and which tab the user opens
+    banner: (tabId, reason) => send(IPC.evBanner, tabId, reason),
     muted: (tabId) => tabs.get(tabId)?.muted === true
   })
   const promptQueries = new PromptQueries({
@@ -543,6 +548,8 @@ function bootstrap(): void {
   }
 
   const focusWindow =(): void => {
+    // a test run never takes the focus: it counts what would have
+    if (isTest) testState.ctFocusRequests = (testState.ctFocusRequests ?? 0) + 1
     if (!win || isTest) return
     if (win.isMinimized()) win.restore()
     win.show()
@@ -551,6 +558,18 @@ function bootstrap(): void {
     win.focus()
     win.setAlwaysOnTop(false)
     if (!win.isFocused()) win.flashFrame(true)
+  }
+
+  /** the tabs that need the user: a count on the Dock icon and the launcher, a dot over the taskbar button on Windows */
+  let badgeDot: Electron.NativeImage | null = null
+  const showBadge = (count: number): void => {
+    if (isTest) testState.ctBadgeCount = count
+    if (process.platform === 'darwin') app.dock?.setBadge(count > 0 ? String(count) : '')
+    else if (process.platform === 'linux') app.setBadgeCount(count)
+    else if (win && !win.isDestroyed()) {
+      badgeDot ??= nativeImage.createFromBitmap(dotBitmap(16, [0xd9, 0x77, 0x57]), { width: 16, height: 16 })
+      win.setOverlayIcon(count > 0 ? badgeDot : null, count > 0 ? badgeDescription(count) : '')
+    }
   }
 
   app.on('second-instance', (_e, argv, _cwd, additionalData) => {
@@ -751,6 +770,8 @@ function bootstrap(): void {
     if (tabs.list().length === 0) win?.close()
   })
   ipcMain.on(IPC.tabsActivate, (_e, id: unknown) => { if (isId(id)) tabs.activate(id) })
+  ipcMain.on(IPC.windowFocus, () => focusWindow())
+  ipcMain.on(IPC.attentionCount, (_e, count: unknown) => { if (isTabCount(count)) showBadge(count) })
   ipcMain.on(IPC.tabsRename, (_e, id: unknown, title: unknown) => { if (isId(id) && isOptionalTitle(title)) tabs.rename(id, title) })
   ipcMain.on(IPC.tabsReorder, (_e, ids: unknown) => { if (isIdList(ids)) tabs.reorder(ids) })
   ipcMain.on(IPC.tabsRestart, (_e, id: unknown, live: unknown) => {

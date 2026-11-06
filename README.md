@@ -71,7 +71,9 @@ The limits are shown for Claude Pro and Max subscriptions, where Claude Code rep
 
 ### 🔔 Know when Claude is waiting for you
 
-When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. Nothing happens while that tab is in front of you, unless you switch on **Even in front** for that case: then its sound plays there too. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash and tab highlight switches, and the sound can be your own `.wav`.
+When Claude asks for a permission, asks you a question or finishes its turn while you are looking elsewhere, ClaudeTerm plays the system sound (on macOS Glass, on Linux the desktop's message sound, through `paplay`, `pw-play` or `aplay`), flashes its taskbar button (bounces its Dock icon on macOS) and marks the tab. While the window is in the background it also shows a system notification with the tab's name: a click on it brings ClaudeTerm forward with that tab open, and opening the tab takes the notification away. Nothing happens while that tab is in front of you, unless you switch on **Even in front** for that case: then its sound plays there too. In **Settings** each of these cases — and a terminal bell from any program — has its own sound, taskbar flash, notification and tab highlight switches, and the sound can be your own `.wav`.
+
+The app icon counts the tabs that need you: a number on the Dock icon (macOS) and the launcher (Linux), a dot over the taskbar button (Windows) with the number in its tooltip. `Ctrl+Shift+J` (`⌘J` on macOS) opens the next of them.
 
 Claude often ends a turn while work it started still runs in the background — subagents, background shell commands, monitors — and starts another turn when that work ends. Each of those turns is signalled as a finished answer; clear **Signal a finished answer also while background work… still runs** in Settings and only the turn after which nothing runs in the background is. ClaudeTerm learns about that work from Claude Code's `Stop` hook (`background_tasks`); a Claude Code that does not send it gets every turn signalled.
 
@@ -184,6 +186,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Show / hide the Changes panel | `Ctrl+Shift+D` | `⌘D` |
 | Show / hide the Docs panel | `Ctrl+Shift+O` | `⌘O` |
 | Show / hide the note of a Claude tab | `Ctrl+Shift+N` | `⌘N` |
+| Next tab that needs you | `Ctrl+Shift+J` | `⌘J` |
 | Find in the Changes panel | `Ctrl+F` (when the panel has the focus) | `⌘F` (when the panel has the focus) |
 | Recent sessions | `Ctrl+Shift+H` | `⌘⇧H` |
 | Star / unstar the selected session | `Ctrl+D` (in the Recent sessions window) | `⌘D` (in the Recent sessions window) |

@@ -37,6 +37,9 @@ export const isNoteText = (v: unknown): v is string => typeof v === 'string' && 
 
 export const isNoteForm = (v: unknown): v is NoteForm => typeof v === 'string' && (NOTE_FORMS as readonly string[]).includes(v)
 
+/** how many tabs need the user, for the app icon's badge */
+export const isTabCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000
+
 /** the number of a tab's note an edit was typed against */
 export const isGeneration = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
 
