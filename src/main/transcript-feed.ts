@@ -134,8 +134,51 @@ export interface TranscriptFeedOptions {
   locate?(): Promise<string | null>
   /** how often locate() may run while the transcript cannot be opened */
   locateMs?: number
+  /** the timer's tick: a transcript that grows is read on every tick, one that brought nothing waits twice as long each time */
   pollMs?: number
+  /** the longest wait between reads of the main transcript */
+  pollMaxMs?: number
+  /** the longest wait between reads of a subagent's transcript */
+  subagentPollMaxMs?: number
+  /** wake() reads again the subagents' transcripts that brought lines within this time; older ones keep their wait */
+  subagentRecentMs?: number
+  /** how often the subagents folder is listed while the session moves; its wait doubles the same way while nothing does */
   subagentScanMs?: number
+  /** the longest wait between listings of the subagents folder */
+  subagentScanMaxMs?: number
+}
+
+/** When something is looked at next, in ticks: after the base wait while it changes, then after waits that double up to a cap */
+class Backoff {
+  private wait: number
+  private next = 0
+  private changedAt = -Infinity
+
+  constructor(private readonly base: number, private readonly max: number) {
+    this.wait = base
+  }
+
+  due(tick: number): boolean {
+    return tick >= this.next
+  }
+
+  /** whether a look found something new within the last `ticks` ticks before `tick` */
+  changedWithin(tick: number, ticks: number): boolean {
+    return tick - this.changedAt <= ticks
+  }
+
+  /** a look on that tick found something new (back to the base wait) or nothing (the wait doubles) */
+  looked(tick: number, changed: boolean): void {
+    if (changed) this.changedAt = tick
+    this.wait = changed ? this.base : Math.max(this.base, Math.min(this.wait * 2, this.max))
+    this.next = tick + this.wait
+  }
+
+  /** due on the next tick, then waiting the base again */
+  reset(): void {
+    this.wait = this.base
+    this.next = 0
+  }
 }
 
 interface Source {
@@ -145,20 +188,28 @@ interface Source {
   agentId: string | null
   lastInfo: string | null
   plan: PlanWorkspaceFinder
+  /** a transcript nothing is written to any more is read rarely: a session keeps every agent's transcript it ever ran */
+  schedule: Backoff
 }
 
 export class TranscriptFeed {
   private readonly main: Source
   private readonly subagents = new Map<string, Source>()
-  private pollTimer: ReturnType<typeof setInterval> | null = null
-  private scanTimer: ReturnType<typeof setInterval> | null = null
+  private readonly scan: Backoff
+  private timer: ReturnType<typeof setInterval> | null = null
+  private ticks = 0
+  private woken = false
+  private readonly wokenAgents = new Set<string>()
+  /** a transcript brought new lines since the subagents folder was listed */
+  private moved = false
   private busy = false
   private stopped = false
   private missingReported = false
   private lastLocate = -Infinity
 
   constructor(private readonly o: TranscriptFeedOptions) {
-    this.main = { tailer: new LineTailer(o.transcriptPath), parser: new TranscriptParser({ subagent: false }), agentId: null, lastInfo: null, plan: new PlanWorkspaceFinder() }
+    this.main = this.source(o.transcriptPath, null)
+    this.scan = new Backoff(this.inTicks(o.subagentScanMs ?? 2000), this.inTicks(o.subagentScanMaxMs ?? 30_000))
   }
 
   get subagentDir(): string {
@@ -166,61 +217,128 @@ export class TranscriptFeed {
   }
 
   start(): void {
-    this.scanSubagents()
-    this.poll().catch((e) => this.report(e))
-    this.pollTimer = setInterval(() => this.poll().catch((e) => this.report(e)), this.o.pollMs ?? 500)
-    this.scanTimer = setInterval(() => this.scanSubagents(), this.o.subagentScanMs ?? 2000)
+    this.timer = setInterval(() => this.tick().catch((e) => this.report(e)), this.o.pollMs ?? 500)
+    this.tick().catch((e) => this.report(e))
   }
 
   stop(): void {
     this.stopped = true
-    if (this.pollTimer) clearInterval(this.pollTimer)
-    if (this.scanTimer) clearInterval(this.scanTimer)
+    if (this.timer) clearInterval(this.timer)
   }
 
-  scanSubagents(): void {
+  /**
+   * Something happens in the tab: the next tick lists the subagents folder and reads the main transcript, the subagents'
+   * transcripts that brought lines lately and the one of `agentId`, and each of them waits the base again. The
+   * transcripts of agents long finished keep their wait
+   */
+  wake(agentId?: string): void {
+    if (this.stopped) return
+    this.woken = true
+    if (agentId !== undefined) this.wokenAgents.add(agentId)
+  }
+
+  /** Adds the transcripts of agents new in the subagents folder; true when there were any */
+  async scanSubagents(): Promise<boolean> {
+    const dir = this.subagentDir
     let names: string[]
     try {
-      names = readdirSync(this.subagentDir)
+      names = await readdir(dir)
     } catch {
-      return
+      return false
     }
+    let found = false
     for (const n of names) {
       if (!n.endsWith('.jsonl') || this.subagents.has(n)) continue
       const agentId = n.startsWith('agent-') ? n.slice('agent-'.length, -'.jsonl'.length) : n.slice(0, -'.jsonl'.length)
-      this.subagents.set(n, { tailer: new LineTailer(join(this.subagentDir, n)), parser: new TranscriptParser({ subagent: true }), agentId, lastInfo: null, plan: new PlanWorkspaceFinder() })
+      this.subagents.set(n, this.source(join(dir, n), agentId))
+      found = true
     }
+    return found
   }
 
-  async poll(): Promise<void> {
+  /** Reads every transcript now */
+  poll(): Promise<void> {
+    return this.exclusive(() => this.read(() => true, this.ticks))
+  }
+
+  /** The timer: lists the subagents folder and reads the transcripts when it is their turn */
+  private tick(): Promise<void> {
+    const now = ++this.ticks
+    return this.exclusive(async () => {
+      if (this.woken) {
+        this.woken = false
+        this.scan.reset()
+        this.main.schedule.reset()
+        const recent = this.inTicks(this.o.subagentRecentMs ?? 60_000)
+        // a named agent without a transcript yet is found by the listing
+        for (const s of this.subagents.values()) {
+          if (s.schedule.changedWithin(now, recent) || (s.agentId !== null && this.wokenAgents.has(s.agentId))) s.schedule.reset()
+        }
+        this.wokenAgents.clear()
+      }
+      const scanning = this.scan.due(now)
+      const found = scanning && (await this.scanSubagents())
+      await this.read((s) => s.schedule.due(now), now)
+      if (!scanning) return
+      // agents start while the session works: while nothing moves, the folder is listed more and more rarely, until wake()
+      this.scan.looked(now, found || this.moved)
+      this.moved = false
+    })
+  }
+
+  /** one read at a time, none after stop() */
+  private async exclusive(work: () => Promise<void>): Promise<void> {
     if (this.busy || this.stopped) return
     this.busy = true
     try {
+      await work()
+    } finally {
+      this.busy = false
+    }
+  }
+
+  /** Reads the main transcript, then the subagents' ones, each that `due` picks */
+  private async read(due: (s: Source) => boolean, now: number): Promise<void> {
+    for (const s of [this.main, ...this.subagents.values()]) {
+      if (this.stopped) return
+      if (!due(s)) continue
+      let got = false
       try {
-        let lines = await this.main.tailer.readNew()
-        if (lines === null && (await this.relocate())) lines = await this.main.tailer.readNew()
-        if (lines === null) {
-          if (!this.missingReported) {
-            this.missingReported = true
-            this.o.onError?.(`transcript not readable yet: ${this.o.transcriptPath}`)
-          }
-        } else {
-          this.consume(this.main, lines)
+        const lines = s === this.main ? await this.readMain() : await s.tailer.readNew()
+        if (lines) {
+          got = lines.length > 0
+          this.consume(s, lines)
         }
       } catch (e) {
         this.report(e)
       }
-      for (const s of this.subagents.values()) {
-        try {
-          const subLines = await s.tailer.readNew()
-          if (subLines) this.consume(s, subLines)
-        } catch (e) {
-          this.report(e)
-        }
-      }
-    } finally {
-      this.busy = false
+      s.schedule.looked(now, got)
+      if (got) this.moved = true
     }
+  }
+
+  /** New lines of the main transcript, wherever it is now; null while it cannot be opened */
+  private async readMain(): Promise<string[] | null> {
+    let lines = await this.main.tailer.readNew()
+    if (lines === null && (await this.relocate())) lines = await this.main.tailer.readNew()
+    if (lines === null && !this.missingReported) {
+      this.missingReported = true
+      this.o.onError?.(`transcript not readable yet: ${this.o.transcriptPath}`)
+    }
+    return lines
+  }
+
+  private source(file: string, agentId: string | null): Source {
+    const maxMs = agentId === null ? (this.o.pollMaxMs ?? 5000) : (this.o.subagentPollMaxMs ?? 30_000)
+    return {
+      tailer: new LineTailer(file), parser: new TranscriptParser({ subagent: agentId !== null }), agentId, lastInfo: null,
+      plan: new PlanWorkspaceFinder(), schedule: new Backoff(1, this.inTicks(maxMs))
+    }
+  }
+
+  /** a time in ticks of the timer, at least one */
+  private inTicks(ms: number): number {
+    return Math.max(1, Math.round(ms / (this.o.pollMs ?? 500)))
   }
 
   /** Switches to where the transcript is now; true when it was found somewhere else */

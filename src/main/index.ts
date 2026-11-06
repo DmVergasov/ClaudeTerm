@@ -316,6 +316,8 @@ function bootstrap(): void {
     images.removeTab(tabId)
   }
 
+  // a test run can have idle transcripts wait long, so that a read the hooks bring is told apart from one within the wait
+  const testFeedMaxMs = isTest ? Number(process.env.CLAUDETERM_TEST_FEED_MAX_MS) || undefined : undefined
   const attachTranscript = (tabId: string, sessionId: string, transcriptPath: string): void => {
     const s = sources.get(tabId)
     if (!s || (s.transcriptPath !== null && pathKey(s.transcriptPath) === pathKey(transcriptPath))) return
@@ -335,7 +337,10 @@ function bootstrap(): void {
       onEditEvent: (ev) => review.transcriptEvent(tabId, ev),
       onAssistant: (agentId, at) => review.assistantEntry(tabId, agentId, at),
       onInterrupt: (agentId, at) => review.interrupted(tabId, agentId, at),
-      onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at)
+      onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at),
+      pollMaxMs: testFeedMaxMs,
+      subagentPollMaxMs: testFeedMaxMs,
+      subagentScanMaxMs: testFeedMaxMs
     })
     // images there, also ones Claude reads, are shown by their path inside it (scratchpad\plot.png)
     const temp = sessionTempDir(transcriptPath, sessionId, claudeRoot)
@@ -350,6 +355,9 @@ function bootstrap(): void {
       log.warn(`cannot watch ${temp}: ${(e as Error).message}`)
     }
   }
+
+  // a tab's transcripts are read rarely while they stay idle: a hook that says the tab works has them read at once again
+  const wakeFeed = (tabId: string, agentId?: string): void => sources.get(tabId)?.feed?.wake(agentId)
 
   handleImgProtocol(images, () => [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
   handleDocProtocol((id) => docs.get(id))
@@ -665,6 +673,7 @@ function bootstrap(): void {
     subagent: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       log.info(`subagent ${msg.event} tab=${msg.tabId} id=${msg.agentId} type=${msg.agentType}`)
+      wakeFeed(msg.tabId, msg.agentId)
       statusHub.subagent(msg)
       // an interrupted subagent never writes again: its end closes a dialog it left open
       if (msg.event === 'stop') review.subagentStopped(msg.tabId, msg.agentId)
@@ -683,6 +692,7 @@ function bootstrap(): void {
     },
     attention: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      wakeFeed(msg.tabId)
       // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
       if (msg.reason === 'done') {
         review.turnEnded(msg.tabId)
@@ -700,6 +710,7 @@ function bootstrap(): void {
     },
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      wakeFeed(msg.tabId)
       review.turn(msg.tabId, msg.sessionId)
       tabs.setWorking(msg.tabId, true)
       autoContinue.turnStarted(msg.tabId)
@@ -713,6 +724,7 @@ function bootstrap(): void {
     },
     editBefore: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      wakeFeed(msg.tabId)
       // the reply lets the edit go ahead: the file is read before it
       review.recordBefore(msg.tabId, msg.sessionId, msg.toolUseId, msg.path)
       return { ok: true }

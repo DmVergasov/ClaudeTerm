@@ -106,7 +106,7 @@ describe('TranscriptFeed', () => {
       onEditEvent: (ev) => events.push(ev.kind === 'prompt' ? 'prompt' : `edit:${ev.toolUseId}`),
       onAssistant: (agentId) => events.push(`assistant:${agentId ?? 'main'}`)
     })
-    feed.scanSubagents()
+    await feed.scanSubagents()
     await feed.poll()
     expect(events).toEqual(['prompt', 'edit:t1', 'assistant:main', 'edit:t2', 'assistant:a1'])
   })
@@ -119,7 +119,7 @@ describe('TranscriptFeed', () => {
     writeFileSync(join(subagents, 'agent-a1.jsonl'), interruptLine({ timestamp: '2026-10-08T10:00:09.000Z' }) + '\n')
     const events: [string | null, number][] = []
     const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, onInterrupt: (agentId, at) => events.push([agentId, at]) })
-    feed.scanSubagents()
+    await feed.scanSubagents()
     await feed.poll()
     expect(events).toEqual([[null, Date.parse('2026-10-08T10:00:07.000Z')], ['a1', Date.parse('2026-10-08T10:00:09.000Z')]])
   })
@@ -137,7 +137,7 @@ describe('TranscriptFeed', () => {
     const printed: string[] = []
     const times: number[] = []
     const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, onPlanWorkspace: (p, at) => (printed.push(p), times.push(at)) })
-    feed.scanSubagents()
+    await feed.scanSubagents()
     await feed.poll()
     expect(printed).toEqual(['/w/a/.superpowers/sdd/2026-10-20-main', '/w/a/.superpowers/sdd/2026-10-20-sub'])
     expect(times).toEqual([Date.parse('2026-10-05T10:00:01.000Z'), Date.parse('2026-10-05T10:00:01.000Z')])
@@ -185,7 +185,7 @@ describe('TranscriptFeed', () => {
     mkdirSync(feed.subagentDir, { recursive: true })
     writeFileSync(join(feed.subagentDir, 'agent-a1.jsonl'), [toolUseLine('toolu_s9', 'mcp__claude-in-chrome__computer', { action: 'screenshot' }), toolResultLine('toolu_s9'), ''].join('\n'))
     writeFileSync(join(feed.subagentDir, 'agent-a1.meta.json'), '{}')
-    feed.scanSubagents()
+    await feed.scanSubagents()
     await feed.poll()
     expect(images.map((i) => i.caption)).toEqual(['subagent · claude-in-chrome · computer (screenshot)'])
   })
@@ -196,7 +196,7 @@ describe('TranscriptFeed', () => {
     mkdirSync(feed.subagentDir, { recursive: true })
     const sub = join(feed.subagentDir, 'agent-a40a10c1d655cf759.jsonl')
     writeFileSync(sub, [assistantLine('claude-sonnet-5-5', 'medium'), assistantLine('claude-sonnet-5-5', 'medium'), assistantLine('<synthetic>'), ''].join('\n'))
-    feed.scanSubagents()
+    await feed.scanSubagents()
     await feed.poll()
     expect(infos).toEqual([['a40a10c1d655cf759', { model: 'claude-sonnet-5-5', effort: 'medium' }]])
     appendFileSync(sub, assistantLine('claude-sonnet-5-5', 'high') + '\n')
