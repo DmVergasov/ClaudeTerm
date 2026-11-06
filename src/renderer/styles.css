@@ -37,8 +37,17 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .tab-position:hover { color: var(--fg); }
 
 /* The left panel: the header, the groups of tabs, and the rows of two lines (the title, then the branch) */
-#tabpanel { position: relative; flex: none; min-height: 0; display: flex; flex-direction: column; background: var(--chrome); border-right: 1px solid var(--border); user-select: none; }
+#tabpanel { position: relative; flex: none; min-height: 0; display: flex; flex-direction: column; background: var(--chrome); border-right: 1px solid var(--border); user-select: none; container: tabpanel / inline-size; }
 .tp-head { display: flex; align-items: stretch; height: 34px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+/* a panel narrower than 220 px (219 inside its border) has no room for the header's row: + and ▾ and the position button
+   stay on top, the side-panel toggles go to a row of their own under them, at the right */
+@container tabpanel (width < 219px) {
+  .tp-head { flex-wrap: wrap; justify-content: flex-end; height: auto; }
+  .tp-head > * { height: 28px; }
+  .tp-head .tab-position { order: 1; }
+  .tp-head::after { content: ''; flex-basis: 100%; order: 1; }
+  .tp-head .tab-changes-toggle, .tp-head .tab-docs-toggle, .tp-head .tab-images-toggle, .tp-head .tab-note-toggle { order: 2; padding: 0 5px; }
+}
 .tp-spacer { flex: 1; }
 .tp-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 0 8px; }
 .tp-group-head { display: flex; align-items: center; gap: 6px; height: 26px; margin-top: 6px; padding: 0 8px; cursor: pointer; }

@@ -205,8 +205,11 @@ export interface TabLayout {
   folded: string[]
 }
 
-/** at its narrowest the panel's header still holds all its buttons: + and ▾, Changes, Docs, Media, Note and the position */
-export const TAB_PANEL_WIDTH = { min: 220, max: 480, initial: 240 }
+/**
+ * The panel's header holds all its buttons in one row (+ and ▾, Changes, Docs, Media, Note and the position) from 220 px
+ * on; a narrower panel puts them in two rows (styles.css)
+ */
+export const TAB_PANEL_WIDTH = { min: 110, max: 480, initial: 240 }
 
 /** the left tab panel's width in whole px, within TAB_PANEL_WIDTH */
 export const clampTabPanelWidth = (px: number): number => Math.min(TAB_PANEL_WIDTH.max, Math.max(TAB_PANEL_WIDTH.min, Math.round(px)))

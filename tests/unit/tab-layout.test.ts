@@ -27,13 +27,15 @@ describe('TabLayoutStore', () => {
     expect(new TabLayoutStore(d).get()).toEqual({ width: 300, folded: ['k'] })
   })
 
-  it('clamps a width outside 220 to 480 on set and on read', () => {
+  it('clamps a width outside 110 to 480 on set and on read', () => {
     const d = dir()
     const store = new TabLayoutStore(d)
     store.set({ width: 9000 })
     expect(store.get().width).toBe(480)
+    store.set({ width: 150 })
+    expect(store.get().width).toBe(150)
     store.set({ width: 10 })
-    expect(store.get().width).toBe(220)
+    expect(store.get().width).toBe(110)
     writeFileSync(join(d, 'tab-layout.json'), JSON.stringify({ width: 9999, folded: [] }))
     expect(new TabLayoutStore(d).get().width).toBe(480)
   })
