@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { PLAN_FILE_MAX_BYTES, PlanHub, readPlanFile } from '../../src/main/plan-hub'
 import { TranscriptFeed } from '../../src/main/transcript-feed'
-import { bashResultLine, toolUseLine } from '../fixtures/transcript'
+import { bashResultLine, editResultLine, toolUseLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const PLAN_TEXT = '# CSV Export Implementation Plan\n### Task 1: Rows\n### Task 2: Escaping\n### Task 3: Button\n'
@@ -98,6 +98,38 @@ describe('plan progress', () => {
     appendFileSync(join(ws, 'progress.md'), 'Task 2: reviewer approved, controller checked; Task 2: complete\r\n')
     await hub.refresh()
     expect(hub.get('t').plan).toMatchObject({ done: 2, tasks: [{ state: 'done' }, { state: 'done' }, { state: 'current' }] })
+  })
+
+  it('a plan whose workspace was rebuilt by hand, with no sdd-workspace run, is found from the task brief its script cut', async () => {
+    const { root, ws, transcriptPath } = layout()
+    writeFileSync(join(dirname(transcriptPath), SID, 'subagents', 'agent-o1.jsonl'), '')
+    writeFileSync(transcriptPath, [
+      toolUseLine('m1', 'Bash', { command: `cp /p/scripts/* ${ws}/ && echo docs/superpowers/plans/2026-10-20-csv-export.md > ${ws}/plan-path` }),
+      bashResultLine('m1', ''),
+      toolUseLine('m2', 'Bash', { command: `bash ${ws}/task-brief docs/superpowers/plans/2026-10-20-csv-export.md 2` }),
+      bashResultLine('m2', `wrote ${join(ws, 'task-2-brief.md')}: 12 lines\n`)
+    ].join('\n') + '\n')
+    const { hub, feed } = wire(root, transcriptPath)
+    feed.scanSubagents()
+    await feed.poll()
+    await expect.poll(() => hub.get('t').plan?.title, { timeout: 5000 }).toBe('CSV Export')
+    expect(hub.get('t').plan?.done).toBe(1)
+  })
+
+  it('a plan with no script run at all is found from the ledger the session wrote', async () => {
+    const { root, ws, transcriptPath } = layout()
+    const ledger = '# SDD ledger — plan: docs/superpowers/plans/2026-10-20-csv-export.md\n\n' + LEDGER
+    writeFileSync(join(ws, 'progress.md'), ledger)
+    writeFileSync(join(dirname(transcriptPath), SID, 'subagents', 'agent-o1.jsonl'), '')
+    writeFileSync(transcriptPath, [
+      toolUseLine('m1', 'Write', { file_path: join(ws, 'progress.md'), content: ledger }),
+      editResultLine({ toolUseId: 'm1', filePath: join(ws, 'progress.md'), created: true })
+    ].join('\n') + '\n')
+    const { hub, feed } = wire(root, transcriptPath)
+    feed.scanSubagents()
+    await feed.poll()
+    await expect.poll(() => hub.get('t').plan?.title, { timeout: 5000 }).toBe('CSV Export')
+    expect(hub.get('t').plan?.done).toBe(1)
   })
 
   it('a replay reads the transcripts in file order: the newer plan of the main transcript beats an older one in a subagent transcript', async () => {

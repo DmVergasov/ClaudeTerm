@@ -128,7 +128,7 @@ export interface TranscriptFeedOptions {
   onAssistant?(agentId: string | null, at: number): void
   /** the user interrupted that agent's turn (Esc, a denied permission prompt); `agentId` and `at` as for onAssistant */
   onInterrupt?(agentId: string | null, at: number): void
-  /** an sdd-workspace run in any of the session's transcripts printed this workspace path; `at` is the time of its result (0 when it has none) */
+  /** a tool call in any of the session's transcripts named this plan workspace (see PlanWorkspaceFinder); `at` is the time of its result (0 when it has none) */
   onPlanWorkspace?(printed: string, at: number): void
   /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
   locate?(): Promise<string | null>
