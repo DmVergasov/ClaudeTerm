@@ -2,6 +2,28 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.14.0
+
+### New
+
+- **System notifications, and a jump to the tab that needs you.** When Claude in a tab you are not looking at asks for a permission, asks you a question or finishes its turn while ClaudeTerm is in the background, a system notification names the tab; a click on it brings the window forward with that tab open. The app icon counts the tabs that need you — a number on the Dock icon (macOS) and the launcher (Linux), a dot on the taskbar button (Windows) — and `Ctrl+Shift+J` (`⌘J` on macOS) opens the next of them. Settings → Notifications has a new **Notification** column to switch it per case.
+- **See when Claude is working in a tab.** While Claude works, from your prompt to the end of its turn, the tab's ✳ spins through Claude Code's own spinner glyphs, on the tab bar and in the left panel, where a folded group spins too. It spins slower and in grey while an agent Claude left running after its turn still works, and a tab where Claude waits for you pulses instead. The ✳, ◐ or ◑ Claude Code puts before its title is left out of the tab's name. With reduced motion turned on in the system, the icon stays still.
+- **A task list Claude can keep for you.** Claude can now put up a task list of its own with the bundled `set_task_list` tool — for longer work, or when you ask it to track the steps. It shows like a superpowers plan: `2/5 · Wire the export button` in the status bar, and a click lists every task. A superpowers plan in progress comes first. The list stays with the conversation through `/clear`, a restart with Restore, Recent sessions and Fork session, and **Clear** in the list removes one Claude forgot. ClaudeTerm allows the two task-list tools in its own tabs, so they never stop unattended work with a permission prompt.
+- **How fast you are spending your limits.** Each usage limit in the status bar has a small bar: it fills with what is spent, and a mark shows how much of the limit's window has gone by. Grey means the limit lasts until it resets, yellow that it would run out in the second half of the time left, red sooner; hover for when it runs out at this pace, or how much will be spent by the reset.
+- **Background work in the status bar.** When Claude ends a turn with work still running in the background — a dev server, a watcher, an agent — the status bar says how many and what: `2 in background: build, tail -f server.log`. Hover for each one's command.
+- **More lines around a change, as on GitHub.** In the Changes panel, ↑ over a hunk and ↓ under it show 20 more lines of the file, and ↕ the rest of a short gap; two hunks with every line between them shown become one. These lines take comments too.
+
+### Changes
+
+- **The left tab panel narrows to half its width.** Drag it down to 110 px; below 220 px its header buttons take two rows.
+- **Lighter on the CPU with many sessions.** ClaudeTerm read every transcript of every tab twice a second, including those of agents long finished, which slowed the window with ten or so busy sessions. Transcripts that bring nothing new are now read less and less often, and are read again at once when Claude starts a turn, ends one, starts or stops an agent or edits a file.
+
+### Fixes
+
+- **A tab follows Claude into another folder.** When Claude Code moved into another folder — a worktree it entered, a `cd` — the tab kept showing the folder it was opened in: in its title, its group and branch in the left panel and the window title. It now shows where Claude works.
+- **A restored tab goes on with work Claude left in the background.** When ClaudeTerm closed after Claude had ended its turn but while agents or commands it started still ran, that work stopped with ClaudeTerm, and the restored conversation waited for it forever. With **Go on with the work Claude was doing when ClaudeTerm closed** on, such a tab now asks Claude to check what finished and start again what did not.
+- **A superpowers plan shows even when its start went unseen.** The status bar learned of a plan only from the moment Claude set up the plan's workspace, and showed nothing if ClaudeTerm missed it. It now also recognises the plan from Claude's later steps of the same run.
+
 ## 0.13.0
 
 ### New
