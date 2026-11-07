@@ -64,6 +64,11 @@ stand-in `claude` command (`tests/e2e/helpers.ts`), and anything Claude would wr
 its own `CLAUDE_CONFIG_DIR`. No test may start the real `claude`, call the Anthropic API, register the MCP server
 for the real user, or read or write the real `~/.claude` or `%APPDATA%\ClaudeTerm`.
 
+Every run keeps what its tests write in a temp folder of its own and deletes it when it ends: the global setup
+(`tests/fixtures/temp-root-setup.ts`) points `TEMP`, `TMP` and `TMPDIR` at it, for the tests and every process they
+start. So a test creates its files and folders under `tmpdir()`, never in the repository or at a fixed path, and stops
+what it starts (closes the app, kills a server it runs).
+
 ## Code rules
 
 - **Match the surrounding code**: its naming, comment density and idioms. TypeScript is strict

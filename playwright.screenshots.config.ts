@@ -6,5 +6,7 @@ export default defineConfig({
   testMatch: '*.shots.ts',
   timeout: 120_000,
   workers: 1,
+  // the run's own temp folder, deleted when it ends
+  globalSetup: './tests/fixtures/temp-root-setup.ts',
   reporter: 'list'
 })
