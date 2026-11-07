@@ -143,9 +143,22 @@ export interface TaskListGetMessage {
   tabId: string
 }
 
+/** device_status from the MCP server: the read-only status of device sync, as text. */
+export interface DeviceStatusMessage {
+  v: 1
+  type: 'device_status'
+}
+
+/** open_device_settings from the MCP server: open the Settings window at the Devices section. */
+export interface OpenDeviceSettingsMessage {
+  v: 1
+  type: 'open_device_settings'
+}
+
 export type PipeMessage =
   | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
-  | TurnMessage | CwdMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage | TaskListMessage | TaskListGetMessage
+  | TurnMessage | CwdMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
+  | TaskListMessage | TaskListGetMessage | DeviceStatusMessage | OpenDeviceSettingsMessage
 export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
@@ -292,6 +305,8 @@ export function parsePipeMessage(line: string): ParseResult {
     if (!list.ok) return { ok: false, error: list.error }
     return { ok: true, message: { v: 1, type: 'task_list', tabId: m.tabId, list: list.list } }
   }
+  if (m.type === 'device_status') return { ok: true, message: { v: 1, type: 'device_status' } }
+  if (m.type === 'open_device_settings') return { ok: true, message: { v: 1, type: 'open_device_settings' } }
 
   if (m.type === 'status' || m.type === 'subagent' || m.type === 'session_end' || m.type === 'attention') {
     if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }

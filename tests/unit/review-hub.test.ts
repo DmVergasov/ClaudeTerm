@@ -20,7 +20,7 @@ const result = (...inputs: DiffInput[]): Inputs => ({ inputs, tooMany: false })
 
 function setup(
   o: Partial<ReviewSources> = {}, active: string | null = TAB, now?: () => number, hideIgnored = false, testPatterns: string[] | null | (() => string[] | null) = null,
-  renderMarkdown: boolean | (() => boolean) = false
+  renderMarkdown: boolean | (() => boolean) = false, remoteFront?: (tabId: string) => boolean
 ) {
   const published: ReviewUpdate[] = []
   const errors: string[] = []
@@ -51,7 +51,8 @@ function setup(
     hideIgnored: () => hideIgnored,
     testPatterns: () => (typeof testPatterns === 'function' ? testPatterns() : testPatterns),
     renderMarkdown: () => (typeof renderMarkdown === 'function' ? renderMarkdown() : renderMarkdown),
-    now
+    now,
+    remoteFront
   })
   hub.addTab(TAB, ROOT, true)
   return { hub, published, errors, git, ledger, totals, ignored, setActive: (id: string | null) => { activeId = id }, last: () => published[published.length - 1]! }
@@ -190,6 +191,76 @@ describe('ReviewHub views', () => {
     await vi.advanceTimersByTimeAsync(10)
     expect(last().notice).toBe(TOO_MANY_NOTICE)
     expect(last().files.map((f) => f.note)).toEqual([null, null, 'too-many'])
+  })
+
+  it('resetTab starts the tab again in the new folder', async () => {
+    const { hub, last } = setup()
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const f = last().files[0]!
+    hub.setViewed(TAB, f.path, f.hash, true)
+    expect(last().files[0]!.viewed).toBe(true)
+    hub.resetTab(TAB, '/b')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(last()).toMatchObject({ folder: '/b', view: { kind: 'scope', scope: 'uncommitted' } })
+    expect(last().files[0]!.viewed).toBe(false)
+  })
+
+  it('resetTab of a tab that is not in front computes nothing until it comes to the front', async () => {
+    const { hub, published, git, setActive } = setup()
+    setActive('other')
+    hub.resetTab(TAB, '/b')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(git).not.toHaveBeenCalled()
+    setActive(TAB)
+    hub.activated(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(published.at(-1)?.folder).toBe('/b')
+  })
+
+  it('resetTab of a tab that is not in front publishes an empty review, so its counter and last view go (m13)', async () => {
+    const { hub, published, setActive } = setup()
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(published.at(-1)?.files.length).toBeGreaterThan(0)
+    setActive('other')
+    hub.resetTab(TAB, '/b')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(published.at(-1)).toMatchObject({ tabId: TAB, folder: '/b', files: [], counter: null })
+  })
+
+  it('trigger computes a tab another device has in front', async () => {
+    const { hub, published, setActive } = setup({}, TAB, undefined, false, null, false, (id) => id === 'tab-2')
+    hub.addTab('tab-2', ROOT, true)
+    setActive(TAB)
+    hub.trigger('tab-2')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(published.some((u) => u.tabId === 'tab-2')).toBe(true)
+    expect(published.some((u) => u.tabId === TAB)).toBe(false)
+  })
+
+  it('a view built for another tab keeps this tab\'s file texts, so its expand buttons still answer', async () => {
+    const { hub, last, published, setActive } = setup({}, TAB, undefined, false, null, false, (id) => id === 'tab-2')
+    hub.addTab('tab-2', ROOT, true)
+    setActive(TAB)
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const f = last().files[0]!
+    expect(hub.contextLines(TAB, f.path, f.hash, 1, 1)).not.toBeNull()
+    hub.trigger('tab-2')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(published.some((u) => u.tabId === 'tab-2')).toBe(true)
+    expect(hub.contextLines(TAB, f.path, f.hash, 1, 1)).not.toBeNull()
+  })
+
+  it('resetTab drops the file texts of the old folder', async () => {
+    const { hub, last } = setup()
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    const f = last().files[0]!
+    expect(hub.contextLines(TAB, f.path, f.hash, 1, 1)).not.toBeNull()
+    hub.resetTab(TAB, '/b')
+    expect(hub.contextLines(TAB, f.path, f.hash, 1, 1)).toBeNull()
   })
 
   it('opens in an editor only files the tab\'s view shows, a show_diff view too', async () => {

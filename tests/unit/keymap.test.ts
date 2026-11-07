@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { imagePasteInput, isPrimaryKey, mapKey, shortcutLabel, type KeyLike } from '../../src/renderer/keymap'
+import { imagePasteInput, imagePasteRoute, isPrimaryKey, mapKey, shortcutLabel, type KeyLike } from '../../src/renderer/keymap'
 
 describe('imagePasteInput', () => {
   it('Alt+V for Claude Code on Windows, Ctrl+V elsewhere', () => {
     expect(imagePasteInput('win32')).toBe('\x1bv')
     expect(imagePasteInput('linux')).toBe('\x16')
     expect(imagePasteInput('darwin')).toBe('\x16')
+  })
+})
+
+describe('imagePasteRoute', () => {
+  it('an image pasted into a remote tab is always copied there, on every system', () => {
+    for (const platform of ['win32', 'darwin', 'linux']) for (const asFile of [true, false]) expect(imagePasteRoute({ platform, remote: true, asFile })).toBe('remote')
+  })
+  it('a local tab: a PNG file on Windows when the file route is asked, the paste key otherwise', () => {
+    expect(imagePasteRoute({ platform: 'win32', remote: false, asFile: true })).toBe('file')
+    expect(imagePasteRoute({ platform: 'win32', remote: false, asFile: false })).toBe('key')
+    expect(imagePasteRoute({ platform: 'darwin', remote: false, asFile: false })).toBe('key')
+    expect(imagePasteRoute({ platform: 'linux', remote: false, asFile: true })).toBe('key')
   })
 })
 

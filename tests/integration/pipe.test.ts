@@ -22,7 +22,9 @@ const okHandlers: PipeHandlers = {
   showDiff: async () => ({ ok: true }),
   showDocument: async () => ({ ok: true }),
   taskList: () => ({ ok: true }),
-  taskListGet: () => ({ ok: true })
+  taskListGet: () => ({ ok: true }),
+  deviceStatus: () => ({ ok: true, info: '' }),
+  openDeviceSettings: () => ({ ok: true })
 }
 
 let server: PipeServerHandle | null = null

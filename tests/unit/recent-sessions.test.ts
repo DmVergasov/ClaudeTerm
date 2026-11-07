@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { arrangeSessions, displayTitle, filterSessions, formatAge, projectKey } from '../../src/renderer/recent-sessions'
+import { arrangeSections, arrangeSessions, displayTitle, filterSessions, firstMatch, formatAge, groupKey, layoutSections, projectKey } from '../../src/renderer/recent-sessions'
+import type { DeviceAnswer } from '../../src/shared/remote'
 import type { RecentSession } from '../../src/shared/types'
 
 const s = (over: Partial<RecentSession>): RecentSession => ({ id: 'x', cwd: 'D:\\Workspace\\Offroad', title: null, firstPrompt: null, lastPrompt: null, modifiedAt: 0, open: false, starred: false, ...over })
+
+const S1 = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+const S2 = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
+const S3 = '6e3d2c8b-9f50-4b4c-a2d3-e4f5a6b7c8d9'
+const STUDIO = { id: 'a1000000-0000-4000-8000-000000000001', name: 'Studio' }
+/** a session of this device, in /work */
+const local = (id: string, over: Partial<RecentSession> = {}): RecentSession => s({ id, cwd: '/work', modifiedAt: 10, ...over })
+/** a session another device lists, with the device it is on */
+const remote = (id: string, device: { id: string; name: string }, over: Partial<RecentSession> = {}): RecentSession => ({ ...local(id, over), device })
 
 describe('formatAge', () => {
   const now = new Date(2026, 9, 6, 12, 0).getTime()
@@ -129,3 +139,57 @@ describe('arrangeSessions by project', () => {
     expect(projectKey('D:\\One\\app')).not.toBe(projectKey('D:\\Two\\app'))
   })
 })
+
+describe('arrangeSections: the other devices after this one', () => {
+  it("another device's sessions come after this device's, under its name, arranged the same way", () => {
+    const r = arrangeSections([local(S1)], [{ device: STUDIO.id, name: 'Studio', value: [remote(S2, STUDIO), remote(S3, STUDIO, { starred: true })] }], '')
+    expect(r.map((s) => s.device?.name ?? null)).toEqual([null, 'Studio'])
+    expect(r[1].arranged.shown.map((s) => s.id)).toEqual([S3, S2])
+    expect(r[1].arranged.dividerAt).toBe(1)
+  })
+
+  it('the same folder on two devices is two projects', () => {
+    expect(groupKey(remote(S2, STUDIO))).not.toBe(groupKey(local(S1)))
+    expect(groupKey(local(S1))).toBe(projectKey('/work'))
+  })
+
+  it('a device that has not answered yet shows as loading', () => {
+    const r = arrangeSections([], [{ device: STUDIO.id, name: 'Studio', value: null }], '')
+    expect(r[1]).toMatchObject({ loading: true, arranged: { shown: [] } })
+  })
+
+  it('a device that answered keeps its heading keys apart from this device\'s', () => {
+    const answers: DeviceAnswer<RecentSession[]>[] = [{ device: STUDIO.id, name: 'Studio', value: [remote(S2, STUDIO)] }]
+    const r = arrangeSections([local(S1)], answers, '')
+    expect(r[0].arranged.headings.map((h) => h.key)).toEqual([groupKey(local(S1))])
+    expect(r[1].arranged.headings.map((h) => h.key)).toEqual([groupKey(remote(S2, STUDIO))])
+  })
+})
+
+describe('the rows a device draws: its name before its loading line (I1)', () => {
+  it('a loading device draws its name, then the loading line, and no session', () => {
+    const layout = layoutSections(arrangeSections([], [{ device: STUDIO.id, name: 'Studio', value: null }], ''), false, new Set())
+    expect(layout.leads.get(0)).toEqual([{ device: 'Studio' }, { loading: true }])
+    expect(layout.items).toEqual([])
+  })
+
+  it('an answered device draws its name before its first row, after this device\'s rows', () => {
+    const layout = layoutSections(arrangeSections([local(S1)], [{ device: STUDIO.id, name: 'Studio', value: [remote(S2, STUDIO)] }], ''), false, new Set([groupKey(local(S1)), groupKey(remote(S2, STUDIO))]))
+    // this device's heading and session are items 0 and 1: the device's name goes before its heading, item 2
+    expect(layout.leads.get(2)).toEqual([{ device: 'Studio' }])
+    expect('heading' in layout.items[2]!).toBe(true)
+  })
+})
+
+describe('Enter after a search takes the first match of any device (I2)', () => {
+  it('the first match is this device\'s when it has one, else the first of another device that answered', () => {
+    expect(firstMatch(arrangeSections([local(S1, { title: 'Login' })], [{ device: STUDIO.id, name: 'Studio', value: [remote(S2, STUDIO, { title: 'Login again' })] }], 'login'))?.id).toBe(S1)
+    expect(firstMatch(arrangeSections([local(S1, { title: 'Docs' })], [{ device: STUDIO.id, name: 'Studio', value: [remote(S2, STUDIO, { title: 'Payments' })] }], 'payments'))?.id).toBe(S2)
+  })
+
+  it('a device that is loading has no match, and no match anywhere gives none', () => {
+    expect(firstMatch(arrangeSections([local(S1, { title: 'Docs' })], [{ device: STUDIO.id, name: 'Studio', value: null }], 'payments'))).toBeUndefined()
+    expect(firstMatch(arrangeSections([local(S1)], [{ device: STUDIO.id, name: 'Studio', value: [remote(S2, STUDIO)] }], 'nothing-matches'))).toBeUndefined()
+  })
+})
+

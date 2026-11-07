@@ -1,6 +1,6 @@
 import { posix, win32, type PlatformPath } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { cardId, ImageHub, relPathOf } from '../../src/main/image-hub'
+import { cardId, ImageHub, relPathOf, showImageFile } from '../../src/main/image-hub'
 
 function hub(maxItems = 200, path: PlatformPath = win32) {
   const onChange = vi.fn()
@@ -161,6 +161,40 @@ describe('ImageHub', () => {
     expect(h.add('nope', 'D:\\a.png', 'created', null)).toBeNull()
   })
 
+  it('resetTab drops the cards and counts relPaths from the new folder', () => {
+    const { h, onChange } = hub()
+    h.addTab('t1', 'D:\\a')
+    h.setTempDir('t1', 'C:\\T\\sid')
+    h.add('t1', 'D:\\a\\old.png', 'created', null)
+    h.setNotice('t1', 'watch off')
+    onChange.mockClear()
+    h.resetTab('t1', 'D:\\b')
+    expect(h.list('t1')).toEqual([])
+    expect(h.unseenCount('t1')).toBe(0)
+    expect(h.notice('t1')).toBeNull()
+    expect(onChange).toHaveBeenCalledWith('t1')
+    h.add('t1', 'D:\\b\\x.png', 'created', null)
+    h.add('t1', 'C:\\T\\sid\\scratchpad\\s.png', 'created', null)
+    expect(h.list('t1').map((c) => c.relPath)).toEqual(['C:\\T\\sid\\scratchpad\\s.png', 'x.png'])
+    h.resetTab('nope', 'D:\\b')
+    expect(onChange).toHaveBeenCalledTimes(3)
+  })
+
+  it('an add that started before resetTab is dropped when it lands: the folder changed under it (R3)', () => {
+    const { h, onChange } = hub()
+    h.addTab('t1', 'D:\\proj')
+    // the add was started in the old folder, and is held while the tab moves to another folder
+    const started = h.generation('t1')
+    h.resetTab('t1', 'D:\\b')
+    onChange.mockClear()
+    expect(h.add('t1', 'D:\\proj\\held.png', 'created', null, undefined, false, started)).toBeNull()
+    expect(h.list('t1')).toEqual([])
+    expect(onChange).not.toHaveBeenCalled()
+    // an add started after the change lands in the new folder
+    expect(h.add('t1', 'D:\\b\\new.png', 'created', null, undefined, false, h.generation('t1'))).not.toBeNull()
+    expect(h.list('t1').map((c) => c.relPath)).toEqual(['new.png'])
+  })
+
   it('notices and tab removal', () => {
     const { h } = hub()
     h.addTab('t1', 'D:\\p')
@@ -204,5 +238,52 @@ describe('helpers', () => {
     expect(relPathOf('/proj', '/proj/out/a.png', null, posix)).toBe('out/a.png')
     expect(relPathOf('/proj', '/tmp/claude-1000/-proj/sid/scratchpad/a.png', '/tmp/claude-1000/-proj/sid', posix)).toBe('scratchpad/a.png')
     expect(relPathOf('/proj', '/other/a.png', '/tmp/claude-1000/-proj/sid', posix)).toBe('/other/a.png')
+  })
+})
+
+describe('the generation of a tab, and show_image (fix 1, I5 and R3)', () => {
+  it('a tab forgets its generation when it is removed', () => {
+    const { h } = hub()
+    h.addTab('t1', 'D:\\proj')
+    h.resetTab('t1', 'D:\\b')
+    expect(h.generation('t1')).toBeGreaterThan(0)
+    h.removeTab('t1')
+    expect(h.generation('t1')).toBe(0)
+  })
+
+  it('show_image: a card whose check was held while the tab changed folder is dropped', async () => {
+    const { h } = hub()
+    h.addTab('t1', 'D:\\proj')
+    let release = (): void => {}
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const pending = showImageFile(h, { tabId: 't1', path: 'D:\\proj\\shot.png', caption: null }, {
+      check: async () => {
+        await gate
+        return { ok: true, size: 1 }
+      },
+      fallback: () => null
+    })
+    h.resetTab('t1', 'D:\\b')
+    release()
+    expect(await pending).toEqual({ ok: true })
+    expect(h.list('t1')).toEqual([])
+  })
+
+  it('show_image without a change of folder lands its card in the tab it names', async () => {
+    const { h } = hub()
+    h.addTab('t1', 'D:\\proj')
+    const ok = await showImageFile(h, { tabId: 't1', path: 'D:\\proj\\shot.png', caption: 'plot' }, { check: async () => ({ ok: true, size: 1 }), fallback: () => null })
+    expect(ok).toEqual({ ok: true })
+    expect(h.list('t1').map((c) => [c.name, c.caption])).toEqual([['shot.png', 'plot']])
+  })
+
+  it('show_image of a file that fails the check answers its error and adds nothing', async () => {
+    const { h } = hub()
+    h.addTab('t1', 'D:\\proj')
+    const failed = await showImageFile(h, { tabId: 't1', path: 'D:\\proj\\x.txt', caption: null }, { check: async () => ({ ok: false, error: 'not an image' }), fallback: () => null })
+    expect(failed).toEqual({ ok: false, error: 'not an image' })
+    expect(h.list('t1')).toEqual([])
   })
 })

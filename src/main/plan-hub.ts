@@ -117,6 +117,18 @@ export class PlanHub {
     await Promise.all(reads)
   }
 
+  /** the tab starts again in another folder: its session, workspace and plan are gone, and the window hears of the null plan */
+  resetTab(tabId: string): void {
+    const t = this.tabs.get(tabId)
+    if (!t) return
+    t.sessionId = null
+    t.ended = false
+    t.dir = null
+    t.status = null
+    t.reportAt = 0
+    this.notify(tabId, t)
+  }
+
   removeTab(tabId: string): void {
     this.tabs.delete(tabId)
   }

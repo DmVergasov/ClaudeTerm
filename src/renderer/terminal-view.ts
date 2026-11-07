@@ -1,6 +1,7 @@
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -8,9 +9,12 @@ import '@xterm/xterm/css/xterm.css'
 import { osc52Text } from './osc52'
 import type { Screen, ScreenRow } from './claude-screen'
 import { windowsPtyOption } from './util'
+import { boundedSerialize, scrollbackLines } from '../shared/screen-serialize'
 
 // Font sizes are in points, like Windows Terminal; xterm.js takes CSS pixels (1pt = 96/72 px)
 const ptToPx = (pt: number): number => (pt * 96) / 72
+
+const usable = (n: number): boolean => Number.isFinite(n) && n > 0
 
 export interface TerminalViewOptions {
   tabId: string
@@ -37,9 +41,16 @@ export class TerminalView {
   readonly search: SearchAddon
   readonly element: HTMLDivElement
   private readonly fit: FitAddon
+  private readonly serializer: SerializeAddon
   private readonly ro: ResizeObserver
+  private readonly onSize: (cols: number, rows: number) => void
+  /** the size the device last typed into holds this terminal at; null: the terminal fits its element */
+  private fixed: { cols: number; rows: number } | null = null
+  /** the size last reported to the window, so that each change is reported once */
+  private reported: { cols: number; rows: number } | null = null
 
   constructor(o: TerminalViewOptions) {
+    this.onSize = o.onResize
     this.element = document.createElement('div')
     this.element.className = 'terminal-host'
     o.container.appendChild(this.element)
@@ -60,6 +71,8 @@ export class TerminalView {
     this.search = new SearchAddon()
     this.term.loadAddon(this.fit)
     this.term.loadAddon(this.search)
+    this.serializer = new SerializeAddon()
+    this.term.loadAddon(this.serializer)
     this.term.loadAddon(new WebLinksAddon((_e, uri) => o.onLink(uri)))
     this.term.loadAddon(new Unicode11Addon())
     this.term.unicode.activeVersion = '11'
@@ -82,16 +95,48 @@ export class TerminalView {
       if (text !== null) o.onClipboard(text)
       return true
     })
-    this.term.onResize(({ cols, rows }) => o.onResize(cols, rows))
+    this.term.onResize(() => this.report())
     this.refit()
-    o.onResize(this.term.cols, this.term.rows)
+    this.report()
     this.ro = new ResizeObserver(() => this.refit())
     this.ro.observe(this.element)
   }
 
   refit(): void {
     if (this.element.offsetParent === null) return
-    try { this.fit.fit() } catch { /* not measurable yet */ }
+    // a fixed terminal keeps its size: the window's fit is only reported, and the device's size still applies
+    if (this.fixed === null) {
+      try { this.fit.fit() } catch { /* not measurable yet */ }
+    }
+    this.report()
+  }
+
+  /** this window's size for the tab: the size that fits the element, reported once per change and never an unusable one */
+  private report(): void {
+    let d: { cols: number; rows: number } | undefined
+    try { d = this.fit.proposeDimensions() } catch { return }
+    if (!d || !usable(d.cols) || !usable(d.rows)) return
+    if (this.reported?.cols === d.cols && this.reported.rows === d.rows) return
+    this.reported = { cols: d.cols, rows: d.rows }
+    this.onSize(d.cols, d.rows)
+  }
+
+  /**
+   * The size of the device that last typed into this tab, or null for the window's own fit. Fixed, the terminal takes
+   * that size (also while hidden) and its element scrolls it sideways, or shows margins when it is smaller.
+   */
+  setFixedSize(size: { cols: number; rows: number } | null): void {
+    if (size === null) {
+      if (this.fixed === null) return
+      this.fixed = null
+      this.element.classList.remove('fixed')
+      this.refit()
+      return
+    }
+    if (this.fixed?.cols === size.cols && this.fixed.rows === size.rows) return
+    this.fixed = { cols: size.cols, rows: size.rows }
+    this.element.classList.add('fixed')
+    this.term.resize(size.cols, size.rows)
   }
 
   write(data: string): void { this.term.write(data) }
@@ -105,6 +150,10 @@ export class TerminalView {
   show(visible: boolean, focus = true): void {
     this.element.style.display = visible ? 'block' : 'none'
     if (visible) {
+      // a device-sized terminal reports its fit again: its first report may have come before the tab was ever in front
+      // here, and the viewer keeps no fit for such a tab; a tab sized for this window is claimed again from the fit the
+      // viewer kept
+      if (this.fixed !== null) this.reported = null
       this.refit()
       if (focus) this.term.focus()
     }
@@ -153,6 +202,16 @@ export class TerminalView {
       rows.push({ text: text.trimEnd(), bright: bright.trimEnd(), shaded: shaded.trimEnd() })
     }
     return { rows, scrolledBack: b.type === 'normal' && b.viewportY < b.baseY }
+  }
+
+  /**
+   * The screen as a string that writes it back onto a fresh terminal: the scrollback and the modes, within maxBytes (as JSON).
+   * The buffer's real length bounds the scrollback, so a short session does not ask for the whole setting.
+   */
+  serialize(maxBytes: number): string {
+    const finite = (n: number | undefined): number => (n !== undefined && Number.isFinite(n) ? n : 0)
+    const bufferLines = scrollbackLines(this.term)
+    return boundedSerialize((n) => this.serializer.serialize({ scrollback: n }), finite(this.term.options.scrollback), maxBytes, finite(bufferLines))
   }
 
   dispose(): void {

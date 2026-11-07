@@ -17,8 +17,15 @@ export function accountLabel(id: string | null, accounts: readonly AccountView[]
 
 const MAIN_CHOICE: AccountChoice = { label: MAIN_ACCOUNT, account: null, disabled: false }
 
+/** what a choice needs of an account: its id, its name, and whether its token can be read here (a device's accounts are readable) */
+export interface ChoiceAccount {
+  id: string
+  name: string
+  readable: boolean
+}
+
 /** every account, the main one first; none until an extra account is added */
-export function accountChoices(accounts: readonly AccountView[]): AccountChoice[] {
+export function accountChoices(accounts: readonly ChoiceAccount[]): AccountChoice[] {
   if (accounts.length === 0) return []
   return [MAIN_CHOICE, ...accounts.map((a) => ({ label: a.name, account: a.id, disabled: !a.readable }))]
 }
@@ -34,7 +41,7 @@ export function validUntil(addedAt: string): string {
 }
 
 /** the accounts a tab on `current` can continue on; a tab on an account deleted with no extra one left can still go back to the main one */
-export function switchChoices(current: string | null, accounts: readonly AccountView[]): AccountChoice[] {
+export function switchChoices(current: string | null, accounts: readonly ChoiceAccount[]): AccountChoice[] {
   const choices = current !== null && accounts.length === 0 ? [MAIN_CHOICE] : accountChoices(accounts)
   return choices.filter((c) => c.account !== current)
 }

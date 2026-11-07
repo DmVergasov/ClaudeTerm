@@ -48,3 +48,20 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .account-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 4px; }
 .account-add input[type="text"].text-input { width: 160px; }
 .account-add input[type="password"].text-input { width: 240px; }
+.device-notice { margin: 8px 0; padding: 8px 12px; color: #e5c07b; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+.device-subhead { margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
+.device-self, .device-join, .device-pairing { margin: 6px 0; }
+.device-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; }
+.device-list { display: flex; flex-direction: column; margin: 6px 0; }
+.device-row { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.device-top { display: flex; align-items: baseline; gap: 10px; }
+.device-name { font-weight: 600; }
+.device-state { font-size: 12px; }
+.device-state.connected { color: #98c379; }
+.device-state.unreachable, .device-state.offline { color: #e5c07b; }
+input[type="text"].device-address { width: 240px; }
+.device-actions { display: flex; align-items: center; gap: 6px; }
+.device-question { color: #e5c07b; }
+input[type="text"].device-code-input { width: 240px; font-family: Consolas, "Cascadia Mono", monospace; }
+.device-pairing .device-code { margin: 6px 0; font: 600 28px Consolas, "Cascadia Mono", monospace; letter-spacing: 0.08em; user-select: text; }
+.device-addresses { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }

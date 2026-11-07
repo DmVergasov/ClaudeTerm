@@ -147,6 +147,14 @@ Hit the 5-hour limit on one subscription, or keep work and personal apart? Add y
 
 Your normal Claude Code login stays the **Main account**. An extra account is a token from `claude setup-token` (Pro, Max, Team or Enterprise, valid for a year): **Get a token** opens a tab that runs it — sign in with that account in the browser, then paste the token it prints. ClaudeTerm keeps the tokens encrypted by the system (DPAPI on Windows, the Keychain on macOS, the keyring on Linux) and gives each one only to the tabs on its account. Claude Code lets a token make model requests only, so a tab on an extra account has no claude.ai connectors and no Remote Control.
 
+### 🖥️ Devices: your other computers in one window
+
+Pair ClaudeTerm on two or more computers, and each one shows the others' tabs in its own tab bar, under the device's chip. With the tabs on the left, they stand under the device's name, grouped by project with their branch, as your own do. In Settings → **Devices**, **Add a device** shows a code and this computer's addresses, valid for five minutes, and **Join a device** on the other computer takes one of the addresses and the code. The devices connect directly, over a network you set up yourself — a home network, Tailscale or a VPN. The first time ClaudeTerm accepts connections, Windows asks to allow it through the firewall, which needs an administrator; on macOS the system may ask to allow incoming connections. A device that the others cannot reach still connects to them, and Settings → **Devices** says **The other devices cannot connect to this one; to pair, show the code on the other device**.
+
+A device's tabs can be typed into, closed, forked and given another folder (**Change folder…**, which this device's own tabs have too) from here, and a Claude tab on another device has its own status bar (the model, the context and limits, the running agents and background tasks, the plan's progress and the changes counter), Media panel and Changes panel. Files pasted or dropped into one of its tabs are copied to that computer. Stars and notes are the same on every device, and **Recent sessions** lists each device's conversations in a section of its own.
+
+The computer stays awake while another device uses it: another device that types into one of its tabs, or has one of its Claude tabs open while that tab works, keeps it from sleeping (**Keep this computer awake while another device uses it** in Settings → **Devices**). Claude can read the state of your devices and their tabs with the `device_status` tool, and open Settings → **Devices** with `open_device_settings`, where you pair or remove devices yourself.
+
 ## Install
 
 1. Install [Claude Code](https://docs.claude.com/en/docs/claude-code) so that `claude` is on your `PATH`.
@@ -171,7 +179,7 @@ On macOS ClaudeTerm updates itself as well: it downloads a new release and puts 
 
 From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. **What's new** in the update banner lists what changed. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — check for updates** to check right away.
 
-On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff`, `show_document`, `set_task_list` and `get_task_list` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
+On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff`, `show_document`, `set_task_list`, `get_task_list`, `device_status` and `open_device_settings` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
 
 **Requirements:** Windows 10 or 11 (x64), macOS 12 or later (Apple Silicon or Intel), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code (on Windows 2.1.139 or later).
 
@@ -206,7 +214,7 @@ Right-click a tab → **Restart session** restarts Claude Code in the same tab a
 
 ## Settings
 
-Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notifications, font, theme, shells, Claude Code, accounts, images and updates. Changes apply at once.
+Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notifications, font, theme, shells, Claude Code, accounts, devices, images and updates. Changes apply at once.
 
 ![Settings window](docs/images/settings.png)
 
@@ -282,7 +290,7 @@ flowchart LR
     claude["claude --settings claude-tab-settings.json"]
   end
   claude -- "hooks + statusLine" --> hook["session-hook.js"]
-  claude -- "MCP: show_image, show_diff, show_document, set_task_list, get_task_list" --> mcp["show-image-server.js"]
+  claude -- "MCP: show_image, show_diff, show_document, set_task_list, get_task_list, device_status, open_device_settings" --> mcp["show-image-server.js"]
   hook -- "named pipe" --> main
   mcp -- "named pipe" --> main
   transcript[("session transcript\n+ subagent transcripts")] --> main

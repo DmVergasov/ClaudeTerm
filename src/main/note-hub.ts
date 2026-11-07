@@ -27,13 +27,27 @@ type Before =
   /** held in the tab, without a conversation: it joined this stored note */
   | { joined: Note }
 
+/** a note another device replaced: the number the tab showed it under, and the store version it was based on */
+interface Replaced {
+  generation: number
+  sessionId: string
+  base: unknown
+}
+
+/** how many replaced notes a tab keeps: an edit typed against an older one is dropped */
+const REPLACED_KEPT = 16
+
 interface TabNote {
   sessionId: string | null
+  /** a tab another device shows: it takes only what is stored for its conversation and never writes the store */
+  remote: boolean
   note: Note | null
   /** the number of the note main gave the tab last; 0 until it gives one */
   generation: number
   /** the note of the number before; null when the tab had none (its first note came with it) */
   before: Before | null
+  /** the notes another device replaced since the tab's conversation last changed, oldest first */
+  replaced: Replaced[]
 }
 
 /** Each Claude tab's note: kept with the tab's conversation, and moved or swapped when the conversation changes. */
@@ -42,9 +56,9 @@ export class NoteHub {
 
   constructor(private readonly deps: NoteHubDeps) {}
 
-  addTab(tabId: string, sessionId: string | null): void {
+  addTab(tabId: string, sessionId: string | null, opts: { remote?: boolean } = {}): void {
     const stored = sessionId ? this.deps.store.get(sessionId) : null
-    const tab: TabNote = { sessionId, note: null, generation: 0, before: null }
+    const tab: TabNote = { sessionId, remote: opts.remote === true, note: null, generation: 0, before: null, replaced: [] }
     this.tabs.set(tabId, tab)
     if (stored) this.give(tabId, tab, stored)
   }
@@ -66,6 +80,21 @@ export class NoteHub {
     this.give(tabId, tab, note)
   }
 
+  /**
+   * The tab starts again in another folder: the window's note is emptied for the new conversation, which takes the next
+   * note. The note of the old conversation stays stored under it, and text typed against it still goes there. The number
+   * keeps going (never back to 0).
+   */
+  resetTab(tabId: string): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    const old = tab.sessionId
+    tab.sessionId = null
+    tab.replaced = []
+    tab.before = old ? { left: old } : null
+    this.give(tabId, tab, null)
+  }
+
   /** Forgets the tab; the note stays stored under the tab's last conversation. */
   removeTab(tabId: string): void {
     this.tabs.delete(tabId)
@@ -77,7 +106,14 @@ export class NoteHub {
     if (!tab || tab.sessionId === sessionId) return
     const old = tab.sessionId
     tab.sessionId = sessionId
+    tab.replaced = []
     const stored = this.deps.store.get(sessionId)
+    if (tab.remote) {
+      // a remote tab takes only what is stored under its new conversation (or nothing) and never writes the store
+      tab.before = old ? { left: old } : stored ? { joined: stored } : null
+      this.give(tabId, tab, stored)
+      return
+    }
     if (stored) {
       // A note written before the first id arrived has nothing stored to stay in: it joins the stored one.
       const note = old ? stored : joined(stored, tab.note)
@@ -101,7 +137,9 @@ export class NoteHub {
   setText(tabId: string, text: string, generation: number): void {
     const tab = this.tabs.get(tabId)
     if (!tab) return
+    const replaced = this.replacedFor(tab, generation)
     if (generation === tab.generation) this.change(tab, (n) => ({ ...n, text }))
+    else if (replaced) this.lateReplaced(tab, replaced, text)
     else if (generation === tab.generation - 1 && tab.before) this.late(tabId, tab, tab.before, text)
   }
 
@@ -111,16 +149,46 @@ export class NoteHub {
     if (tab && generation === tab.generation) this.change(tab, (n) => ({ ...n, shown, form }))
   }
 
+  /**
+   * Another device changed the note of a conversation: every tab on it takes the note with the next number. `before` is
+   * the version the store held before the change; text typed against the note the tab had goes on that version.
+   */
+  external(sessionId: string, note: Note | null, before: unknown): void {
+    for (const [tabId, tab] of this.tabs) {
+      if (tab.sessionId !== sessionId) continue
+      tab.replaced.push({ generation: tab.generation, sessionId, base: before })
+      if (tab.replaced.length > REPLACED_KEPT) tab.replaced.shift()
+      this.give(tabId, tab, note)
+    }
+  }
+
+  /**
+   * The replaced note text typed against `generation` goes on: the first one from that number on, the note the tab
+   * showed then. Null when the kept notes do not reach back that far, or when the number is the current one or later.
+   */
+  private replacedFor(tab: TabNote, generation: number): Replaced | null {
+    const first = tab.replaced[0]
+    if (!first || generation < first.generation || generation >= tab.generation) return null
+    return tab.replaced.find((r) => r.generation >= generation) ?? null
+  }
+
   /** main gives the tab a note: it gets the next number, and the renderer gets the note */
-  private give(tabId: string, tab: TabNote, note: Note): void {
+  private give(tabId: string, tab: TabNote, note: Note | null): void {
     tab.note = note
     tab.generation++
-    this.deps.publish(tabId, { ...note }, tab.generation)
+    this.deps.publish(tabId, note && { ...note }, tab.generation)
   }
 
   private change(tab: TabNote, edit: (note: Note) => Note): void {
     tab.note = edit(tab.note ?? EMPTY)
     if (tab.sessionId) this.deps.store.set(tab.sessionId, tab.note)
+  }
+
+  /** text typed against a note another device replaced: stored on that note's base, the store joins it with the note there */
+  private lateReplaced(tab: TabNote, replaced: Replaced, text: string): void {
+    // the tab keeps the text it has now
+    tab.note = { ...(tab.note ?? EMPTY), text }
+    this.deps.store.set(replaced.sessionId, { ...tab.note }, replaced.base)
   }
 
   /** text typed against the note the tab had before: it goes where that note lives */

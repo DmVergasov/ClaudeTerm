@@ -77,6 +77,8 @@ export class ImagePanel {
     const el = document.createElement('div')
     el.className = `card${card.deleted ? ' deleted' : ''}`
     el.dataset.cardId = card.id
+    // a card of another device's tab: its file is on that device, so the actions that open or show it here are left out
+    const remote = this.current?.remote === true
     const media = card.kind !== 'image'
     let visual: HTMLElement
     if (media) {
@@ -115,7 +117,7 @@ export class ImagePanel {
     el.append(visual, meta)
     el.addEventListener('click', () => {
       if (media) {
-        this.cb.action(card.id, 'open')
+        if (!remote) this.cb.action(card.id, 'open')
         return
       }
       const target = lightboxTarget(all, index)
@@ -124,8 +126,12 @@ export class ImagePanel {
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault()
       showMenu({ x: e.clientX, y: e.clientY }, [
-        { label: 'Open in viewer', action: () => this.cb.action(card.id, 'open') },
-        { label: 'Show in Explorer', action: () => this.cb.action(card.id, 'reveal') },
+        ...(remote
+          ? []
+          : [
+              { label: 'Open in viewer', action: () => this.cb.action(card.id, 'open') },
+              { label: 'Show in Explorer', action: () => this.cb.action(card.id, 'reveal') }
+            ]),
         ...(media ? [] : [{ label: 'Copy image', action: () => this.cb.action(card.id, 'copy-image') }]),
         { label: 'Copy path', action: () => this.cb.action(card.id, 'copy-path') },
         { label: 'Insert path into terminal', action: () => this.cb.insertPath(card.path) },

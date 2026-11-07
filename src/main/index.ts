@@ -1,17 +1,20 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, safeStorage, screen, shell, type Rectangle } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, type Rectangle } from 'electron'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
-import { homedir, release, tmpdir } from 'node:os'
+import { homedir, hostname, release, tmpdir } from 'node:os'
+import { Worker } from 'node:worker_threads'
 import { dirname, join } from 'node:path'
 import type { AccountResult, AccountsView } from '../shared/accounts'
-import { IPC, type AppInfo, type ClipboardContent, type ImagesUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
+import { IPC, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import type { DocRead } from '../shared/docs'
 import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
+import { DEVICE_COPY, type ActiveDevicesView, type DeviceResult, type DevicePlatform, type DevicesView, MAX_DEVICE_NAME } from '../shared/devices'
 import { socketDir } from '../shared/protocol'
 import { describeTaskList, taskListSummary } from '../shared/task-list'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
-import type { OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout } from '../shared/types'
+import type { NotificationCase, OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout, TabPlace } from '../shared/types'
+import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteDeviceView } from '../shared/remote'
 import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './accounts'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
@@ -22,8 +25,8 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isDocAction, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPromptInput, isPtyData, isPtySize, isReviewScope, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
-import { NOT_RUNNING } from '../shared/review'
+import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
+import { NOT_RUNNING, type ReviewUpdate } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
 import { ReviewHub } from './review-hub'
@@ -31,11 +34,11 @@ import { DocHub, htmlFolderRefused } from './doc-hub'
 import { DOC_SCHEME_PRIVILEGES, frameNavigationAllowed, handleDocProtocol } from './doc-protocol'
 import { createSources, nodeIo } from './review-sources'
 import { checkShowableFile, DEFAULT_IMAGE_EXTENSIONS, MEDIA_EXTENSIONS } from '../shared/image-file'
-import { ImageHub } from './image-hub'
+import { ImageHub, showImageFile } from './image-hub'
 import { openCard } from './image-open'
 import { CLAUDE_CLIPBOARD_CHECK, checkOnce, runsCleanly } from './image-paste'
 import { claudeTempRoot, realTempRoot, sessionTempDir, watchImages, type ImageWatcherHandle } from './image-watcher'
-import { handleImgProtocol, registerImgScheme } from './img-protocol'
+import { handleImgProtocol, registerImgScheme, remoteCardSource } from './img-protocol'
 import { createLogger } from './log'
 import { PanelRoom } from './panel-room'
 import { findExecutable, isExecutableFile } from './login-env'
@@ -44,12 +47,14 @@ import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePa
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
 import { anchorExe, findGitBash, MsysAnchor, spawnAnchor } from './msys-anchor'
 import { execGit } from './git-source'
+import { changeFolderOf, folderListingOf, type TabFolderDeps } from './folder-browse'
 import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
 import { buildLaunch, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver } from './profiles'
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
+import { Coalescer } from './coalesce'
 import { SettingsWindow } from './settings-window'
 import { claudeProjectsDir, SessionHistory } from './session-history'
 import { SessionStore } from './session-store'
@@ -60,12 +65,32 @@ import { TaskListHub, shownPlan } from './task-list-hub'
 import { TaskListStore } from './task-list-store'
 import { TurnOrigins } from './turn-origins'
 import { TabLayoutStore } from './tab-layout'
+import { localAddresses } from './sync/address'
+import { formatDeviceStatus } from './sync/device-status'
+import { PortMirrors, screenWorkerPath } from './sync/mirror-port'
+import screenWorkerFile from './sync/screen-worker?modulePath'
+import type { PeerLink } from './sync/peer-link'
+import { KeepAwake, type PowerBlocker } from './sync/keep-awake'
+import { RemoteImages, remoteTabInfo } from './sync/remote-actions'
+import { sendFiles } from './sync/file-sender'
+import { fileToSend, RemoteCopies } from './sync/outgoing-files'
+import { FileReceiver, receivedPeerGone } from './sync/file-receiver'
+import { CallError } from './sync/calls'
+import { TabAttention } from './sync/tab-directory'
+import { type AppliedSize, TabSizes } from './sync/tab-sizes'
+import type { ViewerEvents } from './sync/tab-viewer'
+import type { HelloMessage } from './sync/wire'
+import { DeviceGroup } from './sync/device-group'
+import { StoreBridge } from './sync/store-bridge'
 import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager } from './tab-manager'
 import { TabPlaces } from './tab-places'
+import { clampPush, hostHandlers, hostTabs, planPush, pruneListedMembers, withoutTabId, type HostContext } from './remote-host'
+import { frontClears, RemoteFront } from './remote-front'
+import { RemoteHolder, type RemoteHolderDeps } from './remote-holder'
 import { readAgentMeta } from './transcript-agent-info'
 import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, writeUpdateMarker } from './update-marker'
 import { Updater, type UpdaterBackend } from './updater'
@@ -207,6 +232,11 @@ function bootstrap(): void {
   // clipboard images pasted into a tab as files; Claude Code reads one as its path is pasted
   const clipboardImageRoot = join(tmpdir(), 'ClaudeTerm', 'clipboard')
   cleanupImageCache(clipboardImageRoot, 7 * 24 * 60 * 60 * 1000)
+  // files pasted or dropped into a remote tab arrive here, each in a folder of its own; a test sets the root
+  const receivedRoot = isTest ? process.env.CLAUDETERM_TEST_RECEIVED_ROOT || join(dataDir, 'received') : join(tmpdir(), 'ClaudeTerm', 'received')
+  const receiver = new FileReceiver({ root: receivedRoot, log: (m) => log.warn(m) })
+  void receiver.cleanup(7 * 24 * 60 * 60 * 1000)
+  const peerGoneReceived = receivedPeerGone(receiver)
   const imageTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const images = new ImageHub({
     maxItems: () => settings.imagePanel.maxItems,
@@ -215,7 +245,9 @@ function bootstrap(): void {
       if (imageTimers.has(tabId)) return
       imageTimers.set(tabId, setTimeout(() => {
         imageTimers.delete(tabId)
-        send(IPC.evImages, imagesUpdate(tabId))
+        const update = imagesUpdate(tabId)
+        send(IPC.evImages, update)
+        pushToMembers(tabId, 'images', { cards: update.cards, unseen: update.unseen, notice: update.notice })
       }, 50))
     }
   })
@@ -248,12 +280,19 @@ function bootstrap(): void {
         // the session snapshot keeps it: a restore must wake a conversation whose background work stopped with ClaudeTerm
         tabs.setBackgroundWork(tabId, status.background.length > 0)
         send(IPC.evStatus, status)
+        pushToMembers(tabId, 'status', { main: status.main, agents: status.agents, background: status.background })
       }, 50))
     }
   })
 
-  // the status bar's plan segment: the superpowers plan, or else the list Claude keeps; every evPlan goes through here
-  const sendPlan = (tabId: string): void => send(IPC.evPlan, { tabId, ...shownPlan(planHub.get(tabId).plan, taskLists.status(tabId), newerSide.get(tabId) ?? 'plan') })
+  // the status bar's plan segment: the superpowers plan, or else the list Claude keeps; every evPlan goes through here, and
+  // the members attached to the tab get the same plan with the same flag
+  const shownPlanOf = (tabId: string): PlanUpdate => ({ tabId, ...shownPlan(planHub.get(tabId).plan, taskLists.status(tabId), newerSide.get(tabId) ?? 'plan') })
+  const sendPlan = (tabId: string): void => {
+    const shown = shownPlanOf(tabId)
+    send(IPC.evPlan, shown)
+    pushToMembers(tabId, 'plan', planPush(shown))
+  }
   const planHub = new PlanHub({
     read: readPlanFile,
     onChange: (tabId) => {
@@ -287,9 +326,11 @@ function bootstrap(): void {
 
   /** the session's temp folder (its scratchpad): images that appear there are the session's own */
   const watchTemp = (tabId: string, dir: string): ImageWatcherHandle => {
+    // the cards of this watcher belong to the folder the tab is in now: a folder change drops a card that lands after it
+    const gen = images.generation(tabId)
     const handle: ImageWatcherHandle = watchImages(dir, { ...settings.imageWatch, extensions: [...settings.imageWatch.extensions, ...MEDIA_EXTENSIONS] }, {
-      added: (p) => images.add(tabId, p, 'created', null),
-      changed: (p) => images.add(tabId, p, 'created', null, undefined, true),
+      added: (p) => images.add(tabId, p, 'created', null, undefined, false, gen),
+      changed: (p) => images.add(tabId, p, 'created', null, undefined, true, gen),
       removed: (p) => images.markDeleted(tabId, p),
       error: (err) => {
         log.warn(`watcher ${dir}: ${err.message}`)
@@ -313,7 +354,12 @@ function bootstrap(): void {
     sources: createSources(nodeIo),
     ledgerFor: (sessionId) => new EditLedger({ dir: join(reviewRoot, sessionId), now: () => Date.now(), onError: (m) => log.warn(m) }),
     activeTabId: () => tabs.activeTabId(),
-    publish: (u) => send(IPC.evReview, u),
+    remoteFront: (tabId) => [...remoteFronts.values()].some((f) => f.tabId === tabId),
+    publish: (u) => {
+      lastReviews.set(u.tabId, u)
+      send(IPC.evReview, u)
+      pushToMembers(u.tabId, 'review', withoutTabId(u))
+    },
     onError: (m) => log.warn(m),
     hideIgnored: () => settings.review.hideIgnored,
     testPatterns: () => (settings.review.hideTests ? settings.review.testPatterns : null),
@@ -350,13 +396,14 @@ function bootstrap(): void {
     void s.tempWatcher?.close()
     s.tempWatcher = null
     s.transcriptPath = transcriptPath
+    const gen = images.generation(tabId)
     s.feed = new TranscriptFeed({
       transcriptPath,
       sessionId,
       cacheRoot: imageCacheRoot,
       fileExists: existsSync,
       locate: () => findTranscript(transcriptPath, sessionId),
-      onImage: (img) => images.add(tabId, img.path, img.source, img.caption, img.at ?? undefined),
+      onImage: (img) => images.add(tabId, img.path, img.source, img.caption, img.at ?? undefined, false, gen),
       onError: (m) => log.warn(m),
       onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info),
       onEditEvent: (ev) => review.transcriptEvent(tabId, ev),
@@ -385,7 +432,12 @@ function bootstrap(): void {
   // a tab's transcripts are read rarely while they stay idle: a hook that says the tab works has them read at once again
   const wakeFeed = (tabId: string, agentId?: string): void => sources.get(tabId)?.feed?.wake(agentId)
 
-  handleImgProtocol(images, () => [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
+  // the Media cards of the other devices' tabs: served from their device, through the bytes kept for the window's cards
+  const remoteImages = new RemoteImages()
+  handleImgProtocol(images, () => [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions], remoteCardSource(remoteImages, (tabId, cardId) => {
+    const version = remoteImages.card(cardId)?.version ?? 0
+    return remote?.actions.imageBytes(tabId, cardId, version, () => remoteImages.card(cardId)?.version === version) ?? Promise.resolve(null)
+  }))
   handleDocProtocol((id) => docs.get(id))
 
   let claudeCli: ClaudeCli | null | undefined
@@ -399,7 +451,17 @@ function bootstrap(): void {
   const anchorFile = gitBash ? anchorExe(gitBash, existsSync) : null
   const msysAnchor = anchorFile ? new MsysAnchor(anchorFile, { spawn: spawnAnchor, log }) : null
 
-  const places = new TabPlaces({ run: execGit, publish: (id, place) => send(IPC.evTabPlace, id, place) })
+  /** the place each of this device's tabs last had, as TabPlaces published it: the directory carries it to the members */
+  const tabPlaces = new Map<string, TabPlace | null>()
+  const places = new TabPlaces({
+    run: execGit,
+    publish: (id, place) => {
+      tabPlaces.set(id, place)
+      send(IPC.evTabPlace, id, place)
+      // the place is part of the tab's directory entry: the members hear of it as of any other change
+      remote?.host.changed()
+    }
+  })
   const tabs = new TabManager({
     onTabStarted: (tab) => {
       startTabImages(tab)
@@ -410,7 +472,35 @@ function bootstrap(): void {
       }
     },
     // the tab's group and branch are those of the folder Claude works in
-    onFolderChanged: (tabId, folder) => places.moveTab(tabId, folder),
+    onFolderChanged: (tabId, folder) => {
+      places.moveTab(tabId, folder)
+      // the folder moves the tab's place, and its directory entry goes out again to the members, as other tab changes do
+      remote?.host.changed()
+    },
+    // the user moved the tab to another folder: what the tab knew of the old folder goes, and a Claude tab starts a new conversation
+    onTabFolderChanged: (tab) => {
+      const s = sources.get(tab.id)
+      if (s) {
+        void s.tempWatcher?.close()
+        s.feed?.stop()
+      }
+      sources.set(tab.id, { tempWatcher: null, feed: null, transcriptPath: null })
+      images.resetTab(tab.id, tab.cwd)
+      review.resetTab(tab.id, tab.cwd)
+      docs.resetTab(tab.id, tab.cwd)
+      planHub.resetTab(tab.id)
+      // the task list of the old folder goes with its conversation: the new folder shows none of it
+      newerSide.delete(tab.id)
+      taskLists.resetTab(tab.id)
+      // the status timer stops; the status hub retires the old session and tells the window its state is gone
+      const timer = statusTimers.get(tab.id)
+      if (timer) clearTimeout(timer)
+      statusTimers.delete(tab.id)
+      statusHub.resetTab(tab.id)
+      autoContinue.forget(tab.id)
+      noteHub.resetTab(tab.id)
+      remote?.host.changed()
+    },
     // a continue armed for the old process would type into the resumed one
     onTabRestarting: (tabId) => {
       autoContinue.forget(tabId)
@@ -427,6 +517,7 @@ function bootstrap(): void {
       resumeAfterRestore.delete(tabId)
       review.removeTab(tabId)
       places.removeTab(tabId)
+      tabPlaces.delete(tabId)
       docs.removeTab(tabId)
       noteHub.removeTab(tabId)
       taskLists.removeTab(tabId)
@@ -457,35 +548,463 @@ function bootstrap(): void {
       if (req.profile && profile.name !== req.profile) toast(`Profile "${req.profile}" not found; using ${profile.name}`)
       return { profileName: profile.name, spec: buildLaunch(profile, 'shell', null) }
     },
-    onStateChanged: () => sessions.scheduleSave(tabs.snapshot()),
+    onStateChanged: () => {
+      sessions.scheduleSave(tabs.snapshot())
+      remote?.host.changed()
+      updateAwake()
+    },
     // Claude Code writes the transcript with the first message; --resume of a conversation without one fails
     resumable: async (tabId, sessionId) => {
       const p = sources.get(tabId)?.transcriptPath
       return p ? (await findTranscript(p, sessionId)) !== null : true
     },
     events: {
-      opened: (t) => send(IPC.evTabOpened, t),
-      updated: (t) => send(IPC.evTabUpdated, t),
-      closed: (id) => send(IPC.evTabClosed, id),
-      activated: (id) => { send(IPC.evTabActivated, id); review.activated(id); places.refresh(id) },
+      opened: (t) => {
+        send(IPC.evTabOpened, t)
+        // a new tab has printed nothing yet: its copy opens at number 0 and waits for no seed
+        const size = tabs.size(t.id)
+        if (size) remote?.host.opened(t.id, size.cols, size.rows, settings.scrollback)
+      },
+      updated: (t) => {
+        send(IPC.evTabUpdated, t)
+        // the other devices show the tab's activity and exit too: an update goes out in the directory
+        remote?.host.changed()
+        // an agent's start or stop changes the activity without a state change: the hold follows it
+        updateAwake()
+      },
+      closed: (id) => {
+        send(IPC.evTabClosed, id)
+        remote?.closed(id)
+        sizes.drop(id)
+        deviceSized.delete(id)
+        tabAttention.drop(id)
+        titles.delete(id)
+        lastReviews.delete(id)
+        if (lastLocalActive === id) lastLocalActive = null
+      },
+      activated: (id) => {
+        lastLocalActive = id
+        activeRemote = null
+        // a local tab in front in the meantime: the window never jumps to the requested remote tab later
+        remoteFront.activated()
+        clearAttention(id)
+        send(IPC.evTabActivated, id)
+        review.activated(id)
+        places.refresh(id)
+        applySize(id, sizes.claim(id, null))
+        remote?.viewer.activated(id)
+      },
       order: (ids) => send(IPC.evTabsOrder, ids),
-      data: (id, d) => send(IPC.evPtyData, id, d),
-      exit: (id, code) => send(IPC.evPtyExit, id, code),
-      reset: (id) => send(IPC.evPtyReset, id)
+      data: (id, d) => {
+        send(IPC.evPtyData, id, d)
+        // the copy takes the same string as the window, in the same order
+        remote?.host.output(id, d)
+      },
+      exit: (id, code) => {
+        send(IPC.evPtyExit, id, code)
+        clearAttention(id)
+        remote?.host.exit(id, code)
+        // a Claude tab that exits mid-turn is no longer working: the hold it kept for its watchers ends
+        updateAwake()
+      },
+      reset: (id) => {
+        send(IPC.evPtyReset, id)
+        // the process that waited is gone: the tab stops waiting on every device
+        clearAttention(id)
+        remote?.host.reset(id)
+      }
     }
   })
   const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
 
+  // ---- remote tabs: the other devices' tabs in this window, and this device's tabs as the other devices see them
+  /** the size of each tab's PTY, and the device it is sized for (null: this window) */
+  const sizes = new TabSizes()
+  /** the attention each of this device's tabs waits with, as the other devices see it */
+  const tabAttention = new TabAttention()
+  /** a tab starts waiting with a reason: the other devices show it pulsing too */
+  const startAttention = (tabId: string, reason: NotificationCase): void => {
+    tabAttention.start(tabId, reason)
+    remote?.host.changed()
+  }
+  /** an answer on any device stops the tab waiting everywhere; a clear that changes nothing is not sent */
+  const clearAttention = (tabId: string): void => {
+    if (!tabAttention.clear(tabId)) return
+    send(IPC.evAttentionClear, tabId)
+    remote?.host.changed()
+  }
+  /** the title of each of this device's tabs, from its program */
+  const titles = new Map<string, string>()
+  /** the latest review update of each of this device's tabs */
+  const lastReviews = new Map<string, ReviewUpdate>()
+  /** the latest images update of each remote tab in this window */
+  const lastImages = new Map<string, ImagesUpdate>()
+  /**
+   * each device's tab of this device in front on that device's window, and whether that window has the focus. Focus is not
+   * presence: nothing reads the flag yet, and the presence rule that a later release adds will use it.
+   */
+  const remoteFronts = new Map<string, { tabId: string; focused: boolean }>()
+  /** the remote tab in front in this window; null while a local tab (or none) is in front */
+  let activeRemote: string | null = null
+  /** which tab a new-tab request on another device brings to the front, and when it must not: see RemoteFront */
+  const remoteFront = new RemoteFront()
+  /** this device's id, from the group's view */
+  let selfDeviceId = ''
+  /** this device's side of the remote tabs: built while the group is open and the window is ready */
+  let remote: RemoteHolder | null = null
+  /** test runs never keep the machine awake: each start and stop is appended to the log a test names */
+  const testPowerLog = isTest ? process.env.CLAUDETERM_TEST_POWER_LOG : undefined
+  let testBlockerIds = 0
+  const testBlocker: PowerBlocker = {
+    start: () => {
+      if (testPowerLog) appendFileSync(testPowerLog, 'start\n')
+      return ++testBlockerIds
+    },
+    stop: () => {
+      if (testPowerLog) appendFileSync(testPowerLog, 'stop\n')
+    }
+  }
+  /** keeps this computer awake while another device uses it: see KeepAwake */
+  const keepAwake = new KeepAwake({
+    blocker: isTest ? testBlocker : { start: () => powerSaveBlocker.start('prevent-app-suspension'), stop: (id) => powerSaveBlocker.stop(id) },
+    enabled: () => settings.devices.keepAwake,
+    now: Date.now
+  })
+  /** checks the keep-awake hold again: a member link came or went, a tab's watchers or its work changed, or the setting did */
+  const updateAwake = (): void => keepAwake.update({
+    linked: (remote?.host.peers().length ?? 0) > 0,
+    watchedWorking: tabs.list().some((t) => t.kind === 'claude' && !t.exited && t.activity === 'working' && (remote?.host.watchers(t.id).length ?? 0) > 0)
+  })
+  /** the app is quitting: no tab is activated or opened */
+  let quitting = false
+  /** the local tab in front last: show_image without a tab id goes there while a remote tab is in front */
+  let lastLocalActive: string | null = null
+  /** the seed requests the window was not ready for: tab id to token */
+  const pendingSeeds = new Map<string, number>()
+  /** the links of devices that came up before the holder was built, by device: connected when it is built */
+  const earlyPeers = new Map<string, { link: PeerLink; hello: HelloMessage }>()
+  /** the tabs of this device whose size another device owns, as the viewers were last told */
+  const deviceSized = new Set<string>()
+
+  /** what the window shows of the other devices' tabs */
+  const viewerEvents: ViewerEvents = {
+    opened: (device, tab) => {
+      devicesSoonIfShown()
+      send(IPC.evTabOpened, remoteTabInfo(device, tab))
+      if (tab.placeKnown) send(IPC.evTabPlace, tab.id, tab.place)
+      if (tab.kind === 'claude') noteHub.addTab(tab.id, tab.claudeSessionId, { remote: true })
+      // deferred: the viewer is still in the middle of listing the tab
+      setImmediate(() => {
+        if (remoteFront.arrived(tab.id, Date.now()) && remote?.viewer.has(tab.id)) activateRemote(tab.id, true)
+      })
+    },
+    updated: (device, tab, before) => {
+      send(IPC.evTabUpdated, remoteTabInfo(device, tab))
+      if (tab.placeKnown && (!before.placeKnown || JSON.stringify(tab.place) !== JSON.stringify(before.place))) send(IPC.evTabPlace, tab.id, tab.place)
+      if (tab.claudeSessionId !== null && tab.claudeSessionId !== before.claudeSessionId) noteHub.session(tab.id, tab.claudeSessionId)
+      // the device changed the tab's folder: the note of the old folder goes here too
+      if (tab.claudeSessionId === null && before.claudeSessionId !== null) noteHub.resetTab(tab.id)
+    },
+    closed: (tabId) => {
+      devicesSoonIfShown()
+      send(IPC.evTabClosed, tabId)
+      noteHub.removeTab(tabId)
+      lastImages.delete(tabId)
+      remoteImages.dropTab(tabId)
+      if (activeRemote === tabId) activeRemote = null
+      remoteFront.closed(tabId)
+      // the last tab of a device that went leaves no empty window; deferred, because a device's list is replaced close by close
+      setImmediate(ensureSomeTab)
+    },
+    devices: (list) => {
+      // a device that went or came back changes the tab counts of the Devices section too
+      devicesSoonIfShown()
+      send(IPC.evRemoteDevices, list)
+      // a device that went or came back changes the Recent sessions window's sections: they are drawn again
+      send(IPC.evRemoteSessions, remoteSessionsView())
+      for (const d of list) if (!d.online) remoteFront.deviceGone(d.id)
+    },
+    data: (tabId, d) => send(IPC.evPtyData, tabId, d),
+    reset: (tabId) => send(IPC.evPtyReset, tabId),
+    exit: (tabId, code) => send(IPC.evPtyExit, tabId, code),
+    size: (tabId, size) => send(IPC.evTabSize, tabId, size),
+    attention: (tabId, reason, fresh) => {
+      if (fresh) attention.notify(tabId, reason)
+      else send(IPC.evAttention, tabId, reason)
+    },
+    attentionCleared: (tabId) => send(IPC.evAttentionClear, tabId),
+    push: (tabId, value) => {
+      if (value.k === 'status') {
+        send(IPC.evStatus, { tabId, ...value.v })
+      } else if (value.k === 'plan') {
+        send(IPC.evPlan, { tabId, plan: value.v, agentList: value.agentList })
+      } else if (value.k === 'images') {
+        const update: ImagesUpdate = { tabId, ...value.v, remote: true }
+        remoteImages.setCards(tabId, update.cards)
+        lastImages.set(tabId, update)
+        send(IPC.evImages, update)
+      } else {
+        send(IPC.evReview, { ...value.v, tabId, remote: true })
+      }
+    }
+  }
+
+  /** what the folder calls of this device read: the tab's folder, this device's name, the history, and the tab's move */
+  const folderDeps = (): TabFolderDeps => ({
+    home: homedir(),
+    tabFolder: (tabId) => tabs.get(tabId)?.folder ?? null,
+    device: () => group?.view().self.name || hostname(),
+    sessions: () => history.list(50).catch(() => []),
+    changeFolder: (tabId, path) => tabs.changeFolder(tabId, path)
+  })
+
+  /** this device's Recent sessions, newest first: the window's list, and the list a member gets; it keeps the sessions it listed */
+  const listSessions = async (): Promise<RecentSession[]> => {
+    const list = await history.list(100, starred.ids())
+    listedSessions = new Map(list.map((s) => [s.id, s]))
+    const open = new Set(tabs.list().map((t) => t.claudeSessionId))
+    return list.map((s) => ({ ...s, open: open.has(s.id), starred: starred.ids().has(s.id) }))
+  }
+
+  /** the tab in a session's conversation (not brought forward), or a new Claude tab that resumes it (opened in the background), for a member that was listed it */
+  const openSessionOf = (id: string): string => {
+    const s = listedSessions.get(id)
+    if (!s) throw new CallError(REMOTE_COPY.unknownSession)
+    const tab = tabs.list().find((t) => t.claudeSessionId === s.id)
+    if (tab) return tab.id
+    // Claude Code finds a conversation by its folder: resuming it anywhere else fails
+    if (!isDirectory(s.cwd)) throw new CallError(`The folder of this session no longer exists: ${s.cwd}`)
+    const opened = openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id }, false)
+    if (!opened) throw new CallError(REMOTE_COPY.openTabFailed)
+    return opened.id
+  }
+
+  /** what this device serves its members of its own tabs: the tabs, their sizes, the pushes and the calls */
+  const hostCtx: HostContext = {
+    tabs: {
+      list: () => tabs.list(),
+      get: (tabId) => tabs.get(tabId),
+      // a tab closed from another device leaves no empty window (the window's own close is tabsClose's)
+      close: (tabId) => {
+        tabs.close(tabId)
+        ensureSomeTab()
+      },
+      rename: (tabId, title) => tabs.rename(tabId, title),
+      setMuted: (tabId, muted) => tabs.setMuted(tabId, muted),
+      restart: (tabId, opts) => tabs.restart(tabId, opts),
+      switchAccount: (tabId, account) => tabs.switchAccount(tabId, account),
+      size: (tabId) => tabs.size(tabId),
+      canFork: (tabId) => tabs.canFork(tabId),
+      fork: (tabId, opts) => tabs.fork(tabId, opts)
+    },
+    images,
+    review,
+    imageExtensions: () => [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions],
+    status: statusHub,
+    shownPlan: shownPlanOf,
+    clearTaskList: (tabId) => taskLists.set(tabId, null),
+    notes: noteHub,
+    accounts,
+    sizes,
+    attention: tabAttention,
+    titles,
+    places: tabPlaces,
+    receiver,
+    reviews: lastReviews,
+    profiles: () => profiles.map((p) => p.name),
+    openTab: (r) => openTab({ kind: r.kind, cwd: defaultFolder(), profile: r.profile, account: r.account, resumeSessionId: r.resume }, false),
+    writeInput: (tabId, data, from) => writeInput(tabId, data, from),
+    folders: (tabId, path) => folderListingOf(tabId, path, folderDeps()),
+    changeFolder: (tabId, path) => changeFolderOf(tabId, path, folderDeps()),
+    sessions: () => listSessions(),
+    openSession: (id) => openSessionOf(id),
+    claim: (tabId, from, cols, rows) => applySize(tabId, sizes.claim(tabId, from, cols, rows)),
+    front: (from, tabId, focused) => {
+      if (tabId === null) {
+        remoteFronts.delete(from)
+        return
+      }
+      const was = remoteFronts.get(from)
+      remoteFronts.set(from, { tabId, focused })
+      // a window that loses the focus by itself leaves the tab's mark: only a new tab in front, or the focus gained, answers it
+      if (frontClears(was, tabId, focused)) clearAttention(tabId)
+      if (isClaudeTab(tabId)) review.activated(tabId)
+      places.refresh(tabId)
+    }
+  }
+
+  /** the new-tab menu's answers: this device's name in the group, and each online device's last answer */
+  const choicesNow = (): { self: string; devices: DeviceAnswer<DeviceChoices>[] } => ({
+    self: group?.view().self.name ?? '',
+    devices: remote?.actions.choicesNow() ?? []
+  })
+
+  /** the other devices' Recent sessions as the window shows them: each device's last answer, without the sessions this device lists itself */
+  // the star is this device's, as the shared set has it: a device's own answer may be from before a star toggled here
+  const remoteSessionsView = (): DeviceAnswer<RecentSession[]>[] =>
+    (remote?.actions.sessionsNow() ?? []).map((d) => ({
+      ...d,
+      value: d.value?.filter((s) => !listedSessions.has(s.id)).map((s) => ({ ...s, starred: starred.ids().has(s.id) })) ?? null
+    }))
+
+  /** a session another device lists: the tab in its conversation there, or the new tab that resumes it, which comes to the front here as a new remote tab does; a device that is offline is toasted by the call */
+  const openRemoteSession = async (id: string): Promise<void> => {
+    const r = remote
+    const device = r?.actions.deviceOfSession(id) ?? null
+    if (!r || device === null || quitting) return
+    const mark = remoteFront.mark()
+    const tabId = await r.actions.openSession(device, id)
+    if (tabId !== null && remote === r && remoteFront.answered(mark, tabId, r.viewer.has(tabId), Date.now(), device) === 'activate') {
+      activateRemote(tabId, true)
+    }
+  }
+
+  /** what the holder of the open group needs of this window */
+  const remoteDeps = (): RemoteHolderDeps => ({
+    tabs,
+    scrollback: () => settings.scrollback,
+    windowFocused: () => Boolean(win && !win.isDestroyed() && win.isFocused()),
+    hostTabs: hostTabs(hostCtx),
+    hostHandlers: (device) => hostHandlers(hostCtx, device),
+    viewerEvents,
+    isLocal: (tabId) => tabs.get(tabId) !== null,
+    selfId: () => selfDeviceId,
+    onFresh: (what) => {
+      if (what === 'choices') send(IPC.evDeviceChoices, choicesNow())
+      else send(IPC.evRemoteSessions, remoteSessionsView())
+    },
+    toast,
+    startMirrors: () => new PortMirrors(new Worker(screenWorkerPath(screenWorkerFile), { workerData: { screenWorker: true, maxSnapshotBytes: MAX_SNAPSHOT_BYTES } })),
+    requestSeed: (tabId, token) => {
+      if (rendererReady) send(IPC.evScreenSeed, tabId, token)
+      else pendingSeeds.set(tabId, token)
+    },
+    // the holder tells the members, once per wait of its own: a title may change many times a second
+    onTitle: (tabId, title) => {
+      if (!tabs.get(tabId)) return
+      titles.set(tabId, title)
+    },
+    onPeerGone: (device) => {
+      remoteFronts.delete(device)
+      peerGoneReceived(device)
+      for (const [tabId, s] of sizes.dropViewer(device)) applySize(tabId, s)
+    },
+    log: (m) => log.warn(m),
+    onLinks: () => updateAwake(),
+    onWatchers: () => updateAwake()
+  })
+
+  /** a tab's size as its PTY takes it; the viewers hear of a device's size, and of the return to this window's (once) */
+  const applySize = (tabId: string, s: AppliedSize | null): void => {
+    if (!s) return
+    tabs.resize(tabId, s.cols, s.rows)
+    remote?.host.resized(tabId, s.cols, s.rows)
+    remote?.host.changed()
+    if (s.by !== null) {
+      deviceSized.add(tabId)
+      send(IPC.evTabSize, tabId, { cols: s.cols, rows: s.rows })
+    } else if (deviceSized.delete(tabId)) {
+      send(IPC.evTabSize, tabId, null)
+    }
+  }
+
+  /** input into a tab: the window's own keys (from null, which take the tab at its fitted size) or a member device's */
+  const writeInput = (tabId: string, data: string, from: string | null): void => {
+    const prompt = isPromptInput(data)
+    // a member typed into this device's tab (not a terminal report or a reading key): the computer stays awake for a while
+    if (from !== null && prompt) keepAwake.input()
+    // typing from any device is the user at the tab: it stops waiting everywhere; terminal reports and reading keys are no answer
+    if (prompt) clearAttention(tabId)
+    if (from === null) applySize(tabId, sizes.claim(tabId, null))
+    if (tabId === autoTabId && isUserInput(data)) autoTabId = null
+    // scrolling through the reply with the mouse or PgUp is reading it, it puts nothing in the prompt
+    if (prompt) {
+      autoContinue.userInput(tabId)
+      resumeAfterRestore.delete(tabId)
+    }
+    // Esc or Ctrl+C stops a turn, and Claude Code runs no Stop hook for that: a restore must not take the turn up again
+    if (data === '\x1b' || data === '\x03') tabs.setWorking(tabId, false)
+    tabs.write(tabId, data)
+  }
+
+  /** a remote tab comes to the front in this window: no local tab is in front, and its device hears of it */
+  const activateRemote = (tabId: string, byRequest: boolean): void => {
+    if (byRequest) remoteFront.activatedByRequest()
+    else remoteFront.activated()
+    activeRemote = tabId
+    tabs.deactivate()
+    send(IPC.evTabActivated, tabId)
+    remote?.viewer.activated(tabId)
+  }
+
+  /** a hub update of a tab for the members attached to it, clamped to what they check; the directory follows */
+  const pushToMembers = (tabId: string, k: PushKind, v: unknown): void => {
+    if (!remote) return
+    // a value is clamped only when a member is attached to the tab: nobody else gets it
+    if (remote.host.watchers(tabId).length > 0) remote.host.push(tabId, k, clampPush(k, v))
+    remote.host.changed()
+  }
+
+  /** whether a device of the group lists a tab in this window */
+  const remoteTabsListed = (): boolean => {
+    const r = remote
+    return r !== null && r.viewer.devices().some((d) => r.viewer.tabsOf(d.id).length > 0)
+  }
+
+  /** a window with no tab of its own opens one, unless a remote tab of another device is listed to show in its place */
+  const ensureSomeTab = (): void => {
+    if (quitting || tabs.list().length > 0 || remoteTabsListed()) return
+    openTab({ kind: 'shell', cwd: defaultFolder() })
+  }
+
+  /** the group closed or is closing: the holder goes, and the window's view of the other devices' tabs with it */
+  const stopRemote = (): void => {
+    const hadRemoteFront = activeRemote !== null
+    remote?.dispose()
+    remote = null
+    updateAwake()
+    activeRemote = null
+    remoteFront.reset()
+    earlyPeers.clear()
+    titles.clear()
+    remoteFronts.clear()
+    lastImages.clear()
+    remoteImages.clear()
+    if (quitting) return
+    if (hadRemoteFront) {
+      const first = tabs.list()[0]
+      if (first) tabs.activate(first.id)
+    }
+    ensureSomeTab()
+  }
+
+  /** builds the holder for the open group: its copies open and ask the window for their seeds, the members come, and the links that came first connect */
+  const buildRemote = (view: ActiveDevicesView): void => {
+    remote?.dispose()
+    remote = new RemoteHolder(remoteDeps())
+    remote.viewer.members(view.devices)
+    const early = [...earlyPeers.values()]
+    earlyPeers.clear()
+    for (const { link, hello } of early) {
+      try {
+        remote.connect(link, hello)
+      } catch (e) {
+        log.warn("cannot connect a device's tabs: " + (e instanceof Error ? e.message : String(e)))
+      }
+    }
+    updateAwake()
+  }
+
   const attention = new Attention({
     windowFocused: () => Boolean(win && !win.isDestroyed() && win.isFocused()),
-    activeTabId: () => tabs.activeTabId(),
+    activeTabId: () => activeRemote ?? tabs.activeTabId(),
     settings: () => settings.notifications,
     flash: () => { if (win && !win.isDestroyed()) win.flashFrame(true) },
     play: playSound,
     markTab: (tabId, reason) => send(IPC.evAttention, tabId, reason),
     // the window shows it: it knows the tab's title, and which tab the user opens
     banner: (tabId, reason) => send(IPC.evBanner, tabId, reason),
-    muted: (tabId) => tabs.get(tabId)?.muted === true
+    muted: (tabId) => (remote?.viewer.tab(tabId)?.muted ?? tabs.get(tabId)?.muted) === true
   })
   const promptQueries = new PromptQueries({
     send: (queryId, tabId) => {
@@ -500,6 +1019,7 @@ function bootstrap(): void {
     // writes go to the PTY directly: what it types is not taken for the user's keys
     write: (tabId, data) => tabs.write(tabId, data),
     notify: (tabId) => {
+      startAttention(tabId, 'done')
       const signalled = attention.notify(tabId, 'done')
       log.info(`attention done tab=${tabId} after the auto-continue gave up${signalled ? '' : ' (seen)'}`)
     },
@@ -674,14 +1194,10 @@ function bootstrap(): void {
   const pipeProblem = process.platform === 'win32' ? null : socketProblem(pipeName, { privateDir: socketDir({ platform: process.platform, env: {}, uid }), uid })
   if (pipeProblem) toast(`Claude tabs cannot report to ClaudeTerm (status, images, notifications): ${pipeProblem}`)
   else startPipeServer(pipeName, {
-    showImage: async (msg) => {
-      const check = await checkShowableFile(msg.path, [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions])
-      if (!check.ok) return { ok: false, error: check.error }
-      const target = images.resolveTarget(msg.tabId, tabs.activeTabId())
-      if (!target) return { ok: false, error: 'no open tabs in ClaudeTerm' }
-      images.add(target, msg.path, 'shown', msg.caption)
-      return { ok: true }
-    },
+    showImage: (msg) => showImageFile(images, msg, {
+      check: (path) => checkShowableFile(path, [...DEFAULT_IMAGE_EXTENSIONS, ...settings.imageWatch.extensions]),
+      fallback: () => tabs.activeTabId() ?? lastLocalActive ?? tabs.list()[0]?.id ?? null
+    }),
     session: (msg) => {
       log.info(`session ${msg.source} tab=${msg.tabId} id=${msg.sessionId} transcript=${msg.transcriptPath ?? '-'}`)
       if (!tabs.setClaudeSession(msg.tabId, msg.sessionId, msg.source)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
@@ -744,6 +1260,8 @@ function bootstrap(): void {
         if (!isClaudeTab(msg.tabId)) return
         // a turn a message from another session started has its own settings: the transcript tells which turn this is
         const reason = msg.reason === 'done' && turns.lastTurnIsPeer(msg.tabId) ? 'peer' : msg.reason
+        // a done with background work still running gives no signal while doneWithBackgroundWork is off: no tab waits for it
+        if (msg.reason !== 'done' || msg.background !== true || settings.notifications.doneWithBackgroundWork) startAttention(msg.tabId, reason)
         const signalled = attention.notify(msg.tabId, reason, msg.background === true)
         log.info(`attention ${reason} tab=${msg.tabId}${msg.background ? ' with background work' : ''}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
       }
@@ -791,6 +1309,18 @@ function bootstrap(): void {
       if (!check.ok) return { ok: false, error: check.error }
       if (check.kind === 'html' && htmlFolderRefused(msg.path, homedir())) return { ok: false, error: `an HTML document is not shown from the home folder or a drive root: ${msg.path}` }
       return docs.show(msg.tabId, msg.path, msg.title, check.kind)
+    },
+    deviceStatus: () => ({
+      ok: true,
+      info: formatDeviceStatus({
+        view: group?.view() ?? null,
+        selfTabs: hostTabs(hostCtx).list(),
+        tabsOf: (id) => (remote?.viewer.online(id) ? remote.viewer.tabsOf(id) : null)
+      })
+    }),
+    openDeviceSettings: () => {
+      settingsWindow.open('devices')
+      return { ok: true }
     }
   })
     .then((h) => { pipe = h })
@@ -801,40 +1331,245 @@ function bootstrap(): void {
       .then((r) => log.info(`mcp registration: ${r}`))
   }
 
+  // device sync: the group opens once this device has an identity (device-identity.json), or with the first pairing or join
+  const testDeviceHost = isTest ? process.env.CLAUDETERM_TEST_DEVICE_HOST : undefined
+  // a value that is not a port is ignored: the settings port is used
+  const testDevicePortText = isTest ? process.env.CLAUDETERM_TEST_DEVICE_PORT : undefined
+  const testDevicePort = testDevicePortText !== undefined && /^\d{1,5}$/.test(testDevicePortText) && Number(testDevicePortText) <= 65535 ? Number(testDevicePortText) : undefined
+  const devicePlatform: DevicePlatform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
+  let group: DeviceGroup | null = null
+  let bridge: StoreBridge | null = null
+  let opening: Promise<DeviceGroup | null> | null = null
+  let refreshTimer: ReturnType<typeof setInterval> | null = null
+  const onPowerResume = (): void => { group?.wake() }
+  /** the view with the tab count of each connected device: the tabs of it this window lists; a device whose list has not come yet has no count */
+  const withTabs = (v: DevicesView): DevicesView => {
+    const r = remote
+    if (!v.enabled || !r) return v
+    return { ...v, devices: v.devices.map((d) => (d.state.kind === 'connected' && r.viewer.listedOf(d.id) ? { ...d, tabs: r.viewer.tabsOf(d.id).length } : d)) }
+  }
+  const devicesView = (): DevicesView => withTabs(group ? group.view() : { enabled: false })
+  // the view again while the Settings window is open, at most once per 100 ms: a device's tabs opened or closed
+  const devicesSoon = new Coalescer(100, () => {
+    if (settingsWindow.isOpen()) broadcast(IPC.evDevices, devicesView())
+  })
+  const devicesSoonIfShown = (): void => {
+    if (settingsWindow.isOpen()) devicesSoon.request()
+  }
+  const offline = (): DeviceResult => ({ ok: false, error: DEVICE_COPY.disabled })
+  // the stores' changes from other devices reach every window; the notes go to the tabs of their conversation
+  starred.onExternal(() => broadcast(IPC.evStarred, [...starred.ids()]))
+  notes.onExternal((id, note, before) => {
+    noteHub.external(id, note, before)
+    remote?.host.changed()
+  })
+
+  /** Opens the group, once: a call while it opens gets the same open, and a group that is open is given back. Null when it cannot open. */
+  const startDevices = (): Promise<DeviceGroup | null> => {
+    if (group) return Promise.resolve(group)
+    if (!opening) {
+      opening = DeviceGroup.open({
+        dir: dataDir,
+        vault: electronVault(safeStorage, process.platform),
+        host: testDeviceHost ?? '::',
+        port: testDevicePort ?? settings.devices.port,
+        platform: devicePlatform,
+        hostName: () => hostname().slice(0, MAX_DEVICE_NAME),
+        addresses: testDeviceHost ? () => [testDeviceHost] : localAddresses,
+        onData: (updates) => bridge?.applied(updates),
+        onView: (view) => {
+          selfDeviceId = view.self.id
+          broadcast(IPC.evDevices, withTabs(view))
+          // a device that left the group can link no more: the sessions it was answered with are forgotten
+          pruneListedMembers(hostCtx, view.devices.map((d) => d.id))
+          remote?.viewer.members(view.devices)
+        },
+        onReset: () => bridge?.start(),
+        onPeer: (link, hello) => {
+          if (remote) {
+            remote.connect(link, hello)
+            return
+          }
+          // the window is not ready yet: the link is connected when the holder is built
+          earlyPeers.set(hello.id, { link, hello })
+          link.once('close', () => {
+            if (earlyPeers.get(hello.id)?.link === link) earlyPeers.delete(hello.id)
+          })
+        },
+        // a warning is a toast, as the other notices are; an error is logged
+        warn: toast,
+        onError: (m) => log.warn(m)
+      }).then((g) => {
+        // a failure after the open leaves no group behind: the group is closed and the open counts as failed
+        try {
+          bridge = new StoreBridge(starred, notes, g)
+          bridge.start()
+          refreshTimer = setInterval(() => group?.refreshSelf(), 10_000)
+          powerMonitor.on('resume', onPowerResume)
+          group = g
+          const view = g.view()
+          selfDeviceId = view.self.id
+          if (rendererReady && !quitting) buildRemote(view)
+          broadcast(IPC.evDevices, withTabs(view))
+          return g
+        } catch (e) {
+          log.warn(`cannot start device sync: ${(e as Error).message}`)
+          group = null
+          remote?.dispose()
+          remote = null
+          updateAwake()
+          earlyPeers.clear()
+          if (refreshTimer) clearInterval(refreshTimer)
+          refreshTimer = null
+          powerMonitor.removeListener('resume', onPowerResume)
+          bridge?.stop()
+          bridge = null
+          g.close().catch((err: unknown) => log.warn(`cannot close device sync: ${(err as Error).message}`))
+          return null
+        }
+      }, () => {
+        earlyPeers.clear()
+        return null
+      }).finally(() => {
+        opening = null
+      })
+    }
+    return opening
+  }
+
+  /** Closes the group: the stores stop following it, what is pending is written, and the network stops. */
+  const stopDevices = async (): Promise<void> => {
+    if (opening) await opening
+    stopRemote()
+    const closing = group
+    group = null
+    if (refreshTimer) clearInterval(refreshTimer)
+    refreshTimer = null
+    powerMonitor.removeListener('resume', onPowerResume)
+    bridge?.stop()
+    bridge = null
+    if (closing) {
+      closing.flush()
+      await closing.close()
+    }
+  }
+
+  /** The port changed while the group is open or opening: it is closed and opened again on the new port. Restarts run one after another. */
+  let restarts: Promise<void> = Promise.resolve()
+  const restartDevices = (): Promise<void> => {
+    restarts = restarts.then(async () => {
+      await stopDevices()
+      await startDevices()
+      broadcast(IPC.evDevices, devicesView())
+    }).catch((e: unknown) => {
+      log.warn(`cannot restart device sync: ${(e as Error).message}`)
+    })
+    return restarts
+  }
+
+  ipcMain.handle(IPC.devicesView, (): DevicesView => devicesView())
+  ipcMain.handle(IPC.devicesStartPairing, async (): Promise<DevicesView> => {
+    // a restart that is running opens the group on the new port: the pairing waits for it
+    await restarts
+    const g = await startDevices()
+    if (!g) return { enabled: false }
+    try {
+      await g.startPairing()
+    } catch (e) {
+      log.warn(`cannot start pairing: ${(e as Error).message}`)
+    }
+    return devicesView()
+  })
+  ipcMain.on(IPC.devicesCancelPairing, () => { group?.cancelPairing() })
+  ipcMain.handle(IPC.devicesJoin, async (_e, address: unknown, code: unknown): Promise<DeviceResult> => {
+    await restarts
+    // with a group open, a bad argument is answered with what is wrong with it; with no group, device sync is off
+    if (!isAddressInput(address)) return group ? { ok: false, error: DEVICE_COPY.badAddress } : offline()
+    if (!isPairCodeInput(code)) return group ? { ok: false, error: DEVICE_COPY.joinBadCode } : offline()
+    const g = await startDevices()
+    return g ? g.join(address, code) : offline()
+  })
+  ipcMain.handle(IPC.devicesRemove, (_e, id: unknown): DeviceResult => {
+    if (!group) return offline()
+    return isDeviceId(id) ? group.remove(id) : { ok: false, error: DEVICE_COPY.unknownDevice }
+  })
+  ipcMain.handle(IPC.devicesLeave, (): Promise<DeviceResult> => (group ? group.leave() : Promise.resolve(offline())))
+  ipcMain.handle(IPC.devicesSetAddress, (_e, id: unknown, address: unknown): DeviceResult => {
+    if (!group) return offline()
+    if (!isDeviceId(id)) return { ok: false, error: DEVICE_COPY.unknownDevice }
+    return isOptionalAddress(address) ? group.setAddress(id, address) : { ok: false, error: DEVICE_COPY.badAddress }
+  })
+  ipcMain.handle(IPC.devicesRename, (_e, name: unknown): DeviceResult => {
+    if (!group) return offline()
+    return isDeviceNameInput(name) ? group.rename(name) : { ok: false, error: DEVICE_COPY.badName }
+  })
+  // a device that has its identity is in its group from the start
+  if (existsSync(join(dataDir, 'device-identity.json'))) void startDevices()
+
   ipcMain.handle(IPC.appInfo, (): AppInfo => ({ windowsBuild: process.platform === 'win32' ? Number(release().split('.')[2]) || 0 : null, test: isTest, homeDir: homedir(), version: app.getVersion() }))
   ipcMain.on(IPC.rendererReady, () => {
     rendererReady = true
     for (const n of startupNotices.splice(0)) send(IPC.evToast, n)
     for (const cmd of pendingLaunches.splice(0)) openFromLaunch(cmd)
     if (restoreAfterUpdate) void runRestore()
+    // the window is ready: the open group's holder is built now, and its copies ask the window for their seeds
+    if (group && !remote && !quitting) {
+      try {
+        buildRemote(group.view())
+      } catch (e) {
+        log.warn('cannot start remote tabs: ' + (e instanceof Error ? e.message : String(e)))
+      }
+    }
+    // the window hears of the remote tabs, the devices and the seed requests that came before it was ready
+    if (remote) {
+      // the devices first: a remote tab is never drawn or fronted before its device's chip is known
+      send(IPC.evRemoteDevices, remote.viewer.devices())
+      for (const d of remote.viewer.devices()) {
+        for (const t of remote.viewer.tabsOf(d.id)) {
+          send(IPC.evTabOpened, remoteTabInfo(d.id, t))
+          // as the live path sends it: the device's size, or null where this window's own device sized the tab
+          send(IPC.evTabSize, t.id, t.size.by === selfDeviceId ? null : { cols: t.size.cols, rows: t.size.rows })
+        }
+      }
+      for (const [tabId, token] of pendingSeeds) send(IPC.evScreenSeed, tabId, token)
+      pendingSeeds.clear()
+    }
   })
-  ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) attention.notify(tabId, 'bell') })
+  ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) { startAttention(tabId, 'bell'); attention.notify(tabId, 'bell') } })
   // a fork comes only from Fork session (tabs:fork), never from a request to open a tab
   ipcMain.handle(IPC.tabsOpen, (_e, req: unknown) => (isOpenTabRequest(req) ? openTab(inDefaultFolder(openTabRequestFields(req))) : null))
-  ipcMain.handle(IPC.sessionsList, async (): Promise<RecentSession[]> => {
-    const list = await history.list(100, starred.ids())
-    listedSessions = new Map(list.map((s) => [s.id, s]))
-    const open = new Set(tabs.list().map((t) => t.claudeSessionId))
-    return list.map((s) => ({ ...s, open: open.has(s.id), starred: starred.ids().has(s.id) }))
-  })
+  ipcMain.handle(IPC.sessionsList, listSessions)
   ipcMain.handle(IPC.sessionsStar, (_e, id: unknown, on: unknown): void => {
     if (isSessionId(id) && isFlag(on)) starred.set(id, on)
   })
   ipcMain.on(IPC.notesSetText, (_e, id: unknown, text: unknown, generation: unknown) => {
-    if (isId(id) && isNoteText(text) && isGeneration(generation)) noteHub.setText(id, text, generation)
+    if (isId(id) && isNoteText(text) && isGeneration(generation)) {
+      noteHub.setText(id, text, generation)
+      remote?.host.changed()
+    }
   })
   ipcMain.on(IPC.notesSetView, (_e, id: unknown, shown: unknown, form: unknown, generation: unknown) => {
-    if (isId(id) && isFlag(shown) && isNoteForm(form) && isGeneration(generation)) noteHub.setView(id, shown, form, generation)
+    if (isId(id) && isFlag(shown) && isNoteForm(form) && isGeneration(generation)) {
+      noteHub.setView(id, shown, form, generation)
+      remote?.host.changed()
+    }
   })
   ipcMain.on(IPC.tasksClear, (_e, id: unknown) => {
-    if (isId(id) && isClaudeTab(id)) taskLists.set(id, null)
+    if (!isId(id)) return
+    // a tab of another device keeps its list there: the device clears it
+    if (remote?.viewer.has(id)) void remote.actions.clearTaskList(id)
+    else if (isClaudeTab(id)) taskLists.set(id, null)
   })
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
   ipcMain.handle(IPC.layoutGet, (): TabLayout => tabLayout.get())
   ipcMain.on(IPC.layoutSet, (_e, c: unknown) => { if (isTabLayoutChange(c)) tabLayout.set(c) })
   ipcMain.on(IPC.sessionsOpen, (_e, id: unknown) => {
     const s = isId(id) ? listedSessions.get(id) : undefined
-    if (!s) return
+    // a session another device lists is opened on that device
+    if (!s) {
+      if (isId(id)) void openRemoteSession(id)
+      return
+    }
     const tab = tabs.list().find((t) => t.claudeSessionId === s.id)
     if (tab) {
       tabs.activate(tab.id)
@@ -849,67 +1584,164 @@ function bootstrap(): void {
   })
   ipcMain.on(IPC.tabsClose, (_e, id: unknown) => {
     if (!isId(id)) return
+    if (remote?.viewer.has(id)) {
+      remote.actions.close(id)
+      return
+    }
     tabs.close(id)
-    if (tabs.list().length === 0) win?.close()
+    // the window closes only when no tab is left, of this device or listed from another device
+    if (tabs.list().length === 0 && !remoteTabsListed()) win?.close()
   })
-  ipcMain.on(IPC.tabsActivate, (_e, id: unknown) => { if (isId(id)) tabs.activate(id) })
+  ipcMain.on(IPC.tabsActivate, (_e, id: unknown) => {
+    if (!isId(id)) return
+    if (remote?.viewer.has(id)) activateRemote(id, false)
+    else tabs.activate(id)
+  })
+  ipcMain.on(IPC.tabsRename, (_e, id: unknown, title: unknown) => {
+    if (!isId(id) || !isOptionalTitle(title)) return
+    if (remote?.viewer.has(id)) remote.actions.rename(id, title)
+    else tabs.rename(id, title)
+  })
   ipcMain.on(IPC.windowFocus, () => focusWindow())
   ipcMain.on(IPC.attentionCount, (_e, count: unknown) => { if (isTabCount(count)) showBadge(count) })
-  ipcMain.on(IPC.tabsRename, (_e, id: unknown, title: unknown) => { if (isId(id) && isOptionalTitle(title)) tabs.rename(id, title) })
   ipcMain.on(IPC.tabsReorder, (_e, ids: unknown) => { if (isIdList(ids)) tabs.reorder(ids) })
   ipcMain.on(IPC.tabsRestart, (_e, id: unknown, live: unknown) => {
-    if (isId(id)) tabs.restart(id, { live: live === true }).catch((e: Error) => log.warn(`cannot restart tab: ${e.message}`))
+    if (!isId(id)) return
+    if (remote?.viewer.has(id)) remote.actions.restart(id, live === true)
+    else tabs.restart(id, { live: live === true }).catch((e: Error) => log.warn(`cannot restart tab: ${e.message}`))
   })
   ipcMain.on(IPC.tabsSwitchAccount, (_e, id: unknown, account: unknown) => {
     if (!isId(id) || !isAccountRef(account)) return
+    if (remote?.viewer.has(id)) {
+      void remote.actions.switchAccount(id, account)
+      return
+    }
     tabs.switchAccount(id, account)
       .then((ok) => { if (!ok && account !== null && accounts.token(account) === null) toast(`${accountName(account)} is not available`) })
       .catch((e: Error) => log.warn(`cannot switch the account: ${e.message}`))
   })
-  ipcMain.on(IPC.tabsMute, (_e, id: unknown, muted: unknown) => { if (isId(id) && isFlag(muted)) tabs.setMuted(id, muted) })
+  ipcMain.on(IPC.tabsMute, (_e, id: unknown, muted: unknown) => {
+    if (!isId(id) || !isFlag(muted)) return
+    if (remote?.viewer.has(id)) remote.actions.mute(id, muted)
+    else tabs.setMuted(id, muted)
+  })
   // the transcript is looked for without blocking: the tab menu waits for this answer on every right-click
-  ipcMain.handle(IPC.tabsCanFork, (_e, id: unknown): Promise<boolean> => (isId(id) ? tabs.canFork(id) : Promise.resolve(false)))
+  // a remote tab's fork is checked and made on its device, where its transcript is
+  ipcMain.handle(IPC.tabsCanFork, (_e, id: unknown): Promise<boolean> => {
+    if (!isId(id)) return Promise.resolve(false)
+    return remote?.viewer.has(id) ? remote.actions.canFork(id) : tabs.canFork(id)
+  })
   ipcMain.on(IPC.tabsFork, async (_e, id: unknown) => {
     if (!isId(id)) return
+    if (remote?.viewer.has(id)) {
+      if (quitting) return
+      // the fork comes to the front here the way an open-tab answer does
+      const r = remote
+      const device = r.viewer.deviceOf(id) ?? ''
+      const mark = remoteFront.mark()
+      const forked = await r.actions.forkTab(id)
+      if (forked !== null && remote === r && remoteFront.answered(mark, forked, r.viewer.has(forked), Date.now(), device) === 'activate') {
+        activateRemote(forked, true)
+      }
+      return
+    }
     try {
       await tabs.fork(id)
     } catch (e) {
       toast(`Cannot open tab: ${(e as Error).message}`)
     }
   })
+  // Change folder: a remote tab's folder is listed and changed on its device, where the folder is
+  ipcMain.handle(IPC.foldersList, (_e, id: unknown, path: unknown): Promise<FolderResult> => {
+    if (!isId(id) || !(path === null || isFolderInput(path))) return Promise.resolve({ ok: false, error: 'bad arguments' })
+    return remote?.viewer.has(id) ? remote.actions.listFolders(id, path) : folderListingOf(id, path, folderDeps())
+  })
+  ipcMain.handle(IPC.tabsChangeFolder, (_e, id: unknown, path: unknown): Promise<DeviceResult> => {
+    if (!isId(id) || !isFolderInput(path)) return Promise.resolve({ ok: false, error: 'bad arguments' })
+    return remote?.viewer.has(id) ? remote.actions.changeFolder(id, path) : changeFolderOf(id, path, folderDeps())
+  })
   ipcMain.on(IPC.ptyWrite, (_e, id: unknown, data: unknown) => {
     if (!isId(id) || !isPtyData(data)) return
-    if (id === autoTabId && isUserInput(data)) autoTabId = null
-    // scrolling through the reply with the mouse or PgUp is reading it, it puts nothing in the prompt
-    if (isPromptInput(data)) {
-      autoContinue.userInput(id)
-      resumeAfterRestore.delete(id)
-    }
-    // Esc or Ctrl+C stops a turn, and Claude Code runs no Stop hook for that: a restore must not take the turn up again
-    if (data === '\x1b' || data === '\x03') tabs.setWorking(id, false)
-    tabs.write(id, data)
+    if (remote?.viewer.has(id)) remote.viewer.input(id, data)
+    else writeInput(id, data, null)
   })
   // only the main window has the terminals; PromptQueries checks the answer itself
   ipcMain.on(IPC.promptAnswer, (e, queryId: unknown, state: unknown) => { if (win && e.sender === win.webContents) promptQueries.answer(queryId, state) })
   ipcMain.on(IPC.ptyResize, (_e, id: unknown, cols: unknown, rows: unknown) => {
-    if (isId(id) && isPtySize(cols, rows)) tabs.resize(id, cols as number, rows as number)
+    if (!isId(id) || !isPtySize(cols, rows)) return
+    if (remote?.viewer.has(id)) remote.viewer.fit(id, cols as number, rows as number)
+    else applySize(id, sizes.fit(id, cols as number, rows as number))
   })
-  ipcMain.handle(IPC.imagesList, (_e, tabId: unknown): ImagesUpdate => (isId(tabId) ? imagesUpdate(tabId) : { tabId: '', cards: [], unseen: 0, notice: null }))
-  ipcMain.on(IPC.reviewSetScope, (_e, tabId: unknown, scope: unknown) => { if (isId(tabId) && isReviewScope(scope)) review.setScope(tabId, scope) })
-  ipcMain.on(IPC.reviewClearRequest, (_e, tabId: unknown) => { if (isId(tabId)) review.clearRequest(tabId) })
-  ipcMain.on(IPC.reviewRefresh, (_e, tabId: unknown) => { if (isId(tabId)) review.refresh(tabId) })
+  ipcMain.handle(IPC.imagesList, (_e, tabId: unknown): ImagesUpdate => {
+    if (!isId(tabId)) return { tabId: '', cards: [], unseen: 0, notice: null }
+    // a remote tab's images are the last update its device sent; an empty one until then
+    if (remote?.viewer.has(tabId)) return lastImages.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null }
+    return imagesUpdate(tabId)
+  })
+  ipcMain.handle(IPC.remoteDevices, (): RemoteDeviceView[] => remote?.viewer.devices() ?? [])
+  // the lists of the new-tab menu: the kept answers at once, and a refresh of every device's lists in the background
+  ipcMain.handle(IPC.devicesChoices, () => {
+    const view = choicesNow()
+    remote?.actions.refreshChoices()
+    return view
+  })
+  // the other devices' Recent sessions: the kept answers at once, and a refresh of every device's list in the background
+  ipcMain.handle(IPC.remoteSessions, () => {
+    const view = remoteSessionsView()
+    remote?.actions.refreshSessions()
+    return view
+  })
+  ipcMain.handle(IPC.remoteOpenTab, async (_e, device: unknown, kind: unknown, profile: unknown, account: unknown): Promise<string | null> => {
+    if (!isOpenRemoteTabArgs(device, kind, profile, account) || !remote || quitting) return null
+    const r = remote
+    const mark = remoteFront.mark()
+    const tabId = await r.actions.openTab(device as string, { kind: kind as 'claude' | 'shell', profile: profile as string | null, account: account as string | null, resume: null })
+    // the tab comes to the front here once it is listed, unless the person picked another tab meanwhile; a holder that went meanwhile takes no request
+    if (tabId !== null && remote === r && remoteFront.answered(mark, tabId, r.viewer.has(tabId), Date.now(), device as string) === 'activate') {
+      activateRemote(tabId, true)
+    }
+    return tabId
+  })
+  ipcMain.on(IPC.screenSeed, (_e, id: unknown, token: unknown, data: unknown) => {
+    if (isId(id) && isSeedToken(token) && isSeedText(data)) remote?.seed(id, token, data)
+  })
+  // a remote tab's Changes actions go to its device, which checks them; a local tab's go to its review
+  ipcMain.on(IPC.reviewSetScope, (_e, tabId: unknown, scope: unknown) => {
+    if (!isId(tabId) || !isReviewScope(scope)) return
+    if (remote?.viewer.has(tabId)) remote.actions.review(tabId, { k: 'scope', scope })
+    else review.setScope(tabId, scope)
+  })
+  ipcMain.on(IPC.reviewClearRequest, (_e, tabId: unknown) => {
+    if (!isId(tabId)) return
+    if (remote?.viewer.has(tabId)) remote.actions.review(tabId, { k: 'clear' })
+    else review.clearRequest(tabId)
+  })
+  ipcMain.on(IPC.reviewRefresh, (_e, tabId: unknown) => {
+    if (!isId(tabId)) return
+    if (remote?.viewer.has(tabId)) remote.actions.review(tabId, { k: 'refresh' })
+    else review.refresh(tabId)
+  })
   ipcMain.on(IPC.reviewSetViewed, (_e, tabId: unknown, path: unknown, hash: unknown, viewed: unknown) => {
-    if (isId(tabId) && isAbsPath(path) && isHash(hash) && typeof viewed === 'boolean') review.setViewed(tabId, path, hash, viewed)
+    if (!isId(tabId) || typeof viewed !== 'boolean') return
+    // a remote tab's path is checked by its device, with the rules of its own system: here it is only bounded text
+    if (remote?.viewer.has(tabId)) {
+      if (isPathText(path) && isHash(hash)) remote.actions.review(tabId, { k: 'viewed', path, hash, viewed })
+    } else if (isAbsPath(path) && isHash(hash)) review.setViewed(tabId, path, hash, viewed)
   })
-  ipcMain.on(IPC.reviewShowFile, (_e, tabId: unknown, path: unknown) => { if (isId(tabId) && isAbsPath(path)) review.showFile(tabId, path) })
+  ipcMain.on(IPC.reviewShowFile, (_e, tabId: unknown, path: unknown) => {
+    if (!isId(tabId)) return
+    if (remote?.viewer.has(tabId)) {
+      if (isPathText(path)) remote.actions.review(tabId, { k: 'show', path })
+    } else if (isAbsPath(path)) review.showFile(tabId, path)
+  })
   // only a file the tab's view shows; without an editor the file is shown in its folder, never opened: that could run it
   ipcMain.on(IPC.reviewOpenEditor, (_e, tabId: unknown, path: unknown, line: unknown) => {
-    if (!isId(tabId) || !isAbsPath(path) || !isLineNo(line) || !review.hasFile(tabId, path)) return
+    if (!isId(tabId) || remote?.viewer.has(tabId) || !isAbsPath(path) || !isLineNo(line) || !review.hasFile(tabId, path)) return
     launchEditor(settings.review.editor, path, line, { spawn: spawnDetached, reveal: (p) => shell.showItemInFolder(p), onError: toast })
   })
   // only a file the tab's view shows; a file gone from the disk opens its folder
   ipcMain.on(IPC.reviewReveal, (_e, tabId: unknown, path: unknown) => {
-    if (!isId(tabId) || !isAbsPath(path) || !review.hasFile(tabId, path)) return
+    if (!isId(tabId) || remote?.viewer.has(tabId) || !isAbsPath(path) || !review.hasFile(tabId, path)) return
     revealInFolder(path, nodeRevealDeps((p) => shell.showItemInFolder(p), (d) => void shell.openPath(d)))
   })
   ipcMain.handle(IPC.panelSet, (_e, width: unknown, resize: unknown) => (liveWin() && isPanelWidth(width) && isFlag(resize) ? panelRoom.set(Math.round(width), resize) : panelRoom.mode))
@@ -928,14 +1760,95 @@ function bootstrap(): void {
   ipcMain.on(IPC.accountsGetToken, () => {
     if (openTab({ kind: 'shell', cwd: homedir(), title: 'Get a token' }, true, true)) focusWindow()
   })
-  ipcMain.handle(IPC.reviewCanSend, (_e, tabId: unknown) => (isId(tabId) ? review.canSend(tabId) : { ok: false, reason: NOT_RUNNING }))
+  ipcMain.handle(IPC.reviewCanSend, (_e, tabId: unknown) => {
+    if (!isId(tabId)) return { ok: false, reason: NOT_RUNNING }
+    return remote?.viewer.has(tabId) ? remote.actions.canSend(tabId) : review.canSend(tabId)
+  })
   ipcMain.handle(IPC.reviewLines, (_e, tabId: unknown, path: unknown, hash: unknown, from: unknown, to: unknown) =>
     isId(tabId) && isAbsPath(path) && isHash(hash) && isLineSpan(from, to) ? review.contextLines(tabId, path, hash, from as number, to as number) : null)
-  ipcMain.on(IPC.imagesMarkSeen, (_e, tabId: unknown) => { if (isId(tabId)) images.markSeen(tabId) })
+  /** a picture on the clipboard as a PNG; an image the system cannot read is toasted with `failure` */
+  const copyPicture = (img: Electron.NativeImage, failure: string): void => {
+    if (img.isEmpty()) {
+      toast(failure)
+      return
+    }
+    const png = img.toPNG()
+    clipboard
+      .write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })])
+      .catch((e: unknown) => toast(`Cannot copy image: ${String(e)}`))
+  }
+  /** an action on a card of another device's tab: the bytes and the path are that device's; open and reveal show a file of this device, so they do nothing */
+  const remoteImageAction = (cardId: string, action: ImageAction): void => {
+    const card = remoteImages.card(cardId)
+    const r = remote
+    if (!card || !r || !r.viewer.has(card.tabId)) return
+    switch (action) {
+      case 'copy-image':
+        if (card.kind !== 'image') break
+        {
+          const cached = remoteImages.cached(cardId, card.version)
+          if (cached) {
+            copyPicture(nativeImage.createFromBuffer(cached), `Cannot copy this image format: ${card.path}`)
+            break
+          }
+          const version = card.version
+          void r.actions.imageBytes(card.tabId, cardId, version, () => remoteImages.card(cardId)?.version === version).then((got) => {
+            if (got) copyPicture(nativeImage.createFromBuffer(got.data), `Cannot copy this image format: ${card.path}`)
+            else toast(REMOTE_COPY.imageUnavailable)
+          })
+        }
+        break
+      case 'copy-path':
+        void clipboard.writeText(card.path)
+        break
+      case 'remove':
+        r.actions.removeImage(card.tabId, cardId)
+        break
+      case 'open':
+      case 'reveal':
+        break
+    }
+  }
+  /** the copies to remote tabs: one per tab at a time, the toasts name the device, and the sending is the device's */
+  const copies = new RemoteCopies({
+    toast,
+    sendFiles: (tabId, files) => (remote ? sendFiles(remote.actions, tabId, files) : Promise.reject(new CallError(REMOTE_COPY.unknownTab))),
+    nameOf: (tabId) => {
+      const device = remote?.viewer.has(tabId) ? remote.viewer.deviceOf(tabId) : null
+      if (!remote || device === null) return null
+      return remote.viewer.devices().find((d) => d.id === device)?.name ?? device
+    }
+  })
+  // a clipboard image pasted into a remote tab is copied to its device, and the path it was saved at there is answered
+  ipcMain.handle(IPC.remotePasteImage, (_e, tabId: unknown): Promise<string | null> => {
+    if (!isId(tabId)) return Promise.resolve(null)
+    return copies.copy(tabId, async () => {
+      const item = (await clipboard.read()).find((i) => i.types.includes('image/png'))
+      if (!item) return null
+      const png = Buffer.from(await (await item.getType('image/png')).arrayBuffer())
+      return [{ name: `clipboard-${Date.now()}.png`, size: png.length, read: async (offset, length) => png.subarray(offset, offset + length) }]
+    }).then((paths) => paths?.[0] ?? null)
+  })
+  // files dropped on a remote tab are copied to its device, and their paths there are answered; this device's own files only
+  ipcMain.handle(IPC.remoteDropFiles, (_e, tabId: unknown, paths: unknown): Promise<string[] | null> => {
+    if (!isId(tabId) || !remote?.viewer.has(tabId)) return Promise.resolve(null)
+    if (Array.isArray(paths) && paths.length > MAX_TRANSFER_FILES) return Promise.resolve(copies.refuse(tabId, REMOTE_COPY.copyTooManyFiles))
+    if (!isDropPaths(paths)) return Promise.resolve(null)
+    const files = paths
+    return copies.copy(tabId, () => Promise.all(files.map((p) => fileToSend(p))))
+  })
+  ipcMain.on(IPC.imagesMarkSeen, (_e, tabId: unknown) => {
+    if (!isId(tabId)) return
+    if (remote?.viewer.has(tabId)) remote.actions.markImagesSeen(tabId)
+    else images.markSeen(tabId)
+  })
   ipcMain.on(IPC.imagesAction, (_e, cardId: unknown, action: unknown) => {
     if (!isId(cardId) || !isImageAction(action)) return
     const card = images.get(cardId)
-    if (!card) return
+    if (!card) {
+      remoteImageAction(cardId, action)
+      return
+    }
     switch (action) {
       case 'open':
         void openCard(card, {
@@ -947,19 +1860,10 @@ function bootstrap(): void {
       case 'reveal':
         shell.showItemInFolder(card.path)
         break
-      case 'copy-image': {
+      case 'copy-image':
         if (card.kind !== 'image') break
-        const img = nativeImage.createFromPath(card.path)
-        if (img.isEmpty()) {
-          toast(`Cannot copy this image format: ${card.path}`)
-          break
-        }
-        const png = img.toPNG()
-        clipboard
-          .write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })])
-          .catch((e: unknown) => toast(`Cannot copy image: ${String(e)}`))
+        copyPicture(nativeImage.createFromPath(card.path), `Cannot copy this image format: ${card.path}`)
         break
-      }
       case 'copy-path':
         void clipboard.writeText(card.path)
         break
@@ -1045,9 +1949,9 @@ function bootstrap(): void {
     // the installed app takes its icon from ClaudeTerm.exe; dev and test runs use electron.exe's own
     icon: app.isPackaged ? undefined : join(__dirname, '..', '..', 'build', 'icon.png'),
     offScreen: isTest,
-    load: (w) => {
-      if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}/settings.html`)
-      else void w.loadFile(join(__dirname, '../renderer/settings.html'))
+    load: (w, section) => {
+      if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}/settings.html${section ? `#${section}` : ''}`)
+      else void w.loadFile(join(__dirname, '../renderer/settings.html'), section ? { hash: section } : undefined)
     }
   })
   ipcMain.on(IPC.settingsOpenWindow, () => settingsWindow.open())
@@ -1099,6 +2003,7 @@ function bootstrap(): void {
       const hideIgnored = settings.review.hideIgnored
       const renderMarkdown = settings.review.renderMarkdown
       const noRoom = settings.sidePanel.noRoom
+      const devicePortBefore = settings.devices.port
       const testsBefore = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
       const refreshBefore = statusRefreshInterval(settings.claude)
       settings = next.settings
@@ -1121,6 +2026,9 @@ function bootstrap(): void {
       const changed = hideIgnored !== settings.review.hideIgnored || testsBefore !== testsNow || renderMarkdown !== settings.review.renderMarkdown
       if (changed && active) review.refresh(active)
       if (noRoom !== settings.sidePanel.noRoom) refitPanel()
+      // the group listens on the port it was opened with: a new port opens it again, also while it is still opening
+      if ((group || opening) && devicePortBefore !== settings.devices.port) void restartDevices()
+      updateAwake()
     }
     for (const n of notices) if (!lastNotices.includes(n)) toast(n)
     lastNotices = notices
@@ -1166,14 +2074,17 @@ function bootstrap(): void {
   win.on('unmaximize', refitLater)
   win.on('enter-full-screen', refitLater)
   win.on('leave-full-screen', refitLater)
-  win.on('close', () => { sessions.flush(); notes.flush(); taskListStore.flush() })
+  win.on('close', () => { sessions.flush(); notes.flush(); taskListStore.flush(); bridge?.flush(); group?.flush() })
   win.once('ready-to-show', () => { if (win) showWindow(win, isTest) })
   win.on('focus', () => {
     win?.flashFrame(false)
     places.refreshAll()
     const id = tabs.activeTabId()
     if (id) review.trigger(id)
+    // the device that owns a tab in front here hears that this window has the focus: its tab clears its attention
+    remote?.viewer.focusChanged(true)
   })
+  win.on('blur', () => remote?.viewer.focusChanged(false))
   win.on('closed', () => { win = null })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
@@ -1193,15 +2104,23 @@ function bootstrap(): void {
   let ptysExited = false
   app.on('before-quit', (e) => {
     if (ptysExited) return
+    quitting = true
+    remote?.dispose()
+    remote = null
+    keepAwake.dispose()
+    earlyPeers.clear()
     updater.stop()
     sessions.flush()
     notes.flush()
     taskListStore.flush()
+    bridge?.flush()
+    group?.flush()
     for (const id of [...sources.keys()]) stopTabImages(id)
     for (const t of imageTimers.values()) clearTimeout(t)
     imageTimers.clear()
     tabs.disposeAll()
     review.dispose()
+    receiver.dispose()
     settingsWatcher.close()
     void pipe?.close()
     // Quitting while ConPTY sessions are still shutting down keeps the process alive for seconds after the

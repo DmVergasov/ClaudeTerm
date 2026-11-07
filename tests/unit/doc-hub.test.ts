@@ -114,3 +114,22 @@ describe('docUrl', () => {
     expect(docUrl('d1', FOLDER, p('отчёт', 'my report #1 %.html'))).toBe('ctdoc://d1/%D0%BE%D1%82%D1%87%D1%91%D1%82/my%20report%20%231%20%25.html')
   })
 })
+
+describe('DocHub.resetTab (fix 1, I4)', () => {
+  it('a reset clears the documents, takes the new folder as the root, and publishes an empty list', () => {
+    const { hub, updates } = make()
+    hub.show('t1', p('a.md'), 'A', 'markdown')
+    const id = updates.at(-1)!.docs[0].id
+    updates.length = 0
+    hub.resetTab('t1', join(FOLDER, 'other'))
+    expect(updates).toEqual([{ tabId: 't1', docs: [], reveal: null }])
+    expect(hub.get(id)).toBeUndefined()
+  })
+
+  it('a document shown after the reset is relative to the new folder', () => {
+    const { hub, updates } = make()
+    hub.resetTab('t1', join(FOLDER, 'other'))
+    hub.show('t1', join(FOLDER, 'other', 'b.md'), null, 'markdown')
+    expect(updates.at(-1)!.docs[0].relPath).toBe('b.md')
+  })
+})

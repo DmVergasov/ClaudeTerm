@@ -4,6 +4,7 @@ import { userInfo } from 'node:os'
 import { z } from 'zod'
 import { sendPipeMessage } from '../shared/pipe-client'
 import { defaultPipeName, isUuid } from '../shared/protocol'
+import { handleDeviceStatus, handleOpenDeviceSettings } from './device-tools'
 import { handleShowDiff } from './show-diff-tool'
 import { handleShowDocument } from './show-document-tool'
 import { handleGetTaskList, handleSetTaskList } from './task-list-tool'
@@ -131,6 +132,39 @@ server.registerTool(
     const tabId = process.env.CLAUDETERM_TAB_ID
     const r = await handleGetTaskList({
       tabId: isUuid(tabId) ? tabId : null,
+      pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+      send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
+    })
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'device_status',
+  {
+    title: 'Device sync status in ClaudeTerm',
+    description:
+      "Read-only status of ClaudeTerm's device sync: the devices of the group, whether each is connected, a port problem, whether the other devices can reach this one, and the tabs open on each device. Never shows pairing codes or keys.",
+    inputSchema: {}
+  },
+  async () => {
+    const r = await handleDeviceStatus({
+      pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+      send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
+    })
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'open_device_settings',
+  {
+    title: 'Open device settings in ClaudeTerm',
+    description: "Open ClaudeTerm's Settings window at the Devices section, where the user pairs, joins and removes devices themselves.",
+    inputSchema: {}
+  },
+  async () => {
+    const r = await handleOpenDeviceSettings({
       pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
       send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
     })

@@ -46,6 +46,8 @@ export interface TabManagerDeps {
   onTabClosed?(tabId: string): void
   /** the folder the tab works in changed: Claude Code moved, or a restart went back to the tab's cwd */
   onFolderChanged?(tabId: string, folder: string): void
+  /** the tab was moved to another folder by the user (changeFolder): its new info, before it starts there; a new conversation */
+  onTabFolderChanged?(tab: TabInfo): void
   onStateChanged?(): void
   /** whether a Claude conversation can be resumed, checked on disk; one without a message has no transcript yet */
   resumable?(tabId: string, sessionId: string): Promise<boolean>
@@ -153,6 +155,16 @@ export class TabManager {
     return this.activeId
   }
 
+  /** no tab of this device is in front any more (another device's tab is); nothing is announced */
+  deactivate(): void {
+    this.activeId = null
+  }
+
+  size(tabId: string): { cols: number; rows: number } | null {
+    const rec = this.tabs.get(tabId)
+    return rec ? { cols: rec.cols, rows: rec.rows } : null
+  }
+
   rename(tabId: string, title: string | null): void {
     const rec = this.tabs.get(tabId)
     if (!rec) return
@@ -199,7 +211,7 @@ export class TabManager {
   }
 
   /** a new Claude tab that continues a copy of the tab's conversation, in its folder and account */
-  async fork(tabId: string): Promise<TabInfo | null> {
+  async fork(tabId: string, opts: { activate?: boolean } = {}): Promise<TabInfo | null> {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude') return null
     const from = await this.resumeId(rec)
@@ -212,7 +224,7 @@ export class TabManager {
       account: info.account,
       title: forkTitle(info.customTitle),
       fork: { of: info.fork?.of ?? info.id, from }
-    })
+    }, { activate: opts.activate ?? true })
   }
 
   /**
@@ -256,6 +268,39 @@ export class TabManager {
   }
 
   /**
+   * Moves the tab to another folder and starts it there. A Claude tab starts a new conversation, since the one it had is
+   * not in the new folder. False for an unknown tab, or one that is restarting or whose conversation is being checked;
+   * a launch that cannot be resolved for the folder leaves the tab as it was.
+   */
+  async changeFolder(tabId: string, cwd: string): Promise<boolean> {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.restarting || rec.preparing) return false
+    const info = rec.info
+    let launch: ResolvedLaunch
+    try {
+      launch = info.kind === 'claude'
+        ? this.deps.resolveLaunch({ kind: 'claude', cwd, resumeSessionId: null, account: info.account })
+        : this.deps.resolveLaunch({ kind: 'shell', cwd, profile: info.profile, account: null })
+    } catch {
+      return false
+    }
+    info.cwd = cwd
+    if (info.kind === 'claude') {
+      info.claudeSessionId = null
+      // a fork that moves on starts a conversation of its own there, not a copy of its head's
+      if (info.fork) info.fork = { of: info.fork.of, from: null }
+    }
+    this.setLaunch(rec, launch)
+    // the move reports the tab (and the folder to its place); a tab that stays in its folder is reported here
+    if (info.folder !== cwd) this.moveTo(rec, cwd)
+    else this.deps.events.updated({ ...info })
+    this.deps.onTabFolderChanged?.({ ...info })
+    this.changed()
+    await this.restart(tabId, { live: true })
+    return true
+  }
+
+  /**
    * Restarts a Claude tab on another account, resuming its conversation. When the launch cannot use that account the
    * tab is left as it is and the answer is false: silently going on under another account would be worse.
    */
@@ -286,6 +331,8 @@ export class TabManager {
   resize(tabId: string, cols: number, rows: number): void {
     const rec = this.tabs.get(tabId)
     if (!rec || cols < 1 || rows < 1) return
+    // the PTY already has this size: a ConPTY resize can make Claude Code redraw its screen
+    if (cols === rec.cols && rows === rec.rows) return
     rec.cols = cols
     rec.rows = rows
     rec.pty?.resize(cols, rows)

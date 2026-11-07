@@ -1,9 +1,11 @@
 import type { AccountResult, AccountsView } from './accounts'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
+import type { DeviceResult, DevicesView } from './devices'
 import type { Note, NoteForm } from './note'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
+import type { DeviceAnswer, DeviceChoices, FolderResult, RemoteDeviceView } from './remote'
 import type { SettingKey, SettingValue } from './settings-keys'
-import type { AgentStatus, BackgroundTask, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabLayout, TabPlace, UpdateState } from './types'
+import type { AgentStatus, BackgroundTask, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabKind, TabLayout, TabPlace, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -23,6 +25,8 @@ export const IPC = {
   tabsMute: 'tabs:mute',
   tabsCanFork: 'tabs:can-fork',
   tabsFork: 'tabs:fork',
+  tabsChangeFolder: 'tabs:change-folder',
+  foldersList: 'folders:list',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
   promptAnswer: 'prompt:answer',
@@ -76,6 +80,21 @@ export const IPC = {
   accountsSetToken: 'accounts:set-token',
   accountsRemove: 'accounts:remove',
   accountsGetToken: 'accounts:get-token',
+  devicesView: 'devices:view',
+  devicesStartPairing: 'devices:start-pairing',
+  devicesCancelPairing: 'devices:cancel-pairing',
+  devicesJoin: 'devices:join',
+  devicesRemove: 'devices:remove',
+  devicesLeave: 'devices:leave',
+  devicesSetAddress: 'devices:set-address',
+  devicesRename: 'devices:rename',
+  devicesChoices: 'devices:choices',
+  remoteDevices: 'remote:devices',
+  remoteOpenTab: 'remote:open-tab',
+  remoteSessions: 'remote:sessions',
+  remotePasteImage: 'remote:paste-image',
+  remoteDropFiles: 'remote:drop-files',
+  screenSeed: 'screen:seed',
   evTabOpened: 'ev:tab-opened',
   evTabUpdated: 'ev:tab-updated',
   evTabClosed: 'ev:tab-closed',
@@ -89,6 +108,7 @@ export const IPC = {
   evToast: 'ev:toast',
   evSettings: 'ev:settings',
   evSettingsView: 'ev:settings-view',
+  evSettingsSection: 'ev:settings-section',
   evRestore: 'ev:restore',
   evStatus: 'ev:status',
   evPlan: 'ev:plan',
@@ -100,7 +120,16 @@ export const IPC = {
   evAccounts: 'ev:accounts',
   evNote: 'ev:note',
   evPromptQuery: 'ev:prompt-query',
-  evDocs: 'ev:docs'
+  evDocs: 'ev:docs',
+  evDevices: 'ev:devices',
+  evRemoteDevices: 'ev:remote-devices',
+  evDeviceChoices: 'ev:device-choices',
+  evRemoteSessions: 'ev:remote-sessions',
+  evTabSize: 'ev:tab-size',
+  evAttentionClear: 'ev:attention-clear',
+  evScreenSeed: 'ev:screen-seed',
+  /** the full set of starred session ids, sent when another device changes the set or sync restores it (not for a star set here): a listener replaces its set with it */
+  evStarred: 'ev:starred'
 } as const
 
 export interface AppInfo {
@@ -123,6 +152,8 @@ export interface ImagesUpdate {
   cards: ImageCard[]
   unseen: number
   notice: string | null
+  /** the tab runs on another device: its cards are served from that device, and some actions are that device's alone */
+  remote?: boolean
 }
 
 export interface StatusUpdate {
@@ -193,6 +224,10 @@ export interface CtApi {
   canForkTab(tabId: string): Promise<boolean>
   /** opens a new Claude tab that forks the tab's conversation, after its family */
   forkTab(tabId: string): void
+  /** the subfolders of the tab's folder (null: the tab's own folder), read on the tab's device, with the folders recently used there */
+  listFolders(tabId: string, path: string | null): Promise<FolderResult>
+  /** moves the tab to another folder on its device; a refusal is its message (a remote tab goes to its device) */
+  changeFolder(tabId: string, path: string): Promise<DeviceResult>
   writePty(tabId: string, data: string): void
   resizePty(tabId: string, cols: number, rows: number): void
   /** the answer to a query of onPromptQuery */
@@ -230,6 +265,8 @@ export interface CtApi {
   runRestore(): void
   /** the most recent Claude Code sessions, newest first, and every starred one */
   listSessions(): Promise<RecentSession[]>
+  /** the other devices' Recent sessions at once, from their last answers (without the sessions this device lists); asks every online device again in the background */
+  listRemoteSessions(): Promise<DeviceAnswer<RecentSession[]>[]>
   /** go to the tab in that conversation, or resume it in a new Claude tab */
   openSession(id: string): void
   /** star or unstar a session; answers when the change is saved */
@@ -287,6 +324,31 @@ export interface CtApi {
   removeAccount(id: string): Promise<AccountResult>
   /** opens a tab running `claude setup-token` in the main window */
   getToken(): void
+  /** the device sync section: `enabled: false` while this device has no group yet */
+  getDevicesView(): Promise<DevicesView>
+  /** opens the group if there is none yet (this device gets its identity), then shows a pairing code */
+  startDevicePairing(): Promise<DevicesView>
+  cancelDevicePairing(): void
+  /** opens the group if there is none yet, then joins the group of the device at `address` with the code it shows */
+  joinDevice(address: string, code: string): Promise<DeviceResult>
+  removeDevice(id: string): Promise<DeviceResult>
+  /** the group hears of the leaving only while another device is connected */
+  leaveDeviceGroup(): Promise<DeviceResult>
+  /** the address typed on this device for another device; null clears it */
+  setDeviceAddress(id: string, address: string | null): Promise<DeviceResult>
+  renameThisDevice(name: string): Promise<DeviceResult>
+  /** the tabs of the other devices of the group that this device shows, with each device's name and whether it is online */
+  getRemoteDevices(): Promise<RemoteDeviceView[]>
+  /** the new-tab menu's answers: this device's name in the group, and each online device's last answer to its profiles and accounts (at once; a refresh is started) */
+  listDeviceChoices(): Promise<{ self: string; devices: DeviceAnswer<DeviceChoices>[] }>
+  /** opens a tab on another device, in its default folder; answers its id, or null (the window is told why) */
+  openRemoteTab(device: string, kind: TabKind, profile: string | null, account: string | null): Promise<string | null>
+  /** the clipboard's image copied to the tab's device; answers the path it was saved at there, or null (no image, or a refusal, which is toasted) */
+  pasteImageToRemote(tabId: string): Promise<string | null>
+  /** the files of this device copied to the tab's device; answers their paths there, or null (a refusal is toasted) */
+  dropFilesToRemote(tabId: string, paths: string[]): Promise<string[] | null>
+  /** the answer to onScreenSeed: the tab's screen, serialized (empty when the tab is unknown), with the token of the request */
+  seedScreen(tabId: string, token: number, data: string): void
   onTabOpened(cb: (tab: TabInfo) => void): Unsubscribe
   onTabUpdated(cb: (tab: TabInfo) => void): Unsubscribe
   onTabClosed(cb: (tabId: string) => void): Unsubscribe
@@ -301,6 +363,8 @@ export interface CtApi {
   onToast(cb: (message: string) => void): Unsubscribe
   onSettings(cb: (settings: Settings) => void): Unsubscribe
   onSettingsView(cb: (view: SettingsView) => void): Unsubscribe
+  /** the Settings window is asked to show a section while it is open: 'devices' */
+  onSettingsSection(cb: (section: string) => void): Unsubscribe
   onRestore(cb: (info: RestoreInfo | null) => void): Unsubscribe
   onStatus(cb: (update: StatusUpdate) => void): Unsubscribe
   onPlan(cb: (update: PlanUpdate) => void): Unsubscribe
@@ -323,4 +387,20 @@ export interface CtApi {
   onPromptQuery(cb: (queryId: number, tabId: string) => void): Unsubscribe
   /** the documents of a Claude tab changed: the list, newest first, and the one show_document just showed */
   onDocs(cb: (update: DocsUpdate) => void): Unsubscribe
+  /** the device sync section changed: every window gets the new view */
+  onDevices(cb: (view: DevicesView) => void): Unsubscribe
+  /** the ids of the sessions whose star another device changed */
+  onStarred(cb: (ids: string[]) => void): Unsubscribe
+  /** the size of a remote tab's PTY changed, from its device (null: back to this window's own size) */
+  onTabSize(cb: (tabId: string, size: { cols: number; rows: number } | null) => void): Unsubscribe
+  /** the other devices' tabs changed: the new view of the devices and their online state */
+  onRemoteDevices(cb: (devices: RemoteDeviceView[]) => void): Unsubscribe
+  /** a device's answer to the new-tab menu's lists changed: this device's name and each online device's last answer */
+  onDeviceChoices(cb: (view: { self: string; devices: DeviceAnswer<DeviceChoices>[] }) => void): Unsubscribe
+  /** another device's Recent sessions changed: each online device's last answer, as listRemoteSessions gives it */
+  onRemoteSessions(cb: (list: DeviceAnswer<RecentSession[]>[]) => void): Unsubscribe
+  /** a tab's attention was cleared on another device: this window clears its mark */
+  onAttentionClear(cb: (tabId: string) => void): Unsubscribe
+  /** main asks for the screen of a tab, to copy it on another device; answer with seedScreen, with the same token */
+  onScreenSeed(cb: (tabId: string, token: number) => void): Unsubscribe
 }

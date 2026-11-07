@@ -18,6 +18,14 @@ export interface TabFork {
   from: string | null
 }
 
+/** A tab that runs on another device, as this device shows it: the device, the account and the title and unseen cards it has */
+export interface TabRemote {
+  device: string
+  accountName: string | null
+  images: number
+  title: string | null
+}
+
 export interface TabInfo {
   id: string
   kind: TabKind
@@ -37,6 +45,8 @@ export interface TabInfo {
   exited: boolean
   /** what Claude is doing in the tab; null while it is idle, and in a shell tab */
   activity: TabActivity
+  /** set on a tab that runs on another device; the tab is shown and controlled from here */
+  remote?: TabRemote
 }
 
 /** working: Claude is in a turn, or an agent it started still runs (Claude Code waits for it past the end of the turn) */
@@ -157,6 +167,8 @@ export interface Settings {
   /** where Images and Changes go when the window has no room to widen for them */
   sidePanel: { noRoom: NoRoomMode }
   tabs: { position: TabPosition }
+  /** device sync: the port the group listens on; the group is open once this device has an identity (device-identity.json) */
+  devices: { port: number; keepAwake: boolean }
   /** check GitHub for new versions in the background */
   autoUpdate: boolean
 }
@@ -263,4 +275,6 @@ export interface RecentSession extends SessionSummary {
   open: boolean
   /** the user starred it: the Recent sessions window keeps it on top */
   starred: boolean
+  /** the device the session is on, when another device of the group lists it */
+  device?: { id: string; name: string }
 }

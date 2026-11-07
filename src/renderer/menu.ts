@@ -21,7 +21,13 @@ function onOutside(e: MouseEvent): void {
   closeMenu()
 }
 
-export function showMenu(at: { x: number; y: number }, items: MenuItem[]): void {
+/** whether this menu is the one on screen: a menu that closed, or was replaced, is not */
+export function menuIsOpen(menu: HTMLElement): boolean {
+  return current === menu
+}
+
+/** shows the menu at a place, replacing the one on screen; returns it */
+export function showMenu(at: { x: number; y: number }, items: MenuItem[]): HTMLElement {
   closeMenu()
   const menu = document.createElement('div')
   menu.className = 'menu'
@@ -50,6 +56,7 @@ export function showMenu(at: { x: number; y: number }, items: MenuItem[]): void 
   menu.style.top = `${Math.max(0, Math.min(at.y, window.innerHeight - r.height - 4))}px`
   current = menu
   setTimeout(() => document.addEventListener('mousedown', onOutside, { once: true }), 0)
+  return menu
 }
 
 document.addEventListener('keydown', (e) => {

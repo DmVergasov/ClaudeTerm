@@ -191,3 +191,20 @@ describe('StatusHub', () => {
     expect(hub.get(TAB).agents[0].description).toBe(null)
   })
 })
+
+describe('StatusHub.resetTab (fix 1, I3)', () => {
+  it("a reset clears the state and sends it; the old session's late statusLine is refused, the new session's is taken", () => {
+    const { hub, changes } = makeHub()
+    hub.session(TAB, SID, 'startup')
+    hub.status(status())
+    hub.background(TAB, SID, [task('b1')])
+    changes.length = 0
+    hub.resetTab(TAB)
+    expect(changes).toEqual([TAB])
+    expect(hub.get(TAB)).toEqual({ tabId: TAB, main: null, agents: [], background: [] })
+    hub.status(status({ sessionId: SID, model: { id: 'old', displayName: 'Old' } }))
+    expect(hub.get(TAB).main).toBeNull()
+    hub.status(status({ sessionId: SID2, model: { id: 'new', displayName: 'New' } }))
+    expect(hub.get(TAB).main?.model.displayName).toBe('New')
+  })
+})

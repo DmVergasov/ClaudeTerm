@@ -1,8 +1,9 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
-import { groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
+import { REMOTE_COPY } from '../shared/remote'
+import { deviceGroups, groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
-import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarItem } from './tabbar'
+import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarGroup, type TabBarItem } from './tabbar'
 
 /** the drag's data type that names the group dragged by its header */
 const GROUP_DRAG = 'application/x-claudeterm-group'
@@ -10,10 +11,17 @@ const GROUP_DRAG = 'application/x-claudeterm-group'
 const BRANCH_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
   '<circle cx="5" cy="3.5" r="1.6"/><circle cx="5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5" r="1.6"/><path d="M5 5.1v5.8M11.5 6.6c0 3-6.5 2.2-6.5 4.3"/></svg>'
 
+/** a part of the panel: this device's own groups (device null), or another device's section with its groups */
+interface Section {
+  device: TabBarGroup | null
+  groups: PanelGroup[]
+}
+
 /**
- * The left tab panel: the header buttons, then the tabs as groups by project, each group with its tabs in rows of two
- * lines (the title, and the branch of the tab's folder). Groups fold on a click on their header; the panel's right edge
- * is dragged to change its width. Its items and callbacks are the tab bar's: main shows one or the other.
+ * The left tab panel: the header buttons, then this device's tabs as groups by project, each group with its tabs in rows
+ * of two lines (the title, and the branch of the tab's folder). Then one section per other device that has tabs: its
+ * header, and its tabs grouped the same way. Groups fold on a click on their header, a device on a click on its header;
+ * the panel's right edge is dragged to change its width. Its items and callbacks are the tab bar's: main shows one or the other.
  */
 export class TabPanel {
   private readonly header: TabHeader
@@ -21,6 +29,8 @@ export class TabPanel {
   private readonly list = document.createElement('div')
   private readonly handle = document.createElement('div')
   private items: TabBarItem[] = []
+  /** the other devices, as the tab bar's chips show them: their sections come in this order */
+  private devices: TabBarGroup[] = []
   private activeId: string | null = null
   private editing: string | null = null
   private readonly folded: Set<string>
@@ -56,22 +66,31 @@ export class TabPanel {
     if (visible) this.revealActive()
   }
 
-  /** the tab ids in the order the panel shows them: group by group, folded groups included */
+  /** this device's tab ids in the order the panel shows them: group by group, folded groups included; no other device's */
   get visualOrder(): string[] {
-    return panelOrder(panelGroups(this.items))
+    return panelOrder(this.sections()[0].groups)
   }
 
-  render(items: TabBarItem[], activeId: string | null): void {
+  /** the tab ids of the device sections not folded, in the order the panel shows them: the keyboard walks them after this device's */
+  deviceOrder(folded: ReadonlySet<string>): string[] {
+    return this.sections().flatMap((s) => (s.device === null || folded.has(s.device.id) ? [] : panelOrder(s.groups)))
+  }
+
+  render(items: TabBarItem[], activeId: string | null, groups: TabBarGroup[] = []): void {
     this.items = items
     this.activeId = activeId
+    this.devices = groups
+    this.draw()
+  }
+
+  /** the panel as the items and the devices say now; the scroll, the folds and an edit in progress are kept */
+  private draw(): void {
     if (this.editing) return
-    const byId = new Map(items.map((item) => [item.id, item]))
-    const groups = panelGroups(items)
-    const labels = groupLabels(groups)
-    this.list.replaceChildren(...groups.map((group) => this.renderGroup(group, labels.get(group.key) ?? '', byId)))
+    const byId = new Map(this.items.map((item) => [item.id, item]))
+    this.list.replaceChildren(...this.sections().flatMap((section) => this.renderSection(section, byId)))
     // a tab that became the active one is brought into view once its row is in the list (a folded group has none yet)
-    if (activeId !== this.revealed && this.list.querySelector('.tp-tab.active')) {
-      this.revealed = activeId
+    if (this.activeId !== this.revealed && this.list.querySelector('.tp-tab.active')) {
+      this.revealed = this.activeId
       this.revealActive()
     }
   }
@@ -99,13 +118,17 @@ export class TabPanel {
     this.header.setNote(available, visible)
   }
 
-  /** a tab that becomes the active one shows: its group unfolds, and that is kept */
+  /** a tab that becomes the active one shows: its group unfolds, and that is kept; a folded device stays folded */
   unfoldFor(tabId: string): void {
-    const group = panelGroups(this.items).find((g) => g.rows.some((r) => r.id === tabId))
-    if (!group || !this.folded.has(group.key)) return
-    this.folded.delete(group.key)
-    this.saveFolded()
-    this.render(this.items, this.activeId)
+    for (const section of this.sections()) {
+      const group = section.groups.find((g) => g.rows.some((r) => r.id === tabId))
+      if (!group) continue
+      if (!this.folded.has(group.key) || section.device?.folded) return
+      this.folded.delete(group.key)
+      this.saveFolded()
+      this.draw()
+      return
+    }
   }
 
   /** the folded groups are saved, at most MAX_FOLDED_GROUPS of them: the ones folded longest ago give way */
@@ -115,7 +138,70 @@ export class TabPanel {
     this.saveLayout({ folded: [...this.folded] })
   }
 
-  private renderGroup(group: PanelGroup, label: string, byId: Map<string, TabBarItem>): HTMLElement {
+  /** the panel's parts in the order it shows them: this device's groups, then each other device's section that has tabs */
+  private sections(): Section[] {
+    const own = this.items.filter((item) => item.group === null)
+    return [
+      { device: null, groups: panelGroups(own) },
+      ...this.devices.flatMap((device) => {
+        const tabs = this.items.filter((item) => item.group === device.id)
+        return tabs.length === 0 ? [] : [{ device, groups: deviceGroups(device.id, tabs) }]
+      })
+    ]
+  }
+
+  private renderSection(section: Section, byId: Map<string, TabBarItem>): HTMLElement[] {
+    const device = section.device
+    if (device === null) return this.renderGroups(section, byId)
+    const el = document.createElement('div')
+    el.className = `tp-section${device.online ? '' : ' offline'}${device.folded ? ' folded' : ''}`
+    el.style.setProperty('--dc', device.color)
+    el.append(this.renderDeviceHead(device))
+    // a folded device shows its header only: its count and its attention dot, as its chip does
+    if (!device.folded) el.append(...this.renderGroups(section, byId))
+    return [el]
+  }
+
+  /** another device's header: its colour bar, its name (with the offline note), and folded, its count and attention dot */
+  private renderDeviceHead(device: TabBarGroup): HTMLElement {
+    const head = document.createElement('div')
+    head.className = 'tp-device'
+    head.dataset.deviceId = device.id
+    head.addEventListener('click', () => this.cb.toggleGroup(device.id))
+    head.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+      this.cb.groupMenu(device.id, { x: e.clientX, y: e.clientY })
+    })
+    const chevron = document.createElement('span')
+    chevron.className = 'tp-chevron'
+    chevron.textContent = '▼'
+    const bar = document.createElement('span')
+    bar.className = 'tp-device-bar'
+    const name = document.createElement('span')
+    name.className = 'tp-device-name'
+    name.textContent = device.online ? device.name : `${device.name} ${REMOTE_COPY.offline}`
+    head.append(chevron, bar, name)
+    if (device.folded) {
+      const count = document.createElement('span')
+      count.className = 'tp-device-count'
+      count.textContent = String(device.count)
+      head.append(count)
+      if (device.working) head.append(spinner('tp-group-spin'))
+      if (device.attention) {
+        const dot = document.createElement('span')
+        dot.className = 'tp-group-dot pulse'
+        head.append(dot)
+      }
+    }
+    return head
+  }
+
+  private renderGroups(section: Section, byId: Map<string, TabBarItem>): HTMLElement[] {
+    const labels = groupLabels(section.groups)
+    return section.groups.map((group) => this.renderGroup(section, group, labels.get(group.key) ?? '', byId))
+  }
+
+  private renderGroup(section: Section, group: PanelGroup, label: string, byId: Map<string, TabBarItem>): HTMLElement {
     const folded = this.folded.has(group.key)
     const el = document.createElement('div')
     el.className = `tp-group${folded ? ' folded' : ''}`
@@ -129,7 +215,7 @@ export class TabPanel {
     head.addEventListener('dragover', (e) => { if (dragCarries(e, GROUP_DRAG)) e.preventDefault() })
     head.addEventListener('drop', (e) => {
       e.preventDefault()
-      this.dropGroup(group.key, e.dataTransfer?.getData(GROUP_DRAG) ?? '')
+      this.dropGroup(section, group.key, e.dataTransfer?.getData(GROUP_DRAG) ?? '')
     })
     const chevron = document.createElement('span')
     chevron.className = 'tp-chevron'
@@ -158,16 +244,17 @@ export class TabPanel {
     } else {
       for (const row of group.rows) {
         const item = byId.get(row.id)
-        if (item) el.append(this.renderRow(item, row, item.id === this.activeId))
+        if (item) el.append(this.renderRow(section, item, row, item.id === this.activeId))
       }
     }
     return el
   }
 
-  private renderRow(item: TabBarItem, row: PanelRow, active: boolean): HTMLElement {
+  private renderRow(section: Section, item: TabBarItem, row: PanelRow, active: boolean): HTMLElement {
     const place = item.place
     const el = document.createElement('div')
-    el.className = `tp-tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${row.fork ? ' fork' : ''}`
+    const remote = item.group !== null
+    el.className = `tp-tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${row.fork ? ' fork' : ''}${remote ? ' remote' : ''}${item.dim ? ' dim' : ''}`
     el.dataset.tabId = item.id
     if (item.attention) el.style.animationDelay = pulseDelay()
     el.draggable = true
@@ -175,9 +262,9 @@ export class TabPanel {
     el.addEventListener('dragover', (e) => { if (dragCarries(e, TAB_DRAG)) e.preventDefault() })
     el.addEventListener('drop', (e) => {
       e.preventDefault()
-      this.dropTab(item.id, e.dataTransfer?.getData(TAB_DRAG) ?? '')
+      this.dropTab(section, item.id, e.dataTransfer?.getData(TAB_DRAG) ?? '')
     })
-    const tooltip = [item.title, item.folder]
+    const tooltip = remote && item.deviceName !== null ? [REMOTE_COPY.tabTooltip(item.title, item.deviceName, item.folder)] : [item.title, item.folder]
     if (place) tooltip.push(`branch: ${place.branch}`)
     if (place?.worktree) tooltip.push(`worktree: ${place.worktree.path}`)
     el.title = tooltip.join('\n')
@@ -216,32 +303,32 @@ export class TabPanel {
     return el
   }
 
-  /** a row dropped on another row: the tab order the drop answers, when it is allowed, goes to main; `from` is the drag's own tab id */
-  private dropTab(targetId: string, from: string): void {
+  /** a row dropped on another row of its section: the tab order the drop answers, when it is allowed, goes to main for that device; `from` is the drag's own tab id */
+  private dropTab(section: Section, targetId: string, from: string): void {
     if (!from) return
-    const order = moveTab(panelGroups(this.items), from, targetId)
-    if (order) this.cb.reorder(order)
+    const order = moveTab(section.groups, from, targetId)
+    if (order) this.cb.reorder(order, section.device?.id ?? null)
   }
 
-  /** a group header dropped on another header: the groups move, the tab order goes to main */
-  private dropGroup(targetKey: string, from: string): void {
+  /** a group header dropped on another header of its section: the groups move, the tab order goes to main for that device */
+  private dropGroup(section: Section, targetKey: string, from: string): void {
     if (!from) return
-    const order = moveGroup(panelGroups(this.items), from, targetKey)
-    if (order) this.cb.reorder(order)
+    const order = moveGroup(section.groups, from, targetKey)
+    if (order) this.cb.reorder(order, section.device?.id ?? null)
   }
 
   private toggleFold(key: string): void {
     if (this.folded.has(key)) this.folded.delete(key)
     else this.folded.add(key)
     this.saveFolded()
-    this.render(this.items, this.activeId)
+    this.draw()
   }
 
   private startRename(label: HTMLElement, item: TabBarItem): void {
     this.editing = item.id
     beginRename(label, item.title, (title) => this.cb.rename(item.id, title), () => {
       this.editing = null
-      this.render(this.items, this.activeId)
+      this.draw()
     })
   }
 

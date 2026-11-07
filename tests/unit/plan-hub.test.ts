@@ -285,3 +285,24 @@ describe('PlanHub', () => {
     expect(hub.get('t').plan).toMatchObject({ title: 'P', done: 1, total: 2 })
   })
 })
+
+describe('PlanHub.resetTab (fix 1, I3)', () => {
+  it("a reset sends the null plan at once, and the old folder's plan does not come back", async () => {
+    const { hub, changes, seen } = setup()
+    await hub.workspace('t', WS)
+    expect(hub.get('t').plan).not.toBeNull()
+    changes.length = 0
+    hub.resetTab('t')
+    expect(hub.get('t')).toEqual({ tabId: 't', plan: null })
+    expect(changes).toEqual(['t'])
+    expect(seen.at(-1)).toBeUndefined()
+  })
+
+  it('a plan reported after the reset is taken', async () => {
+    const { hub } = setup({ ...run(), ...run2() })
+    await hub.workspace('t', WS)
+    hub.resetTab('t')
+    await hub.workspace('t', WS2)
+    expect(hub.get('t').plan?.title).toBe('CSV Import')
+  })
+})

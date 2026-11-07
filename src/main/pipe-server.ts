@@ -1,5 +1,5 @@
 import { createServer, type Socket } from 'node:net'
-import { type AttentionMessage, type CwdMessage, type EditBeforeMessage, encodeMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TaskListGetMessage, type TaskListMessage, type TurnMessage } from '../shared/protocol'
+import { type AttentionMessage, type CwdMessage, type DeviceStatusMessage, type EditBeforeMessage, encodeMessage, type OpenDeviceSettingsMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TaskListGetMessage, type TaskListMessage, type TurnMessage } from '../shared/protocol'
 
 export interface PipeHandlers {
   showImage(msg: ShowImageMessage): Promise<PipeResponse>
@@ -15,6 +15,8 @@ export interface PipeHandlers {
   showDocument(msg: ShowDocumentMessage): Promise<PipeResponse>
   taskList(msg: TaskListMessage): PipeResponse
   taskListGet(msg: TaskListGetMessage): PipeResponse
+  deviceStatus(msg: DeviceStatusMessage): PipeResponse
+  openDeviceSettings(msg: OpenDeviceSettingsMessage): PipeResponse
 }
 
 export interface PipeServerHandle {
@@ -42,6 +44,8 @@ async function handleLine(line: string, h: PipeHandlers): Promise<PipeResponse> 
       case 'show_document': return await h.showDocument(m)
       case 'task_list': return h.taskList(m)
       case 'task_list_get': return h.taskListGet(m)
+      case 'device_status': return h.deviceStatus(m)
+      case 'open_device_settings': return h.openDeviceSettings(m)
     }
   } catch (e) {
     return { ok: false, error: (e as Error).message }

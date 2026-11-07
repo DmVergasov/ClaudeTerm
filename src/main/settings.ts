@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, win32 } from 'node:path'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS, type SettingKey, type SettingValue } from '../shared/settings-keys'
+import { DEFAULT_DEVICE_PORT } from '../shared/devices'
 import { DEFAULT_TEST_PATTERNS, MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
 import type { NoRoomMode, NotificationSettings, ProfileDef, Settings, TabPosition } from '../shared/types'
 
@@ -32,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200, renderMarkdown: true },
   sidePanel: { noRoom: 'overlay' },
   tabs: { position: 'top' },
+  devices: { port: DEFAULT_DEVICE_PORT, keepAwake: true },
   autoUpdate: true
 }
 
@@ -91,6 +93,7 @@ export function parseSettings(text: string | null): ParsedSettings {
   const ip = obj(raw.imagePanel)
   const rv = obj(raw.review)
   const sp = obj(raw.sidePanel)
+  const dv = obj(raw.devices)
 
   const profiles: ProfileDef[] = take('profiles', raw.profiles, isProfiles, []).map((p) => ({ name: p.name, command: p.command, args: p.args ?? [] }))
 
@@ -159,6 +162,10 @@ export function parseSettings(text: string | null): ParsedSettings {
     },
     sidePanel: { noRoom: take('sidePanel.noRoom', sp.noRoom, isNoRoom, d.sidePanel.noRoom) },
     tabs: { position: take('tabs.position', obj(raw.tabs).position, isTabPosition, d.tabs.position) },
+    devices: {
+      port: take('devices.port', dv.port, wholeIn(1024, 65535), d.devices.port),
+      keepAwake: take('devices.keepAwake', dv.keepAwake, isBool, d.devices.keepAwake)
+    },
     autoUpdate: take('autoUpdate', raw.autoUpdate, isBool, d.autoUpdate)
   }
   return { settings, errors }

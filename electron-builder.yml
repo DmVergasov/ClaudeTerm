@@ -9,6 +9,7 @@ files:
   - package.json
 asarUnpack:
   - node_modules/node-pty/**
+  - out/main/**/screen-worker*.js
 extraResources:
   - from: resources/mcp
     to: mcp

@@ -118,6 +118,18 @@ export class StatusHub {
     this.deps.onChange(tabId)
   }
 
+  /**
+   * The tab starts again in another folder: its current session is retired, so a late statusLine or hook of the old
+   * process is refused, and the state it showed goes, which the window hears of.
+   */
+  resetTab(tabId: string): void {
+    const t = this.tabs.get(tabId)
+    if (!t) return
+    if (t.sessionId !== null) t.retired.add(t.sessionId)
+    this.clear(t, null)
+    this.deps.onChange(tabId)
+  }
+
   removeTab(tabId: string): void {
     this.tabs.delete(tabId)
   }

@@ -61,7 +61,7 @@ async function listen(): Promise<{ pipe: string; got: PipeMessage[] }> {
   server = await startPipeServer(pipe, {
     showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take, attention: take,
     turn: take, cwd: take, editBefore: take, showDiff: async (m) => take(m),
-    showDocument: async () => ({ ok: true }), taskList: take, taskListGet: take
+    showDocument: async () => ({ ok: true }), taskList: take, taskListGet: take, deviceStatus: take, openDeviceSettings: take
   })
   return { pipe, got }
 }

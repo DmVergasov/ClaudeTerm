@@ -1,18 +1,43 @@
 import { isAbsolute } from 'node:path'
 import { DOC_ACTIONS, type DocAction } from '../shared/docs'
 import type { ImageAction } from '../shared/ipc'
+import { MAX_ADDRESS_LENGTH } from '../shared/devices'
 import { MAX_NOTE_LENGTH, NOTE_FORMS, type NoteForm } from '../shared/note'
 import { isUuid } from '../shared/protocol'
-import { REVIEW_SCOPES, type ReviewScope } from '../shared/review'
+import { MAX_HASH, REVIEW_SCOPES, type ReviewScope } from '../shared/review'
 import { MAX_FOLDED_GROUPS, type OpenTabRequest, type TabLayout } from '../shared/types'
+import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../shared/remote'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
+/** a pairing code as typed, with its separators and spaces around it */
+const MAX_PAIR_CODE_INPUT = 64
+/** a device name as typed: the group checks its length in characters and its control characters */
+const MAX_DEVICE_NAME_INPUT = 256
+/** a profile's name as the group checks it */
+const MAX_PROFILE_NAME = 256
 
 export const isId = (v: unknown): v is string => typeof v === 'string'
 
 /** a Claude Code session id */
 export const isSessionId = isUuid
+
+/** a device's id in the group */
+export const isDeviceId = isUuid
+
+/** the arguments of a new tab on another device: its device, a Claude or shell tab, a profile name (null for Claude) and an account ref */
+export const isOpenRemoteTabArgs = (device: unknown, kind: unknown, profile: unknown, account: unknown): boolean =>
+  isDeviceId(device) && (kind === 'claude' || kind === 'shell') && (profile === null || (typeof profile === 'string' && profile.length >= 1 && profile.length <= MAX_PROFILE_NAME)) && isAccountRef(account)
+
+/** an address typed for a device or to join one: a name or IP address, optionally with :port */
+export const isAddressInput = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_ADDRESS_LENGTH
+
+/** an address typed for a device, or null to clear it */
+export const isOptionalAddress = (v: unknown): v is string | null => v === null || isAddressInput(v)
+
+export const isPairCodeInput = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_PAIR_CODE_INPUT
+
+export const isDeviceNameInput = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_DEVICE_NAME_INPUT
 
 export const isFlag = (v: unknown): v is boolean => typeof v === 'boolean'
 
@@ -44,6 +69,16 @@ export const isTabCount = (v: unknown): v is number => typeof v === 'number' && 
 export const isGeneration = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
 
 export const isAbsPath = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && isAbsolute(v)
+
+/** the files of this device dropped on a remote tab: 1 to MAX_TRANSFER_FILES absolute paths of at most MAX_PATH_TEXT, each checked as this device's own */
+export const isDropPaths = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.length >= 1 && v.length <= MAX_TRANSFER_FILES && v.every((p) => isAbsPath(p) && p.length <= MAX_PATH_TEXT)
+
+/** a path of any system, as text: bounded, and nothing else checked; the device that owns the path checks it with its own rules */
+export const isPathText = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_PATH_TEXT
+
+/** a folder as the user typed it for Change folder: bounded text, and nothing else checked; `~`, relative paths and the other system's paths are read on the tab's device */
+export const isFolderInput = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_PATH_TEXT
 
 export const isLineNo = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10_000_000
 
@@ -88,7 +123,13 @@ export const openTabRequestFields = (req: OpenTabRequest): OpenTabRequest => ({
   fork: null
 })
 
-export const isHash = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64
+export const isHash = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_HASH
+
+/** a screen copy handed back by the window: a string of at most MAX_SNAPSHOT_BYTES characters */
+export const isSeedText = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_SNAPSHOT_BYTES
+
+/** the token of a seed request: a safe integer of at least 1 */
+export const isSeedToken = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 1
 
 export function isPtySize(cols: unknown, rows: unknown): boolean {
   return (

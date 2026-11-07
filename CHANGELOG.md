@@ -2,6 +2,21 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.15.0
+
+### New
+
+- **Devices: your other computers in one window.** Pair ClaudeTerm on two computers once. In Settings → **Devices** on the first one, click **Add a device**: it shows a code of sixteen characters and the addresses of that computer, valid for five minutes. On the other computer, type one of the addresses and the code into **Join a device**. The devices connect to each other directly, over a network you set up yourself: a home network, Tailscale or a VPN. Five wrong codes cancel the code that is shown. The first time ClaudeTerm accepts connections, Windows asks to allow it through the firewall, which needs an administrator; on macOS the system may ask to allow incoming connections. A device that the others cannot reach still connects to them, and Settings → **Devices** says **The other devices cannot connect to this one; to pair, show the code on the other device**.
+- **Stars and notes are the same on every device.** Star a session, or write a note on a Claude tab, on one computer, and it shows the same on every computer in the group.
+- **Another device's tabs under its chip.** Each device of the group has a chip with its name in the tab bar, before its own tabs. A dimmed chip means that device is offline. Click a chip to fold or unfold its tabs: a folded chip shows the number of tabs and a dot when one of them needs you. Right-click a chip for **New Claude Code tab**, a new tab for each shell profile of that device, and **Fold**. With the tabs on the left, a device's tabs stand under its name, grouped by project with their branch.
+- **Work in another device's tab as in your own.** Click one of its tabs to see its screen and type into it. The terminal takes the size of the device you used last. Right-click the tab for **Fork session**, **Star session** and **Change folder…**; Change folder opens that device's folders, with its recent ones under **Recent on** and the device's name, and **Open here** makes the folder the tab's folder. This device's own tabs have **Change folder…** too.
+- **Media, Changes, status bar and attention for another device's tabs.** A Claude tab on another device shows its status bar as its own tabs do: the model and effort, the context, the 5-hour and weekly limits, the agents running and the background tasks, the plan's progress and the changes counter. It also shows its Media panel and its Changes panel. Its files are on that device, so **Open in editor**, **Show in Explorer** and **Open in viewer** are left out for it. A tab there that needs you gets the same tab mark, sound and system notification as one of your own tabs.
+- **Pasting and dropping files copies them to the tab's device.** Paste an image, or drop files, into a tab of another device, and they are copied to that device; the path that goes into the prompt is the one they are saved at there. A copy is limited to 50 MB and 100 files at a time, and a larger one is refused with a message.
+- **Recent sessions of every device.** **Recent sessions** (`Ctrl+Shift+H`, `⌘⇧H` on macOS) lists the conversations of every connected device in a section of its own, headed with the device's name. Pick one to open it on its own device.
+- **Keep a computer awake while another device uses it.** Settings → **Devices** → **Keep this computer awake while another device uses it** is on by default. The computer stays awake for 30 minutes after another device typed into one of its tabs, and for as long as a Claude tab another device is showing is working, while the devices are connected.
+- **Claude can see your devices.** The bundled `device_status` tool tells Claude which devices are connected and what tabs they have open, read-only and with no codes or keys. The `open_device_settings` tool opens Settings → **Devices**, where you pair devices and remove them yourself.
+- **Settings → Devices shows the group.** It lists this device's name and addresses, each device with its state, and for each connected device its number of open tabs (for example **3 tabs open**), and an address field for each device. **Remove** and **Leave the group** ask first.
+
 ## 0.14.0
 
 ### New

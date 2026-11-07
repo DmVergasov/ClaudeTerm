@@ -22,6 +22,9 @@ function setup(over: Partial<TabManagerDeps> = {}) {
   const ptys: FakePty[] = []
   const log: string[] = []
   const data: Array<[string, string]> = []
+  const launches: LaunchRequest[] = []
+  const folderChanged: Array<[string, string]> = []
+  const tabFolderChanged: Array<[string, string]> = []
   const events: TabEvents = {
     opened: (t) => log.push(`opened:${t.id}`),
     updated: (t) => log.push(`updated:${t.id}:${t.exited}`),
@@ -41,16 +44,21 @@ function setup(over: Partial<TabManagerDeps> = {}) {
       ptys.push(p)
       return p
     },
-    resolveLaunch: (req) => ({ profileName: req.profile ?? 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }),
+    resolveLaunch: (req) => {
+      launches.push(req)
+      return { profileName: req.profile ?? 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }
+    },
     baseEnv: () => ({ PATH: 'C:\\Windows' }),
     pipeName: '\\\\.\\pipe\\test',
     events,
     onStateChanged,
     onTabStarted,
     onTabClosed,
+    onFolderChanged: (tabId, folder) => folderChanged.push([tabId, folder]),
+    onTabFolderChanged: (tab) => tabFolderChanged.push([tab.id, tab.cwd]),
     ...over
   }
-  return { tm: new TabManager(deps), ptys, log, data, onStateChanged, onTabStarted, onTabClosed }
+  return { tm: new TabManager(deps), ptys, log, data, launches, folderChanged, tabFolderChanged, onStateChanged, onTabStarted, onTabClosed }
 }
 
 afterEach(() => { vi.useRealTimers() })
@@ -219,6 +227,22 @@ describe('TabManager', () => {
     tm.setFolder('unknown', 'D:\\other')
     expect(log).toHaveLength(1)
     expect(onFolderChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('setFolder reports to onFolderChanged only; changeFolder reports to both, and a restart back to cwd to onFolderChanged only', async () => {
+    const { tm, folderChanged, tabFolderChanged } = setup({ restartWaitMs: 0 })
+    const t = tm.open({ kind: 'claude', cwd: '/a', resumeSessionId: SID_A })
+    tm.setFolder(t.id, '/a/sub')
+    expect(folderChanged).toEqual([[t.id, '/a/sub']])
+    expect(tabFolderChanged).toEqual([])
+    expect(await tm.changeFolder(t.id, '/b')).toBe(true)
+    expect(folderChanged).toEqual([[t.id, '/a/sub'], [t.id, '/b']])
+    expect(tabFolderChanged).toEqual([[t.id, '/b']])
+    // Claude Code moves back to the tab's folder: the tab's own reset does not run
+    tm.setFolder(t.id, '/b/sub')
+    await tm.restart(t.id, { live: true })
+    expect(folderChanged.at(-1)).toEqual([t.id, '/b'])
+    expect(tabFolderChanged).toEqual([[t.id, '/b']])
   })
 
   it('a restart starts Claude in the folder the tab was opened in, and the tab shows that folder again', async () => {
@@ -452,6 +476,86 @@ describe('TabManager', () => {
     await done
     expect(ptys).toHaveLength(1)
   })
+
+  it('changeFolder restarts the tab in the new folder; a Claude tab starts a new conversation', async () => {
+    const { tm, ptys, launches, folderChanged, log } = setup({ restartWaitMs: 0 })
+    const t = tm.open({ kind: 'claude', cwd: '/a', resumeSessionId: SID_A })
+    expect(await tm.changeFolder(t.id, '/b')).toBe(true)
+    expect(ptys.at(-1)!.opts.cwd).toBe('/b')
+    expect(launches.at(-1)).toMatchObject({ kind: 'claude', cwd: '/b', resumeSessionId: null })
+    expect(tm.get(t.id)).toMatchObject({ cwd: '/b', claudeSessionId: null })
+    expect(folderChanged).toEqual([[t.id, '/b']])
+    expect(log).toContain(`reset:${t.id}`)
+  })
+
+  it('changeFolder of a shell tab keeps its profile; of an unknown tab answers false, and so does a tab that is restarting', async () => {
+    const { tm, ptys, launches } = setup({ restartWaitMs: 0 })
+    const t = tm.open({ kind: 'shell', cwd: '/a', profile: 'Bash' })
+    expect(await tm.changeFolder('nope', '/b')).toBe(false)
+    const done = tm.restart(t.id, { live: true })
+    expect(await tm.changeFolder(t.id, '/c')).toBe(false)
+    await done
+    expect(await tm.changeFolder(t.id, '/b')).toBe(true)
+    expect(launches.at(-1)).toMatchObject({ kind: 'shell', cwd: '/b', profile: 'Bash' })
+    expect(tm.get(t.id)).toMatchObject({ cwd: '/b', profile: 'Bash' })
+    expect(ptys.at(-1)!.opts.cwd).toBe('/b')
+  })
+
+  it('changeFolder during a pending check of the conversation answers false and changes nothing (R8)', async () => {
+    let release = (): void => {}
+    const gate = new Promise<void>((r) => { release = r })
+    const { tm, launches } = setup({ restartWaitMs: 0, resumable: async () => { await gate; return true } })
+    const t = tm.open({ kind: 'claude', cwd: '/a', resumeSessionId: SID_A })
+    const pending = tm.restart(t.id, { live: true })
+    const launchesBefore = launches.length
+    expect(await tm.changeFolder(t.id, '/b')).toBe(false)
+    expect(tm.get(t.id)).toMatchObject({ cwd: '/a', claudeSessionId: SID_A })
+    expect(launches).toHaveLength(launchesBefore)
+    release()
+    await pending
+  })
+
+  it('a fork that moves to another folder starts a conversation of its own there: its from is null after the change (R8)', async () => {
+    const { tm, launches } = setup({ restartWaitMs: 0 })
+    const head = tm.open({ kind: 'claude', cwd: '/a', resumeSessionId: SID_A })
+    const fork = tm.open({ kind: 'claude', cwd: '/a', fork: { of: head.id, from: SID_B } })
+    expect(await tm.changeFolder(fork.id, '/b')).toBe(true)
+    expect(tm.get(fork.id)?.fork).toEqual({ of: head.id, from: null })
+    expect(launches.at(-1)).toMatchObject({ cwd: '/b', fork: { of: head.id, from: null } })
+  })
+
+  it('changeFolder reports the tab once to the window when the folder changes (R9)', async () => {
+    const { tm, log } = setup({ restartWaitMs: 0 })
+    const t = tm.open({ kind: 'claude', cwd: '/a', resumeSessionId: SID_A })
+    log.length = 0
+    expect(await tm.changeFolder(t.id, '/b')).toBe(true)
+    expect(log.filter((l) => l === `updated:${t.id}:false`)).toHaveLength(1)
+  })
+
+  it('size and deactivate: deactivate tells nobody and leaves no tab in front', () => {
+    const { tm, log } = setup()
+    const t = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    expect(tm.size(t.id)).toEqual({ cols: 120, rows: 30 })
+    tm.resize(t.id, 90, 20)
+    expect(tm.size(t.id)).toEqual({ cols: 90, rows: 20 })
+    expect(tm.size('nope')).toBeNull()
+    tm.setWorking(t.id, true)
+    log.length = 0
+    tm.deactivate()
+    expect(log).toEqual([])
+    expect(tm.activeTabId()).toBeNull()
+  })
+
+  it('a resize to the size the PTY already has does not reach the PTY', () => {
+    const { tm, ptys } = setup()
+    const t = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    expect(ptys.at(-1)!.opts.cols).toBe(120)
+    tm.resize(t.id, 100, 30)
+    tm.resize(t.id, 100, 30)
+    expect(ptys.at(-1)!.sizes).toEqual([[100, 30]])
+    tm.resize(t.id, 101, 30)
+    expect(ptys.at(-1)!.sizes).toEqual([[100, 30], [101, 30]])
+  })
 })
 
 describe('TabManager accounts', () => {
@@ -616,6 +720,18 @@ describe('TabManager forks', () => {
     expect(check).not.toHaveBeenCalled()
     expect(await tm.canFork(saved.id)).toBe(true)
     expect(check).toHaveBeenCalledWith(saved.id, SID_A)
+  })
+
+  it('a fork asked with activate: false opens after its family and leaves the tab in front where it is', async () => {
+    const { tm, log } = forkSetup()
+    const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    const B = tm.open({ kind: 'shell', cwd: 'D:\\y' })
+    tm.activate(B.id)
+    log.length = 0
+    const A1 = (await tm.fork(A.id, { activate: false }))!
+    expect(tm.list().map((t) => t.id)).toEqual([A.id, A1.id, B.id])
+    expect(log.some((l) => l.startsWith('activated:'))).toBe(false)
+    expect(tm.activeTabId()).toBe(B.id)
   })
 
   it('a fork stands right after its family, and a fork of a fork joins the family', async () => {

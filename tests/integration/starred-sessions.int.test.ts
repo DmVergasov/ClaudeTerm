@@ -24,8 +24,9 @@ describe('StarredSessions', () => {
     expect([...store.ids()]).toEqual([SID1])
     expect(JSON.parse(readFileSync(join(d, 'starred-sessions.json'), 'utf8'))).toEqual([SID1])
     expect([...new StarredSessions(d).ids()]).toEqual([SID1])
-    // written through a temp file that is gone again
-    expect(readdirSync(d)).toEqual(['starred-sessions.json'])
+    // written through a temp file that is gone again; the store had no file to load, so its restore marker is kept beside it
+    expect(readdirSync(d).filter((f) => f.endsWith('.tmp'))).toEqual([])
+    expect(readdirSync(d)).toContain('starred-sessions.json')
   })
 
   it('a corrupt file or a file of the wrong shape means no stars, is reported and is replaced by the next change', () => {

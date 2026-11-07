@@ -1,9 +1,11 @@
 import './settings.css'
 import type { SettingsView } from '../shared/ipc'
+import { REMOTE_COPY } from '../shared/remote'
 import { MAX_AUTO_CONTINUES, NOTIFICATION_CASES, NOTIFICATION_CHANNELS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import { DEFAULT_TEST_PATTERNS } from '../shared/test-files'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
 import { accountsSection } from './accounts-section'
+import { devicesSection } from './devices-section'
 import { el, section } from './dom'
 import { checkNumber, checkOptionalText, checkPatterns, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions, type Checked, type Option } from './settings-form'
 
@@ -240,6 +242,7 @@ root.append(
     checkboxField('claude.limitPace', 'Show in the status bar how fast the usage limits are spent: a bar, and a color from the pace',
       (v) => v.settings.claude.limitPace)),
   accountsSection(),
+  devicesSection([checkboxField('devices.keepAwake', REMOTE_COPY.keepAwake, (v) => v.settings.devices.keepAwake)]),
   section('Media', 'applies to new tabs',
     checkboxField('imageWatch.enabled', 'Show new images, audio and video from the session scratchpad', (v) => v.settings.imageWatch.enabled),
     checkboxField('imagePanel.autoOpen', 'Open the Media panel when a new file arrives', (v) => v.settings.imagePanel.autoOpen)),
@@ -273,3 +276,14 @@ document.addEventListener('keydown', (e) => {
 
 ct.onSettingsView(render)
 void ct.getSettingsView().then(render)
+
+/** the sections a Settings window can be opened at: their ids, the #hash of a new window or a section sent to an open one */
+const SECTIONS = new Set(['devices'])
+
+function showSection(name: string): void {
+  if (!SECTIONS.has(name)) return
+  document.getElementById(name)?.scrollIntoView()
+}
+
+ct.onSettingsSection(showSection)
+showSection(location.hash.slice(1))

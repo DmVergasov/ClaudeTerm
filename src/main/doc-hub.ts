@@ -50,6 +50,15 @@ export class DocHub {
     this.tabs.set(tabId, { folder, claude, docs: [] })
   }
 
+  /** The tab starts again in `folder`: its documents go (the window hears of the empty list), and the folder is their root from now on. */
+  resetTab(tabId: string, folder: string): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    tab.folder = folder
+    tab.docs = []
+    this.publish(tabId, tab, null)
+  }
+
   /** Forgets the tab and its documents, silently. */
   removeTab(tabId: string): void {
     this.tabs.delete(tabId)

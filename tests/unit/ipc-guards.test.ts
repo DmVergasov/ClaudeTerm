@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { MAX_ADDRESS_LENGTH } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
-import { isAbsPath, isAccountRef, isDocAction, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteText, isOpenTabRequest, openTabRequestFields, isOptionalTitle, isPanelWidth, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
+import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
+import { isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -83,6 +85,17 @@ describe('ipc guards', () => {
 })
 
 describe('review guards', () => {
+  it('isDropPaths takes 1 to MAX_TRANSFER_FILES absolute paths of this device', () => {
+    const ABS = process.platform === 'win32' ? 'D:\\p\\a.png' : '/p/a.png'
+    expect(isDropPaths([ABS])).toBe(true)
+    expect(isDropPaths([])).toBe(false)
+    expect(isDropPaths(Array(MAX_TRANSFER_FILES + 1).fill(ABS))).toBe(false)
+    expect(isDropPaths(Array(MAX_TRANSFER_FILES).fill(ABS))).toBe(true)
+    expect(isDropPaths(['relative'])).toBe(false)
+    expect(isDropPaths([ABS, 3])).toBe(false)
+    expect(isDropPaths(ABS)).toBe(false)
+    expect(isDropPaths([ABS + 'x'.repeat(MAX_PATH_TEXT)])).toBe(false)
+  })
   it('checks scopes, absolute paths, line numbers and hashes', () => {
     expect(isReviewScope('last_turn')).toBe(true)
     expect(isReviewScope('week')).toBe(false)
@@ -92,7 +105,8 @@ describe('review guards', () => {
     expect(isLineNo(0)).toBe(false)
     expect(isLineNo(1.5)).toBe(false)
     expect(isHash('0123456789abcdef0123456789abcdef01234567')).toBe(true)
-    expect(isHash('x'.repeat(65))).toBe(false)
+    expect(isHash('binary:' + 'f'.repeat(64))).toBe(true)
+    expect(isHash('x'.repeat(129))).toBe(false)
   })
 
   it('isLineSpan takes the lines of one expand click: whole numbers from 1, in order, at most 1000 of them', () => {
@@ -213,5 +227,92 @@ describe('open tab request fields', () => {
   it('openTabRequestFields keeps the optional fields that were sent', () => {
     const sent: OpenTabRequest = { kind: 'claude', cwd: FOLDER, profile: 'work', title: 'Shop', resumeSessionId: '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', account: 'acc', muted: true }
     expect(openTabRequestFields(sent)).toEqual({ ...sent, fork: null })
+  })
+})
+
+describe('device guards', () => {
+  it('isDeviceId accepts a device id (UUID) only', () => {
+    expect(isDeviceId('5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8')).toBe(true)
+    expect(isDeviceId('macbook')).toBe(false)
+    expect(isDeviceId(null)).toBe(false)
+  })
+
+  it('isOpenRemoteTabArgs accepts a device id, a claude or shell kind, a profile name or null, and an account ref or null', () => {
+    const device = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+    expect(isOpenRemoteTabArgs(device, 'claude', null, null)).toBe(true)
+    expect(isOpenRemoteTabArgs(device, 'shell', 'Bash', 'w')).toBe(true)
+    expect(isOpenRemoteTabArgs(device, 'shell', 'x'.repeat(256), null)).toBe(true)
+  })
+
+  it('isOpenRemoteTabArgs refuses anything else', () => {
+    const device = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+    expect(isOpenRemoteTabArgs('x', 'claude', null, null)).toBe(false)
+    expect(isOpenRemoteTabArgs(null, 'claude', null, null)).toBe(false)
+    expect(isOpenRemoteTabArgs(device, 'other', null, null)).toBe(false)
+    expect(isOpenRemoteTabArgs(device, undefined, null, null)).toBe(false)
+    expect(isOpenRemoteTabArgs(device, 'shell', '', null)).toBe(false)
+    expect(isOpenRemoteTabArgs(device, 'shell', 'x'.repeat(257), null)).toBe(false)
+    expect(isOpenRemoteTabArgs(device, 'shell', 42, null)).toBe(false)
+    expect(isOpenRemoteTabArgs(device, 'claude', undefined, null)).toBe(false)
+    expect(isOpenRemoteTabArgs(device, 'claude', null, 42)).toBe(false)
+    expect(isOpenRemoteTabArgs(device, 'claude', null, '')).toBe(false)
+    expect(isOpenRemoteTabArgs(device, 'claude', null, 'x'.repeat(65))).toBe(false)
+  })
+
+  it('isAddressInput accepts 1 to MAX_ADDRESS_LENGTH characters', () => {
+    expect(isAddressInput('a')).toBe(true)
+    expect(isAddressInput('x'.repeat(MAX_ADDRESS_LENGTH))).toBe(true)
+    expect(isAddressInput('')).toBe(false)
+    expect(isAddressInput('x'.repeat(MAX_ADDRESS_LENGTH + 1))).toBe(false)
+    expect(isAddressInput(5)).toBe(false)
+  })
+
+  it('isOptionalAddress accepts null or an address', () => {
+    expect(isOptionalAddress(null)).toBe(true)
+    expect(isOptionalAddress('macbook:47821')).toBe(true)
+    expect(isOptionalAddress('')).toBe(false)
+    expect(isOptionalAddress(undefined)).toBe(false)
+  })
+
+  it('isPairCodeInput accepts a string of at most 64 characters', () => {
+    expect(isPairCodeInput('K7QM-2XPD-9TRA-W4BN')).toBe(true)
+    expect(isPairCodeInput('x'.repeat(64))).toBe(true)
+    expect(isPairCodeInput('x'.repeat(65))).toBe(false)
+    expect(isPairCodeInput(null)).toBe(false)
+  })
+
+  it('isDeviceNameInput accepts a string of at most 256 characters', () => {
+    expect(isDeviceNameInput('')).toBe(true)
+    expect(isDeviceNameInput('x'.repeat(256))).toBe(true)
+    expect(isDeviceNameInput('x'.repeat(257))).toBe(false)
+    expect(isDeviceNameInput(3)).toBe(false)
+  })
+
+  it('isSeedText takes a string up to MAX_SNAPSHOT_BYTES characters', () => {
+    expect(isSeedText('')).toBe(true)
+    expect(isSeedText('x'.repeat(MAX_SNAPSHOT_BYTES))).toBe(true)
+    expect(isSeedText('x'.repeat(MAX_SNAPSHOT_BYTES + 1))).toBe(false)
+    expect(isSeedText(42)).toBe(false)
+    expect(isSeedText(null)).toBe(false)
+  })
+
+  it('isSeedToken takes a safe integer of at least 1', () => {
+    for (const v of [1, Number.MAX_SAFE_INTEGER]) expect(isSeedToken(v)).toBe(true)
+    for (const v of [0, -1, 1.5, NaN, '1']) expect(isSeedToken(v)).toBe(false)
+  })
+
+  it('isFolderInput takes any typed folder as text, bounded', () => {
+    for (const p of ['', '~', '~/src', 'C:\\work\\', '/Users/x', 'relative']) expect(isFolderInput(p)).toBe(true)
+    expect(isFolderInput('x'.repeat(MAX_PATH_TEXT + 1))).toBe(false)
+    expect(isFolderInput(null)).toBe(false)
+  })
+
+  it('isPathText takes a path of any system as text, bounded', () => {
+    for (const p of ['C:\\work\\a.ts', '/Users/x/a.ts', 'a.ts']) expect(isPathText(p)).toBe(true)
+    expect(isPathText('')).toBe(false)
+    expect(isPathText('x'.repeat(MAX_PATH_TEXT))).toBe(true)
+    expect(isPathText('x'.repeat(MAX_PATH_TEXT + 1))).toBe(false)
+    expect(isPathText(1)).toBe(false)
+    expect(isPathText(null)).toBe(false)
   })
 })

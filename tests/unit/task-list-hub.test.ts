@@ -63,6 +63,30 @@ describe('TaskListHub', () => {
     expect(changed).toEqual(['t1', 't1', 't1'])
   })
 
+  it('a folder change forgets the list the tab shows and its conversation; the list stays stored under the old conversation, and the next conversation takes none of it', () => {
+    const { hub, store, changed } = setup({ [A]: unfinished })
+    hub.addTab('t1', A)
+    changed.length = 0
+    hub.resetTab('t1')
+    expect(hub.get('t1')).toBeNull()
+    expect(hub.status('t1')).toBeNull()
+    expect(changed).toEqual(['t1'])
+    expect(store.get(A)).toEqual(unfinished)
+    // the next SessionStart of the moved tab starts a conversation with no list of the old folder
+    hub.session('t1', B, null)
+    expect(hub.get('t1')).toBeNull()
+    expect(store.get(A)).toEqual(unfinished)
+    expect(store.has(B)).toBe(false)
+  })
+
+  it('a folder change of a tab with no list reports nothing', () => {
+    const { hub, changed } = setup()
+    hub.addTab('t1', null)
+    changed.length = 0
+    hub.resetTab('t1')
+    expect(changed).toEqual([])
+  })
+
   it('session to a new id shows the list stored under it, and the old one stays stored', () => {
     const { hub, store } = setup({ [A]: unfinished, [B]: finished })
     hub.addTab('t1', A)

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { DIM, PILL, promptBox, show } from './claude-screen'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchClaudeTab } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, KEYS, launchClaudeTab } from './helpers'
 
 const OFF = { sound: false, flash: false, tab: true }
 // the mark is what these tests check; keep the desktop quiet while they run
@@ -76,5 +76,21 @@ test('a Claude tab left with an unsent prompt or a reply scrolled up pulses once
   await activate(page, shell)
   await page.waitForTimeout(300)
   await expect(claudeTab).not.toHaveClass(/\battention\b/)
+  await app.close()
+})
+
+test('a tab marked unread counts on the app icon, and Ctrl+Shift+J opens it and takes the count away', async () => {
+  const { app, page, tabId, work } = await launchClaudeTab(QUIET)
+  const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work))!.id
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, shell)
+  const claudeTab = page.locator(`[data-tab-id="${tabId}"]`)
+  await claudeTab.click({ button: 'right' })
+  await page.locator('.menu-item', { hasText: 'Mark as unread' }).click()
+  await expect(claudeTab).toHaveClass(/\battention\b/)
+  const badge = () => app.evaluate(() => (globalThis as { ctBadgeCount?: number }).ctBadgeCount ?? 0)
+  await expect.poll(badge).toBe(1)
+  await page.keyboard.press(KEYS.nextWaiting)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, tabId)
+  await expect.poll(badge).toBe(0)
   await app.close()
 })

@@ -1,8 +1,9 @@
 import './styles.css'
-import type { AccountView } from '../shared/accounts'
+import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
+import { deviceColor, MAX_SNAPSHOT_BYTES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type RemoteDeviceView } from '../shared/remote'
 import type { NotificationCase, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { DocPanel } from './doc-panel'
@@ -11,22 +12,25 @@ import { SidePanel } from './side-panel'
 import { Lightbox } from './lightbox'
 import { PlanList } from './plan-list'
 import { RecentSessionsWindow } from './recent-sessions'
-import { imagePasteInput, mapKey, shortcutLabel, type KeyAction } from './keymap'
+import { imagePasteInput, imagePasteRoute, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar } from './search'
-import { closeMenu, showMenu, type MenuItem } from './menu'
+import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
 import { NoteOverlay } from './note-overlay'
 import { RestoreBanner } from './restore-banner'
 import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
 import { UpdateBanner } from './update-banner'
-import { TabBar, type TabBarCallbacks, type TabBarItem } from './tabbar'
+import { TabBar, type TabBarCallbacks, type TabBarGroup, type TabBarItem } from './tabbar'
+import { shownActivity } from './tab-row'
 import { TabPanel } from './tab-panel'
-import { orderToWrite } from './tab-groups'
+import { orderToWrite, tabBarOrder } from './tab-groups'
 import { TerminalView } from './terminal-view'
 import { resolveTheme } from './themes'
 import { showToast } from './toasts'
 import { promptText } from './claude-screen'
 import { leftUnfinished } from './unread'
+import { FrontFallback } from './front-fallback'
+import { FolderDialog } from './folder-dialog'
 import { claudeTitle, folderName } from './util'
 
 interface TabState {
@@ -35,6 +39,8 @@ interface TabState {
   oscTitle: string | null
   bell: boolean
   attention: boolean
+  /** marked unread, or left unfinished: it pulses on this device until it is opened here, whatever the other devices do */
+  unread: boolean
   /** Mark as unread on the tab in front: it pulses once it is left */
   unreadOnLeave: boolean
   images: number
@@ -44,6 +50,8 @@ const ct = window.ct
 const tabs = new Map<string, TabState>()
 let order: string[] = []
 let activeId: string | null = null
+/** the tab to bring to the front when the one in front closes and main activates none */
+const frontFallback = new FrontFallback()
 let settings: Settings
 let appInfo: AppInfo
 let fontSize = 12
@@ -70,8 +78,11 @@ const pendingDocReveal = new Map<string, string>()
 const inputLog = new Map<string, string>()
 /** every size each tab's terminal gave its process, in test runs */
 const sizeLog = new Map<string, string[]>()
+/** every place event each tab got, in test runs: a null place is kept apart from no event */
+const placeLog = new Map<string, (TabPlace | null)[]>()
 let lightbox: Lightbox
 let sessionsWindow: RecentSessionsWindow
+let folderDialog: FolderDialog
 let planList: PlanList
 const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
@@ -80,24 +91,104 @@ const statusUpdates = new Map<string, StatusUpdate>()
 const planUpdates = new Map<string, PlanUpdate>()
 /** the extra accounts, without their tokens */
 let accounts: AccountView[] = []
+/** the other devices of the group, by name: their tabs are groups of the tab bar, in this order */
+let remoteDevices: RemoteDeviceView[] = []
+/** whether the devices came in as an event: then the answer to the first request is older and is not applied */
+let remoteDevicesSeen = false
+/** the devices whose tabs are folded into their chip */
+const folded = new Set<string>()
+/** a remote device's tabs in the order this window dragged them to; the tabs that came since follow in arrival order */
+const remoteOrder = new Map<string, string[]>()
+/** this device's name, and each online device's last answer to the new-tab menu's lists (value null: not answered yet) */
+let choices: { self: string; devices: DeviceAnswer<DeviceChoices>[] } = { self: '', devices: [] }
+/** counts the answers that came as events: an answer to a request sent before the latest event is older and is not applied */
+let choicesSeq = 0
+// how many times the window asked the devices for their lists: the test hook counts them
+let choiceAsks = 0
+/** the latest request of a new-tab menu or a chip menu: an earlier one that answers later opens nothing */
+let menuSeq = 0
+/** the menu of the new tabs or of a device's chip, drawn again in place when the answers change while it is open */
+let choiceMenu: { el: HTMLElement; at: { x: number; y: number }; build: () => MenuItem[] } | null = null
+
+/** a tab pulses while Claude waits in it, or while it is marked unread */
+const pulsing = (t: TabState | undefined): boolean => t !== undefined && (t.attention || t.unread)
 
 /** a fork's title gets ` (fork)` after the usual one, unless the user named the tab */
-const titleOf = (t: TabState): string => t.info.customTitle ?? `${t.oscTitle ?? folderName(t.info.folder)}${t.info.fork ? ' (fork)' : ''}`
+const titleOf = (t: TabState): string => t.info.customTitle ?? `${t.oscTitle ?? t.info.remote?.title ?? folderName(t.info.folder)}${t.info.fork ? ' (fork)' : ''}`
 
 /** where a new tab opens: the defaultFolder setting, else the home folder */
 const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
 
+const remoteDeviceOf = (id: string): RemoteDeviceView | undefined => remoteDevices.find((d) => d.id === id)
+const isOnline = (deviceId: string): boolean => remoteDeviceOf(deviceId)?.online === true
+
+/** a remote device's tabs in this window's order: as dragged here, or with each fork after its family (tabBarOrder) */
+function groupTabs(deviceId: string): string[] {
+  const here = order.filter((id) => tabs.get(id)?.info.remote?.device === deviceId)
+  return tabBarOrder(here.map((id) => ({ id, forkOf: tabs.get(id)?.info.fork?.of ?? null })), remoteOrder.get(deviceId) ?? [])
+}
+
+/** this device's tabs, then the tabs of the groups not folded: the order Next, Previous and Go to tab walk */
+function visibleOrder(): string[] {
+  const own = order.filter((id) => !tabs.get(id)?.info.remote)
+  return [...own, ...remoteDevices.filter((d) => !folded.has(d.id)).flatMap((d) => groupTabs(d.id))]
+}
+
+function tabBarItem(id: string): TabBarItem | null {
+  const t = tabs.get(id)
+  if (!t) return null
+  const remote = t.info.remote
+  return {
+    id,
+    title: titleOf(t),
+    folder: t.info.folder,
+    kind: t.info.kind,
+    muted: t.info.muted,
+    bell: t.bell,
+    attention: pulsing(t),
+    activity: t.info.activity,
+    // a remote tab's unseen Media count is its device's, as the directory gives it
+    images: remote ? remote.images : t.images,
+    exited: t.info.exited,
+    note: noteOverlay.hasText(id),
+    place: places.get(id) ?? null,
+    forkOf: t.info.fork?.of ?? null,
+    group: remote?.device ?? null,
+    deviceName: remote ? remoteDeviceOf(remote.device)?.name ?? null : null,
+    dim: remote !== undefined && !isOnline(remote.device)
+  }
+}
+
 function renderTabs(): void {
-  const items = order.flatMap((id): TabBarItem[] => {
-    const t = tabs.get(id)
-    return t ? [{ id, title: titleOf(t), folder: t.info.folder, kind: t.info.kind, muted: t.info.muted, bell: t.bell, attention: t.attention, activity: t.info.activity, images: t.images, exited: t.info.exited, note: noteOverlay.hasText(id), place: places.get(id) ?? null, forkOf: t.info.fork?.of ?? null }] : []
+  // this device's tabs first, then each device's group in the order of the devices
+  const ids = [...order.filter((id) => !tabs.get(id)?.info.remote), ...remoteDevices.flatMap((d) => groupTabs(d.id))]
+  const items = ids.flatMap((id) => {
+    const item = tabBarItem(id)
+    return item ? [item] : []
   })
-  tabBar.render(items, activeId)
-  tabPanel.render(items, activeId)
+  const itemOf = new Map(items.map((item) => [item.id, item]))
+  const groups: TabBarGroup[] = remoteDevices.map((d) => {
+    const tabsOf = groupTabs(d.id)
+    return {
+      id: d.id,
+      name: d.name,
+      color: deviceColor(d.id),
+      online: d.online,
+      folded: folded.has(d.id),
+      count: tabsOf.length,
+      attention: tabsOf.some((id) => pulsing(tabs.get(id))),
+      working: tabsOf.some((id) => { const item = itemOf.get(id); return item !== undefined && shownActivity(item) !== null })
+    }
+  })
+  tabBar.render(items, activeId, groups)
+  // the left panel shows this device's groups, then a section per device with tabs: the same items and groups as the tab bar
+  tabPanel.render(items, activeId, groups)
   // on the left, the order is the panel's: main takes it when it differs, so the tab order follows the groups (the next render finds them equal).
-  // Not before every tab's place is known: until then a tab sits in No project and that temporary order must not reach main
+  // Not before every tab's place is known: until then a tab sits in No project and that temporary order must not reach main.
+  // A remote tab's id never reaches main: its order is its device's
   if (settings.tabs.position === 'left') {
-    const next = orderToWrite(order, tabPanel.visualOrder, order.every((id) => places.has(id)))
+    const own = order.filter((id) => !tabs.get(id)?.info.remote)
+    const next = orderToWrite(own, tabPanel.visualOrder, own.every((id) => places.has(id)))
     if (next) ct.reorderTabs(next)
   }
   if (imagePanel) refreshPanelButtons()
@@ -114,6 +205,25 @@ function showTabs(position: TabPosition): void {
   tabPanel.show(position === 'left')
 }
 
+/** the device a tab runs on, or null for this device's own tab */
+const groupOf = (tabId: string | null): string | null => (tabId ? tabs.get(tabId)?.info.remote?.device ?? null : null)
+
+/** folds or unfolds a device's chip; folding the group of the tab in front brings the first visible tab to the front */
+function toggleGroup(deviceId: string): void {
+  if (folded.has(deviceId)) {
+    folded.delete(deviceId)
+  } else {
+    folded.add(deviceId)
+    if (groupOf(activeId) === deviceId) {
+      const next = visibleOrder()[0]
+      // with no other tab to show, the group stays open: the tab in front must not be hidden
+      if (next) ct.activateTab(next)
+      else folded.delete(deviceId)
+    }
+  }
+  renderTabs()
+}
+
 function renderTitle(): void {
   const active = activeId ? tabs.get(activeId) : undefined
   if (!active) {
@@ -123,8 +233,8 @@ function renderTitle(): void {
   // the folder's name tells the projects of several windows and tabs apart, in the taskbar and Alt+Tab too
   const title = titleOf(active)
   const folder = folderName(active.info.folder)
-  // and an extra account the subscription; the main account is the usual one and is left out
-  const account = active.info.kind === 'claude' && active.info.account !== null ? accountLabel(active.info.account, accounts) : null
+  // and an extra account the subscription; the main account is the usual one and is left out, a remote tab's too (its device's own title leaves it out)
+  const account = active.info.remote ? active.info.remote.accountName : active.info.kind === 'claude' && active.info.account !== null ? accountLabel(active.info.account, accounts) : null
   document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')
 }
 
@@ -146,15 +256,29 @@ function logInput(tabId: string, data: string): void {
   if (appInfo.test) inputLog.set(tabId, (inputLog.get(tabId) ?? '') + data)
 }
 
+/** a tab on a device that is offline takes no input */
+function writable(t: TabState): boolean {
+  return !t.info.remote || isOnline(t.info.remote.device)
+}
+
+/** the one way the window writes into a tab: nothing is logged or sent to a tab that is not writable */
+function writeToTab(tabId: string, data: string): void {
+  const t = tabs.get(tabId)
+  if (!t || !writable(t)) return
+  logInput(tabId, data)
+  ct.writePty(tabId, data)
+}
+
 function handleInput(tabId: string, data: string): void {
   const t = tabs.get(tabId)
   if (!t) return
-  logInput(tabId, data)
-  if (t.info.exited) {
-    if (data === '\r') ct.restartTab(tabId)
+  if (!t.info.exited) {
+    writeToTab(tabId, data)
     return
   }
-  ct.writePty(tabId, data)
+  if (!writable(t)) return
+  logInput(tabId, data)
+  if (data === '\r') ct.restartTab(tabId)
 }
 
 /** the status bar counter for a tab, unless review.statusBar turned it off */
@@ -165,7 +289,15 @@ function counterOf(tabId: string | null): ReviewCounter | null {
 /** the status bar's account: a Claude tab's, once extra accounts exist, or while it still runs on one deleted since */
 function accountOf(tabId: string | null): string | null {
   const t = tabId ? tabs.get(tabId) : undefined
-  return t?.info.kind === 'claude' && (accounts.length > 0 || t.info.account !== null) ? accountLabel(t.info.account, accounts) : null
+  if (t?.info.kind !== 'claude') return null
+  // a remote tab names the account of its own device: the main account's label when it runs on that
+  // (the main account only when its device has extra accounts, as the device's own window shows it)
+  if (t.info.remote) {
+    const device = t.info.remote.device
+    const extra = (choices.devices.find((d) => d.device === device)?.value?.accounts.length ?? 0) > 0
+    return t.info.remote.accountName ?? (extra ? MAIN_ACCOUNT : null)
+  }
+  return accounts.length > 0 || t.info.account !== null ? accountLabel(t.info.account, accounts) : null
 }
 
 function renderStatus(tabId: string): void {
@@ -176,14 +308,17 @@ function renderStatus(tabId: string): void {
 function continueItems(tabId: string): MenuItem[] {
   const t = tabs.get(tabId)
   if (t?.info.kind !== 'claude') return []
-  return switchChoices(t.info.account, accounts).map((c) => ({ label: `Continue as ${c.label}`, disabled: c.disabled, action: () => ct.switchAccount(tabId, c.account) }))
+  // a remote tab continues on the accounts of its own device, as that device answered them
+  const list = t.info.remote ? choices.devices.find((d) => d.device === t.info.remote!.device)?.value?.accounts.map((a) => ({ ...a, readable: true })) ?? [] : accounts
+  return switchChoices(t.info.account, list).map((c) => ({ label: `Continue as ${c.label}`, disabled: c.disabled, action: () => ct.switchAccount(tabId, c.account) }))
 }
 
 /** why Send may not write into the tab now, or null */
 async function sendRefusal(tabId: string): Promise<string | null> {
+  const t = tabs.get(tabId)
+  if (t && t.info.remote && !writable(t)) return REMOTE_COPY.deviceOffline(remoteDeviceOf(t.info.remote.device)?.name ?? t.info.remote.device)
   const state = await ct.reviewCanSend(tabId)
   if (!state.ok) return state.reason
-  const t = tabs.get(tabId)
   return !t || t.info.exited ? NOT_RUNNING : null
 }
 
@@ -199,8 +334,7 @@ async function sendToClaude(tabId: string, message: string): Promise<string | nu
   await new Promise((r) => setTimeout(r, 50))
   const refusal = await sendRefusal(tabId)
   if (refusal !== null) return refusal
-  logInput(tabId, '\r')
-  ct.writePty(tabId, '\r')
+  writeToTab(tabId, '\r')
   if (tabId === activeId) tabs.get(tabId)?.view.term.focus()
   return null
 }
@@ -210,9 +344,9 @@ function setFontSize(size: number): void {
   for (const t of tabs.values()) t.view.setFont(settings.font.family, fontSize)
 }
 
-/** the tab ids in the order the shown tab bar lists them: the left panel's when the tabs are on the left */
+/** the tab ids in the order the shown tab bar lists them: on the left, the panel's (this device's groups, then each unfolded device section) */
 function shownOrder(): string[] {
-  return settings.tabs.position === 'left' ? tabPanel.visualOrder : order
+  return settings.tabs.position === 'left' ? [...tabPanel.visualOrder, ...tabPanel.deviceOrder(folded)] : visibleOrder()
 }
 
 function cycleTabs(delta: number): void {
@@ -225,11 +359,12 @@ function cycleTabs(delta: number): void {
 
 /** the next tab after the active one, in the order shown, that needs the user; none: nothing changes */
 function nextWaiting(): void {
-  const seq = shownOrder()
+  // the tabs of folded devices come last: the jump reaches every tab the app icon counts
+  const seq = [...shownOrder(), ...remoteDevices.filter((d) => folded.has(d.id)).flatMap((d) => groupTabs(d.id))]
   const i = activeId ? seq.indexOf(activeId) : -1
   for (let k = 1; k <= seq.length; k++) {
     const id = seq[(i + k) % seq.length]!
-    if (id !== activeId && tabs.get(id)?.attention) {
+    if (id !== activeId && pulsing(tabs.get(id))) {
       ct.activateTab(id)
       return
     }
@@ -285,7 +420,7 @@ let attentionCount = 0
 
 function reportAttentionCount(): void {
   let count = 0
-  for (const t of tabs.values()) if (t.attention) count++
+  for (const t of tabs.values()) if (pulsing(t)) count++
   if (count === attentionCount) return
   attentionCount = count
   ct.setAttentionCount(count)
@@ -307,22 +442,30 @@ async function paste(t: TabState, allowImage: boolean): Promise<void> {
 /**
  * An image-only clipboard. Claude Code's image-paste key makes claude read the image from the clipboard itself, but on
  * Windows it reads it through PowerShell, which fails where a policy keeps PowerShell in Constrained Language mode. There
- * the image goes to Claude as the pasted path of a PNG file, which Claude Code attaches as the image itself.
+ * the image goes to Claude as the pasted path of a PNG file, which Claude Code attaches as the image itself. In a remote tab the
+ * image is copied to the tab's device, and the path it was saved at there is typed.
  */
 async function pasteImage(t: TabState): Promise<void> {
-  if (ct.platform !== 'win32' || !(await ct.imagePasteAsFile())) {
+  const remote = t.info.remote !== undefined
+  // the PNG file route is asked for a local tab on Windows only
+  const asFile = !remote && ct.platform === 'win32' && (await ct.imagePasteAsFile())
+  const route = imagePasteRoute({ platform: ct.platform, remote, asFile })
+  if (route === 'remote') {
+    const path = await ct.pasteImageToRemote(t.info.id)
+    if (path) t.view.term.paste(`"${path}"`)
+  } else if (route === 'file') {
+    const file = await ct.saveClipboardImage()
+    if (file) t.view.term.paste(`"${file}"`)
+  } else {
     handleInput(t.info.id, imagePasteInput(ct.platform))
-    return
   }
-  const file = await ct.saveClipboardImage()
-  if (file) t.view.term.paste(`"${file}"`)
 }
 
 function runAction(a: KeyAction, tabId: string | null): void {
   const t = tabId ? tabs.get(tabId) : undefined
   switch (a.type) {
     case 'newTab': void ct.openTab({ kind: 'shell', cwd: defaultFolder() }); break
-    case 'newClaudeTab': void ct.openTab({ kind: 'claude', cwd: t?.info.cwd ?? defaultFolder() }); break
+    case 'newClaudeTab': void ct.openTab({ kind: 'claude', cwd: folderFor(t) }); break
     case 'closeTab': if (tabId) ct.closeTab(tabId); break
     case 'nextTab': cycleTabs(1); break
     case 'prevTab': cycleTabs(-1); break
@@ -385,7 +528,15 @@ function attachTerminalMouse(tabId: string, view: TerminalView): void {
   view.element.addEventListener('drop', (e) => {
     e.preventDefault()
     const paths = Array.from(e.dataTransfer?.files ?? []).map((f) => ct.pathForFile(f)).filter((p) => p.length > 0)
-    if (paths.length > 0) handleInput(tabId, paths.map((p) => `"${p}"`).join(' '))
+    if (paths.length === 0) return
+    // a remote tab's files are copied to its device first: the paths typed are the ones they were saved at there
+    if (tabs.get(tabId)?.info.remote) {
+      void ct.dropFilesToRemote(tabId, paths).then((copied) => {
+        if (copied) handleInput(tabId, copied.map((p) => `"${p}"`).join(' '))
+      })
+      return
+    }
+    handleInput(tabId, paths.map((p) => `"${p}"`).join(' '))
   })
 }
 
@@ -417,7 +568,7 @@ function addTab(info: TabInfo): void {
   })
   view.show(false)
   attachTerminalMouse(info.id, view)
-  tabs.set(info.id, { info, view, oscTitle: null, bell: false, attention: false, unreadOnLeave: false, images: 0 })
+  tabs.set(info.id, { info, view, oscTitle: null, bell: false, attention: false, unread: false, unreadOnLeave: false, images: 0 })
   if (!order.includes(info.id)) order.push(info.id)
   renderTabs()
 }
@@ -428,7 +579,7 @@ function addTab(info: TabInfo): void {
  */
 function leave(t: TabState): void {
   const unfinished = settings.notifications.autoUnread && t.info.kind === 'claude' && !t.info.exited && leftUnfinished(t.view.screen())
-  if (t.unreadOnLeave || unfinished) t.attention = true
+  if (t.unreadOnLeave || unfinished) t.unread = true
   t.unreadOnLeave = false
 }
 
@@ -436,7 +587,7 @@ function markUnread(tabId: string): void {
   const t = tabs.get(tabId)
   if (!t) return
   if (tabId === activeId) t.unreadOnLeave = true
-  else t.attention = true
+  else t.unread = true
   renderTabs()
 }
 
@@ -454,6 +605,7 @@ function activate(tabId: string): void {
   const left = activeId !== null && activeId !== tabId ? tabs.get(activeId) : undefined
   if (left) leave(left)
   activeId = tabId
+  frontFallback.activated(tabId)
   planList.close()
   const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
   const focus = !busy
@@ -462,8 +614,12 @@ function activate(tabId: string): void {
   if (t) {
     t.bell = false
     t.attention = false
+    t.unread = false
   }
   closeBanner(tabId)
+  // the tab in front is never under a folded chip: its device's group opens
+  const device = groupOf(tabId)
+  if (device !== null) folded.delete(device)
   const claude = t?.info.kind === 'claude'
   // before the tabs are drawn: the Note button shows whether this tab's note is shown
   noteOverlay.show(tabId, claude)
@@ -479,27 +635,103 @@ function activate(tabId: string): void {
   renderStatus(tabId)
 }
 
-function newTabMenu(anchor: HTMLElement): void {
-  void ct.listProfiles().then((names) => {
-    const active = activeId ? tabs.get(activeId) : undefined
-    const items: MenuItem[] = [
-      ...names.map((name) => ({ label: name, action: () => void ct.openTab({ kind: 'shell', cwd: defaultFolder(), profile: name }) })),
-      { label: '', separator: true },
-      { label: 'Claude Code', action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? defaultFolder() }) },
-      ...accountChoices(accounts).map((c) => ({
-        label: `Claude Code — ${c.label}`,
-        disabled: c.disabled,
-        action: () => void ct.openTab({ kind: 'claude', cwd: active?.info.cwd ?? defaultFolder(), account: c.account })
-      })),
-      { label: 'Recent sessions…', action: () => void sessionsWindow.open() },
-      ...(restoreInfo ? [{ label: `Restore previous session (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
-      { label: '', separator: true },
-      { label: 'Settings…', action: () => ct.openSettingsWindow() },
-      { label: `ClaudeTerm ${appInfo.version} — check for updates`, action: () => { updateBanner.reveal(); ct.checkForUpdates() } }
-    ]
-    const r = anchor.getBoundingClientRect()
-    showMenu({ x: r.left, y: r.bottom }, items)
+/** the folder a new Claude tab of this device opens in: the tab in front's when that is this device's; another device's path is never this machine's */
+const folderFor = (t: TabState | undefined): string => (t && !t.info.remote ? t.info.cwd : defaultFolder())
+
+/** the device answers, asked now: an answer that came as an event meanwhile is newer and is kept */
+function requestChoices(then: () => void): void {
+  const seq = choicesSeq
+  choiceAsks++
+  void ct.listDeviceChoices().then((view) => {
+    if (seq === choicesSeq) choices = view
+    then()
   })
+}
+
+/** a new-tab or chip menu: its own list (`more`) and the device answers are asked at once; a menu asked for later wins */
+function menuRequest<T>(more: Promise<T>, show: (x: T) => void): void {
+  const seq = ++menuSeq
+  const answers = choicesSeq
+  choiceAsks++
+  void Promise.all([more, ct.listDeviceChoices()]).then(([x, view]) => {
+    if (seq !== menuSeq) return
+    if (answers === choicesSeq) choices = view
+    show(x)
+  })
+}
+
+/** an open new-tab or chip menu is drawn again with the answers as they are now: a device that came online gains its section */
+function refreshChoiceMenu(): void {
+  if (choiceMenu && menuIsOpen(choiceMenu.el)) requestChoices(redrawChoiceMenu)
+}
+
+/** shows a menu drawn from the answers it has, and draws it again in place when they change while it is open */
+function showChoiceMenu(at: { x: number; y: number }, build: () => MenuItem[]): void {
+  choiceMenu = { el: showMenu(at, build()), at, build }
+}
+
+function redrawChoiceMenu(): void {
+  const m = choiceMenu
+  if (!m) return
+  if (!menuIsOpen(m.el)) {
+    choiceMenu = null
+    return
+  }
+  m.el = showMenu(m.at, m.build())
+}
+
+/** one device's entries of the new-tab menu: its name, its profiles, Claude Code and its accounts; loading until it answers */
+function deviceSection(d: DeviceAnswer<DeviceChoices>): MenuItem[] {
+  const head: MenuItem[] = [{ label: '', separator: true }, { label: d.name, disabled: true }]
+  if (d.value === null) return [...head, { label: REMOTE_COPY.loading, disabled: true }]
+  return [
+    ...head,
+    ...d.value.profiles.map((p) => ({ label: p, action: () => void ct.openRemoteTab(d.device, 'shell', p, null) })),
+    { label: '', separator: true },
+    { label: 'Claude Code', action: () => void ct.openRemoteTab(d.device, 'claude', null, null) },
+    ...d.value.accounts.map((a) => ({ label: `Claude Code — ${a.name}`, action: () => void ct.openRemoteTab(d.device, 'claude', null, a.id) }))
+  ]
+}
+
+/** the new-tab menu: this device's entries, then each online device's; without one, the menu is this device's alone */
+function newTabItems(names: string[]): MenuItem[] {
+  const folder = folderFor(activeId ? tabs.get(activeId) : undefined)
+  const own: MenuItem[] = [
+    ...names.map((name) => ({ label: name, action: () => void ct.openTab({ kind: 'shell', cwd: defaultFolder(), profile: name }) })),
+    { label: '', separator: true },
+    { label: 'Claude Code', action: () => void ct.openTab({ kind: 'claude', cwd: folder }) },
+    ...accountChoices(accounts).map((c) => ({
+      label: `Claude Code — ${c.label}`,
+      disabled: c.disabled,
+      action: () => void ct.openTab({ kind: 'claude', cwd: folder, account: c.account })
+    }))
+  ]
+  const tail: MenuItem[] = [
+    { label: 'Recent sessions…', action: () => void sessionsWindow.open() },
+    ...(restoreInfo ? [{ label: `Restore previous session (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
+    { label: '', separator: true },
+    { label: 'Settings…', action: () => ct.openSettingsWindow() },
+    { label: `ClaudeTerm ${appInfo.version} — check for updates`, action: () => { updateBanner.reveal(); ct.checkForUpdates() } }
+  ]
+  if (choices.devices.length === 0) return [...own, ...tail]
+  return [{ label: choices.self, disabled: true }, ...own, ...choices.devices.flatMap(deviceSection), ...tail]
+}
+
+function newTabMenu(anchor: HTMLElement): void {
+  const r = anchor.getBoundingClientRect()
+  const at = { x: r.left, y: r.bottom }
+  menuRequest(ct.listProfiles(), (names) => showChoiceMenu(at, () => newTabItems(names)))
+}
+
+/** a device's chip menu: its new Claude tab and one tab per profile (loading until it answers), then Fold or Unfold; offline, only that */
+function chipItems(deviceId: string): MenuItem[] {
+  const fold: MenuItem = { label: folded.has(deviceId) ? REMOTE_COPY.unfold : REMOTE_COPY.fold, action: () => toggleGroup(deviceId) }
+  if (!isOnline(deviceId)) return [fold]
+  const answer = choices.devices.find((d) => d.device === deviceId)?.value ?? null
+  const profiles: MenuItem[] = answer
+    ? answer.profiles.map((p) => ({ label: REMOTE_COPY.newProfileTab(p), action: () => void ct.openRemoteTab(deviceId, 'shell', p, null) }))
+    : [{ label: REMOTE_COPY.loading, disabled: true }]
+  return [{ label: REMOTE_COPY.newClaudeTab, action: () => void ct.openRemoteTab(deviceId, 'claude', null, null) }, ...profiles, { label: '', separator: true }, fold]
 }
 
 // the latest right-click wins when the star lookups of two of them overlap
@@ -511,10 +743,13 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
   const seq = ++tabMenuSeq
   const sessionId = t.info.kind === 'claude' ? t.info.claudeSessionId : null
   const claude = t.info.kind === 'claude'
-  // the star and the fork live in main: ask before showing, so the items say what the click does
+  // the star and the fork live in main: ask before showing, so the items say what the click does. A remote Claude tab forks on its
+  // device (canForkTab and forkTab route it there), and a remote tab's Continue as … lists its device's accounts: the device's answer is asked before the menu is drawn
+  const answers = t.info.remote ? new Promise<void>((resolve) => requestChoices(resolve)) : Promise.resolve()
   void Promise.all([
     sessionId ? ct.getStarredSessions().catch(() => [] as string[]) : Promise.resolve([] as string[]),
-    claude ? ct.canForkTab(id).catch(() => false) : Promise.resolve(false)
+    claude ? ct.canForkTab(id).catch(() => false) : Promise.resolve(false),
+    answers
   ]).then(([starred, canFork]) => {
     if (seq !== tabMenuSeq || !tabs.has(id)) return
     const isStarred = sessionId !== null && starred.includes(sessionId)
@@ -525,10 +760,22 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
       ...(sessionId ? [{ label: isStarred ? 'Unstar session' : 'Star session', action: () => void ct.setSessionStarred(sessionId, !isStarred) }] : []),
       { label: t.info.muted ? 'Unmute sound' : 'Mute sound', action: () => ct.muteTab(id, !t.info.muted) },
       { label: 'Mark as unread', action: () => markUnread(id) },
+      { label: REMOTE_COPY.changeFolder, action: () => openFolderDialog(id) },
       ...(switches.length > 0 ? [{ label: '', separator: true }, ...switches] : []),
       { label: '', separator: true },
       { label: 'Close tab', action: () => ct.closeTab(id) }
     ])
+  })
+}
+
+/** Change folder…: a remote tab's folders are its device's, and the title names the device */
+function openFolderDialog(id: string): void {
+  const device = tabs.get(id)?.info.remote?.device
+  const name = device === undefined ? undefined : remoteDeviceOf(device)?.name
+  folderDialog.open(name === undefined ? REMOTE_COPY.changeFolderTitle : REMOTE_COPY.changeFolderOn(name), id, {
+    list: (path) => ct.listFolders(id, path),
+    open: (path) => ct.changeFolder(id, path),
+    closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
   })
 }
 
@@ -568,10 +815,19 @@ async function boot(): Promise<void> {
     activate: (id) => ct.activateTab(id),
     close: (id) => ct.closeTab(id),
     rename: (id, title) => ct.renameTab(id, title),
-    reorder: (ids) => ct.reorderTabs(ids),
+    // a remote group's order is this window's only; this device's own order is main's
+    reorder: (ids, group) => {
+      if (group === null) ct.reorderTabs(ids)
+      else {
+        remoteOrder.set(group, ids)
+        renderTabs()
+      }
+    },
     newTab: () => void ct.openTab({ kind: 'shell', cwd: defaultFolder() }),
     openMenu: (anchor) => newTabMenu(anchor),
     tabMenu,
+    toggleGroup,
+    groupMenu: (id, at) => menuRequest(Promise.resolve(null), () => showChoiceMenu(at, () => chipItems(id))),
     toggleImages: () => {
       runAction({ type: 'toggleImages' }, activeId)
       if (activeId) tabs.get(activeId)?.view.term.focus()
@@ -607,6 +863,7 @@ async function boot(): Promise<void> {
     // the group is known with the first answer for the tab: a later change of its branch keeps a group the user folded
     const first = !places.has(id)
     places.set(id, place)
+    if (appInfo.test) placeLog.set(id, [...placeLog.get(id) ?? [], place])
     renderTabs()
     // a new active tab unfolds its group once its place is known: until then it is in No project, which must stay folded
     if (first && id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id)
@@ -630,16 +887,24 @@ async function boot(): Promise<void> {
   lightbox = new Lightbox(document.getElementById('lightbox')!)
   sessionsWindow = new RecentSessionsWindow(document.getElementById('sessions')!, {
     load: () => ct.listSessions(),
+    loadRemote: () => ct.listRemoteSessions(),
     open: (id) => ct.openSession(id),
     opening: closeMenu,
     setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
     closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
   }, ct.platform)
+  folderDialog = new FolderDialog(document.getElementById('folder-dialog')!)
+  ct.onStarred((ids) => sessionsWindow.applyStars(new Set(ids)))
+  ct.onRemoteSessions((list) => sessionsWindow.applyRemote(list))
   planList = new PlanList(document.getElementById('plan-list')!, () => { if (activeId) tabs.get(activeId)?.view.term.focus() }, () => { if (activeId) ct.clearTaskList(activeId) })
   statusBar =new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'), (anchor) => {
     const r = anchor.getBoundingClientRect()
-    // the menu opens over the status bar, kept inside the window
-    if (activeId) showMenu({ x: r.left, y: r.top }, continueItems(activeId))
+    // the menu opens over the status bar, kept inside the window; a remote tab's accounts are asked for first, a local tab's need no answer
+    const id = activeId
+    if (!id) return
+    const show = (): void => { showMenu({ x: r.left, y: r.top }, continueItems(id)) }
+    if (tabs.get(id)?.info.remote) requestChoices(show)
+    else show()
   }, (anchor) => {
     const p = activeId ? planUpdates.get(activeId) : undefined
     if (p?.plan) planList.toggle(anchor, p.plan, !!p.agentList)
@@ -672,6 +937,15 @@ async function boot(): Promise<void> {
     renderTabs()
   })
   ct.onBanner(showBanner)
+  // another device's tab was answered: its pulse stops here; this device's unread mark is its own and stays
+  ct.onAttentionClear((tabId) => {
+    closeBanner(tabId)
+    const t = tabs.get(tabId)
+    if (!t) return
+    t.attention = false
+    t.bell = false
+    renderTabs()
+  })
   // before main types a continue into a Claude tab: only this window has the terminal's screen
   ct.onPromptQuery((queryId, tabId) => {
     const t = tabs.get(tabId)
@@ -713,7 +987,12 @@ async function boot(): Promise<void> {
     {
       setScope: (id, scope) => ct.setReviewScope(id, scope),
       clearRequest: (id) => ct.clearReviewRequest(id),
-      refresh: (id) => ct.refreshReview(id),
+      refresh: (id, auto) => {
+        // opening Changes on an offline device's tab asks nothing: a background action, as marking images seen is; the button still asks
+        const device = tabs.get(id)?.info.remote?.device
+        if (auto && device !== undefined && !isOnline(device)) return
+        ct.refreshReview(id)
+      },
       setViewed: (id, path, hash, viewed) => ct.setReviewViewed(id, path, hash, viewed),
       showFile: (id, path) => ct.showReviewFile(id, path),
       openEditor: (id, path, line) => ct.openInEditor(id, path, line),
@@ -784,7 +1063,13 @@ async function boot(): Promise<void> {
     noteOverlay.set(id, note, generation)
     renderTabs()
   })
-  ct.onTabOpened(addTab)
+  ct.onTabOpened((info) => {
+    addTab(info)
+    // a window that lists no tab of its own, and whose front closed with no other tab to ask for (a batch of closes from a
+    // device that restarted): a remote tab that comes brings itself forward. A window with a local tab leaves the front to main
+    const ownTab = [...tabs.values()].some((t) => !t.info.remote)
+    if (info.remote && activeId === null && !ownTab) ct.activateTab(info.id)
+  })
   ct.onTabUpdated((info) => {
     const t = tabs.get(info.id)
     if (!t) return
@@ -797,7 +1082,9 @@ async function boot(): Promise<void> {
     closeBanner(id)
     const t = tabs.get(id)
     if (!t) return
-    if (id === activeId) planList.close()
+    const frontBefore = activeId
+    const wasFront = id === activeId
+    if (wasFront) planList.close()
     t.view.dispose()
     tabs.delete(id)
     places.delete(id)
@@ -821,11 +1108,38 @@ async function boot(): Promise<void> {
       sidePanel.setAvailable('docs', false)
     }
     renderTabs()
+    // main activates the neighbor of a closed local tab that was in front; in the other cases it activates none, and the
+    // window asks for the first tab left (FrontFallback repeats the ask while the asked tab closes first)
+    const localLeft = [...tabs.values()].some((x) => !x.info.remote)
+    if (wasFront && !t.info.remote && localLeft) return
+    const ask = frontFallback.closed(id, visibleOrder(), frontBefore)
+    if (ask) ct.activateTab(ask)
   })
   ct.onTabActivated(activate)
   ct.onTabsOrder((ids) => {
-    order = ids.filter((id) => tabs.has(id))
+    // the device's own tabs in its order; the remote tabs in front of it, which the device does not list
+    order = [...ids.filter((id) => tabs.has(id)), ...order.filter((id) => tabs.get(id)?.info.remote && !ids.includes(id))]
     renderTabs()
+  })
+  ct.onRemoteDevices((list) => {
+    remoteDevicesSeen = true
+    remoteDevices = list
+    renderTabs()
+    refreshChoiceMenu()
+  })
+  void ct.getRemoteDevices().then((list) => {
+    if (remoteDevicesSeen) return
+    remoteDevices = list
+    renderTabs()
+  })
+  // a device's answer to the new-tab menu's lists: kept, and the menu on screen is drawn again with it
+  ct.onDeviceChoices((view) => {
+    choicesSeq++
+    choices = view
+    redrawChoiceMenu()
+    // the account a remote tab names depends on its device's answer
+    renderTitle()
+    if (activeId) renderStatus(activeId)
   })
   ct.onPtyData((id, data) => tabs.get(id)?.view.write(data))
   ct.onPtyReset((id) => {
@@ -836,13 +1150,22 @@ async function boot(): Promise<void> {
     t.oscTitle = null
     t.bell = false
     t.attention = false
+    t.unread = false
     renderTabs()
   })
   ct.onPtyExit((id, code) => tabs.get(id)?.view.write(`\r\n\x1b[90m[process exited with code ${code}] Enter — restart, ${shortcutLabel('closeTab', ct.platform)} — close\x1b[0m\r\n`))
+  // the size of a tab that another device typed into last; null: this window's own fit applies again
+  ct.onTabSize((id, size) => tabs.get(id)?.view.setFixedSize(size))
+  // a copy of this window's tab on another device: the screen, once the output before the request is written
+  ct.onScreenSeed((id, token) => {
+    const t = tabs.get(id)
+    if (!t) ct.seedScreen(id, token, '')
+    else t.view.term.write('', () => ct.seedScreen(id, token, t.view.serialize(MAX_SNAPSHOT_BYTES)))
+  })
   ct.onToast((m) => showToast(m))
   ct.onSettings(applySettings)
   window.addEventListener('focus', () => {
-    if (sessionsWindow.isOpen) return
+    if (sessionsWindow.isOpen || folderDialog.isOpen) return
     if (document.activeElement?.closest('#image-panel, #note')) return
     const t = activeId ? tabs.get(activeId) : undefined
     t?.view.term.focus()
@@ -866,10 +1189,23 @@ async function boot(): Promise<void> {
       },
       ptyInput: (id) => inputLog.get(id ?? activeId ?? '') ?? '',
       ptySizes: (id) => [...sizeLog.get(id ?? activeId ?? '') ?? []],
+      termSize: (id) => {
+        const t = tabs.get(id ?? activeId ?? '')
+        return t ? { cols: t.view.term.cols, rows: t.view.term.rows } : null
+      },
       bufferText: (id) => tabs.get(id ?? activeId ?? '')?.view.bufferText() ?? '',
       themeBackground: () => (activeId ? tabs.get(activeId)?.view.term.options.theme?.background ?? null : null),
       banners: () => [...banners].map(([tabId, b]) => ({ tabId, title: b.title, body: b.body })),
-      clickBanner: (id) => banners.get(id)?.click()
+      clickBanner: (id) => banners.get(id)?.click(),
+      // what Send (the Changes panel, the note) does with a tab
+      sendText: (id: string, message: string) => sendToClaude(id, message),
+      choiceAsks: () => choiceAsks,
+      placeOf: (id) => places.get(id),
+      placeEvents: (id) => [...placeLog.get(id) ?? []],
+      tabMarks: (id) => {
+        const t = tabs.get(id)
+        return t ? { attention: t.attention, unread: t.unread } : null
+      }
     }
   }
   ct.rendererReady()

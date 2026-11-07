@@ -1,4 +1,5 @@
 import { BrowserWindow, screen, shell } from 'electron'
+import { IPC } from '../shared/ipc'
 import { showWindow } from './window-show'
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -27,7 +28,8 @@ export interface SettingsWindowDeps {
   icon?: string
   /** shown off the screen, never brought forward (a test run) */
   offScreen?: boolean
-  load(win: BrowserWindow): void
+  /** the section a new window opens at (its #hash) */
+  load(win: BrowserWindow, section?: string): void
 }
 
 /** The one settings window: owned by the main window, brought forward when it is already open. */
@@ -36,9 +38,17 @@ export class SettingsWindow {
 
   constructor(private readonly d: SettingsWindowDeps) {}
 
-  open(): void {
-    if (this.win && !this.win.isDestroyed()) {
-      if (!this.d.offScreen) this.win.focus()
+  /** whether the window is open */
+  isOpen(): boolean {
+    return this.win !== null && !this.win.isDestroyed()
+  }
+
+  /** section: the Settings section to show, 'devices' being the only one; an open window is brought forward and shown it */
+  open(section?: 'devices'): void {
+    const open = this.win
+    if (open && !open.isDestroyed()) {
+      if (!this.d.offScreen) open.focus()
+      if (section) this.sendSection(open, section)
       return
     }
     const parent = this.d.parent()
@@ -61,13 +71,28 @@ export class SettingsWindow {
     })
     win.setMenu(null)
     win.once('ready-to-show', () => showWindow(win, this.d.offScreen ?? false))
-    win.on('closed', () => { if (this.win === win) this.win = null })
+    win.on('closed', () => {
+      if (this.win !== win) return
+      this.win = null
+    })
     win.webContents.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
       return { action: 'deny' }
     })
     win.webContents.on('will-navigate', (e) => e.preventDefault())
     this.win = win
-    this.d.load(win)
+    this.d.load(win, section)
+  }
+
+  /** a section for an open window: a page still loading has not set its section listener yet, so the section goes once it has loaded */
+  private sendSection(win: BrowserWindow, section: 'devices'): void {
+    const wc = win.webContents
+    if (!wc.isLoading()) {
+      wc.send(IPC.evSettingsSection, section)
+      return
+    }
+    wc.once('did-finish-load', () => {
+      if (!win.isDestroyed()) wc.send(IPC.evSettingsSection, section)
+    })
   }
 }

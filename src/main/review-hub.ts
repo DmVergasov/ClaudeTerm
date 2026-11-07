@@ -22,6 +22,8 @@ export interface ReviewHubDeps {
   sources: ReviewSources
   ledgerFor(sessionId: string): EditLedger
   activeTabId(): string | null
+  /** another device has the tab in front: this device computes its view too */
+  remoteFront?(tabId: string): boolean
   publish(update: ReviewUpdate): void
   onError(message: string): void
   /** review.hideIgnored: Last turn and Session leave out the files git ignores */
@@ -117,6 +119,62 @@ export class ReviewHub {
     const t = this.tabs.get(tabId)
     if (t?.timer) clearTimeout(t.timer)
     this.tabs.delete(tabId)
+  }
+
+  /**
+   * The tab starts again in `cwd`, as a new tab with the same id and Claude flag: its session, ledger, scope, request,
+   * viewed marks, dialogs and last view are gone. It computes at once when it is in front.
+   */
+  resetTab(tabId: string, cwd: string): void {
+    const t = this.tabs.get(tabId)
+    if (!t) return
+    if (t.timer) clearTimeout(t.timer)
+    t.timer = null
+    t.folder = cwd
+    t.sessionId = null
+    t.ledger = null
+    t.log = { prompts: [], edits: [] }
+    t.logIds.clear()
+    t.keptOriginal.clear()
+    t.texts.clear()
+    t.scope = null
+    t.request = null
+    t.forced.clear()
+    t.viewed.clear()
+    t.running = false
+    t.dialogs.clear()
+    t.gen++
+    t.countJob = null
+    t.last = null
+    // a tab in front computes its new view now; one in the background says so at once, so its counter and last view go
+    if (this.inFront(tabId)) this.schedule(t, 0)
+    else this.d.publish(this.withState(t, this.emptyUpdate(t)))
+  }
+
+  /** the view of a tab with nothing computed in it: no files and no counter, in the tab's folder */
+  private emptyUpdate(t: TabState): ReviewUpdate {
+    return {
+      tabId: t.tabId,
+      view: { kind: 'request' },
+      label: '',
+      uncommitted: { available: true },
+      files: [],
+      additions: 0,
+      deletions: 0,
+      unviewed: 0,
+      ignored: 0,
+      hideTests: this.d.testPatterns() !== null,
+      renderMarkdown: this.d.renderMarkdown(),
+      testsHidden: 0,
+      testsSample: [],
+      outside: 0,
+      outsideSample: [],
+      folder: t.folder,
+      notice: null,
+      send: this.sendState(t),
+      counter: null,
+      reveal: false
+    }
   }
 
   dispose(): void {
@@ -282,10 +340,10 @@ export class ReviewHub {
 
   // ---- when to compute
 
-  /** something changed for the tab: compute it soon if it is in front; a tab behind computes when it comes to the front */
+  /** something changed for the tab: compute it soon if it is in front (here or on another device); a tab behind computes when it comes to the front */
   trigger(tabId: string): void {
     const t = this.tabs.get(tabId)
-    if (!t?.claude || this.d.activeTabId() !== tabId) return
+    if (!t?.claude || !this.inFront(tabId)) return
     this.schedule(t, this.d.debounceMs ?? 300)
   }
 
@@ -346,6 +404,11 @@ export class ReviewHub {
     if (!t || openedAt === undefined || at <= openedAt) return
     t.dialogs.delete(agentId)
     this.publishState(t)
+  }
+
+  /** the tab is in front on this device, or another device has it in front */
+  private inFront(tabId: string): boolean {
+    return this.d.activeTabId() === tabId || (this.d.remoteFront?.(tabId) ?? false)
   }
 
   private useSession(t: TabState, sessionId: string): void {
@@ -440,9 +503,9 @@ export class ReviewHub {
     return { update, counting: own ? null : () => this.otherCounter(t, root, base), texts }
   }
 
-  /** the texts of the view `t` just published (by path); every other tab's go: only the tab in front builds its view */
+  /** the texts of the view `t` just published (by path); the texts of the tabs not in front go: a tab in front keeps its own, for its expand buttons */
   private keepTexts(t: TabState, texts: Map<string, string>): void {
-    for (const o of this.tabs.values()) o.texts.clear()
+    for (const o of this.tabs.values()) if (o.tabId === t.tabId || !this.inFront(o.tabId)) o.texts.clear()
     for (const f of t.last?.files ?? []) {
       const text = texts.get(f.path)
       if (text !== undefined) t.texts.set(pathKey(f.path), { hash: f.hash, text })

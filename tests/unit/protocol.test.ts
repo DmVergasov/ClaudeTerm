@@ -291,3 +291,10 @@ describe('parsePipeMessage: task list', () => {
     })
   })
 })
+
+describe('parsePipeMessage: the device messages', () => {
+  it('parses device_status and open_device_settings, keeping only their fields', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'device_status', code: 'x' }))).toEqual({ ok: true, message: { v: 1, type: 'device_status' } })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'open_device_settings' }))).toEqual({ ok: true, message: { v: 1, type: 'open_device_settings' } })
+  })
+})

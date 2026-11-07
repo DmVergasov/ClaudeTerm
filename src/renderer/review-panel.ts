@@ -14,7 +14,8 @@ import type { SidePanel } from './side-panel'
 export interface ReviewPanelCallbacks {
   setScope(tabId: string, scope: ReviewScope): void
   clearRequest(tabId: string): void
-  refresh(tabId: string): void
+  /** `auto` is a background refresh (opening the panel): the window may leave it out when the tab's device is offline */
+  refresh(tabId: string, auto?: boolean): void
   setViewed(tabId: string, path: string, hash: string, viewed: boolean): void
   showFile(tabId: string, path: string): void
   openEditor(tabId: string, path: string, line: number): void
@@ -597,7 +598,7 @@ export class ReviewPanel {
     const showing = this.panel.isShowing('changes')
     if (showing && !this.wasShowing) {
       this.render()
-      if (this.update) this.cb.refresh(this.update.tabId)
+      if (this.update) this.cb.refresh(this.update.tabId, true)
     }
     this.wasShowing = showing
   }
@@ -798,8 +799,10 @@ export class ReviewPanel {
       e.stopPropagation()
       const r = more.getBoundingClientRect()
       showMenu({ x: r.left, y: r.bottom }, [
-        { label: 'Open in editor', action: () => this.cb.openEditor(u.tabId, f.path, firstLine(f)) },
-        { label: 'Show in Explorer', action: () => this.cb.reveal(u.tabId, f.path) },
+        ...(u.remote ? [] : [
+          { label: 'Open in editor', action: () => this.cb.openEditor(u.tabId, f.path, firstLine(f)) },
+          { label: 'Show in Explorer', action: () => this.cb.reveal(u.tabId, f.path) }
+        ]),
         { label: 'Copy path', action: () => this.cb.copyText(f.path) }
       ])
     })
@@ -826,7 +829,8 @@ export class ReviewPanel {
       return box
     }
     // the lines the hunks hide: each gap's buttons sit in the header of the hunk under it, the last one's in a row of its own
-    const gaps = new Map(gapsOf(f.hunks, f.lineCount).map((g) => [g.before, g]))
+    // a remote tab's view has none: the lines a hunk hides are read on its device, which this window does not ask
+    const gaps = new Map<number, Gap>(u.remote ? [] : gapsOf(f.hunks, f.lineCount).map((g): [number, Gap] => [g.before, g]))
     f.hunks.forEach((h, hi) => box.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt, marks, gaps.get(hi))))
     const tail = gaps.get(f.hunks.length)
     if (tail) {
@@ -913,7 +917,7 @@ export class ReviewPanel {
         const at = editorLine(h, seg.from)
         showMenu({ x: e.clientX, y: e.clientY }, [
           { label: 'Comment', action: () => this.startDraft(u, f, h, seg.from, seg.to) },
-          { label: `Open in editor at line ${at}`, action: () => this.cb.openEditor(u.tabId, f.path, at) },
+          ...(u.remote ? [] : [{ label: `Open in editor at line ${at}`, action: () => this.cb.openEditor(u.tabId, f.path, at) }]),
           { label: 'Copy path:line', action: () => this.cb.copyText(location(anchorOf(f, h.lines.slice(seg.from, seg.to + 1), ''))) }
         ])
       })
@@ -960,7 +964,7 @@ export class ReviewPanel {
         const at = editorLine(h, li)
         showMenu({ x: e.clientX, y: e.clientY }, [
           { label: 'Comment', action: () => this.startDraft(u, f, h, li, li) },
-          { label: `Open in editor at line ${at}`, action: () => this.cb.openEditor(u.tabId, f.path, at) },
+          ...(u.remote ? [] : [{ label: `Open in editor at line ${at}`, action: () => this.cb.openEditor(u.tabId, f.path, at) }]),
           { label: 'Copy path:line', action: () => this.cb.copyText(`${f.relPath}:${no ?? at}`) }
         ])
       })

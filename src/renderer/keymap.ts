@@ -37,6 +37,12 @@ export function imagePasteInput(platform: string): string {
   return platform === 'win32' ? '\x1bv' : '\x16'
 }
 
+/** how an image-only clipboard reaches a tab: 'remote' copies it to the tab's device and types the path there; 'file' types a local PNG file's path; 'key' sends Claude Code's image-paste key */
+export function imagePasteRoute(o: { platform: string; remote: boolean; asFile: boolean }): 'remote' | 'file' | 'key' {
+  if (o.remote) return 'remote'
+  return o.platform === 'win32' && o.asFile ? 'file' : 'key'
+}
+
 /** Ctrl on Windows and Linux, ⌘ on macOS, without the other modifiers: the key of a panel's own shortcuts (Ctrl+F, Ctrl+D) */
 export function isPrimaryKey(e: KeyLike, platform: string): boolean {
   const mac = platform === 'darwin'

@@ -9,6 +9,9 @@ export const SCOPE_LABELS: Record<ReviewScope, string> = { uncommitted: 'uncommi
 export const NOT_RUNNING = 'Claude is not running in this tab'
 export const IN_DIALOG = "Answer Claude's prompt in the terminal first"
 
+/** the longest file hash: a git object id, or `binary:` and one (71 characters in a SHA-256 repository) */
+export const MAX_HASH = 128
+
 export type ReviewLineKind = 'context' | 'add' | 'del'
 
 export interface ReviewLine {
@@ -94,4 +97,6 @@ export interface ReviewUpdate {
   counter: ReviewCounter | null
   /** show_diff asked to open the panel */
   reveal: boolean
+  /** the update of a tab on another device, as this window gets it: the panel leaves out what only this device can do */
+  remote?: boolean
 }

@@ -30,6 +30,20 @@ export class TaskListHub {
     this.notify(tabId, before)
   }
 
+  /**
+   * The tab's folder changed: its list and its conversation are forgotten. The list stays stored under the old conversation,
+   * and the next conversation of the tab takes none of it.
+   */
+  resetTab(tabId: string): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    const before = this.statusJson(tabId)
+    tab.sessionId = null
+    tab.list = null
+    tab.hidden = false
+    this.notify(tabId, before)
+  }
+
   /** Forgets the tab; the list stays stored under the tab's last conversation. */
   removeTab(tabId: string): void {
     this.tabs.delete(tabId)

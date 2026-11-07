@@ -19,11 +19,12 @@ const diffs: ShowDiffMessage[] = []
 const docs: ShowDocumentMessage[] = []
 const taskLists: TaskListMessage[] = []
 const taskListGets: TaskListGetMessage[] = []
+const deviceMsgs: unknown[] = []
 let server: PipeServerHandle
 
 beforeAll(async () => {
   await build({ entryPoints: [resolve(__dirname, '../../src/mcp/show-image-server.ts')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', target: 'node20', logLevel: 'silent' })
-  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), cwd: () => ({ ok: true }), editBefore: () => ({ ok: true }), showDocument: async (m) => { docs.push(m); return { ok: true, info: 'Opened out/spec.md in the Docs panel.' } }, showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } }, taskList: (m) => { taskLists.push(m); return { ok: true, info: 'Task list updated: 1 of 2 done.' } }, taskListGet: (m) => { taskListGets.push(m); return { ok: true, info: 'Release prep: 1 of 2 done' } } })
+  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), cwd: () => ({ ok: true }), editBefore: () => ({ ok: true }), deviceStatus: (m) => { deviceMsgs.push(m); return { ok: true, info: 'status text' } }, openDeviceSettings: (m) => { deviceMsgs.push(m); return { ok: true } }, showDocument: async (m) => { docs.push(m); return { ok: true, info: 'Opened out/spec.md in the Docs panel.' } }, showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } }, taskList: (m) => { taskLists.push(m); return { ok: true, info: 'Task list updated: 1 of 2 done.' } }, taskListGet: (m) => { taskListGets.push(m); return { ok: true, info: 'Release prep: 1 of 2 done' } } })
   mkdirSync(join(work, 'out'))
   writeFileSync(join(work, 'out', 'plot.png'), Buffer.from([1, 2, 3]))
   writeFileSync(join(work, 'out', 'spec.md'), '# Spec\n')
@@ -42,7 +43,7 @@ describe('show_image MCP server', () => {
     const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['get_task_list', 'set_task_list', 'show_diff', 'show_document', 'show_image'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['device_status', 'get_task_list', 'open_device_settings', 'set_task_list', 'show_diff', 'show_document', 'show_image'])
     const res = await client.callTool({ name: 'show_image', arguments: { path: 'out/plot.png', caption: 'Plot' } })
     expect(res.isError).toBeFalsy()
     expect(res.content).toEqual([{ type: 'text', text: `Shown in ClaudeTerm: ${join(work, 'out', 'plot.png')}` }])
@@ -112,6 +113,25 @@ describe('show_image MCP server', () => {
     expect(res.isError).toBeFalsy()
     expect(res.content).toEqual([{ type: 'text', text: 'Release prep: 1 of 2 done' }])
     expect(taskListGets).toEqual([{ v: 1, type: 'task_list_get', tabId: TAB }])
+    await client.close()
+  })
+
+  it('forwards device_status and open_device_settings to ClaudeTerm', async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [bundle],
+      cwd: work,
+      env: { ...(process.env as Record<string, string>), CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
+    })
+    const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
+    await client.connect(transport)
+    const status = await client.callTool({ name: 'device_status', arguments: {} })
+    expect(status.isError).toBeFalsy()
+    expect(status.content).toEqual([{ type: 'text', text: 'status text' }])
+    const opened = await client.callTool({ name: 'open_device_settings', arguments: {} })
+    expect(opened.isError).toBeFalsy()
+    expect(opened.content).toEqual([{ type: 'text', text: 'Opened Settings → Devices in ClaudeTerm.' }])
+    expect(deviceMsgs).toEqual([{ v: 1, type: 'device_status' }, { v: 1, type: 'open_device_settings' }])
     await client.close()
   })
 })

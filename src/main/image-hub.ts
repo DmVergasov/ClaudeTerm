@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { PlatformPath } from 'node:path'
-import { mediaKindOf } from '../shared/image-file'
+import { mediaKindOf, type ImageCheck } from '../shared/image-file'
 import type { ImageCard, ImageSource } from '../shared/types'
 import { nativePath, pathKey } from './path-key'
 
@@ -36,8 +36,29 @@ export function relPathOf(cwd: string, file: string, tempDir: string | null = nu
   return file
 }
 
+/**
+ * show_image: the file is checked, then shown as a card of the tab it names (else of the fallback tab). The named tab's
+ * generation is taken before the check, so a folder change while the check runs drops the card (R3).
+ */
+export async function showImageFile(
+  hub: ImageHub,
+  req: { tabId: string | null; path: string; caption: string | null },
+  o: { check(path: string): Promise<ImageCheck>; fallback(): string | null }
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const generation = req.tabId === null ? undefined : hub.generation(req.tabId)
+  const check = await o.check(req.path)
+  if (!check.ok) return { ok: false, error: check.error }
+  const target = hub.resolveTarget(req.tabId, o.fallback())
+  if (!target) return { ok: false, error: 'no open tabs in ClaudeTerm' }
+  hub.add(target, req.path, 'shown', req.caption, undefined, false, target === req.tabId ? generation : undefined)
+  return { ok: true }
+}
+
 export class ImageHub {
   private readonly feeds = new Map<string, Feed>()
+  /** the generation of each tab: resetTab takes a new one, so an add that started before it is dropped (R3) */
+  private readonly gens = new Map<string, number>()
+  private nextGen = 0
 
   constructor(private readonly o: ImageHubOptions) {}
 
@@ -54,8 +75,27 @@ export class ImageHub {
     if (f) f.tempDir = dir
   }
 
+  /** the tab's current generation: an add that is given an older one is dropped (R3) */
+  generation(tabId: string): number {
+    return this.gens.get(tabId) ?? 0
+  }
+
   removeTab(tabId: string): void {
     this.feeds.delete(tabId)
+    this.gens.delete(tabId)
+  }
+
+  /** the tab starts again in `cwd`: its cards, unseen count, notice and temp folder go; later cards count their paths from `cwd` */
+  resetTab(tabId: string, cwd: string): void {
+    const f = this.feeds.get(tabId)
+    if (!f) return
+    this.gens.set(tabId, ++this.nextGen)
+    f.cwd = cwd
+    f.tempDir = null
+    f.cards = []
+    f.unseen.clear()
+    f.notice = null
+    this.o.onChange(tabId)
   }
 
   hasTab(tabId: string): boolean {
@@ -69,10 +109,14 @@ export class ImageHub {
     this.o.onChange(tabId)
   }
 
-  /** `contentChanged` is true only for a real file modification (watcher `change`): it bumps the version and marks the card updated. */
-  add(tabId: string, path: string, source: ImageSource, caption: string | null, at?: number, contentChanged = false): ImageCard | null {
+  /**
+   * `contentChanged` is true only for a real file modification (watcher `change`): it bumps the version and marks the card updated.
+   * `generation` is the tab's generation when the add started (see generation): once the tab changed folder, the add is dropped.
+   */
+  add(tabId: string, path: string, source: ImageSource, caption: string | null, at?: number, contentChanged = false, generation?: number): ImageCard | null {
     const f = this.feeds.get(tabId)
     if (!f) return null
+    if (generation !== undefined && generation !== this.generation(tabId)) return null
     const id = cardId(tabId, path, this.paths)
     const touchedAt = at ?? this.o.now?.() ?? Date.now()
     const idx = f.cards.findIndex((c) => c.id === id)

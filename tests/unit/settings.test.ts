@@ -396,3 +396,37 @@ describe('review settings', () => {
     expect(applySettingEdit('{}', 'review.hideTests', 'yes')).toEqual({ ok: false, error: 'Invalid value for review.hideTests' })
   })
 })
+
+describe('devices settings', () => {
+  it('devices.port: 47821 by default, a whole number from 1024 to 65535', () => {
+    expect(DEFAULT_SETTINGS.devices).toEqual({ port: 47821, keepAwake: true })
+    for (const port of [1024, 5000, 65535]) expect(parseSettings(JSON.stringify({ devices: { port } })).settings.devices).toEqual({ port, keepAwake: true })
+  })
+
+  it('devices.port: other values fall back with a notice naming the key', () => {
+    for (const port of [80, 70000, 1.5, 'x']) {
+      const r = parseSettings(JSON.stringify({ devices: { port } }))
+      expect(r.settings.devices).toEqual({ port: 47821, keepAwake: true })
+      expect(r.errors).toEqual(['settings.json: invalid value for "devices.port", using default'])
+    }
+  })
+
+  it('an enabled key from an older file is ignored like any unknown key', () => {
+    const r = parseSettings(JSON.stringify({ devices: { enabled: true } }))
+    expect(r.settings.devices).toEqual({ port: 47821, keepAwake: true })
+    expect(r.errors).toEqual([])
+  })
+
+  it('devices.keepAwake: true by default, a false is kept, another value falls back with a notice naming the key', () => {
+    expect(parseSettings(JSON.stringify({ devices: { keepAwake: false } })).settings.devices).toEqual({ port: 47821, keepAwake: false })
+    const r = parseSettings(JSON.stringify({ devices: { keepAwake: 'yes' } }))
+    expect(r.settings.devices).toEqual({ port: 47821, keepAwake: true })
+    expect(r.errors).toEqual(['settings.json: invalid value for "devices.keepAwake", using default'])
+  })
+
+  it('applySettingEdit writes devices.keepAwake, and refuses a value that is not a boolean', () => {
+    const off = applySettingEdit('{}', 'devices.keepAwake', false)
+    expect(off.ok && JSON.parse(off.text)).toEqual({ devices: { keepAwake: false } })
+    expect(applySettingEdit('{}', 'devices.keepAwake', 'yes')).toEqual({ ok: false, error: 'Invalid value for devices.keepAwake' })
+  })
+})
