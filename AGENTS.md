@@ -88,6 +88,21 @@ what it starts (closes the app, kills a server it runs).
   the window stay responsive in a large repository.
 - **Keep a file's existing line endings.**
 
+## Clean up after yourself
+
+Leave the machine as you found it. When a piece of work is done, delete what you made for it and no longer need:
+
+- temp files and folders: scripts, logs, screenshots and test projects made by hand go to a scratch folder outside the
+  repository and are deleted at the end; test runs delete their own (see above);
+- git worktrees, once their work is merged or dropped. Remove a `node_modules` junction or symlink in one first
+  (`rmdir`), or `git worktree remove` deletes the main checkout's packages through it; then the branches and stashes
+  you made for it;
+- local builds nobody asked for (`dist/`: installers, packages, disk images), and processes you started: dev servers,
+  watchers, the app.
+
+Delete only what you made yourself, and look before you delete: never another agent's worktree, branch or files, nor
+the user's.
+
 ## Not allowed
 
 - No secrets (API keys, tokens) in code, history, logs or fixtures.
