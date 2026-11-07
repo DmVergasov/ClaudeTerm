@@ -1822,8 +1822,11 @@ test("a fork that B makes after B dragged A's tabs into a new order stands right
   const barA = async () => (await b.page.evaluate(() => [...document.querySelectorAll('#tabbar .tab')].map((e) => (e as HTMLElement).dataset.tabId))).filter((id) => id !== b.firstTab)
   await expect.poll(barA, SLOW).toEqual([a.firstTab, x.id, y.id])
   // B drags y onto x: this window's order is head, y, x
-  await b.page.locator(`#tabbar .tab[data-tab-id="${y.id}"]`).dragTo(b.page.locator(`#tabbar .tab[data-tab-id="${x.id}"]`))
-  await expect.poll(barA, SLOW).toEqual([a.firstTab, y.id, x.id])
+  // a title that comes in the meantime draws the bar again: a drag whose source went before it started is dragged again
+  await expect(async () => {
+    await b.page.locator(`#tabbar .tab[data-tab-id="${y.id}"]`).dragTo(b.page.locator(`#tabbar .tab[data-tab-id="${x.id}"]`))
+    await expect.poll(barA, { timeout: 5000 }).toEqual([a.firstTab, y.id, x.id])
+  }).toPass(SLOW)
   // B forks the head from its tab bar: the fork stands right after the head, before the tabs dragged after it
   const before = await tabIdsOf(a)
   await b.page.locator(`#tabbar .tab[data-tab-id="${a.firstTab}"]`).click({ button: 'right' })

@@ -758,14 +758,21 @@ test('a click on a tab in the left panel activates it even when the panel is dra
   const firstId = (await page.evaluate(() => window.__ct!.tabIds()))[0]
   const secondId = await openTab(page, 'shell', freshFolder())
   await expect(row(page, secondId)).toBeVisible()
+  // the panel settles first: the new tab is in front and both tabs' places are known, so no later redraw moves the rows
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(secondId)
+  await expect.poll(() => page.evaluate((ids) => ids.every((id) => window.__ct!.placeEvents!(id).length > 0), [firstId, secondId])).toBe(true)
 
   const c = await centre(row(page, firstId))
+  // the press lands on the first tab's row, nothing lies over it
+  const under = (p: { x: number, y: number }): Promise<string | null> => page.evaluate((q) => (document.elementFromPoint(q.x, q.y)?.closest('.tp-tab') as HTMLElement | null)?.dataset.tabId ?? null, p)
+  expect(await under(c)).toBe(firstId)
   await page.mouse.move(c.x, c.y)
   await page.mouse.down()
   await row(page, firstId).evaluate((el) => { (window as any).__pressed = el })
   // a busy Claude retitles its tab: the panel is built again while the button is down
   await page.evaluate((id) => window.ct.renameTab(id, 'redrawn'), secondId)
   await expect.poll(() => page.evaluate(() => (window as any).__pressed.isConnected)).toBe(false)
+  expect(await under(c)).toBe(firstId)
   await page.mouse.up()
   await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(firstId)
 
