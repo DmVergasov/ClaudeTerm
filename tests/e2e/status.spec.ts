@@ -97,6 +97,31 @@ test('the background work a turn ended with shows in the status bar until a late
   await app.close()
 })
 
+test('long background work takes no more than about 40 characters of the status bar, and its tooltip says it all', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  const segment = page.locator('#statusbar .status-background')
+  const description = 'Watch the invoice export queue and re-arm the watcher on every restart of the billing service'
+  const tasks = [{ id: 'm1', type: 'monitor', description, command: 'node scripts/watch-queue.js --billing --retry 5' }]
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks })).toEqual({ ok: true })
+  await expect(segment).toHaveText(`1 in background: ${description}`)
+  await expect(segment).toHaveAttribute('title', `Still running after the turn:\nmonitor · ${description} · node scripts/watch-queue.js --billing --retry 5`)
+
+  // 40 characters of the status bar's font, measured beside the segment
+  const forty = await page.locator('#statusbar').evaluate((bar) => {
+    const probe = document.createElement('span')
+    probe.textContent = '0'.repeat(40)
+    bar.append(probe)
+    const width = probe.getBoundingClientRect().width
+    probe.remove()
+    return width
+  })
+  const shown = await segment.evaluate((el) => ({ width: el.getBoundingClientRect().width, cut: el.scrollWidth > el.clientWidth }))
+  expect(shown.width).toBeLessThanOrEqual(forty + 1)
+  expect(shown.cut).toBe(true)
+  await app.close()
+})
+
 test('a new status updates the segments in place, so an open tooltip is not dismissed', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })

@@ -164,6 +164,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #statusbar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; height: 28px; padding: 0 13px; background: var(--chrome); border-top: 1px solid var(--border); color: var(--muted); font-size: 15px; white-space: nowrap; overflow: hidden; user-select: none; }
 #statusbar .status-sep { color: var(--border); }
 #statusbar .status-agents, #statusbar .status-background { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* long commands and descriptions would push the plan and the Changes counter out: the tooltip has them in full */
+#statusbar .status-background { max-width: 40ch; }
 #statusbar .warn { color: #e5c07b; }
 #statusbar .crit { color: #e06c75; }
 /* a usage limit's bar: what is used, in the segment's color, and a mark where the time gone by stands */
