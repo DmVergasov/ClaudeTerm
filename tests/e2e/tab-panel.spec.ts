@@ -146,6 +146,23 @@ test('a Claude tab follows Claude into another folder: its row shows that folder
   await app.close()
 })
 
+test('a Claude tab goes back to the folder a new prompt reports, after a cd that Claude Code undid without a CwdChanged', async () => {
+  const repo = gitRepo()
+  const elsewhere = freshFolder()
+  const { app, page, pipeName, tabId } = await launchClaudeTab(left(freshFolder()), repo)
+  // the tooltip's second line is the tab's folder
+  const folderLine = async (): Promise<string | undefined> => (await row(page, tabId).getAttribute('title'))?.split('\n')[1]
+  await expect.poll(folderLine).toBe(repo)
+
+  // a cd out of the folders the session may work in: CwdChanged reports it, then Claude Code resets its shell and reports nothing
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'cwd', tabId, sessionId: SID, cwd: elsewhere })).toMatchObject({ ok: true })
+  await expect.poll(folderLine).toBe(elsewhere)
+  // the next prompt's UserPromptSubmit carries the folder Claude Code works in
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: repo })).toMatchObject({ ok: true })
+  await expect.poll(folderLine).toBe(repo)
+  await app.close()
+})
+
 test('a folded group shows its count and a dot, and stays folded after a restart', async () => {
   const folder = freshFolder()
   const repoA = gitRepo()

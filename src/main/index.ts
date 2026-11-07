@@ -756,6 +756,8 @@ function bootstrap(): void {
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       wakeFeed(msg.tabId)
+      // the folder Claude Code works in now: it moves its shell back from a cd out of the session's folders without a CwdChanged
+      if (msg.cwd !== null) tabs.setFolder(msg.tabId, msg.cwd)
       review.turn(msg.tabId, msg.sessionId)
       tabs.setWorking(msg.tabId, true)
       autoContinue.turnStarted(msg.tabId)
