@@ -169,7 +169,7 @@ test('output printed while the devices pair is neither lost nor doubled', async 
   await expect.poll(() => bufferText(a.page, id), SLOW).toMatch(PROMPT)
   await typeInTerminal(a.page, WIN
     ? `1..${count} | % { "L$_"; Start-Sleep -Milliseconds 20 }`
-    : `for i in $(seq 1 ${count}); do echo L$i; sleep 0.02; done`)
+    : `for i in $(seq 1 ${count}); do echo L$i; if [ $((i % 10)) -eq 0 ]; then sleep 0.2; fi; done`)
   // the loop runs before the pairing starts, and is still running after B has attached and shown the tab
   await expect.poll(() => lastPrinted(a, id), SLOW).toBeGreaterThan(0)
   await pairApps(a, b)
@@ -179,8 +179,8 @@ test('output printed while the devices pair is neither lost nor doubled', async 
 
   await expect.poll(async () => {
     const [onA, onB] = await Promise.all([printedNumbers(a, id), printedNumbers(b, id)])
-    return onA.at(-1) === count && onB.at(-1) === count
-  }, { timeout: 120_000 }).toBe(true)
+    return `${onA.at(-1)}/${onB.at(-1)}`
+  }, { timeout: 120_000 }).toBe(`${count}/${count}`)
   const onA = await printedNumbers(a, id)
   const onB = await printedNumbers(b, id)
   expect(onA).toEqual(expected)

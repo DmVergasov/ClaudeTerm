@@ -60,7 +60,8 @@ test('Change folder empties the card, Changes, status, note and Docs of the old 
   const repo = gitRepo()
   writeFileSync(join(repo, 'a.ts'), 'one\nTWO\nthree\n')
   const other = mkdtempSync(join(tmpdir(), 'ct-other-'))
-  const { app, page, pipeName } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, args: ['--claude', repo], env })
+  // the panels narrow the terminal rather than lie over it, so the clicks of this test reach it in a small window too
+  const { app, page, pipeName } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, sidePanel: { noRoom: 'narrow' } }, args: ['--claude', repo], env })
   try {
     await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
     const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
@@ -86,8 +87,10 @@ test('Change folder empties the card, Changes, status, note and Docs of the old 
     await expect(page.locator('#note .note-text')).toHaveValue('Goal: payments')
     await expect(page.locator('.doc-md h1')).toHaveText('Spec')
     // Changes lists the edited file of the old folder
-    // the shortcut goes to the terminal, not to the note's text in focus
-    await page.locator('.terminal-host:visible .xterm').click()
+    // the shortcut goes to the terminal, not to the note's text in focus: the terminal's input takes the focus without a
+    // click, as the Docs panel can lie over the terminal in a small window
+    await page.locator('.terminal-host:visible .xterm-helper-textarea').focus()
+    await expect(page.locator('.terminal-host:visible .xterm-helper-textarea')).toBeFocused()
     await page.keyboard.press(KEYS.changes)
     await page.locator('.review-seg-btn[data-scope="uncommitted"]').click()
     await expect(page.locator('.review-file')).not.toHaveCount(0, SLOW)
