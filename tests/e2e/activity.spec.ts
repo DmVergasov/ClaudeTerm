@@ -20,11 +20,14 @@ const glyph = (page: Page, tabId: string): Promise<{ animation: string; content:
   return { animation: s.animationName, content: s.content }
 }, tabId)
 
-/** how a spinning icon looks: its color and the animation of its glyph, with the speed */
-const spinLook = (spin: Locator): Promise<{ color: string; animation: string; duration: string }> => spin.evaluate((el) => {
+/** how a spinning icon looks: its color and the animation of its glyph, with the speed; found and read in one go, as glyph() */
+const spinLook = (page: Page, selector: string): Promise<{ color: string; animation: string; duration: string } | null> => page.evaluate((sel) => {
+  const el = document.querySelector(sel)
+  if (!el) return null
   const s = getComputedStyle(el, '::before')
   return { color: getComputedStyle(el).color, animation: s.animationName, duration: s.animationDuration }
-})
+}, selector)
+const iconSelector = (tabId: string): string => `[data-tab-id="${tabId}"] .tab-icon`
 
 /**
  * waits until the window has drawn everything main said of its tabs so far: a rename of the tab sent after it comes
@@ -96,13 +99,13 @@ test('an agent Claude left running after its turn keeps the icon spinning as in 
   await turn(pipeName, tabId)
   expect(await agent(pipeName, tabId, 'start')).toEqual({ ok: true })
   await expect(icon(page, tabId)).toHaveClass(/\bspin\b/)
-  const working = await spinLook(icon(page, tabId))
-  expect(working.animation).toBe('tab-spin')
+  const working = await spinLook(page, iconSelector(tabId))
+  expect(working?.animation).toBe('tab-spin')
 
   await turnEnd(pipeName, tabId)
   await settled(page, tabId, 'after the turn')
   await expect(icon(page, tabId)).toHaveClass(/\bspin\b/)
-  expect(await spinLook(icon(page, tabId))).toEqual(working)
+  expect(await spinLook(page, iconSelector(tabId))).toEqual(working)
 
   expect(await agent(pipeName, tabId, 'stop')).toEqual({ ok: true })
   await expect(icon(page, tabId)).not.toHaveClass(/\bspin\b/)
@@ -198,13 +201,16 @@ test('a folded group spins while Claude works in one of its tabs, the agents it 
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await turn(pipeName, claude)
   await expect(spin).toHaveCount(1)
-  const working = await spinLook(spin)
+  // the Claude tab's group is the only folded one
+  const groupSpin = '#tabpanel .tp-group.folded .tp-group-spin'
+  const working = await spinLook(page, groupSpin)
+  expect(working?.animation).toBe('tab-spin')
   await agent(pipeName, claude, 'start')
   await turnEnd(pipeName, claude)
   // the Claude tab is in the folded group: the home tab, drawn with it, says when the window has caught up
   await settled(page, home, 'after the turn')
   await expect(spin).toHaveCount(1)
-  expect(await spinLook(spin)).toEqual(working)
+  expect(await spinLook(page, groupSpin)).toEqual(working)
   await agent(pipeName, claude, 'stop')
   await expect(spin).toHaveCount(0)
 
