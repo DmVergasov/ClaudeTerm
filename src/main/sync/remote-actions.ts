@@ -182,11 +182,15 @@ export class RemoteActions {
   }
 
   /**
-   * the device whose last Recent sessions list this session: an online one before an offline one, since two devices may list
-   * the same session; offline devices count too (the window keeps their sessions until it is told); null for none
+   * the device whose last Recent sessions list this session: the preferred one when it keeps the session, online or not (the
+   * section the pick was made in, so an offline one gets the open and says it is not connected); otherwise an online one
+   * before an offline one, since two devices may list the same session; offline devices count too (the window keeps their
+   * sessions until it is told); null for none
    */
-  deviceOfSession(id: string): string | null {
+  deviceOfSession(id: string, prefer?: string): string | null {
     const online = new Map(this.tabs.devices().map((d) => [d.id, d.online]))
+    // a pick names its section's device: an offline one is asked too, so the person is told it is not connected
+    if (prefer !== undefined && this.keptSessions.get(prefer)?.some((s) => s.id === id)) return prefer
     let offline: string | null = null
     for (const [device, list] of this.keptSessions) {
       if (!online.has(device) || !list.some((s) => s.id === id)) continue

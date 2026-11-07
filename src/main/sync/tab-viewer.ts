@@ -5,8 +5,8 @@ import { AttachedView, type StreamItem, type ViewStep } from './attached-view'
 import type { Calls } from './calls'
 import type { PeerLink } from './peer-link'
 import { piecesOf } from './pieces'
-import { CALL_REPLIES, parsePush, type PushValue } from './remote-shapes'
-import type { HelloMessage, Message } from './wire'
+import { CALL_REPLIES, MAX_REVIEW_FILES, parsePush, type PushValue, type ReviewPart, reviewRevOf } from './remote-shapes'
+import { type HelloMessage, MAX_FRAME_BYTES, type Message } from './wire'
 
 // The other devices' tabs, as this device shows them: each device's directory, the screen and stream of the tabs it
 // attaches to, and what this window sends back (input, claims, the tab in front). Everything from a device is checked
@@ -26,14 +26,16 @@ export interface ViewerEvents {
   /** fresh: an attention that just started; not fresh: one the tab already had when its device came */
   attention(tabId: string, reason: NotificationCase, fresh: boolean): void
   attentionCleared(tabId: string): void
+  /** a device is present with this tab of it in front, and its attention rings here: see Attention.ringInFront */
+  ring(tabId: string, reason: NotificationCase): void
   push(tabId: string, value: PushValue): void
 }
 
 export interface RemoteTabsDeps {
   selfId(): string
   isLocal(tabId: string): boolean
-  /** whether this window has the focus; false by default. The device that owns the tab in front is told it */
-  windowFocused?(): boolean
+  /** whether this device is present (see Presence); false by default. The device that owns the tab in front is told it */
+  present?(): boolean
   events: ViewerEvents
   /** how long before a tab in front attaches again after a loss; REATTACH_MS by default */
   reattachMs?: number
@@ -76,6 +78,25 @@ interface Fit {
   rows: number
 }
 
+/** a tab's reviews as this viewer has them: the highest rev shown, and the review whose parts are coming */
+interface ReviewFlow {
+  shown: number | null
+  assembly: {
+    rev: number
+    of: number
+    next: number
+    head: NonNullable<ReviewPart['head']>
+    files: ReviewPart['files']
+    /** the parts' sizes added up: past MAX_FRAME_BYTES, the review is no longer assembled */
+    bytes: number
+  } | null
+}
+
+/** the lowest rev a review may have and still be shown: the highest of the shown one and the one being assembled */
+function floorOf(flow: ReviewFlow): number {
+  return Math.max(flow.shown ?? -1, flow.assembly?.rev ?? -1)
+}
+
 /** The tabs of the other devices of the group, as this window shows them. */
 export class RemoteTabs {
   private readonly known = new Map<string, Device>()
@@ -84,6 +105,8 @@ export class RemoteTabs {
   /** this window's latest fit of each tab it was activated for */
   private readonly fits = new Map<string, Fit>()
   private readonly wasActivated = new Set<string>()
+  /** each tab's reviews: the highest rev shown, and the review being put together from its parts */
+  private readonly reviews = new Map<string, ReviewFlow>()
   private readonly reattachMs: number
   /** the remote tab in front in this window, if any */
   private frontId: string | null = null
@@ -279,6 +302,7 @@ export class RemoteTabs {
     this.owner.clear()
     this.fits.clear()
     this.wasActivated.clear()
+    this.reviews.clear()
     this.frontId = null
     this.frontDevice = null
   }
@@ -309,13 +333,69 @@ export class RemoteTabs {
       case 'push': {
         if (!d.tabs.has(m.id)) return
         const value = parsePush(m.k, m.v, m.id)
-        if (value) this.deps.events.push(m.id, value)
+        if (!value) return
+        if (value.k === 'review-part') this.reviewPart(m.id, value.part)
+        else if (value.k === 'review') this.review(m.id, value, reviewRevOf(m.v))
+        else this.deps.events.push(m.id, value)
         return
       }
+      case 'ring':
+        // a tab the device announced only: a ring for another device's tab is dropped
+        if (d.tabs.has(m.id)) this.deps.events.ring(m.id, m.reason)
+        return
       default:
         // in, claim and front are the host's; calls and replies go to the link's Calls
         return
     }
+  }
+
+  /**
+   * A whole review: shown unless a review of a higher rev is shown or being assembled. A review with no rev is an older
+   * device's, and is shown as it always was.
+   */
+  private review(tabId: string, value: Extract<PushValue, { k: 'review' }>, rev: number | null): void {
+    if (rev !== null) {
+      const flow = this.flowOf(tabId)
+      if (rev < floorOf(flow)) return
+      flow.shown = rev
+      flow.assembly = null
+    }
+    this.deps.events.push(tabId, value)
+  }
+
+  /**
+   * A part of a review. Part 0 starts its assembly; a part that is not the next of the assembly drops it, and so does a
+   * part of a higher rev. The last part shows the review as one push, with the head and all its files.
+   */
+  private reviewPart(tabId: string, part: ReviewPart): void {
+    const flow = this.flowOf(tabId)
+    if (part.rev < floorOf(flow)) return
+    // a copy of a part the assembly has (the same review pushed twice to this member) changes nothing
+    const have = flow.assembly
+    if (have && have.rev === part.rev && have.of === part.of && part.i < have.next) return
+    if (part.head !== null) flow.assembly = { rev: part.rev, of: part.of, next: 0, head: part.head, files: [], bytes: 0 }
+    const a = flow.assembly
+    const tooBig = a !== null && a.bytes + part.bytes > MAX_FRAME_BYTES
+    if (!a || tooBig || a.rev !== part.rev || a.of !== part.of || a.next !== part.i || a.files.length + part.files.length > MAX_REVIEW_FILES) {
+      flow.assembly = null
+      return
+    }
+    for (const f of part.files) a.files.push(f)
+    a.bytes += part.bytes
+    a.next++
+    if (a.next < a.of) return
+    flow.assembly = null
+    flow.shown = a.rev
+    this.deps.events.push(tabId, { k: 'review', v: { ...a.head, files: a.files } })
+  }
+
+  private flowOf(tabId: string): ReviewFlow {
+    let flow = this.reviews.get(tabId)
+    if (!flow) {
+      flow = { shown: null, assembly: null }
+      this.reviews.set(tabId, flow)
+    }
+    return flow
   }
 
   /** a full directory: the device's tabs are replaced by it */
@@ -415,6 +495,7 @@ export class RemoteTabs {
     this.owner.delete(id)
     this.fits.delete(id)
     this.wasActivated.delete(id)
+    this.reviews.delete(id)
     if (this.frontId === id) {
       this.frontId = null
       this.frontDevice = null
@@ -439,13 +520,14 @@ export class RemoteTabs {
     this.known.delete(id)
   }
 
-  /** the link is gone: the device's tabs stay, the attached ones are resumed when it comes back */
+  /** the link is gone: the device's tabs stay, the attached ones are resumed when it comes back; their reviews start over */
   private unlink(d: Device): void {
     if (d.link && d.onMessage) d.link.off('message', d.onMessage)
     d.link = null
     d.calls = null
     d.onMessage = null
     for (const e of d.tabs.values()) {
+      this.reviews.delete(e.id)
       if (e.view) e.resume = true
       e.view = null
       e.token++
@@ -569,15 +651,16 @@ export class RemoteTabs {
     e.claimed = true
   }
 
-  private sendFront(d: Device, id: string | null, focused = this.deps.windowFocused?.() === true): void {
-    d.link?.send({ t: 'front', id, focused })
+  private sendFront(d: Device, id: string | null, present = this.deps.present?.() === true): void {
+    // a 0.15.0 host reads focused instead of present: it gets the presence in that field
+    d.link?.send({ t: 'front', id, present, focused: present })
   }
 
-  /** this window gained or lost the focus: the device that owns the tab in front is told with the new flag */
-  focusChanged(focused: boolean): void {
+  /** this device became present or stopped being present: the device that owns the tab in front is told with the new flag */
+  presenceChanged(present: boolean): void {
     if (this.disposed || this.frontId === null || this.frontDevice === null) return
     const d = this.known.get(this.frontDevice)
-    if (d) this.sendFront(d, this.frontId, focused)
+    if (d) this.sendFront(d, this.frontId, present)
   }
 
   private emitDevices(): void {

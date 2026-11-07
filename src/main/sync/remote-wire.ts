@@ -24,7 +24,8 @@ export type RemoteMessage =
   | { t: 'push'; id: string; k: PushKind; v: unknown }
   | { t: 'in'; id: string; d: string }
   | { t: 'claim'; id: string; cols: number; rows: number }
-  | { t: 'front'; id: string | null; focused: boolean }
+  | { t: 'front'; id: string | null; present: boolean; focused: boolean }
+  | { t: 'ring'; id: string; reason: NotificationCase }
 
 /** The shape of a call's method name on the wire; a call whose name does not match is not sent, and a peer refuses one that does not. */
 export const METHOD_RE = /^[a-z][a-z-]{0,31}$/
@@ -112,12 +113,18 @@ export function parseRemoteMessage(v: Record<string, unknown>): RemoteMessage | 
       return isUuid(id) && fits && isPtySize(cols, rows) ? { t: 'claim', id, cols: cols as number, rows: rows as number } : null
     }
     case 'front': {
-      // focused is absent from an older member, which is not focused; any other value is a bad message
-      const { id, focused } = v
+      // present is absent from an older member, which is not present; focused is all a 0.15.0 member sends, and clears its mark as before; any other value is a bad message
+      const { id, present, focused } = v
+      if (present !== undefined && typeof present !== 'boolean') return null
       if (focused !== undefined && typeof focused !== 'boolean') return null
-      const isFocused = focused === true
-      if (id === null) return { t: 'front', id: null, focused: isFocused }
-      return isUuid(id) ? { t: 'front', id, focused: isFocused } : null
+      const flags = { present: present === true, focused: focused === true }
+      if (id === null) return { t: 'front', id: null, ...flags }
+      return isUuid(id) ? { t: 'front', id, ...flags } : null
+    }
+    case 'ring': {
+      // a tab's attention rung on a member that is present with the tab in front: the tab and its case, nothing else
+      const { id, reason } = v
+      return isUuid(id) && NOTIFICATION_CASES.some((c) => c === reason) ? { t: 'ring', id, reason: reason as NotificationCase } : null
     }
     default:
       return 'unknown'

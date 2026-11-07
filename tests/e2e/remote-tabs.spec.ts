@@ -9,8 +9,8 @@ import { IPC } from '../../src/shared/ipc'
 import type { TaskList } from '../../src/shared/task-list'
 import { PEER_ORIGIN, turnPromptLine } from '../fixtures/transcript'
 import { LIST_TIMEOUT_MS, MAX_TRANSFER_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY } from '../../src/shared/remote'
-import { MAC, WIN } from '../fixtures/platform'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, keepingClipboard, PNG_1x1, PROMPT, typeInTerminal, writeTranscript } from './helpers'
+import { LINUX, MAC, WIN } from '../fixtures/platform'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, keepingClipboard, PNG_1x1, processAlive, PROMPT, TEST_SHELL, typeInTerminal, writeTranscript } from './helpers'
 import { closePaired, type Device, openShell, pairApps, pairedApps, relaunch, setWindowSize, SLOW, startApps, termSize } from './device-pair'
 
 test.afterEach(closePaired)
@@ -442,6 +442,26 @@ test("opening Changes on an offline device's tab says nothing; the ⟳ button st
   await expect(b.page.locator('.toast')).toHaveCount(1)
 })
 
+test('⟳ on the tab of a device that went offline before any review came says the device is offline', async () => {
+  test.setTimeout(180_000)
+  const { a, b } = await pairedApps({ a: { args: ['--claude', gitRepo()] } })
+  const claude = a.firstTab
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
+  // B does not activate the tab before A closes: it never attaches, so no review is pushed to B
+  await a.app.close()
+  await expect(b.page.locator('.tab-group-chip.offline')).toBeVisible(SLOW)
+  await b.page.evaluate((id) => window.ct.activateTab(id), claude)
+  await expect.poll(() => front(b), SLOW).toBe(claude)
+
+  await b.page.keyboard.press(KEYS.changes)
+  await expect(b.page.locator('.review-refresh')).toBeVisible(SLOW)
+  // the panel has no review for the tab, so it lists no file
+  await expect(b.page.locator('.review-files .review-file')).toHaveCount(0)
+  await b.page.locator('.review-refresh').click()
+  await expect(b.page.locator('.toast', { hasText: REMOTE_COPY.deviceOffline('Studio') })).toHaveCount(1, SLOW)
+  await expect(b.page.locator('.toast')).toHaveCount(1)
+})
+
 test('next, previous and go-to-tab walk this device\'s tabs and the unfolded groups, not a folded one', async () => {
   test.setTimeout(180_000)
   const { a, b } = await pairedApps()
@@ -546,10 +566,11 @@ test("an image pasted into A's tab on B is copied to A and its path typed there,
     await b.page.keyboard.press(KEYS.paste)
     // what B typed, without the bracketed-paste markers a bash with bracketed paste wraps a paste in (Ubuntu's bash 5.2)
     const typed = () => b.page.evaluate((id) => window.__ct!.ptyInput!(id).replace(/\x1b\[(?:20[01]~|[IO])/g, ''), tab.id)
-    await expect.poll(typed, SLOW).toMatch(/"[^"]+"/)
+    // B's shell quotes the path with single quotes (PowerShell and bash both do), as A's tab's shell is told to
+    await expect.poll(typed, SLOW).toMatch(/'[^']+'/)
     const sent = await typed()
-    const path = /"([^"]+)"/.exec(sent)![1]
-    expect(sent).toContain(`"${path}"`)
+    const path = /'([^']+)'/.exec(sent)![1]
+    expect(sent).toContain(`'${path}'`)
     expect(sent).not.toContain('\x1bv')
     expect(sent).not.toContain('\x16')
     // the copy is a PNG file under A's received folder, as big as the image (its IHDR), and A's shell shows its path
@@ -557,6 +578,55 @@ test("an image pasted into A's tab on B is copied to A and its path typed there,
     const png = readFileSync(path)
     expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1, 1])
     await expect.poll(() => bufferText(a.page, tab.id), SLOW).toContain(basename(path))
+  })
+})
+
+// Claude Code's own image-paste key: Ctrl+V on macOS, Alt+V on Windows (Ctrl+V is smart paste on Linux already)
+const CLAUDE_IMAGE_KEY = MAC ? 'Control+KeyV' : 'Alt+KeyV'
+const CLAUDE_IMAGE_INPUT = MAC ? '\x16' : '\x1bv'
+
+test("Claude Code's image-paste key in another device's Claude tab copies B's clipboard image to A and types its path there", async () => {
+  test.skip(LINUX, 'Ctrl+V is smart paste on Linux')
+  test.setTimeout(180_000)
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({ a: { args: ['--claude', work] } })
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${a.firstTab}"]`)).toHaveCount(1, SLOW)
+  await b.page.evaluate((id) => window.ct.activateTab(id), a.firstTab)
+  await expect.poll(() => b.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(a.firstTab)
+  await keepingClipboard(b.app, async () => {
+    await b.app.evaluate(async ({ clipboard, ClipboardItem }, png) => {
+      await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })])
+    }, [...PNG_1x1])
+    await b.page.locator('.terminal-host:visible .xterm').click()
+    await b.page.keyboard.press(CLAUDE_IMAGE_KEY)
+    // what B typed into A's tab, without the bracketed-paste markers
+    const typed = () => b.page.evaluate((id) => window.__ct!.ptyInput!(id).replace(/\x1b\[(?:20[01]~|[IO])/g, ''), a.firstTab)
+    // a Claude tab takes the path in double quotes, as the prompt of Claude Code reads them (a shell tab gets its shell's quotes)
+    await expect.poll(typed, SLOW).toMatch(/"[^"]+"/)
+    const sent = await typed()
+    const path = /"([^"]+)"/.exec(sent)![1]
+    expect(sent).toContain(`"${path}"`)
+    // the key itself is not sent: A's Claude Code would read A's clipboard, not this device's image
+    expect(sent).not.toContain('\x16')
+    expect(sent).not.toContain('\x1bv')
+    expect(isWithin(a.received, path)).toBe(true)
+    const png = readFileSync(path)
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1, 1])
+  })
+})
+
+test("with text only on B's clipboard, Claude Code's image-paste key reaches A's Claude tab as that key", async () => {
+  test.skip(LINUX, 'Ctrl+V is smart paste on Linux')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({ a: { args: ['--claude', work] } })
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${a.firstTab}"]`)).toHaveCount(1, SLOW)
+  await b.page.evaluate((id) => window.ct.activateTab(id), a.firstTab)
+  await expect.poll(() => b.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(a.firstTab)
+  await keepingClipboard(b.app, async () => {
+    await b.app.evaluate(({ clipboard }) => clipboard.writeText('plain text'))
+    await b.page.locator('.terminal-host:visible .xterm').click()
+    await b.page.keyboard.press(CLAUDE_IMAGE_KEY)
+    await expect.poll(() => b.page.evaluate((id) => window.__ct!.ptyInput!(id), a.firstTab), SLOW).toContain(CLAUDE_IMAGE_INPUT)
   })
 })
 
@@ -571,10 +641,12 @@ test("dropped files are copied to A's tab device; a folder, too many files, more
   const drop = (paths: string[]) => b.page.evaluate(([id, list]) => window.ct.dropFilesToRemote(id, list), [tab.id, paths] as [string, string[]])
 
   // one file of 10 bytes: one path under A's received folder, with the same bytes
-  const copied = await drop([file])
-  expect(copied).toHaveLength(1)
-  expect(isWithin(a.received, copied![0])).toBe(true)
-  expect(readFileSync(copied![0]).equals(Buffer.from('0123456789'))).toBe(true)
+  // the text typed is the path, quoted for the tab's shell (single quotes)
+  const typed = await drop([file])
+  const copied = /^'([^']+)'$/.exec(typed ?? '')?.[1] ?? ''
+  expect(copied).not.toBe('')
+  expect(isWithin(a.received, copied)).toBe(true)
+  expect(readFileSync(copied).equals(Buffer.from('0123456789'))).toBe(true)
 
   // a folder is not a file: refused with the copy's words, and nothing is sent
   const folder = join(dir, 'sub')
@@ -601,7 +673,7 @@ test("dropped files are copied to A's tab device; a folder, too many files, more
     const second = await window.ct.dropFilesToRemote(id, [q])
     return { running: await first, refused: second }
   }, [tab.id, bulk, file] as [string, string, string])
-  expect(running).toHaveLength(1)
+  expect(running).toMatch(/^'[^']+'$/)
   expect(refused).toBeNull()
   await expect(b.page.locator('#toasts')).toContainText(REMOTE_COPY.copying('Studio'))
 })
@@ -633,11 +705,11 @@ test("a file dropped on a remote tab's terminal is copied to A, and its path is 
   })
   // without the focus reports xterm sends when the test moves focus (ESC [ I, ESC [ O)
   const typed = () => b.page.evaluate((id) => window.__ct!.ptyInput!(id).replace(/\x1b\[(?:20[01]~|[IO])/g, ''), tab.id)
-  await expect.poll(typed, SLOW).toMatch(/"[^"]+"/)
+  await expect.poll(typed, SLOW).toMatch(/'[^']+'/)
   const sent = await typed()
-  const path = /"([^"]+)"/.exec(sent)![1]
-  // exactly the quoted path, under A's received folder, with the file's bytes
-  expect(sent).toBe(`"${path}"`)
+  const path = /'([^']+)'/.exec(sent)![1]
+  // exactly the path quoted for the tab's shell, under A's received folder, with the file's bytes
+  expect(sent).toBe(`'${path}'`)
   expect(isWithin(a.received, path)).toBe(true)
   expect(readFileSync(path).equals(Buffer.from('0123456789'))).toBe(true)
 })
@@ -808,6 +880,320 @@ test('an attention on the tab in front on A pulses on B; typing into it on A sto
   await a.page.waitForTimeout(300)
   expect(await clears()).toBe(1)
   expect(await marksOf(b, claude)).toEqual({ attention: false, unread: false })
+})
+
+test('an attention on A while A is present with its tab in front reaches no other device: B neither pulses nor sounds', async () => {
+  test.setTimeout(180_000)
+  // A's presence is a file: 'present' while the test says so; B writes the sounds it would play to a file
+  const presentA = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(presentA, 'present')
+  const sounds = join(mkdtempSync(join(tmpdir(), 'ct-sound-')), 'sounds.txt')
+  const played = (): string => (existsSync(sounds) ? readFileSync(sounds, 'utf8') : '')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({
+    a: { settings: quietNotifications(), args: ['--claude', work], env: { CLAUDETERM_TEST_PRESENCE: presentA } },
+    b: { settings: quietNotifications({ permission: { sound: true, flash: false, tab: true } }), env: { CLAUDETERM_TEST_SOUND_LOG: sounds } }
+  })
+  const claude = a.firstTab
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
+
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'permission' })).toEqual({ ok: true })
+  await a.page.waitForTimeout(2000)
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).not.toHaveClass(/\battention\b/)
+  expect(played()).toBe('')
+  expect(await marksOf(a, claude)).toEqual({ attention: false, unread: false })
+})
+
+test("A becoming present with its Claude tab in front clears the attention B shows, and A's own mark", async () => {
+  test.setTimeout(180_000)
+  // A is not present at first: its file says so, and the test sets it present later
+  const presentA = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(presentA, 'absent')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({
+    a: { settings: quietNotifications(), args: ['--claude', work], env: { CLAUDETERM_TEST_PRESENCE: presentA } },
+    b: { settings: quietNotifications() }
+  })
+  const claude = a.firstTab
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
+
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'permission' })).toEqual({ ok: true })
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).toHaveClass(/\battention\b/, SLOW)
+
+  // the person sits down at A, with its Claude tab in front: the tab is seen there, so B stops pulsing; A shows no mark for its own front tab
+  writeFileSync(presentA, 'present')
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).not.toHaveClass(/\battention\b/, SLOW)
+  expect(await marksOf(a, claude)).toEqual({ attention: false, unread: false })
+})
+
+test("B becoming present with A's Claude tab in front on B clears the attention on A", async () => {
+  test.setTimeout(180_000)
+  // B is not present at first: its file says so, and the test sets it present later
+  const presentB = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(presentB, 'absent')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({
+    a: { settings: quietNotifications(), args: ['--claude', work] },
+    b: { settings: quietNotifications(), env: { CLAUDETERM_TEST_PRESENCE: presentB } }
+  })
+  const claude = a.firstTab
+  await a.page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await a.page.waitForFunction((id) => window.__ct!.activeTabId() !== id, claude)
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
+  // A's Claude tab is in front on B, which is not present yet; the front reaches A before the attention does
+  await b.page.locator(`[data-tab-id="${claude}"]`).click()
+  await expect.poll(() => b.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(claude)
+  await b.page.waitForTimeout(1500)
+
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'permission' })).toEqual({ ok: true })
+  // A's tab is behind its shell, so A marks it; B shows no pulse for the tab in front on it
+  await expect.poll(async () => (await marksOf(a, claude))?.attention, SLOW).toBe(true)
+
+  // B's person sits down: the tab in front on B is seen, so A's mark goes
+  writeFileSync(presentB, 'present')
+  await expect.poll(async () => (await marksOf(a, claude))?.attention, SLOW).toBe(false)
+})
+
+test("B locking its screen while A's Claude tab is in front there makes B away: an attention on A starts on A", async () => {
+  test.setTimeout(180_000)
+  // B is present: its file says so, and the lock is what makes it away
+  const presentB = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(presentB, 'present')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({
+    a: { settings: quietNotifications(), args: ['--claude', work] },
+    b: { settings: quietNotifications(), env: { CLAUDETERM_TEST_PRESENCE: presentB } }
+  })
+  const claude = a.firstTab
+  await a.page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await a.page.waitForFunction((id) => window.__ct!.activeTabId() !== id, claude)
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
+  // A's Claude tab is in front on B, which is present
+  await b.page.locator(`[data-tab-id="${claude}"]`).click()
+  await expect.poll(() => b.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(claude)
+  await b.page.waitForTimeout(1500)
+
+  // B's screen locks: B counts as away at once, and A's host learns it
+  await b.app.evaluate(({ powerMonitor }) => { powerMonitor.emit('lock-screen') })
+  await b.page.waitForTimeout(1500)
+
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'permission' })).toEqual({ ok: true })
+  // A's tab is behind its shell, so A marks it: a present B would ring instead, and A would keep no mark
+  await expect.poll(async () => (await marksOf(a, claude))?.attention, SLOW).toBe(true)
+})
+
+/** ends the node process of a tab's command by its marker, from the test: nothing is typed into the tab */
+function killByMarker(marker: string): void {
+  if (WIN) {
+    execFileSync('powershell.exe', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*${marker}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`])
+    return
+  }
+  // anchored to node: the tab's own bash -c holds the same marker in its command line
+  for (const pid of execFileSync('pgrep', ['-f', `^node .*${marker}`], { encoding: 'utf8' }).trim().split('\n')) execFileSync('kill', [pid])
+}
+
+test('a Claude tab whose process exits on its own while it waits clears its mark on every device', async () => {
+  test.setTimeout(180_000)
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  // the tab's command is a node process with a marker, then the shell's exit: when the process ends, the tab's shell ends too
+  const marker = `ct-exit-probe-${Date.now()}`
+  const command = `node -e 'setTimeout(()=>{},1e9)' ${marker}; exit #`
+  const { a, b } = await pairedApps({
+    a: { settings: { ...quietNotifications(), claude: { command, shellProfile: TEST_SHELL } }, args: ['--claude', work] },
+    b: { settings: quietNotifications() }
+  })
+  const claude = a.firstTab
+  await expect.poll(() => processAlive(marker), { timeout: 15_000 }).toBe(true)
+  await waitingBehindShell(a, b, claude, work)
+  // nothing is typed: the process is killed from outside, and the shell's own exit ends the tab
+  killByMarker(marker)
+  await expect.poll(() => processAlive(marker), { timeout: 15_000 }).toBe(false)
+  await expect(a.page.locator(`.tab[data-tab-id="${claude}"]`)).toHaveClass(/\bexited\b/, SLOW)
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).not.toHaveClass(/\battention\b/, SLOW)
+  await expect.poll(async () => (await marksOf(a, claude))?.attention, SLOW).toBe(false)
+})
+
+/** the transcript poll that answers a turn's end waits this long: the person's answer lands in that gap */
+const DONE_DELAY = { CLAUDETERM_TEST_DONE_DELAY_MS: '1500' }
+
+/**
+ * A's Claude tab, behind a shell tab of A's, with a session whose transcript holds a turn: the turn's end is sent now and
+ * its poll waits for DONE_DELAY, so the tests answer it in that gap.
+ */
+async function endTurnBehindShellOnA(a: Device, b: Device, claude: string, work: string): Promise<void> {
+  await a.page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await a.page.waitForFunction((id) => window.__ct!.activeTabId() !== id, claude)
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
+  const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
+  mkdirSync(projectDir, { recursive: true })
+  const transcriptPath = join(projectDir, `${ATTENTION_SID}.jsonl`)
+  writeFileSync(transcriptPath, turnPromptLine('the build is green', { turnIndex: 0 }) + '\n')
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'session', tabId: claude, sessionId: ATTENTION_SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'done' })).toEqual({ ok: true })
+}
+
+/** after the poll's delay the answered turn's end starts nothing: B does not pulse and A keeps no mark */
+async function expectAnsweredNoMark(a: Device, b: Device, claude: string): Promise<void> {
+  await b.page.waitForTimeout(2500)
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).not.toHaveClass(/\battention\b/)
+  expect(await marksOf(a, claude)).toEqual({ attention: false, unread: false })
+}
+
+test('a prompt typed on A while the end of its turn is being read leaves no mark on any device', async () => {
+  test.setTimeout(180_000)
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({ a: { settings: quietNotifications(), args: ['--claude', work], env: DONE_DELAY }, b: { settings: quietNotifications() } })
+  const claude = a.firstTab
+  await endTurnBehindShellOnA(a, b, claude, work)
+  await a.page.evaluate(([id, text]) => window.ct.writePty(id, text), [claude, 'x'] as const)
+  await expectAnsweredNoMark(a, b, claude)
+  // the window was long enough: a turn's end nobody answers pulses on B and marks A's tab
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).toHaveClass(/\battention\b/, SLOW)
+  await expect.poll(async () => (await marksOf(a, claude))?.attention, SLOW).toBe(true)
+})
+
+test("A activating its Claude tab while the end of its turn is being read leaves no pulse on B and no mark on A", async () => {
+  test.setTimeout(180_000)
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({ a: { settings: quietNotifications(), args: ['--claude', work], env: DONE_DELAY }, b: { settings: quietNotifications() } })
+  const claude = a.firstTab
+  await endTurnBehindShellOnA(a, b, claude, work)
+  await a.page.evaluate((id) => window.ct.activateTab(id), claude)
+  await expect.poll(() => a.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(claude)
+  await expectAnsweredNoMark(a, b, claude)
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).toHaveClass(/\battention\b/, SLOW)
+})
+
+test("B activating A's Claude tab while the end of its turn is being read leaves no mark on A", async () => {
+  test.setTimeout(180_000)
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({ a: { settings: quietNotifications(), args: ['--claude', work], env: DONE_DELAY }, b: { settings: quietNotifications() } })
+  const claude = a.firstTab
+  await endTurnBehindShellOnA(a, b, claude, work)
+  await b.page.evaluate((id) => window.ct.activateTab(id), claude)
+  await expect.poll(() => b.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(claude)
+  await b.page.waitForTimeout(2500)
+  expect(await marksOf(a, claude)).toEqual({ attention: false, unread: false })
+  // the window was long enough: with B's tab in front nobody answers, A marks its tab
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'done' })).toEqual({ ok: true })
+  await expect.poll(async () => (await marksOf(a, claude))?.attention, SLOW).toBe(true)
+})
+
+/**
+ * A's Claude tab, behind a shell tab of A's, waits with a permission attention that B shows pulsing: the set-up of the
+ * tests below. A is not present, so the attention starts and every device hears it.
+ */
+async function waitingBehindShell(a: Device, b: Device, claude: string, work: string): Promise<void> {
+  await a.page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await a.page.waitForFunction((id) => window.__ct!.activeTabId() !== id, claude)
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'permission' })).toEqual({ ok: true })
+  await expect.poll(async () => (await marksOf(a, claude))?.attention, SLOW).toBe(true)
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).toHaveClass(/\battention\b/, SLOW)
+}
+
+/**
+ * B opens the waiting tab: its front, sent with B's presence, reaches A, which clears the tab's mark there. A's mark going
+ * is the proof that the front arrived, so the attention that follows is one B is present for.
+ */
+async function openWaitingOnB(a: Device, b: Device, claude: string): Promise<void> {
+  await b.page.locator(`[data-tab-id="${claude}"]`).click()
+  await expect.poll(() => b.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(claude)
+  await expect.poll(async () => (await marksOf(a, claude))?.attention, SLOW).toBe(false)
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).not.toHaveClass(/\battention\b/, SLOW)
+}
+
+test("an attention on A while B is present with A's tab in front rings B and leaves no mark on A", async () => {
+  test.setTimeout(180_000)
+  // A is not present (its presence file says so); B is present, and the test sets its file
+  const absentA = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(absentA, 'absent')
+  const presentB = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(presentB, 'present')
+  const sounds = join(mkdtempSync(join(tmpdir(), 'ct-sound-')), 'sounds.txt')
+  const played = (): string => (existsSync(sounds) ? readFileSync(sounds, 'utf8') : '')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({
+    a: { settings: quietNotifications(), args: ['--claude', work], env: { CLAUDETERM_TEST_PRESENCE: absentA } },
+    b: {
+      settings: quietNotifications({ permission: { sound: true, flash: false, tab: true } }),
+      env: { CLAUDETERM_TEST_PRESENCE: presentB, CLAUDETERM_TEST_SOUND_LOG: sounds }
+    }
+  })
+  const claude = a.firstTab
+  await waitingBehindShell(a, b, claude, work)
+  await expect.poll(played, SLOW).toBe('system\n')
+  await openWaitingOnB(a, b, claude)
+  // the sound of the wait has its own repeat window: the ring that follows is past it
+  await b.page.waitForTimeout(2500)
+  const before = played()
+
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'permission' })).toEqual({ ok: true })
+  await b.page.waitForTimeout(2000)
+  // the case has no Even in front: B's sound stays silent, and A keeps no mark of its own
+  expect(played()).toBe(before)
+  expect((await marksOf(a, claude))?.attention).toBe(false)
+})
+
+test('an attention on A while B is present with its tab in front sounds on B for a case set to Even in front', async () => {
+  test.setTimeout(180_000)
+  const absentA = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(absentA, 'absent')
+  const presentB = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(presentB, 'present')
+  const sounds = join(mkdtempSync(join(tmpdir(), 'ct-sound-')), 'sounds.txt')
+  const played = (): string => (existsSync(sounds) ? readFileSync(sounds, 'utf8') : '')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({
+    a: { settings: quietNotifications(), args: ['--claude', work], env: { CLAUDETERM_TEST_PRESENCE: absentA } },
+    b: {
+      settings: quietNotifications({ permission: { sound: true, flash: false, tab: true, front: true } }),
+      env: { CLAUDETERM_TEST_PRESENCE: presentB, CLAUDETERM_TEST_SOUND_LOG: sounds }
+    }
+  })
+  const claude = a.firstTab
+  await waitingBehindShell(a, b, claude, work)
+  await expect.poll(played, SLOW).toBe('system\n')
+  await openWaitingOnB(a, b, claude)
+  await b.page.waitForTimeout(2500)
+  const before = played()
+
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'permission' })).toEqual({ ok: true })
+  // one more sound on B, the ring's; the tab is not pulsed there
+  await expect.poll(played, SLOW).toBe(`${before}system\n`)
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).not.toHaveClass(/\battention\b/)
+  expect((await marksOf(a, claude))?.attention).toBe(false)
+})
+
+test('a turn that ends with background work while doneWithBackgroundWork is off rings no device present with its tab in front', async () => {
+  test.setTimeout(180_000)
+  const absentA = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(absentA, 'absent')
+  const presentB = join(mkdtempSync(join(tmpdir(), 'ct-present-')), 'present.txt')
+  writeFileSync(presentB, 'present')
+  const sounds = join(mkdtempSync(join(tmpdir(), 'ct-sound-')), 'sounds.txt')
+  const played = (): string => (existsSync(sounds) ? readFileSync(sounds, 'utf8') : '')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({
+    a: { settings: quietNotifications({ doneWithBackgroundWork: false }), args: ['--claude', work], env: { CLAUDETERM_TEST_PRESENCE: absentA } },
+    // B would sound this turn's done in front, were it rung
+    b: {
+      settings: quietNotifications({ done: { sound: true, flash: false, tab: false, banner: false, front: true } }),
+      env: { CLAUDETERM_TEST_PRESENCE: presentB, CLAUDETERM_TEST_SOUND_LOG: sounds }
+    }
+  })
+  const claude = a.firstTab
+  await waitingBehindShell(a, b, claude, work)
+  await openWaitingOnB(a, b, claude)
+  await b.page.waitForTimeout(2500)
+  const before = played()
+
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'done', background: true })).toEqual({ ok: true })
+  await b.page.waitForTimeout(2000)
+  expect(played()).toBe(before)
+  await expect(b.page.locator(`[data-tab-id="${claude}"]`)).not.toHaveClass(/\battention\b/)
 })
 
 test('a tab marked unread on A keeps its pulse on A when B opens it; a tab not marked loses it', async () => {

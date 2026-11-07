@@ -16,6 +16,8 @@ export interface ReviewPanelCallbacks {
   clearRequest(tabId: string): void
   /** `auto` is a background refresh (opening the panel): the window may leave it out when the tab's device is offline */
   refresh(tabId: string, auto?: boolean): void
+  /** the active tab's id when it is a Claude tab, else null: the ⟳ button asks for it when the panel has no review yet */
+  activeTabId(): string | null
   setViewed(tabId: string, path: string, hash: string, viewed: boolean): void
   showFile(tabId: string, path: string): void
   openEditor(tabId: string, path: string, line: number): void
@@ -198,9 +200,11 @@ export class ReviewPanel {
     const refresh = el('button', 'review-refresh', '⟳')
     refresh.title = 'Refresh'
     refresh.addEventListener('click', () => {
-      if (!this.update) return
-      this.cb.refresh(this.update.tabId)
-      this.startLoading(this.update.tabId, null)
+      // no review yet (a device that went offline before its first push): the click still asks, so the device's answer is shown
+      const id = this.update?.tabId ?? this.cb.activeTabId()
+      if (!id) return
+      this.cb.refresh(id)
+      if (this.update) this.startLoading(this.update.tabId, null)
     })
     this.expandBtn.title = 'Expand'
     this.expandBtn.addEventListener('click', () => this.panel.setExpanded(!this.panel.expanded))

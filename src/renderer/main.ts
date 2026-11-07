@@ -12,7 +12,7 @@ import { SidePanel } from './side-panel'
 import { Lightbox } from './lightbox'
 import { PlanList } from './plan-list'
 import { RecentSessionsWindow } from './recent-sessions'
-import { imagePasteInput, imagePasteRoute, mapKey, shortcutLabel, type KeyAction } from './keymap'
+import { imagePasteInput, imagePasteRoute, isImagePasteKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar } from './search'
 import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
 import { NoteOverlay } from './note-overlay'
@@ -451,14 +451,23 @@ async function pasteImage(t: TabState): Promise<void> {
   const asFile = !remote && ct.platform === 'win32' && (await ct.imagePasteAsFile())
   const route = imagePasteRoute({ platform: ct.platform, remote, asFile })
   if (route === 'remote') {
-    const path = await ct.pasteImageToRemote(t.info.id)
-    if (path) t.view.term.paste(`"${path}"`)
+    // the text is the path the image was saved at on the tab's device, quoted for that tab's shell
+    const text = await ct.pasteImageToRemote(t.info.id)
+    if (text) t.view.term.paste(text)
   } else if (route === 'file') {
     const file = await ct.saveClipboardImage()
     if (file) t.view.term.paste(`"${file}"`)
   } else {
     handleInput(t.info.id, imagePasteInput(ct.platform))
   }
+}
+
+/** Claude Code's image-paste key in another device's Claude tab: an image-only clipboard is pasted as its path there, anything else reaches the tab as the key */
+async function pasteImageKey(t: TabState): Promise<void> {
+  // a clipboard that cannot be read is no image: the key goes to the tab as it is
+  const clip = await ct.readClipboard().catch(() => null)
+  if (clip?.hasImage && clip.text.length === 0) await pasteImage(t)
+  else handleInput(t.info.id, imagePasteInput(ct.platform))
 }
 
 function runAction(a: KeyAction, tabId: string | null): void {
@@ -500,10 +509,15 @@ function runAction(a: KeyAction, tabId: string | null): void {
 }
 
 function onTerminalKey(tabId: string, e: KeyboardEvent): boolean {
+  const t = tabs.get(tabId)
+  if (t?.info.remote && t.info.kind === 'claude' && isImagePasteKey(e, ct.platform)) {
+    e.preventDefault()
+    void pasteImageKey(t)
+    return false
+  }
   const action = mapKey(e, ct.platform)
   if (!action) return true
   if (action.type === 'copyOrInterrupt') {
-    const t = tabs.get(tabId)
     if (t && copySelection(t)) {
       e.preventDefault()
       return false
@@ -529,14 +543,17 @@ function attachTerminalMouse(tabId: string, view: TerminalView): void {
     e.preventDefault()
     const paths = Array.from(e.dataTransfer?.files ?? []).map((f) => ct.pathForFile(f)).filter((p) => p.length > 0)
     if (paths.length === 0) return
-    // a remote tab's files are copied to its device first: the paths typed are the ones they were saved at there
+    // a remote tab's files are copied to its device first: the text typed is for the paths they were saved at there
     if (tabs.get(tabId)?.info.remote) {
-      void ct.dropFilesToRemote(tabId, paths).then((copied) => {
-        if (copied) handleInput(tabId, copied.map((p) => `"${p}"`).join(' '))
+      void ct.dropFilesToRemote(tabId, paths).then((text) => {
+        if (text) handleInput(tabId, text)
       })
       return
     }
-    handleInput(tabId, paths.map((p) => `"${p}"`).join(' '))
+    // a local tab's paths are quoted for its shell, which main knows
+    void ct.typedPaths(tabId, paths).then((text) => {
+      if (text) handleInput(tabId, text)
+    })
   })
 }
 
@@ -888,7 +905,7 @@ async function boot(): Promise<void> {
   sessionsWindow = new RecentSessionsWindow(document.getElementById('sessions')!, {
     load: () => ct.listSessions(),
     loadRemote: () => ct.listRemoteSessions(),
-    open: (id) => ct.openSession(id),
+    open: (id, device) => ct.openSession(id, device),
     opening: closeMenu,
     setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
     closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
@@ -993,6 +1010,7 @@ async function boot(): Promise<void> {
         if (auto && device !== undefined && !isOnline(device)) return
         ct.refreshReview(id)
       },
+      activeTabId: () => (activeId && tabs.get(activeId)?.info.kind === 'claude' ? activeId : null),
       setViewed: (id, path, hash, viewed) => ct.setReviewViewed(id, path, hash, viewed),
       showFile: (id, path) => ct.showReviewFile(id, path),
       openEditor: (id, path, line) => ct.openInEditor(id, path, line),

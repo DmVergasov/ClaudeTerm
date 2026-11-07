@@ -7,17 +7,21 @@ import type { PeerLink } from '../../src/main/sync/peer-link'
 import { connectPeer } from '../../src/main/sync/remote-link'
 import type { ScreenMirrorsApi } from '../../src/main/sync/screen-mirror'
 import { ScreenMirrors } from '../../src/main/sync/screen-mirror'
+import { clampPush, hostTabs, reviewPushes } from '../../src/main/remote-host'
 import { TabHost } from '../../src/main/sync/tab-host'
 import { RemoteTabs, type ViewerEvents } from '../../src/main/sync/tab-viewer'
+import { parsePush } from '../../src/main/sync/remote-shapes'
 import type { HelloMessage, Message } from '../../src/main/sync/wire'
 import {
   MAX_INPUT_CHARS,
   MAX_OUT_CHARS,
   MAX_REMOTE_TABS,
+  REVIEW_PART_BYTES,
   type PushKind,
   type RemoteSnapshot,
   type RemoteTab
 } from '../../src/shared/remote'
+import { fakeHost, reviewUpdate, T1 as HOST_T1 } from '../fixtures/host-context'
 import { headless, replay, textOf } from '../fixtures/screen'
 import { closeLinkPairs, linkPair, until } from '../fixtures/sync'
 
@@ -77,7 +81,7 @@ function fakeTabs() {
     pushList: [] as { k: PushKind; v: unknown }[],
     inputs: [] as [string, string, string][],
     claims: [] as [string, string, number, number][],
-    fronts: [] as [string, string | null, boolean][],
+    fronts: [] as [string, string | null, boolean, boolean][],
     list: (): RemoteTab[] => fake.entries,
     has: (id: string): boolean => fake.entries.some((t) => t.id === id),
     input: (id: string, data: string, from: string): void => {
@@ -86,10 +90,10 @@ function fakeTabs() {
     claim: (id: string, from: string, cols: number, rows: number): void => {
       fake.claims.push([id, from, cols, rows])
     },
-    front: (from: string, id: string | null, focused: boolean): void => {
-      fake.fronts.push([from, id, focused])
+    front: (from: string, id: string | null, present: boolean, focused: boolean): void => {
+      fake.fronts.push([from, id, present, focused])
     },
-    pushes: (): { k: PushKind; v: unknown }[] => fake.pushList
+    pushes: async (): Promise<{ k: PushKind; v: unknown }[]> => fake.pushList
   }
   return fake
 }
@@ -128,6 +132,7 @@ function recordingEvents(log: Ev[]): ViewerEvents {
     size: (id, size) => log.push({ name: 'size', id, value: size }),
     attention: (id, reason, fresh) => log.push({ name: 'attention', id, value: { reason, fresh } }),
     attentionCleared: (id) => log.push({ name: 'attentionCleared', id }),
+    ring: (id, reason) => log.push({ name: 'ring', id, value: reason }),
     push: (id, value) => log.push({ name: 'push', id, value })
   }
 }
@@ -138,8 +143,8 @@ const STEP_NAMES = ['opened', 'updated', 'closed', 'reset', 'data', 'exit']
 interface World {
   log: Ev[]
   viewer: RemoteTabs
-  /** whether this device's window is focused, as the viewer is told it */
-  focus: { on: boolean }
+  /** whether this device is present, as the viewer is told it */
+  presence: { on: boolean }
   hostB: TabHost
   teardown: (() => void)[]
   steps(id: string): string[]
@@ -153,13 +158,13 @@ interface World {
 function world(reattachMs = 50): World {
   const log: Ev[] = []
   const teardown: (() => void)[] = []
-  const focus = { on: false }
+  const presence = { on: false }
   const hostB = new TabHost({ tabs: fakeTabs(), mirrors: new ScreenMirrors({ maxSnapshotBytes: 1024 * 1024 }) })
   teardown.push(() => hostB.dispose())
   const viewer = new RemoteTabs({
     selfId: () => B_ID,
     isLocal: (id) => id === T_LOCAL,
-    windowFocused: () => focus.on,
+    present: () => presence.on,
     events: recordingEvents(log),
     reattachMs
   })
@@ -167,7 +172,7 @@ function world(reattachMs = 50): World {
   return {
     log,
     viewer,
-    focus,
+    presence,
     hostB,
     teardown,
     steps: (id) => log.filter((e) => e.id === id && STEP_NAMES.includes(e.name)).map((e) => e.name),
@@ -301,6 +306,59 @@ const asLink = (l: HeldLink): PeerLink => l as unknown as PeerLink
 
 /** lets the calls of the links settle: their replies are queued after one turn of microtasks */
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+/** a review as a publish sends it, without its tab id: `files` files of 600 lines of 1 KiB, about 0.65 MB each */
+function bigReview(label: string, files: number): Record<string, unknown> {
+  const line = { kind: 'add', text: 'x'.repeat(1024), oldNo: null, newNo: 1 }
+  const file = (i: number) => ({
+    path: `src/${label}-${i}.ts`,
+    relPath: `src/${label}-${i}.ts`,
+    status: 'modified',
+    additions: 600,
+    deletions: 0,
+    hunks: [{ header: '@@ -1 +1 @@', lines: Array.from({ length: 600 }, () => line) }],
+    note: null,
+    canForce: false,
+    hash: `${label}${i}`,
+    viewed: false,
+    markdown: false,
+    lineCount: 600
+  })
+  return {
+    view: { kind: 'request' },
+    label,
+    uncommitted: { available: true },
+    files: Array.from({ length: files }, (_, i) => file(i)),
+    additions: 0,
+    deletions: 0,
+    unviewed: 0,
+    ignored: 0,
+    hideTests: false,
+    renderMarkdown: false,
+    testsHidden: 0,
+    testsSample: [],
+    outside: 0,
+    outsideSample: [],
+    folder: '/work/demo',
+    notice: null,
+    send: { ok: true },
+    counter: null,
+    reveal: false
+  }
+}
+
+/** the review a viewer shows for a review of a host: what its push checks to, with no rev */
+function shownReview(review: Record<string, unknown>): unknown {
+  const p = parsePush('review', clampPush('review', review), T1)
+  return p?.k === 'review' ? p.v : null
+}
+
+/** the parts (or the one review push) a host sends for a review of the rev, with no stale check */
+async function pushesOfReview(review: Record<string, unknown>, rev: number): Promise<{ k: PushKind; v: unknown }[]> {
+  const out = await reviewPushes(review, rev, { yieldNow: async () => {}, stale: () => false })
+  if (out === null) throw new Error('no pushes')
+  return out
+}
 
 describe('remote tabs', () => {
   let worlds: World[] = []
@@ -625,12 +683,25 @@ describe('remote tabs', () => {
     w.viewer.activated(T_LOCAL)
     await until(() => a.fake.fronts.length === 2)
     expect(a.fake.fronts).toEqual([
-      [B_ID, T1, false],
-      [B_ID, null, false]
+      [B_ID, T1, false, false],
+      [B_ID, null, false, false]
     ])
   })
 
-  it("the tab in front is told whether this window is focused, and again when the window's focus changes", async () => {
+  it('an activation while this device is present sends present true, with focused equal to it', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.presence.on = true
+    w.viewer.activated(T1)
+    await until(() => a.fake.fronts.length === 1)
+    expect(a.fake.fronts).toEqual([[B_ID, T1, true, true]])
+  })
+
+  it("the tab in front is told whether this device is present, and again when its presence changes", async () => {
     const w = newWorld()
     const a = newRemote(A_ID)
     setTabs(a, [tab(T1)])
@@ -639,31 +710,50 @@ describe('remote tabs', () => {
     await until(() => w.viewer.has(T1))
     w.viewer.activated(T1)
     await until(() => a.fake.fronts.length === 1)
-    expect(a.fake.fronts[0]).toEqual([B_ID, T1, false])
-    w.focus.on = true
-    w.viewer.focusChanged(true)
+    expect(a.fake.fronts[0]).toEqual([B_ID, T1, false, false])
+    w.presence.on = true
+    w.viewer.presenceChanged(true)
     await until(() => a.fake.fronts.length === 2)
-    expect(a.fake.fronts[1]).toEqual([B_ID, T1, true])
-    w.focus.on = false
-    w.viewer.focusChanged(false)
+    expect(a.fake.fronts[1]).toEqual([B_ID, T1, true, true])
+    w.presence.on = false
+    w.viewer.presenceChanged(false)
     await until(() => a.fake.fronts.length === 3)
-    expect(a.fake.fronts[2]).toEqual([B_ID, T1, false])
+    expect(a.fake.fronts[2]).toEqual([B_ID, T1, false, false])
   })
 
-  it('a window focus change with no remote tab in front sends nothing', async () => {
+  it('a presence change with no remote tab in front sends nothing', async () => {
     const w = newWorld()
     const a = newRemote(A_ID)
     setTabs(a, [tab(T1)])
     openTab(a, T1)
     await connect(w, a)
     await until(() => w.viewer.has(T1))
-    w.focus.on = true
-    w.viewer.focusChanged(true)
+    w.presence.on = true
+    w.viewer.presenceChanged(true)
     w.viewer.activated(T_LOCAL)
-    w.focus.on = false
-    w.viewer.focusChanged(false)
+    w.presence.on = false
+    w.viewer.presenceChanged(false)
     await new Promise((r) => setTimeout(r, 50))
     expect(a.fake.fronts).toEqual([])
+  })
+
+  it('a ring reaches the viewer of the member it is for, for a tab that device has; any other ring is dropped', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    const c = newRemote(C_ID)
+    setTabs(a, [tab(T1)])
+    setTabs(c, [tab(T_C)])
+    await connect(w, a)
+    await connect(w, c)
+    await until(() => w.viewer.has(T1) && w.viewer.has(T_C))
+    a.host.ring(T1, B_ID, 'permission')
+    await until(() => w.log.some((e) => e.name === 'ring'))
+    // a tab the ringing device does not have, and a device that is no member of it, ring nothing here
+    a.host.ring(T_C, B_ID, 'question')
+    a.host.ring(T1, C_ID, 'question')
+    c.host.ring(T1, B_ID, 'bell')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(w.log.filter((e) => e.name === 'ring')).toEqual([{ name: 'ring', id: T1, value: 'permission' }])
   })
 
   it('a tab sized for this device fits; one sized for another keeps that size here', async () => {
@@ -758,11 +848,333 @@ describe('remote tabs', () => {
     link.remote.send({ t: 'exit', id: T_C, seq: 3, code: 0 })
     link.remote.send({ t: 'detached', id: T_C })
     link.remote.send({ t: 'tab-closed', id: T_C })
+    link.remote.send({ t: 'ring', id: T_C, reason: 'bell' })
     // the marker: a tab of A, on the same link
     link.remote.send({ t: 'tab', tab: tab(T_MARK) })
     await until(() => w.viewer.has(T_MARK))
     expect(w.viewer.deviceOf(T_C)).toBe(C_ID)
     expect(w.log.slice(before).filter((e) => e.id === T_C)).toEqual([])
+  })
+
+  // Task 9: a large review comes as ordered parts, and the viewer shows it whole, once
+  it('a large review comes as ordered parts, and the viewer shows one review: the clamp of it', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const review = bigReview('two', 5)
+    for (const p of await pushesOfReview(review, 2)) a.host.push(T1, p.k, p.v)
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1))
+    const shown = w.log.filter((e) => e.name === 'push' && e.id === T1).map((e) => e.value)
+    expect(shown).toEqual([{ k: 'review', v: shownReview(review) }])
+  })
+
+  it('parts of a newer rev that come after the older rev\'s part 0 end on the newer review', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    const link = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const older = await pushesOfReview(bigReview('old', 5), 2)
+    const newer = await pushesOfReview(bigReview('new', 5), 3)
+    expect(older).toHaveLength(2)
+    expect(newer).toHaveLength(2)
+    const send = (p: { k: PushKind; v: unknown }) => link.remote.send({ t: 'push', id: T1, k: p.k, v: p.v })
+    send(older[0])
+    send(newer[0])
+    send(older[1])
+    send(newer[1])
+    link.remote.send({ t: 'push', id: T1, k: 'plan', v: null })
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'plan'))
+    const shown = w.log.filter((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'review').map((e) => e.value)
+    expect(shown).toEqual([{ k: 'review', v: shownReview(bigReview('new', 5)) }])
+  })
+
+  it('a review of an older rev than the one being assembled or shown is dropped', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    const link = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const older = await pushesOfReview(bigReview('one', 1), 1)
+    const newer = await pushesOfReview(bigReview('two', 5), 2)
+    expect(older.map((p) => p.k)).toEqual(['review'])
+    expect(newer).toHaveLength(2)
+    const send = (p: { k: PushKind; v: unknown }) => link.remote.send({ t: 'push', id: T1, k: p.k, v: p.v })
+    send(newer[0])
+    // rev 1 arrives while rev 2 is being assembled: dropped
+    send(older[0])
+    send(newer[1])
+    // and again after rev 2 is shown: still dropped
+    send(older[0])
+    link.remote.send({ t: 'push', id: T1, k: 'plan', v: null })
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'plan'))
+    const shown = w.log.filter((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'review').map((e) => e.value)
+    expect(shown).toEqual([{ k: 'review', v: shownReview(bigReview('two', 5)) }])
+  })
+
+  it('no push message on the wire is over REVIEW_PART_BYTES', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    const link = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const sizes: number[] = []
+    const sendBulk = link.remote.sendBulk.bind(link.remote)
+    link.remote.sendBulk = (m, key) => {
+      sizes.push(Buffer.byteLength(JSON.stringify(m)))
+      return sendBulk(m, key)
+    }
+    for (const p of await pushesOfReview(bigReview('wire', 12), 4)) a.host.push(T1, p.k, p.v)
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1))
+    expect(sizes.length).toBeGreaterThan(1)
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(REVIEW_PART_BYTES)
+  })
+
+  it('a review part whose tab closes is dropped: the next part, once the tab is announced again, shows no review', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    const link = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const parts = await pushesOfReview(bigReview('closed', 5), 2)
+    link.remote.send({ t: 'push', id: T1, k: parts[0].k, v: parts[0].v })
+    link.remote.send({ t: 'tab-closed', id: T1 })
+    link.remote.send({ t: 'tab', tab: tab(T1) })
+    link.remote.send({ t: 'push', id: T1, k: parts[1].k, v: parts[1].v })
+    link.remote.send({ t: 'push', id: T1, k: 'plan', v: null })
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'plan'))
+    expect(w.log.filter((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'review')).toEqual([])
+  })
+
+  it('a review part of a link that drops is dropped: the rest of that review, on the next link, shows no review', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    const first = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const parts = await pushesOfReview(bigReview('lost', 5), 2)
+    first.remote.send({ t: 'push', id: T1, k: parts[0].k, v: parts[0].v })
+    first.remote.send({ t: 'push', id: T1, k: 'plan', v: null })
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'plan'))
+    first.remote.close('test')
+    await until(() => !w.viewer.online(A_ID))
+    const second = await connect(w, a)
+    await until(() => w.viewer.online(A_ID))
+    second.remote.send({ t: 'push', id: T1, k: parts[1].k, v: parts[1].v })
+    second.remote.send({ t: 'push', id: T1, k: 'plan', v: null })
+    await until(() => w.log.filter((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'plan').length === 2)
+    expect(w.log.filter((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'review')).toEqual([])
+  })
+
+  // Fix 1: a plan published while an attach waits for its review clamp is the one the member holds last
+  it('a plan published while an attach waits for its review clamp is the one the member holds last', async () => {
+    const w = newWorld()
+    const f = fakeHost()
+    const plan = (title: string) => ({ title, tasks: [], done: 0, total: 0, finished: false })
+    f.plans.set(HOST_T1, plan('First'))
+    f.reviews.set(HOST_T1, reviewUpdate(HOST_T1))
+    const real = hostTabs(f.ctx)
+    const mirrors = new ScreenMirrors({ maxSnapshotBytes: 1024 * 1024 })
+    let host!: TabHost
+    // the plan changes, and is pushed, in the turn an attach asks its pushes
+    host = new TabHost({
+      tabs: {
+        ...real,
+        pushes: (id: string) => {
+          const asked = real.pushes(id)
+          f.plans.set(HOST_T1, plan('Second'))
+          host.push(HOST_T1, 'plan', { ...plan('Second'), agentList: false })
+          return asked
+        }
+      },
+      mirrors
+    })
+    const a: Remote = { id: A_ID, fake: fakeTabs(), mirrors, host }
+    remotes.push(a)
+    await connect(w, a)
+    await until(() => w.viewer.has(HOST_T1))
+    w.viewer.activated(HOST_T1)
+    const plans = () => w.log.filter((e) => e.name === 'push' && e.id === HOST_T1 && (e.value as { k: string }).k === 'plan')
+    await until(() => plans().length === 2)
+    expect((plans()[1].value as { v: { title: string } }).v.title).toBe('Second')
+  })
+
+  // Fix 2: an attach sends a review's parts one per turn of the event loop
+  it('an attach sends a review in parts, one per turn of the event loop, not all in one turn', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    a.fake.pushList = [{ k: 'plan', v: null }, ...[0, 1, 2].map((i) => ({ k: 'review-part' as PushKind, v: { i } }))]
+    const link = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    let turn = 0
+    let running = true
+    const tick = (): void => {
+      if (!running) return
+      turn++
+      setImmediate(tick)
+    }
+    setImmediate(tick)
+    const turns: number[] = []
+    const sendBulk = link.remote.sendBulk.bind(link.remote)
+    link.remote.sendBulk = (m, key) => {
+      if (m.t === 'push' && m.k === 'review-part') turns.push(turn)
+      return sendBulk(m, key)
+    }
+    w.viewer.activated(T1)
+    try {
+      await until(() => turns.length === 3)
+    } finally {
+      running = false
+    }
+    expect(Math.max(...turns)).toBeGreaterThan(Math.min(...turns))
+  })
+
+  // Fix 2: an attach that loses its member mid-way sends no more parts
+  it('an attach stops sending the review parts when the member leaves mid-way', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    a.fake.pushList = [0, 1, 2, 3].map((i) => ({ k: 'review-part' as PushKind, v: { i } }))
+    const link = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    let sent = 0
+    const sendBulk = link.remote.sendBulk.bind(link.remote)
+    link.remote.sendBulk = (m, key) => {
+      if (m.t !== 'push' || m.k !== 'review-part') return sendBulk(m, key)
+      sent++
+      const ok = sendBulk(m, key)
+      if (sent === 1) link.remote.close('test')
+      return ok
+    }
+    w.viewer.activated(T1)
+    await until(() => sent > 0)
+    for (let i = 0; i < 10; i++) await new Promise<void>((r) => setImmediate(r))
+    expect(sent).toBe(1)
+  })
+
+  // Fix 3: parts that add up past one frame drop the assembly; the next review still shows
+  it('parts of a review that add up past one frame show nothing, and the next review still shows', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    const link = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const headV: Record<string, unknown> = { ...((await pushesOfReview(bigReview('head', 1), 1))[0].v as object) }
+    delete headV.files
+    delete headV.rev
+    const line = { kind: 'add', text: 'x'.repeat(100_000), oldNo: null, newNo: 1 }
+    const part = (i: number, of: number) => ({
+      rev: 2,
+      i,
+      of,
+      ...(i === 0 ? { head: headV } : {}),
+      files: [
+        {
+          path: `p${i}`,
+          relPath: `p${i}`,
+          status: 'modified',
+          additions: 19,
+          deletions: 0,
+          hunks: [{ header: '@@', lines: Array.from({ length: 19 }, () => line) }],
+          note: null,
+          canForce: false,
+          hash: `abc${i}`,
+          viewed: false,
+          markdown: false,
+          lineCount: 19
+        }
+      ]
+    })
+    // nine parts of about 1.9 MB: 17 MB, past the 16 MiB frame
+    for (let i = 0; i < 9; i++) link.remote.send({ t: 'push', id: T1, k: 'review-part', v: part(i, 9) })
+    for (const p of await pushesOfReview(bigReview('three', 1), 3)) link.remote.send({ t: 'push', id: T1, k: p.k, v: p.v })
+    link.remote.send({ t: 'push', id: T1, k: 'plan', v: null })
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'plan'))
+    const shown = w.log.filter((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'review').map((e) => e.value)
+    expect(shown).toEqual([{ k: 'review', v: shownReview(bigReview('three', 1)) }])
+  })
+
+  // Fix 5: a copy of a part the assembly already has is ignored, and the review still shows
+  it('a copy of a review part the assembly already has is ignored, and the review still shows', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    const link = await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const parts = await pushesOfReview(bigReview('dup', 12), 2)
+    expect(parts.length).toBeGreaterThan(2)
+    const send = (p: { k: PushKind; v: unknown }) => link.remote.send({ t: 'push', id: T1, k: p.k, v: p.v })
+    send(parts[0])
+    send(parts[1])
+    send(parts[0])
+    for (const p of parts.slice(2)) send(p)
+    link.remote.send({ t: 'push', id: T1, k: 'plan', v: null })
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'plan'))
+    const shown = w.log.filter((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'review').map((e) => e.value)
+    expect(shown).toEqual([{ k: 'review', v: shownReview(bigReview('dup', 12)) }])
+  })
+
+  // Fix 2: a large review of many short lines shows whole on the other device
+  it('a review of 1500 files of 60 short lines shows whole, though its parts are packed near the part size', async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    await until(() => a.host.watchers(T1).length === 1)
+    const line = { kind: 'add', text: 'x', oldNo: null, newNo: 1 }
+    const file = (i: number) => ({
+      path: `src/short-${i}.ts`,
+      relPath: `src/short-${i}.ts`,
+      status: 'modified',
+      additions: 60,
+      deletions: 0,
+      hunks: [{ header: '@@ -1 +1 @@', lines: Array.from({ length: 60 }, () => line) }],
+      note: null,
+      canForce: false,
+      hash: `h${i}`,
+      viewed: false,
+      markdown: false,
+      lineCount: 60
+    })
+    const review = { ...bigReview('short', 0), files: Array.from({ length: 1500 }, (_, i) => file(i)) }
+    const parts = await pushesOfReview(review, 5)
+    expect(parts.length).toBeGreaterThan(1)
+    for (const p of parts) a.host.push(T1, p.k, p.v)
+    await until(() => w.log.some((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'review'))
+    const shown = w.log.filter((e) => e.name === 'push' && e.id === T1 && (e.value as { k: string }).k === 'review').map((e) => e.value)
+    expect(shown).toEqual([{ k: 'review', v: shownReview(review) }])
   })
 
   // R2: input pieces never split a surrogate pair

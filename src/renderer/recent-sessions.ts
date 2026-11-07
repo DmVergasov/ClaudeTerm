@@ -165,7 +165,8 @@ export interface RecentSessionsCallbacks {
   load(): Promise<RecentSession[]>
   /** the other devices' sessions as their last answers give them; the devices are asked again in the background */
   loadRemote(): Promise<DeviceAnswer<RecentSession[]>[]>
-  open(id: string): void
+  /** device: the device of the section the session was picked in; none for this device's own sessions */
+  open(id: string, device?: string): void
   /** the window is about to show: a context menu left open would stay above it */
   opening(): void
   /** the star was toggled; the window shows the new state right away */
@@ -319,7 +320,7 @@ export class RecentSessionsWindow {
   private choose(s: RecentSession | undefined): void {
     if (!s) return
     this.close()
-    this.cb.open(s.id)
+    this.cb.open(s.id, s.device?.id)
   }
 
   private render(keepSelected?: string, keepHeading?: string): void {

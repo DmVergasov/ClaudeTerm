@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Stats } from 'node:fs'
 import { lstat, mkdir, mkdtemp, open, readdir, rm, type FileHandle } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix, win32 } from 'node:path'
 import { MAX_TRANSFER_BYTES, REMOTE_COPY } from '../../shared/remote'
 import { pathKey } from '../path-key'
 import { CallError } from './calls'
@@ -67,17 +67,28 @@ function extOf(s: string): string {
   return ext.length - 1 <= MAX_EXT_LENGTH ? ext : ''
 }
 
-/** the names made unique in their order: a name taken already (without case) becomes `name (2).ext`, then (3) and so on */
+/** the names made unique in their order: a name taken already (without case or normalization) becomes `name (2).ext`, then (3) and so on */
 function uniqueNames(names: string[]): string[] {
   const used = new Set<string>()
+  // macOS takes NFC and NFD names for one file: they are the same name here
+  const key = (name: string): string => name.normalize('NFC').toLowerCase()
   return names.map((n) => {
     const ext = extOf(n)
     const stem = n.slice(0, n.length - ext.length)
     let name = n
-    for (let k = 2; used.has(name.toLowerCase()); k++) name = `${stem} (${k})${ext}`
-    used.add(name.toLowerCase())
+    for (let k = 2; used.has(key(name)); k++) name = `${stem} (${k})${ext}`
+    used.add(key(name))
     return name
   })
+}
+
+/**
+ * The folder the files received from another device are kept in. A shared /tmp has one folder per user, so each user's
+ * folder is its own on POSIX; Windows' temp folder is per user already.
+ */
+export function receivedRoot(o: { platform: NodeJS.Platform; tmpdir: string; uid: number }): string {
+  if (o.platform === 'win32') return win32.join(o.tmpdir, 'ClaudeTerm', 'received')
+  return posix.join(o.tmpdir, `ClaudeTerm-${o.uid}`, 'received')
 }
 
 interface OpenFile {

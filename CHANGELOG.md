@@ -2,6 +2,23 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.15.1
+
+### Changes
+
+- **Your other devices stay quiet for a tab you are watching.** When you are at one of your devices and watching a tab, the other devices no longer ring, flash or pop a notification for it; you count as at a device when its ClaudeTerm window is focused and you used its keyboard or mouse in the last 30 seconds, and as away once its screen is locked or it sleeps. Coming back to a device that shows a waiting tab clears that tab's mark on every device. A case set to **Even in front** still sounds on the device you are at, and when you are away from all of them, every device signals as before. Every device needs 0.15.1 for this.
+
+### Fixes
+
+- **A tab click always switches.** A click on a tab sometimes did nothing while Claude was busy in another tab. Now it always switches.
+- **File paths are quoted for their shell.** A file dropped into a shell tab, or pasted or dropped into a shell tab of another device, is typed with that shell's own quoting (PowerShell, cmd, bash, zsh, fish), so a `$`, `!` or quote in its path reaches the shell as it is. Claude tabs keep double quotes.
+- **Image paste in another device's Claude tab.** In another device's Claude tab, Claude Code's own image-paste key (Ctrl+V on macOS, Alt+V on Windows) pastes the image from this device's clipboard, not that device's.
+- **Recent sessions opens the device you picked.** When two devices list the same session in **Recent sessions**, choosing it opens it on the device whose section you picked it from, or says that device is not connected.
+- **⟳ says when a device is offline.** ⟳ in the Changes panel of a device that went offline now always says that it is not connected, even before any of its changes arrived.
+- **A large set of changes from another device no longer stalls.** A very large set of changes from another device no longer makes ClaudeTerm stall while it arrives. One file with an enormous diff shows on the other device with its lines not shown, as files past the limit already did. A device still on 0.15.0 does not show a set of changes over 2 MB from an updated one, so update every device.
+- **Answering at once leaves no waiting mark elsewhere.** Answering a finished turn at once (typing, or bringing the tab to the front, right as it ends) no longer leaves a waiting mark on your other devices.
+- **Copying files to a shared Linux computer works.** Files copied to a Linux device no longer fail when another user of that computer uses ClaudeTerm too. Two files of one copy whose names differ only in how an accented letter is encoded no longer fail either.
+
 ## 0.15.0
 
 ### New

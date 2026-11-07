@@ -97,7 +97,16 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
   return { icon, label, marks, close }
 }
 
-/** the mouse on a tab: a click activates, a middle click closes, a right click opens its menu, a double click renames */
+/**
+ * The tab whose primary button went down last. A press and a release on the same tab activate it, even when the
+ * element was built again between the two (the tab bar redraws while a press is held), so the tracking is by id.
+ */
+let pressed: string | null = null
+// a press that starts elsewhere activates no tab, whatever it is released over
+document.addEventListener('mousedown', () => { pressed = null }, true)
+document.addEventListener('mouseup', () => { pressed = null })
+
+/** the mouse on a tab: a press and release activate, a middle click closes, a right click opens its menu, a double click renames */
 export function bindTab(
   el: HTMLElement,
   item: TabBarItem,
@@ -108,9 +117,13 @@ export function bindTab(
     if (e.button === 1) {
       e.preventDefault()
       cb.close(item.id)
-    }
+    } else if (e.button === 0) pressed = item.id
   })
-  el.addEventListener('click', () => cb.activate(item.id))
+  el.addEventListener('mouseup', (e) => {
+    // the close button is part of the tab: releasing on it closes the tab, it does not activate it
+    const onClose = e.target instanceof Element && e.target.closest('.tab-close') !== null
+    if (e.button === 0 && pressed === item.id && !onClose) cb.activate(item.id)
+  })
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault()
     cb.tabMenu(item.id, { x: e.clientX, y: e.clientY })

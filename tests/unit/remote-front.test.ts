@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { frontClears, PENDING_ACTIVATE_MS, RemoteFront } from '../../src/main/remote-front'
+import { clearFlag, frontClears, PENDING_ACTIVATE_MS, presentViewers, RemoteFront } from '../../src/main/remote-front'
 
 const T1 = 'd1000000-0000-4000-8000-000000000001'
 const T2 = 'd1000000-0000-4000-8000-000000000002'
@@ -107,19 +107,38 @@ describe('RemoteFront: the tab a new-tab request opened comes to the front only 
   })
 })
 
-describe("frontClears: a member's front clears the tab's attention only when the front changed or its window gained the focus", () => {
-  const was = (tabId: string, focused: boolean) => ({ tabId, focused })
+describe('presentViewers: the devices present with a tab in front, which an attention of the tab rings', () => {
+  const C = 'c1000000-0000-4000-8000-000000000001'
+
+  it('lists only the present members whose front is that tab', () => {
+    const fronts = new Map([
+      [A, { tabId: T1, present: true }],
+      [B, { tabId: T1, present: false }],
+      [C, { tabId: T2, present: true }]
+    ])
+    expect(presentViewers(T1, fronts)).toEqual([A])
+    expect(presentViewers(T2, fronts)).toEqual([C])
+  })
+
+  it('lists nobody when no member has the tab in front', () => {
+    expect(presentViewers(T1, new Map())).toEqual([])
+    expect(presentViewers(T1, new Map([[B, { tabId: T2, present: true }]]))).toEqual([])
+  })
+})
+
+describe("frontClears: a member's front clears the tab's attention only when the front changed or the member became present", () => {
+  const was = (tabId: string, present: boolean) => ({ tabId, present })
 
   it('a new tab in front clears', () => {
     expect(frontClears(was(T1, false), T2, false)).toBe(true)
     expect(frontClears(was(T1, true), T2, true)).toBe(true)
   })
 
-  it('the same tab gaining the focus clears', () => {
+  it('the same tab becoming present clears', () => {
     expect(frontClears(was(T1, false), T1, true)).toBe(true)
   })
 
-  it('the same tab losing the focus does not clear', () => {
+  it('the same tab losing its presence does not clear', () => {
     expect(frontClears(was(T1, true), T1, false)).toBe(false)
   })
 
@@ -131,5 +150,13 @@ describe("frontClears: a member's front clears the tab's attention only when the
   it('no record of the member (a reconnect, or its first front) clears', () => {
     expect(frontClears(undefined, T1, false)).toBe(true)
     expect(frontClears(undefined, T1, true)).toBe(true)
+  })
+
+  it('a 0.15.0 member sends only focused: its focus gain clears as before, and a 0.15.1 member clears by its presence', () => {
+    const oldWas = { tabId: T1, present: clearFlag({ present: false, focused: false }) }
+    expect(frontClears(oldWas, T1, clearFlag({ present: false, focused: true }))).toBe(true)
+    const newWas = { tabId: T1, present: clearFlag({ present: false, focused: false }) }
+    expect(frontClears(newWas, T1, clearFlag({ present: true, focused: true }))).toBe(true)
+    expect(frontClears(newWas, T1, clearFlag({ present: false, focused: false }))).toBe(false)
   })
 })

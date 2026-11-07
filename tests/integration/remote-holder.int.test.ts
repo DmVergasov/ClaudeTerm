@@ -133,7 +133,7 @@ interface Harness {
   titles: [string, string][]
   /** the title each tab shows in the directory: the test sets it with each title change the window reports */
   titleOf: Map<string, string>
-  /** the fronts members sent this device's tabs: from, tab, and whether the member's window has the focus */
+  /** the fronts members sent this device's tabs: from, tab, and whether the member is present */
   fronts: [string, string | null, boolean][]
   toasts: string[]
   logs: string[]
@@ -184,6 +184,7 @@ function harness(opts: HarnessOpts = {}): Harness {
     size: () => {},
     attention: () => {},
     attentionCleared: () => {},
+    ring: () => {},
     push: () => {}
   }
   const deps: RemoteHolderDeps = {
@@ -194,10 +195,10 @@ function harness(opts: HarnessOpts = {}): Harness {
       has: (id) => ids.includes(id),
       input: () => {},
       claim: () => {},
-      front: (from, id, focused) => {
-        fronts.push([from, id, focused])
+      front: (from, id, present) => {
+        fronts.push([from, id, present])
       },
-      pushes: () => []
+      pushes: async () => []
     },
     hostHandlers: (device: string): Record<string, CallEntry> => {
       hostHandlersAsked.push(device)
@@ -207,7 +208,7 @@ function harness(opts: HarnessOpts = {}): Harness {
     isLocal: (id) => id === T1,
     selfId: () => A_ID,
     toast: (m) => toasts.push(m),
-    windowFocused: () => false,
+    present: () => false,
     onFresh: () => {},
     startMirrors: () => {
       if (opts.failRestart && started.length > 0) throw new Error('no worker here')
@@ -437,12 +438,12 @@ describe('RemoteHolder', () => {
     expect(seen.some((m) => m.t === 'out' && m.d === 'after')).toBe(false)
   })
 
-  it("a member's tab in front is sent again when its window gains the focus, and this device's host hears each send with the flag", async () => {
+  it("a member's tab in front is sent again when the member becomes present, and this device's host hears each send with the flag", async () => {
     const h = harness()
     const { pair } = await connectB(h)
-    // B brings T1 to the front, then its window gains the focus
-    pair.server.send({ t: 'front', id: T1, focused: false })
-    pair.server.send({ t: 'front', id: T1, focused: true })
+    // B brings T1 to the front while not present, then becomes present with T1 still in front
+    pair.server.send({ t: 'front', id: T1, present: false, focused: false })
+    pair.server.send({ t: 'front', id: T1, present: true, focused: true })
     await until(() => h.fronts.length === 2)
     expect(h.fronts).toEqual([
       [B_ID, T1, false],

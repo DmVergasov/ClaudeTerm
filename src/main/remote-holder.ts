@@ -27,8 +27,8 @@ export interface RemoteHolderDeps {
   viewerEvents: ViewerEvents
   isLocal(tabId: string): boolean
   selfId(): string
-  /** whether this window has the focus: a member is told it with its tab in front */
-  windowFocused(): boolean
+  /** whether this device is present (see Presence): a member is told it with its tab in front */
+  present(): boolean
   toast(m: string): void
   /** a device's answer to the lists of the new-tab menu changed what is kept: the window draws it again */
   onFresh(what: 'choices' | 'sessions'): void
@@ -153,7 +153,7 @@ export class RemoteHolder {
       this.viewer = new RemoteTabs({
         selfId: () => deps.selfId(),
         isLocal: (tabId) => deps.isLocal(tabId),
-        windowFocused: () => deps.windowFocused(),
+        present: () => deps.present(),
         events: deps.viewerEvents
       })
       // a toast for a call that fails after dispose is dropped: the window is no longer showing this device

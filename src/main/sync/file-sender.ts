@@ -12,8 +12,14 @@ export interface OutgoingFile {
   read(offset: number, length: number): Promise<Buffer>
 }
 
-/** the paths the files were saved at on the tab's device, in the order sent; a refusal is the receiver's message */
-export async function sendFiles(actions: RemoteActions, tabId: string, files: OutgoingFile[]): Promise<string[]> {
+/** what the tab's device answers for files sent to it: the paths they were saved at, in the order sent, and the text to type for them */
+export interface SentFiles {
+  paths: string[]
+  text: string
+}
+
+/** the files saved on the tab's device; a refusal is the receiver's message */
+export async function sendFiles(actions: RemoteActions, tabId: string, files: OutgoingFile[]): Promise<SentFiles> {
   // refused here, before anything is sent, when the files cannot fit one transfer
   if (files.length > MAX_TRANSFER_FILES) throw new CallError(REMOTE_COPY.copyTooManyFiles)
   if (files.reduce((n, f) => n + f.size, 0) > MAX_TRANSFER_BYTES) throw new CallError(REMOTE_COPY.receiveTooLarge)
@@ -27,8 +33,9 @@ export async function sendFiles(actions: RemoteActions, tabId: string, files: Ou
       offset += length
     }
   }
-  const { paths } = await actions.askTab(tabId, 'recv-end', { transfer })
-  return paths
+  // the tab is named so the device types the paths for the tab's shell; a device of 0.15.0 answers the paths alone
+  const { paths, text } = await actions.askTab(tabId, 'recv-end', { transfer, id: tabId })
+  return { paths, text: text ?? paths.map((p) => `"${p}"`).join(' ') }
 }
 
 /** the bytes of a part of a file; a file that cannot be read, or gives fewer bytes, fails the copy with no local detail */

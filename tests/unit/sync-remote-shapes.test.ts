@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { CALL_ARGS, CALL_REPLIES, type CallMethod, parsePush } from '../../src/main/sync/remote-shapes'
+import { CALL_ARGS, CALL_REPLIES, type CallMethod, parsePush, reviewRevOf } from '../../src/main/sync/remote-shapes'
 import { MAX_IMAGE_BYTES } from '../../src/shared/image-file'
-import { IMAGE_PART_BYTES, MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_BYTES, MAX_TRANSFER_FILES, TRANSFER_PART_BYTES } from '../../src/shared/remote'
+import { IMAGE_PART_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_BYTES, MAX_TRANSFER_FILES, MAX_TYPED_TEXT, TRANSFER_PART_BYTES } from '../../src/shared/remote'
 import type { ReviewUpdate } from '../../src/shared/review'
 import type { ImageCard } from '../../src/shared/types'
 
@@ -45,7 +45,8 @@ const GOOD_ARGS: Array<[CallMethod, unknown]> = [
   ['change-folder', { id: T1, path: '   ' }],
   ['recv-begin', { id: T1, files: [{ name: 'a.png', size: 0 }] }],
   ['recv-part', { transfer: T2, file: 0, offset: 0, data: 'AAAA' }],
-  ['recv-end', { transfer: T2 }]
+  ['recv-end', { transfer: T2 }],
+  ['recv-end', { transfer: T2, id: T1 }]
 ]
 
 const BAD_ARGS: Array<[CallMethod, unknown]> = [
@@ -92,7 +93,9 @@ const BAD_ARGS: Array<[CallMethod, unknown]> = [
   ['recv-part', { transfer: T2, file: 0, offset: 0, data: 'AAA' }],
   ['recv-part', { transfer: T2, file: 0, offset: 0, data: 'A'.repeat(4 * Math.ceil((TRANSFER_PART_BYTES + 1) / 3)) }],
   ['review', { id: T1, action: { k: 'viewed', path: 'a', hash: 'a\u0000b', viewed: true } }],
-  ['recv-end', { transfer: 'x' }]
+  ['recv-end', { transfer: 'x' }],
+  ['recv-end', { transfer: T2, id: 'x' }],
+  ['recv-end', { transfer: T2, id: 5 }]
 ]
 
 describe('call arguments', () => {
@@ -178,6 +181,19 @@ describe('call replies', () => {
     expect(CALL_REPLIES['recv-begin']({ transfer: T2 })).toEqual({ transfer: T2 })
     expect(CALL_REPLIES['recv-end']({ paths: ['D:\\tmp\\a.png'] })).toEqual({ paths: ['D:\\tmp\\a.png'] })
     expect(CALL_REPLIES['recv-end']({ paths: Array(MAX_TRANSFER_FILES + 1).fill('a') })).toBeNull()
+    expect(CALL_REPLIES['recv-end']({ paths: ['D:\\tmp\\a.png'], text: '"D:\\tmp\\a.png"' })).toEqual({ paths: ['D:\\tmp\\a.png'], text: '"D:\\tmp\\a.png"' })
+    expect(CALL_REPLIES['recv-end']({ paths: ['a'], text: 'x'.repeat(MAX_TYPED_TEXT) })).not.toBeNull()
+    expect(CALL_REPLIES['recv-end']({ paths: ['a'], text: '' })).toBeNull()
+    expect(CALL_REPLIES['recv-end']({ paths: ['a'], text: 'x'.repeat(MAX_TYPED_TEXT + 1) })).toBeNull()
+    expect(CALL_REPLIES['recv-end']({ paths: ['a'], text: 5 })).toBeNull()
+  })
+
+  it('a recv-end text of the bash quoting of MAX_TRANSFER_FILES paths of MAX_PATH_TEXT apostrophes each is accepted', () => {
+    // bash and zsh write each ' as '\'' (4 characters), inside two outer quotes
+    const quoted = "'" + "'\\''".repeat(MAX_PATH_TEXT) + "'"
+    const text = Array(MAX_TRANSFER_FILES).fill(quoted).join(' ')
+    const paths = Array(MAX_TRANSFER_FILES).fill("'".repeat(MAX_PATH_TEXT))
+    expect(CALL_REPLIES['recv-end']({ paths, text })).not.toBeNull()
   })
 
   it('can-fork answers { ok }, and fork-tab answers the new tab\'s id', () => {
@@ -438,5 +454,58 @@ describe('pushes', () => {
 
   it('a push of a kind this version does not know is refused', () => {
     expect(parsePush('weather' as 'status', {}, T1)).toBeNull()
+  })
+})
+
+// Task 9: a review over 2 MiB comes as ordered parts; the part carries the head only in part 0
+describe('review parts and the rev of a review (Task 9)', () => {
+  const headOf = (): Record<string, unknown> => {
+    const head: Record<string, unknown> = { ...reviewWithoutTab() }
+    delete head.files
+    return head
+  }
+  const part = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    rev: 2,
+    i: 0,
+    of: 2,
+    head: headOf(),
+    files: [reviewFile()],
+    ...over
+  })
+
+  it('a good part 0 with its head, and a good later part with files only, are accepted', () => {
+    expect(parsePush('review-part', part(), T1)).toMatchObject({ k: 'review-part', part: { rev: 2, i: 0, of: 2 } })
+    expect(parsePush('review-part', { rev: 2, i: 1, of: 2, files: [reviewFile()] }, T1)).toMatchObject({ k: 'review-part', part: { i: 1 } })
+  })
+
+  it('a part refuses an index past its count, a count past MAX_REVIEW_PARTS, and a head in the wrong part', () => {
+    expect(parsePush('review-part', part({ i: 2 }), T1)).toBeNull()
+    expect(parsePush('review-part', part({ i: 3, of: 2 }), T1)).toBeNull()
+    expect(parsePush('review-part', part({ of: MAX_REVIEW_PARTS + 1 }), T1)).toBeNull()
+    expect(parsePush('review-part', part({ of: MAX_REVIEW_PARTS }), T1)).not.toBeNull()
+    expect(parsePush('review-part', part({ head: undefined }), T1)).toBeNull()
+    expect(parsePush('review-part', { ...part(), i: 1 }, T1)).toBeNull()
+  })
+
+  it('a part whose text alone is clearly over REVIEW_PART_BYTES is refused; one just under it is accepted', () => {
+    const line = { kind: 'add', text: 'x'.repeat(100_000), oldNo: null, newNo: 1 }
+    const withLines = (n: number) => part({ files: [reviewFile({ hunks: [{ header: '@@', lines: Array(n).fill(line) }] })] })
+    expect(parsePush('review-part', withLines(19), T1)).not.toBeNull()
+    expect(parsePush('review-part', withLines(23), T1)).toBeNull()
+  })
+
+  it('a part refuses a rev that is not a non-negative integer, and a file the review refuses', () => {
+    expect(parsePush('review-part', part({ rev: 1.5 }), T1)).toBeNull()
+    expect(parsePush('review-part', part({ rev: -1 }), T1)).toBeNull()
+    expect(parsePush('review-part', part({ rev: '2' }), T1)).toBeNull()
+    expect(parsePush('review-part', part({ files: [reviewFile({ hash: 'a\u0000b' })] }), T1)).toBeNull()
+  })
+
+  it('a review push carries its rev, and a review without one is shown as before (no rev)', () => {
+    expect(reviewRevOf({ ...reviewWithoutTab(), rev: 3 })).toBe(3)
+    expect(reviewRevOf(reviewWithoutTab())).toBeNull()
+    expect(parsePush('review', { ...reviewWithoutTab(), rev: 3 }, T1)).not.toBeNull()
+    expect(parsePush('review', { ...reviewWithoutTab(), rev: 'x' }, T1)).toBeNull()
+    expect(parsePush('review', { ...reviewWithoutTab(), rev: 1.5 }, T1)).toBeNull()
   })
 })

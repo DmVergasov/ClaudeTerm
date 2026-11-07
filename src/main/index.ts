@@ -25,7 +25,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
 import { NOT_RUNNING, type ReviewUpdate } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -50,7 +50,7 @@ import { execGit } from './git-source'
 import { changeFolderOf, folderListingOf, type TabFolderDeps } from './folder-browse'
 import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
-import { buildLaunch, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver } from './profiles'
+import { buildLaunch, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver, typedPaths } from './profiles'
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
@@ -70,13 +70,15 @@ import { formatDeviceStatus } from './sync/device-status'
 import { PortMirrors, screenWorkerPath } from './sync/mirror-port'
 import screenWorkerFile from './sync/screen-worker?modulePath'
 import type { PeerLink } from './sync/peer-link'
+import { nextTurn } from './sync/tab-host'
 import { KeepAwake, type PowerBlocker } from './sync/keep-awake'
+import { Presence } from './sync/presence'
 import { RemoteImages, remoteTabInfo } from './sync/remote-actions'
 import { sendFiles } from './sync/file-sender'
 import { fileToSend, RemoteCopies } from './sync/outgoing-files'
-import { FileReceiver, receivedPeerGone } from './sync/file-receiver'
+import { FileReceiver, receivedPeerGone, receivedRoot } from './sync/file-receiver'
 import { CallError } from './sync/calls'
-import { TabAttention } from './sync/tab-directory'
+import { TabAttention, TabInputs } from './sync/tab-directory'
 import { type AppliedSize, TabSizes } from './sync/tab-sizes'
 import type { ViewerEvents } from './sync/tab-viewer'
 import type { HelloMessage } from './sync/wire'
@@ -88,8 +90,8 @@ import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager } from './tab-manager'
 import { TabPlaces } from './tab-places'
-import { clampPush, hostHandlers, hostTabs, planPush, pruneListedMembers, withoutTabId, type HostContext } from './remote-host'
-import { frontClears, RemoteFront } from './remote-front'
+import { clampPush, hostHandlers, hostTabs, planPush, pruneListedMembers, reviewPushes, withoutTabId, type HostContext } from './remote-host'
+import { clearFlag, frontClears, presentViewers, RemoteFront } from './remote-front'
 import { RemoteHolder, type RemoteHolderDeps } from './remote-holder'
 import { readAgentMeta } from './transcript-agent-info'
 import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, writeUpdateMarker } from './update-marker'
@@ -233,8 +235,8 @@ function bootstrap(): void {
   const clipboardImageRoot = join(tmpdir(), 'ClaudeTerm', 'clipboard')
   cleanupImageCache(clipboardImageRoot, 7 * 24 * 60 * 60 * 1000)
   // files pasted or dropped into a remote tab arrive here, each in a folder of its own; a test sets the root
-  const receivedRoot = isTest ? process.env.CLAUDETERM_TEST_RECEIVED_ROOT || join(dataDir, 'received') : join(tmpdir(), 'ClaudeTerm', 'received')
-  const receiver = new FileReceiver({ root: receivedRoot, log: (m) => log.warn(m) })
+  const receivedFolder = isTest ? process.env.CLAUDETERM_TEST_RECEIVED_ROOT || join(dataDir, 'received') : receivedRoot({ platform: process.platform, tmpdir: tmpdir(), uid: process.getuid?.() ?? -1 })
+  const receiver = new FileReceiver({ root: receivedFolder, log: (m) => log.warn(m) })
   void receiver.cleanup(7 * 24 * 60 * 60 * 1000)
   const peerGoneReceived = receivedPeerGone(receiver)
   const imageTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -356,9 +358,11 @@ function bootstrap(): void {
     activeTabId: () => tabs.activeTabId(),
     remoteFront: (tabId) => [...remoteFronts.values()].some((f) => f.tabId === tabId),
     publish: (u) => {
+      const rev = ++reviewCounter
       lastReviews.set(u.tabId, u)
+      reviewRevs.set(u.tabId, rev)
       send(IPC.evReview, u)
-      pushToMembers(u.tabId, 'review', withoutTabId(u))
+      pushReviewToMembers(u.tabId, withoutTabId(u), rev).catch((err: unknown) => log.warn(`review push failed: ${String(err)}`))
     },
     onError: (m) => log.warn(m),
     hideIgnored: () => settings.review.hideIgnored,
@@ -389,6 +393,8 @@ function bootstrap(): void {
 
   // a test run can have idle transcripts wait long, so that a read the hooks bring is told apart from one within the wait
   const testFeedMaxMs = isTest ? Number(process.env.CLAUDETERM_TEST_FEED_MAX_MS) || undefined : undefined
+  // a test holds the transcript poll of a turn's end back, so an answer typed meanwhile is the one that counts
+  const testDoneDelayMs = isTest ? Number(process.env.CLAUDETERM_TEST_DONE_DELAY_MS) || 0 : 0
   const attachTranscript = (tabId: string, sessionId: string, transcriptPath: string): void => {
     const s = sources.get(tabId)
     if (!s || (s.transcriptPath !== null && pathKey(s.transcriptPath) === pathKey(transcriptPath))) return
@@ -578,8 +584,10 @@ function bootstrap(): void {
         sizes.drop(id)
         deviceSized.delete(id)
         tabAttention.drop(id)
+        tabInputs.drop(id)
         titles.delete(id)
         lastReviews.delete(id)
+        reviewRevs.delete(id)
         if (lastLocalActive === id) lastLocalActive = null
       },
       activated: (id) => {
@@ -587,6 +595,7 @@ function bootstrap(): void {
         activeRemote = null
         // a local tab in front in the meantime: the window never jumps to the requested remote tab later
         remoteFront.activated()
+        tabInputs.bump(id)
         clearAttention(id)
         send(IPC.evTabActivated, id)
         review.activated(id)
@@ -602,6 +611,8 @@ function bootstrap(): void {
       },
       exit: (id, code) => {
         send(IPC.evPtyExit, id, code)
+        // the process that waited is gone: an attention still in its poll must not start
+        tabInputs.bump(id)
         clearAttention(id)
         remote?.host.exit(id, code)
         // a Claude tab that exits mid-turn is no longer working: the hold it kept for its watchers ends
@@ -610,6 +621,7 @@ function bootstrap(): void {
       reset: (id) => {
         send(IPC.evPtyReset, id)
         // the process that waited is gone: the tab stops waiting on every device
+        tabInputs.bump(id)
         clearAttention(id)
         remote?.host.reset(id)
       }
@@ -622,6 +634,8 @@ function bootstrap(): void {
   const sizes = new TabSizes()
   /** the attention each of this device's tabs waits with, as the other devices see it */
   const tabAttention = new TabAttention()
+  /** the answers each of this device's tabs got: an attention that starts after a turn's end is read is void if one came meanwhile */
+  const tabInputs = new TabInputs()
   /** a tab starts waiting with a reason: the other devices show it pulsing too */
   const startAttention = (tabId: string, reason: NotificationCase): void => {
     tabAttention.start(tabId, reason)
@@ -637,13 +651,16 @@ function bootstrap(): void {
   const titles = new Map<string, string>()
   /** the latest review update of each of this device's tabs */
   const lastReviews = new Map<string, ReviewUpdate>()
+  /** the rev of each tab's latest review: a counter of the publishes, which only grows */
+  const reviewRevs = new Map<string, number>()
+  let reviewCounter = 0
   /** the latest images update of each remote tab in this window */
   const lastImages = new Map<string, ImagesUpdate>()
   /**
-   * each device's tab of this device in front on that device's window, and whether that window has the focus. Focus is not
-   * presence: nothing reads the flag yet, and the presence rule that a later release adds will use it.
+   * each member's tab of this device in front on the member's window, and its flags: present (see Presence) and focused, the
+   * 0.15.0 member's flag
    */
-  const remoteFronts = new Map<string, { tabId: string; focused: boolean }>()
+  const remoteFronts = new Map<string, { tabId: string; present: boolean; focused: boolean }>()
   /** the remote tab in front in this window; null while a local tab (or none) is in front */
   let activeRemote: string | null = null
   /** which tab a new-tab request on another device brings to the front, and when it must not: see RemoteFront */
@@ -670,6 +687,45 @@ function bootstrap(): void {
     enabled: () => settings.devices.keepAwake,
     now: Date.now
   })
+  /** a test names a file whose content is 'present' while this device is present; a missing file is not present */
+  const testPresence = isTest ? process.env.CLAUDETERM_TEST_PRESENCE : undefined
+  const testPresenceFile = (path: string): boolean => {
+    try {
+      return readFileSync(path, 'utf8').trim() === 'present'
+    } catch {
+      return false
+    }
+  }
+  /** the machine sleeps or its screen is locked: this device counts as away until it wakes, so its absence is told at once */
+  let away = false
+  /** whether this device is present: its window is focused and the machine had input recently. See Presence */
+  const presence = new Presence({
+    focused: () => !away && (testPresence ? testPresenceFile(testPresence) : Boolean(win && !win.isDestroyed() && win.isFocused())),
+    // a test run never reads the machine's idle time: without a presence file it is never present
+    idleSeconds: testPresence ? () => 0 : isTest ? () => Infinity : () => powerMonitor.getSystemIdleTime(),
+    changed: (present) => {
+      remote?.viewer.presenceChanged(present)
+      // a device that becomes present with no remote tab in front clears the tab in front here, as bringing it to the front does
+      if (present && activeRemote === null) {
+        const id = tabs.activeTabId()
+        if (id) clearAttention(id)
+      }
+    },
+    ...(testPresence ? { tickMs: 200, alwaysTick: true } : {})
+  })
+  const onPowerAway = (): void => {
+    away = true
+    presence.check()
+  }
+  const onPowerBack = (): void => {
+    away = false
+    presence.check()
+  }
+  // these listeners live as long as the app, so away always follows the machine
+  powerMonitor.on('suspend', onPowerAway)
+  powerMonitor.on('lock-screen', onPowerAway)
+  powerMonitor.on('resume', onPowerBack)
+  powerMonitor.on('unlock-screen', onPowerBack)
   /** checks the keep-awake hold again: a member link came or went, a tab's watchers or its work changed, or the setting did */
   const updateAwake = (): void => keepAwake.update({
     linked: (remote?.host.peers().length ?? 0) > 0,
@@ -733,6 +789,7 @@ function bootstrap(): void {
       else send(IPC.evAttention, tabId, reason)
     },
     attentionCleared: (tabId) => send(IPC.evAttentionClear, tabId),
+    ring: (tabId, reason) => attention.ringInFront(tabId, reason),
     push: (tabId, value) => {
       if (value.k === 'status') {
         send(IPC.evStatus, { tabId, ...value.v })
@@ -743,7 +800,7 @@ function bootstrap(): void {
         remoteImages.setCards(tabId, update.cards)
         lastImages.set(tabId, update)
         send(IPC.evImages, update)
-      } else {
+      } else if (value.k === 'review') {
         send(IPC.evReview, { ...value.v, tabId, remote: true })
       }
     }
@@ -811,7 +868,9 @@ function bootstrap(): void {
     places: tabPlaces,
     receiver,
     reviews: lastReviews,
+    reviewRevs,
     profiles: () => profiles.map((p) => p.name),
+    typedPaths: (tabId, paths) => typedTextOf(tabId, paths),
     openTab: (r) => openTab({ kind: r.kind, cwd: defaultFolder(), profile: r.profile, account: r.account, resumeSessionId: r.resume }, false),
     writeInput: (tabId, data, from) => writeInput(tabId, data, from),
     folders: (tabId, path) => folderListingOf(tabId, path, folderDeps()),
@@ -819,15 +878,19 @@ function bootstrap(): void {
     sessions: () => listSessions(),
     openSession: (id) => openSessionOf(id),
     claim: (tabId, from, cols, rows) => applySize(tabId, sizes.claim(tabId, from, cols, rows)),
-    front: (from, tabId, focused) => {
+    front: (from, tabId, present, focused) => {
       if (tabId === null) {
         remoteFronts.delete(from)
         return
       }
       const was = remoteFronts.get(from)
-      remoteFronts.set(from, { tabId, focused })
-      // a window that loses the focus by itself leaves the tab's mark: only a new tab in front, or the focus gained, answers it
-      if (frontClears(was, tabId, focused)) clearAttention(tabId)
+      remoteFronts.set(from, { tabId, present, focused })
+      // a member that stops being present by itself leaves the tab's mark: only a new tab in front, or the member becoming present, answers it
+      const wasFlag = was && { tabId: was.tabId, present: clearFlag(was) }
+      if (frontClears(wasFlag, tabId, clearFlag({ present, focused }))) {
+        tabInputs.bump(tabId)
+        clearAttention(tabId)
+      }
       if (isClaudeTab(tabId)) review.activated(tabId)
       places.refresh(tabId)
     }
@@ -848,9 +911,9 @@ function bootstrap(): void {
     }))
 
   /** a session another device lists: the tab in its conversation there, or the new tab that resumes it, which comes to the front here as a new remote tab does; a device that is offline is toasted by the call */
-  const openRemoteSession = async (id: string): Promise<void> => {
+  const openRemoteSession = async (id: string, prefer?: string): Promise<void> => {
     const r = remote
-    const device = r?.actions.deviceOfSession(id) ?? null
+    const device = r?.actions.deviceOfSession(id, prefer) ?? null
     if (!r || device === null || quitting) return
     const mark = remoteFront.mark()
     const tabId = await r.actions.openSession(device, id)
@@ -863,7 +926,7 @@ function bootstrap(): void {
   const remoteDeps = (): RemoteHolderDeps => ({
     tabs,
     scrollback: () => settings.scrollback,
-    windowFocused: () => Boolean(win && !win.isDestroyed() && win.isFocused()),
+    present: () => presence.present(),
     hostTabs: hostTabs(hostCtx),
     hostHandlers: (device) => hostHandlers(hostCtx, device),
     viewerEvents,
@@ -914,7 +977,11 @@ function bootstrap(): void {
     // a member typed into this device's tab (not a terminal report or a reading key): the computer stays awake for a while
     if (from !== null && prompt) keepAwake.input()
     // typing from any device is the user at the tab: it stops waiting everywhere; terminal reports and reading keys are no answer
-    if (prompt) clearAttention(tabId)
+    if (prompt) {
+      // a key pressed as a tab closes leaves no entry behind
+      if (tabs.get(tabId)) tabInputs.bump(tabId)
+      clearAttention(tabId)
+    }
     if (from === null) applySize(tabId, sizes.claim(tabId, null))
     if (tabId === autoTabId && isUserInput(data)) autoTabId = null
     // scrolling through the reply with the mouse or PgUp is reading it, it puts nothing in the prompt
@@ -935,6 +1002,22 @@ function bootstrap(): void {
     tabs.deactivate()
     send(IPC.evTabActivated, tabId)
     remote?.viewer.activated(tabId)
+  }
+
+  /**
+   * A review of a tab for the members attached to it: clamped in steps, sent in parts in order. A review published while
+   * this one is clamped or sent ends it, since its rev is no longer the tab's.
+   */
+  const pushReviewToMembers = async (tabId: string, v: unknown, rev: number): Promise<void> => {
+    if (!remote) return
+    remote.host.changed()
+    if (remote.host.watchers(tabId).length === 0) return
+    const pushes = await reviewPushes(v, rev, { yieldNow: nextTurn, stale: () => reviewRevs.get(tabId) !== rev })
+    for (const [n, p] of (pushes ?? []).entries()) {
+      if (n > 0) await nextTurn()
+      if (!remote || reviewRevs.get(tabId) !== rev) return
+      remote.host.push(tabId, p.k, p.v)
+    }
   }
 
   /** a hub update of a tab for the members attached to it, clamped to what they check; the directory follows */
@@ -1006,6 +1089,33 @@ function bootstrap(): void {
     banner: (tabId, reason) => send(IPC.evBanner, tabId, reason),
     muted: (tabId) => (remote?.viewer.tab(tabId)?.muted ?? tabs.get(tabId)?.muted) === true
   })
+  /**
+   * An attention starts on a tab of this device. When the person is present here with the tab in front, it starts nowhere
+   * else: each device present with the tab in front rings for it, and this one signals it here (see Presence). Otherwise it
+   * starts as before. share: false for a turn that ends with background work while doneWithBackgroundWork is off: it starts
+   * nothing and rings nobody.
+   */
+  const raiseAttention = (tabId: string, reason: NotificationCase, o: { background?: boolean; share?: boolean } = {}): void => {
+    const background = o.background === true
+    if (o.share === false) {
+      log.info(`attention ${reason} tab=${tabId} quiet`)
+      return
+    }
+    const here = activeRemote === null && tabs.activeTabId() === tabId && presence.present()
+    const there = presentViewers(tabId, remoteFronts)
+    if (!here && there.length === 0) {
+      startAttention(tabId, reason)
+      const signalled = attention.notify(tabId, reason, background)
+      log.info(`attention ${reason} tab=${tabId} ${signalled ? 'started' : 'seen'}`)
+      return
+    }
+    const parts: string[] = []
+    if (here) parts.push(attention.notify(tabId, reason, background) ? 'here' : 'seen')
+    // a ring is sent once and not stored: a ring lost on a dying link is accepted
+    for (const d of there) remote?.host.ring(tabId, d, reason)
+    if (there.length > 0) parts.push(`rung ${there.length}`)
+    log.info(`attention ${reason} tab=${tabId} ${parts.join(' ')}`)
+  }
   const promptQueries = new PromptQueries({
     send: (queryId, tabId) => {
       if (!win || win.isDestroyed()) return false
@@ -1019,9 +1129,7 @@ function bootstrap(): void {
     // writes go to the PTY directly: what it types is not taken for the user's keys
     write: (tabId, data) => tabs.write(tabId, data),
     notify: (tabId) => {
-      startAttention(tabId, 'done')
-      const signalled = attention.notify(tabId, 'done')
-      log.info(`attention done tab=${tabId} after the auto-continue gave up${signalled ? '' : ' (seen)'}`)
+      raiseAttention(tabId, 'done')
     },
     log
   })
@@ -1256,19 +1364,27 @@ function bootstrap(): void {
         // a response a dropped connection cut off goes on by itself: nobody needs to look yet
         else if (autoContinue.failed(msg.tabId, msg.error)) return { ok: true }
       } else review.dialogOpened(msg.tabId, msg.agentId ?? null)
+      // an answer typed or fronted while the turn's end is read makes the attention void: it starts nowhere
+      const inputsAtEnd = tabInputs.of(msg.tabId)
       const signal = (): void => {
         if (!isClaudeTab(msg.tabId)) return
+        if (tabInputs.of(msg.tabId) !== inputsAtEnd) {
+          log.info(`attention ${msg.reason} tab=${msg.tabId} void: answered while the turn's end was read`)
+          return
+        }
         // a turn a message from another session started has its own settings: the transcript tells which turn this is
         const reason = msg.reason === 'done' && turns.lastTurnIsPeer(msg.tabId) ? 'peer' : msg.reason
         // a done with background work still running gives no signal while doneWithBackgroundWork is off: no tab waits for it
-        if (msg.reason !== 'done' || msg.background !== true || settings.notifications.doneWithBackgroundWork) startAttention(msg.tabId, reason)
-        const signalled = attention.notify(msg.tabId, reason, msg.background === true)
-        log.info(`attention ${reason} tab=${msg.tabId}${msg.background ? ' with background work' : ''}${msg.error ? ` error=${msg.error}` : ''}${signalled ? '' : ' (seen)'}`)
+        const share = msg.reason !== 'done' || msg.background !== true || settings.notifications.doneWithBackgroundWork
+        raiseAttention(msg.tabId, reason, { background: msg.background === true, share })
+        if (msg.error) log.info(`attention ${reason} tab=${msg.tabId} error=${msg.error}`)
       }
       // the end of a turn waits for the main transcript to be read up to it: the pipe answers at once, the signal follows
       const feed = msg.reason === 'done' ? sources.get(msg.tabId)?.feed : undefined
-      if (feed) void feed.pollMain().then(signal, signal)
-      else signal()
+      if (feed) {
+        const read = testDoneDelayMs > 0 ? new Promise<void>((r) => setTimeout(r, testDoneDelayMs)).then(() => feed.pollMain()) : feed.pollMain()
+        void read.then(signal, signal)
+      } else signal()
       return { ok: true }
     },
     turn: (msg) => {
@@ -1535,7 +1651,7 @@ function bootstrap(): void {
       pendingSeeds.clear()
     }
   })
-  ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) { startAttention(tabId, 'bell'); attention.notify(tabId, 'bell') } })
+  ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) raiseAttention(tabId, 'bell') })
   // a fork comes only from Fork session (tabs:fork), never from a request to open a tab
   ipcMain.handle(IPC.tabsOpen, (_e, req: unknown) => (isOpenTabRequest(req) ? openTab(inDefaultFolder(openTabRequestFields(req))) : null))
   ipcMain.handle(IPC.sessionsList, listSessions)
@@ -1563,11 +1679,13 @@ function bootstrap(): void {
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
   ipcMain.handle(IPC.layoutGet, (): TabLayout => tabLayout.get())
   ipcMain.on(IPC.layoutSet, (_e, c: unknown) => { if (isTabLayoutChange(c)) tabLayout.set(c) })
-  ipcMain.on(IPC.sessionsOpen, (_e, id: unknown) => {
+  ipcMain.on(IPC.sessionsOpen, (_e, id: unknown, device?: unknown) => {
+    // the device of the section the pick was made in; a value that is not a device drops the pick
+    if (device !== undefined && !isDeviceId(device)) return
     const s = isId(id) ? listedSessions.get(id) : undefined
     // a session another device lists is opened on that device
     if (!s) {
-      if (isId(id)) void openRemoteSession(id)
+      if (isId(id)) void openRemoteSession(id, isDeviceId(device) ? device : undefined)
       return
     }
     const tab = tabs.list().find((t) => t.claudeSessionId === s.id)
@@ -1827,15 +1945,25 @@ function bootstrap(): void {
       if (!item) return null
       const png = Buffer.from(await (await item.getType('image/png')).arrayBuffer())
       return [{ name: `clipboard-${Date.now()}.png`, size: png.length, read: async (offset, length) => png.subarray(offset, offset + length) }]
-    }).then((paths) => paths?.[0] ?? null)
+    }).then((sent) => sent?.text ?? null)
   })
-  // files dropped on a remote tab are copied to its device, and their paths there are answered; this device's own files only
-  ipcMain.handle(IPC.remoteDropFiles, (_e, tabId: unknown, paths: unknown): Promise<string[] | null> => {
+  // files dropped on a remote tab are copied to its device, and the text to type for them there is answered; this device's own files only
+  ipcMain.handle(IPC.remoteDropFiles, (_e, tabId: unknown, paths: unknown): Promise<string | null> => {
     if (!isId(tabId) || !remote?.viewer.has(tabId)) return Promise.resolve(null)
     if (Array.isArray(paths) && paths.length > MAX_TRANSFER_FILES) return Promise.resolve(copies.refuse(tabId, REMOTE_COPY.copyTooManyFiles))
     if (!isDropPaths(paths)) return Promise.resolve(null)
     const files = paths
-    return copies.copy(tabId, () => Promise.all(files.map((p) => fileToSend(p))))
+    return copies.copy(tabId, () => Promise.all(files.map((p) => fileToSend(p)))).then((sent) => sent?.text ?? null)
+  })
+  /** the text typed for paths into one of this device's tabs: quoted for the shell the tab runs, from the live profiles */
+  function typedTextOf(tabId: string, paths: string[]): string {
+    const info = tabs.get(tabId)
+    return typedPaths(profiles.find((p) => p.name === info?.profile) ?? null, info?.kind ?? 'claude', paths)
+  }
+  // the text typed for files dropped on a local tab
+  ipcMain.handle(IPC.typedPaths, (_e, tabId: unknown, paths: unknown): string | null => {
+    if (!isId(tabId) || !tabs.get(tabId) || !isLocalDropPaths(paths)) return null
+    return typedTextOf(tabId, paths)
   })
   ipcMain.on(IPC.imagesMarkSeen, (_e, tabId: unknown) => {
     if (!isId(tabId)) return
@@ -2075,16 +2203,21 @@ function bootstrap(): void {
   win.on('enter-full-screen', refitLater)
   win.on('leave-full-screen', refitLater)
   win.on('close', () => { sessions.flush(); notes.flush(); taskListStore.flush(); bridge?.flush(); group?.flush() })
-  win.once('ready-to-show', () => { if (win) showWindow(win, isTest) })
+  win.once('ready-to-show', () => {
+    if (!win) return
+    showWindow(win, isTest)
+    // a window that starts focused gets no focus event: its presence is read now
+    presence.check()
+  })
   win.on('focus', () => {
     win?.flashFrame(false)
     places.refreshAll()
     const id = tabs.activeTabId()
     if (id) review.trigger(id)
-    // the device that owns a tab in front here hears that this window has the focus: its tab clears its attention
-    remote?.viewer.focusChanged(true)
+    // the device that owns a tab in front here hears when this device becomes present: its tab clears its attention
+    presence.check()
   })
-  win.on('blur', () => remote?.viewer.focusChanged(false))
+  win.on('blur', () => presence.check())
   win.on('closed', () => { win = null })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
@@ -2108,6 +2241,7 @@ function bootstrap(): void {
     remote?.dispose()
     remote = null
     keepAwake.dispose()
+    presence.dispose()
     earlyPeers.clear()
     updater.stop()
     sessions.flush()

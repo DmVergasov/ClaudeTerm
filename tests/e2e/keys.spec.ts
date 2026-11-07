@@ -1,8 +1,9 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MAC, WIN } from '../fixtures/platform'
-import { bufferText, FAKE_CLAUDE_SETTINGS, keepingClipboard, launchApp, KEYS, PNG_1x1, PROMPT, typeInTerminal } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, keepingClipboard, launchApp, launchClaudeTab, KEYS, PNG_1x1, PROMPT, typeInTerminal } from './helpers'
 
 /* What stands in for the PowerShell check of Claude Code's own image paste: a program that cannot start (as PowerShell
  * failing to load System.Windows.Forms in Constrained Language mode), and one that exits 0 (as it loading it) */
@@ -104,5 +105,62 @@ test('on macOS Ctrl keys go to the terminal: Ctrl+C interrupts, Ctrl+V reaches C
   await page.keyboard.press('Control+KeyC')
   await expect.poll(() => page.evaluate(() => window.__ct!.ptyInput!())).toContain('\x16')
   await expect.poll(() => page.evaluate(() => window.__ct!.ptyInput!())).toContain('\x03')
+  await app.close()
+})
+
+/** drops a file whose folder name has a space and a `$` on the tab, as a drag from the desktop does; answers the text typed */
+async function dropFileOnTab(page: Page, tabId: string): Promise<string> {
+  const file = join(mkdtempSync(join(tmpdir(), 'ct-drop-')), 'my $file.txt')
+  writeFileSync(file, 'dropped')
+  await page.evaluate(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.id = 'drop-source'
+    input.hidden = true
+    document.body.append(input)
+  })
+  await page.locator('#drop-source').setInputFiles(file)
+  await page.locator('.terminal-host:visible').evaluate((host) => {
+    const input = document.getElementById('drop-source') as HTMLInputElement
+    const data = new DataTransfer()
+    data.items.add(input.files![0])
+    host.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }))
+  })
+  // without the focus reports xterm sends when the test moves focus (ESC [ I, ESC [ O)
+  const typed = () => page.evaluate((id) => window.__ct!.ptyInput!(id).replace(/\x1b\[(?:20[01]~|[IO])/g, ''), tabId)
+  await expect.poll(typed).toMatch(/my \$file\.txt/)
+  return typed()
+}
+
+test('the typed text of dropped files is refused for a tab that does not exist and for paths that are not a list', async () => {
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  expect(await page.evaluate(() => window.ct.typedPaths('not-a-tab', ['/x']))).toBeNull()
+  expect(await page.evaluate((id) => window.ct.typedPaths(id, 'not-an-array' as unknown as string[]), tabId)).toBeNull()
+  await app.close()
+})
+
+test('a file dropped on a shell tab is typed in the shell\'s quotes, so a $ in its path does not expand', async () => {
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await expect.poll(() => bufferText(page)).toMatch(PROMPT)
+  const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  // PowerShell and bash both keep a $ inside single quotes
+  expect(await dropFileOnTab(page, tabId)).toMatch(/^'[^']*my \$file\.txt'$/)
+  await app.close()
+})
+
+test('a file dropped on a Claude tab is typed in double quotes', async () => {
+  const { app, page, tabId } = await launchClaudeTab()
+  expect(await dropFileOnTab(page, tabId)).toMatch(/^"[^"]*my \$file\.txt"$/)
+  await app.close()
+})
+
+test('a local drop of more than 100 files is typed in full, every path quoted', async () => {
+  const { app, page, tabId } = await launchClaudeTab()
+  const paths = Array.from({ length: 101 }, (_, i) => `C:\\T\\drop-${i}.txt`)
+  const text = await page.evaluate(([id, list]) => window.ct.typedPaths(id, list), [tabId, paths] as const)
+  expect(text).toBe(paths.map((p) => `"${p}"`).join(' '))
   await app.close()
 })

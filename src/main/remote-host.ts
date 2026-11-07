@@ -3,7 +3,7 @@ import { checkImageFile, MAX_IMAGE_BYTES } from '../shared/image-file'
 import { hasText } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 import type { DeviceResult } from '../shared/devices'
-import { IMAGE_PART_BYTES, MAX_PATH_TEXT, REMOTE_COPY, type FolderResult, type PushKind, type RemoteTab } from '../shared/remote'
+import { IMAGE_PART_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, REMOTE_COPY, REVIEW_FILE_BYTES, REVIEW_PART_BYTES, type FolderResult, type PushKind, type RemoteTab } from '../shared/remote'
 import { MAX_HASH, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { PlanUpdate } from '../shared/ipc'
 import type { RecentSession, TabInfo, TabPlace } from '../shared/types'
@@ -17,7 +17,7 @@ import type { TabManager } from './tab-manager'
 import { CallError, type CallEntry } from './sync/calls'
 import { CALL_ARGS, type CallArgs } from './sync/remote-shapes'
 import { parsePlace } from './sync/remote-wire'
-import type { HostTabs } from './sync/tab-host'
+import { type HostTabs, nextTurn } from './sync/tab-host'
 import { statusSummary, type TabAttention } from './sync/tab-directory'
 import type { TabSizes } from './sync/tab-sizes'
 import type { FileReceiver } from './sync/file-receiver'
@@ -52,6 +52,8 @@ const MAX_SESSIONS = 1000
 const MAX_SESSION_TEXT = 2000
 /** what the files of one review push may take, JSON-encoded: the push stays under a frame (MAX_FRAME_BYTES) with what else it holds */
 const REVIEW_PUSH_BYTES = 12 * 1024 * 1024
+/** what a part's own keys (rev, i, of, head, files) take beyond its files, with room to spare */
+const PART_SLACK_BYTES = 1024
 /** what an object costs in a push beyond its strings: its keys, its braces and its numbers, rounded up */
 const OBJECT_BYTES = 64
 
@@ -79,15 +81,19 @@ export interface HostContext {
   places: ReadonlyMap<string, TabPlace | null>
   /** the last review update published for each tab */
   reviews: ReadonlyMap<string, ReviewUpdate>
+  /** the rev of each tab's last review: the counter of the publish, which only grows */
+  reviewRevs: ReadonlyMap<string, number>
   /** the Changes actions a member asks of a tab; the hub acts on the tab's own view */
   review: Pick<ReviewHub, 'setScope' | 'clearRequest' | 'refresh' | 'setViewed' | 'showFile' | 'canSend'>
   profiles(): string[]
+  /** the text typed for paths into one of this device's tabs: quoted for the tab's shell, double quotes for a Claude tab */
+  typedPaths(tabId: string, paths: string[]): string
   /** opens a tab in this device's default folder without bringing it to the front of this window */
   openTab(req: CallArgs['open-tab']): TabInfo | null
   writeInput(tabId: string, data: string, from: string | null): void
   claim(tabId: string, from: string, cols: number, rows: number): void
-  /** the tab a member has in front, and whether the member's window has the focus */
-  front(from: string, tabId: string | null, focused: boolean): void
+  /** the tab a member has in front, and whether the member is present (see Presence); focused is a 0.15.0 member's flag, kept for its clearing */
+  front(from: string, tabId: string | null, present: boolean, focused: boolean): void
   /** the subfolders of a tab's folder (null: the tab's own), read on this device */
   folders(tabId: string, path: string | null): Promise<FolderResult>
   /** moves a tab to another folder on this device; a refusal is its message */
@@ -115,8 +121,8 @@ export function hostTabs(ctx: HostContext): HostTabs {
     claim: (tabId, from, cols, rows) => {
       ctx.claim(tabId, from, cols, rows)
     },
-    front: (from, tabId, focused) => {
-      ctx.front(from, tabId, focused)
+    front: (from, tabId, present, focused) => {
+      ctx.front(from, tabId, present, focused)
     },
     pushes: (tabId) => pushesOf(ctx, tabId)
   }
@@ -334,11 +340,16 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
         return {}
       }
     },
+    // the end of a transfer answers the paths; a sender that names its tab also gets the text to type, quoted for that tab's shell
     'recv-end': {
       run: async (a) => {
         const args = CALL_ARGS['recv-end'](a)
         if (!args) throw new CallError('bad arguments')
-        return { paths: await ctx.receiver.end(args.transfer, device) }
+        // an older sender names no tab: it types the paths itself, as 0.15.0 did
+        if (args.id === undefined) return { paths: await ctx.receiver.end(args.transfer, device) }
+        const { id } = tabCall(ctx, { id: args.id })
+        const paths = await ctx.receiver.end(args.transfer, device)
+        return { paths, text: ctx.typedPaths(id, paths) }
       }
     }
   }
@@ -457,8 +468,19 @@ function counterOf(counter: ReviewCounter | null): ReviewCounter | null {
   return { files: counter.files, additions: counter.additions, deletions: counter.deletions, title: cut(stripC0(counter.title), MAX_TITLE) }
 }
 
-/** the pushes of a tab, in the order a member gets them: status, plan, images and the last review */
-function pushesOf(ctx: HostContext, tabId: string): Array<{ k: PushKind; v: unknown }> {
+/** the pushes of a tab, in the order a member gets them: status, plan, images and the last review (in parts when it is large) */
+async function pushesOf(ctx: HostContext, tabId: string): Promise<Array<{ k: PushKind; v: unknown }>> {
+  const review = ctx.reviews.get(tabId)
+  let reviewPushesOf: { k: PushKind; v: unknown }[] = []
+  if (review) {
+    const rev = ctx.reviewRevs.get(tabId) ?? 0
+    // a newer review of the tab replaced this one while it was clamped: that one is pushed to the member, as it is attached
+    reviewPushesOf = (await reviewPushes(withoutTabId(review), rev, {
+      yieldNow: nextTurn,
+      stale: () => (ctx.reviewRevs.get(tabId) ?? 0) !== rev
+    })) ?? []
+  }
+  // read after the last turn of the clamp: a status, plan or images update pushed meanwhile is not followed by an older one
   const status = ctx.status.get(tabId)
   const out: Array<{ k: PushKind; v: unknown }> = [
     { k: 'status', v: clampPush('status', { main: status.main, agents: status.agents, background: status.background }) },
@@ -468,9 +490,67 @@ function pushesOf(ctx: HostContext, tabId: string): Array<{ k: PushKind; v: unkn
       v: clampPush('images', { cards: ctx.images.list(tabId), unseen: ctx.images.unseenCount(tabId), notice: ctx.images.notice(tabId) })
     }
   ]
-  const review = ctx.reviews.get(tabId)
-  if (review) out.push({ k: 'review', v: clampPush('review', withoutTabId(review)) })
-  return out
+  return [...out, ...reviewPushesOf]
+}
+
+/**
+ * A review's pushes for the members of its tab: one `review` push carrying its rev when the whole fits REVIEW_PART_BYTES,
+ * else `review-part` pushes in order, the head in part 0. The files are clamped one by one with a turn of the event loop
+ * before each, so a large review does not hold up the process. Null once stale() says a newer review replaced this one.
+ */
+export async function reviewPushes(
+  v: unknown,
+  rev: number,
+  o: { yieldNow(): Promise<void>; stale(): boolean }
+): Promise<{ k: 'review' | 'review-part'; v: unknown }[] | null> {
+  if (!isRecord(v) || !Array.isArray(v.files)) return [{ k: 'review', v: withRev(clampPush('review', v), rev) }]
+  const budget = new FileBudget()
+  const files = clampedFiles(v.files)
+  for (;;) {
+    await o.yieldNow()
+    if (o.stale()) return null
+    const next = files.next()
+    if (next.done || !budget.add(next.value)) break
+  }
+  const head = clampPush('review', { ...v, files: [] }) as Record<string, unknown>
+  delete head.files
+  const groups = packFiles(head, budget.kept)
+  if (groups.length === 1) return [{ k: 'review', v: { ...head, files: groups[0], rev } }]
+  const of = groups.length
+  return groups.map((files, i) => ({ k: 'review-part', v: i === 0 ? { rev, i, of, head, files } : { rev, i, of, files } }))
+}
+
+function withRev(v: unknown, rev: number): unknown {
+  return isRecord(v) ? { ...v, rev } : v
+}
+
+/**
+ * The files in order, cut into groups that each fit a part: part 0 takes the head too. A file that does not fit the rest of
+ * a part starts the next one, and so a group may hold no file when the head alone is large. At MAX_REVIEW_PARTS parts, a file
+ * that needs one more keeps its header only, in the last part; when even the headers do not fit, the list ends there.
+ */
+export function packFiles(head: Record<string, unknown>, kept: KeptFile[]): Record<string, unknown>[][] {
+  const budget = REVIEW_PART_BYTES - PART_SLACK_BYTES
+  const groups: Record<string, unknown>[][] = []
+  let group: Record<string, unknown>[] = []
+  let used = encodedBytes(head)
+  for (const f of kept) {
+    let item = f
+    if (used + item.bytes + 1 > budget) {
+      if (groups.length + 1 < MAX_REVIEW_PARTS) {
+        groups.push(group)
+        group = []
+        used = 0
+      } else {
+        item = headerOf(f.file)
+        if (used + item.bytes + 1 > budget) break
+      }
+    }
+    group.push(item.file)
+    used += item.bytes + 1
+  }
+  groups.push(group)
+  return groups
 }
 
 export function withoutTabId(update: ReviewUpdate): Partial<ReviewUpdate> {
@@ -632,32 +712,82 @@ function clampReview(v: unknown): unknown {
   }
 }
 
+/** a clamped file, with its encoded size as the push sends it */
+interface KeptFile {
+  file: Record<string, unknown>
+  bytes: number
+}
+
 /**
  * The files in order, within REVIEW_PUSH_BYTES of encoded size. A file is kept whole while it fits; the first one that does
  * not keeps its header only, with no hunks and the note too-many, and so does every later one. A header that does not
  * fit either ends the list.
  */
 function clampFiles(list: unknown[]): Record<string, unknown>[] {
-  const out: Record<string, unknown>[] = []
-  let used = 0
-  let full = false
-  for (const f of fit(list, MAX_FILES, clampFile)) {
-    if (!full) {
-      const size = fileBytes(f)
-      if (used + size <= REVIEW_PUSH_BYTES) {
-        out.push(f)
-        used += size
-        continue
-      }
-      full = true
-    }
-    const header = { ...f, hunks: [], note: 'too-many' }
-    const size = ownBytes(header)
-    if (used + size > REVIEW_PUSH_BYTES) break
-    out.push(header)
-    used += size
+  const budget = new FileBudget()
+  for (const f of clampedFiles(list)) if (!budget.add(f)) break
+  return budget.kept.map((f) => f.file)
+}
+
+/**
+ * The clamped files of a list, one at a time: at most MAX_FILES, and a file over REVIEW_FILE_BYTES encoded keeps its header
+ * only. The clamp of each file runs when it is asked for, so a caller can wait between two files.
+ */
+function* clampedFiles(list: unknown[]): Generator<KeptFile> {
+  let n = 0
+  for (const x of list) {
+    if (n >= MAX_FILES) return
+    const f = clampFileWithin(x, REVIEW_FILE_BYTES)
+    if (f === null) continue
+    n++
+    yield f.over ? headerOf(f.file) : { file: f.file, bytes: f.bytes }
   }
-  return out
+}
+
+/** the file as a review keeps it: with its encoded size */
+function keptOf(f: Record<string, unknown>): KeptFile {
+  return { file: f, bytes: encodedBytes(f) }
+}
+
+/** a file as a review keeps its header only: no hunks, the note too-many */
+function headerOf(f: Record<string, unknown>): KeptFile {
+  return keptOf({ ...f, hunks: [], note: 'too-many' })
+}
+
+/** the files a review keeps, within REVIEW_PUSH_BYTES by the clamp's own estimate of their size */
+class FileBudget {
+  readonly kept: KeptFile[] = []
+  private used = 0
+  private full = false
+  private open = true
+
+  /** adds the next file; false once the list has ended, and no file after it is kept */
+  add(f: KeptFile): boolean {
+    if (!this.open) return false
+    if (!this.full) {
+      const size = fileBytes(f.file)
+      if (this.used + size <= REVIEW_PUSH_BYTES) return this.keep(f, size)
+      this.full = true
+    }
+    const header = headerOf(f.file)
+    const size = ownBytes(header.file)
+    if (this.used + size > REVIEW_PUSH_BYTES) {
+      this.open = false
+      return false
+    }
+    return this.keep(header, size)
+  }
+
+  private keep(f: KeptFile, size: number): boolean {
+    this.kept.push(f)
+    this.used += size
+    return true
+  }
+}
+
+/** the JSON-encoded size of a value, in bytes */
+function encodedBytes(v: unknown): number {
+  return Buffer.byteLength(JSON.stringify(v))
 }
 
 /** the encoded size of a file with its hunks and their lines */
@@ -694,20 +824,45 @@ function samplePath(x: unknown): string | null {
   return s ? s : null
 }
 
-function clampFile(f: unknown): Record<string, unknown> | null {
+/**
+ * A file clamped as its fields and hunks are clamped, and stopped as soon as its encoded size is over `limit`: then `over` is
+ * true and `file` has no hunks. The running size counts whole lines and hunk headers, so it is a lower bound of the file's
+ * encoded size: a file stopped here is over the limit, and a file that is not stopped is measured exactly.
+ */
+function clampFileWithin(
+  f: unknown,
+  limit: number
+): { file: Record<string, unknown>; over: boolean; bytes: number } | null {
   if (!isRecord(f) || !Array.isArray(f.hunks)) return null
   const path = cutText(f.path, MAX_PATH_TEXT)
   const relPath = cutText(f.relPath, MAX_PATH_TEXT)
   const hash = cutText(f.hash, MAX_HASH)
   if (path === null || relPath === null || hash === null) return null
-  return { ...f, path, relPath, hash, hunks: fit(f.hunks, MAX_HUNKS, clampHunk) }
-}
-
-function clampHunk(h: unknown): Record<string, unknown> | null {
-  if (!isRecord(h) || !Array.isArray(h.lines)) return null
-  const header = cutText(h.header, MAX_PATH_TEXT)
-  if (header === null) return null
-  return { header, lines: fit(h.lines, MAX_LINES, clampLine) }
+  const base = { ...f, path, relPath, hash }
+  let bytes = encodedBytes({ ...base, hunks: [] })
+  if (bytes > limit) return { file: base, over: true, bytes }
+  const hunks: Record<string, unknown>[] = []
+  for (const h of f.hunks) {
+    if (hunks.length >= MAX_HUNKS) break
+    if (!isRecord(h) || !Array.isArray(h.lines)) continue
+    const header = cutText(h.header, MAX_PATH_TEXT)
+    if (header === null) continue
+    bytes += encodedBytes({ header })
+    const lines: Record<string, unknown>[] = []
+    for (const l of h.lines) {
+      if (lines.length >= MAX_LINES) break
+      const line = clampLine(l)
+      if (line === null) continue
+      lines.push(line)
+      bytes += encodedBytes(line)
+      if (bytes > limit) return { file: base, over: true, bytes }
+    }
+    hunks.push({ header, lines })
+  }
+  const file = { ...base, hunks }
+  // measured once, exactly: the caller keeps this size, and a file over the limit keeps its header only
+  const exact = encodedBytes(file)
+  return { file, over: exact > limit, bytes: exact }
 }
 
 function clampLine(l: unknown): Record<string, unknown> | null {

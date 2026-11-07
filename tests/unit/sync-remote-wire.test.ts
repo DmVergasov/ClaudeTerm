@@ -45,16 +45,28 @@ describe('part 2 messages', () => {
       expect(parseRemoteMessage(bad)).toBeNull()
       expect(parseMessage(bad)).toBe('unknown')
     }
-    expect(parseMessage({ t: 'front', id: null })).toEqual({ t: 'front', id: null, focused: false })
+    expect(parseMessage({ t: 'front', id: null })).toEqual({ t: 'front', id: null, present: false, focused: false })
     expect(parseMessage({ t: 'reply', id: 3, ok: false, e: 'no' })).toEqual({ t: 'reply', id: 3, ok: false, e: 'no' })
   })
 
-  it('front says whether the member window is focused: true, false or absent (not focused); any other value drops the message', () => {
-    expect(parseMessage({ t: 'front', id: T1, focused: true })).toEqual({ t: 'front', id: T1, focused: true })
-    expect(parseMessage({ t: 'front', id: T1, focused: false })).toEqual({ t: 'front', id: T1, focused: false })
-    expect(parseMessage({ t: 'front', id: T1 })).toEqual({ t: 'front', id: T1, focused: false })
+  it('front says whether the member is present: true, false or absent (not present); any other value drops the message', () => {
+    expect(parseMessage({ t: 'front', id: T1, present: true, focused: true })).toEqual({ t: 'front', id: T1, present: true, focused: true })
+    expect(parseMessage({ t: 'front', id: T1, present: false, focused: false })).toEqual({ t: 'front', id: T1, present: false, focused: false })
+    expect(parseMessage({ t: 'front', id: T1 })).toEqual({ t: 'front', id: T1, present: false, focused: false })
+    expect(parseMessage({ t: 'front', id: T1, present: 'x' })).toBe('unknown')
+    expect(parseMessage({ t: 'front', id: null, present: 1 })).toBe('unknown')
+  })
+
+  it('ring carries a tab and one of the notification cases; any other id or case is malformed', () => {
+    expect(parseMessage({ t: 'ring', id: T1, reason: 'permission' })).toEqual({ t: 'ring', id: T1, reason: 'permission' })
+    expect(parseMessage({ t: 'ring', id: 'nope', reason: 'permission' })).toBe('unknown')
+    expect(parseMessage({ t: 'ring', id: T1, reason: 'nope' })).toBe('unknown')
+    expect(parseMessage({ t: 'ring', id: T1 })).toBe('unknown')
+  })
+
+  it('an older member sends focused and no present: that front is not present, and its focus is kept for the clearing of its mark', () => {
+    expect(parseMessage({ t: 'front', id: T1, focused: true })).toEqual({ t: 'front', id: T1, present: false, focused: true })
     expect(parseMessage({ t: 'front', id: T1, focused: 'x' })).toBe('unknown')
-    expect(parseMessage({ t: 'front', id: null, focused: 1 })).toBe('unknown')
   })
 
   it("a member's size claim is bounded by MAX_REMOTE_COLS and MAX_REMOTE_ROWS; a larger one is dropped", () => {

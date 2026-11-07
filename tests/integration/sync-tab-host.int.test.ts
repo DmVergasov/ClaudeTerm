@@ -59,7 +59,7 @@ function fakeTabs() {
     pushList: [] as { k: PushKind; v: unknown }[],
     inputs: [] as [string, string, string][],
     claims: [] as [string, string, number, number][],
-    fronts: [] as [string, string | null, boolean][],
+    fronts: [] as [string, string | null, boolean, boolean][],
     list: (): RemoteTab[] => fake.entries,
     has: (tabId: string): boolean => fake.entries.some((t) => t.id === tabId),
     input: (tabId: string, data: string, from: string): void => {
@@ -68,10 +68,10 @@ function fakeTabs() {
     claim: (tabId: string, from: string, cols: number, rows: number): void => {
       fake.claims.push([tabId, from, cols, rows])
     },
-    front: (from: string, tabId: string | null, focused: boolean): void => {
-      fake.fronts.push([from, tabId, focused])
+    front: (from: string, tabId: string | null, present: boolean, focused: boolean): void => {
+      fake.fronts.push([from, tabId, present, focused])
     },
-    pushes: (): { k: PushKind; v: unknown }[] => fake.pushList
+    pushes: async (): Promise<{ k: PushKind; v: unknown }[]> => fake.pushList
   }
   return fake
 }
@@ -255,20 +255,29 @@ describe('tab host', () => {
     await until(() => fake.inputs.length === 1)
     expect(fake.inputs).toEqual([[T1, 'ls\r', VIEWER]])
     expect(fake.claims).toEqual([])
-    memberLink.send({ t: 'front', id: null, focused: false })
+    memberLink.send({ t: 'front', id: null, present: false, focused: false })
     await until(() => fake.fronts.length === 1)
-    expect(fake.fronts).toEqual([[VIEWER, null, false]])
+    expect(fake.fronts).toEqual([[VIEWER, null, false, false]])
   })
 
-  it("a member's tab in front says whether its window is focused; an older member's front (no flag) is not focused", async () => {
+  it("a member's tab in front says whether its member is present; an older member's front (no flag) is not present", async () => {
     await start()
     fake.entries = [tab(T1)]
     await join()
-    memberLink.send({ t: 'front', id: T1, focused: true })
+    memberLink.send({ t: 'front', id: T1, present: true, focused: true })
     await until(() => fake.fronts.length === 1)
     memberLink.send({ t: 'front', id: T1 } as unknown as Message)
     await until(() => fake.fronts.length === 2)
-    expect(fake.fronts).toEqual([[VIEWER, T1, true], [VIEWER, T1, false]])
+    expect(fake.fronts).toEqual([[VIEWER, T1, true, true], [VIEWER, T1, false, false]])
+  })
+
+  it("a 0.15.0 member's front says focused and no present: the host gets present false and its focus", async () => {
+    await start()
+    fake.entries = [tab(T1)]
+    await join()
+    memberLink.send({ t: 'front', id: T1, focused: true } as unknown as Message)
+    await until(() => fake.fronts.length === 1)
+    expect(fake.fronts).toEqual([[VIEWER, T1, false, true]])
   })
 
   it('attach for a tab it does not have is refused', async () => {

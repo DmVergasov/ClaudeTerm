@@ -1,4 +1,5 @@
 import { DETACH_BACKLOG_BYTES, MAX_OUT_CHARS, MAX_REMOTE_TABS, REMOTE_COPY, type PushKind, type RemoteSnapshot, type RemoteTab } from '../../shared/remote'
+import type { NotificationCase } from '../../shared/types'
 import { CallError, type CallEntry } from './calls'
 import type { PeerLink } from './peer-link'
 import { piecesOf } from './pieces'
@@ -7,16 +8,21 @@ import type { ScreenMirrorsApi } from './screen-mirror'
 import { TabDirectory } from './tab-directory'
 import type { Message } from './wire'
 
+/** the next turn of the event loop: a large review is sent in steps, with a turn between them */
+export function nextTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
 /** This device's tabs, as the host serves them to the members. */
 export interface HostTabs {
   list(): RemoteTab[]
   has(tabId: string): boolean
   input(tabId: string, data: string, from: string): void
   claim(tabId: string, from: string, cols: number, rows: number): void
-  /** the tab of this device in front on a member's window; null: none of them. focused: the member's window has the focus */
-  front(from: string, tabId: string | null, focused: boolean): void
-  /** the tab's current hub updates, for a member that attaches */
-  pushes(tabId: string): Array<{ k: PushKind; v: unknown }>
+  /** the tab of this device in front on a member's window; null: none of them. present: the member is present (see Presence); focused: a 0.15.0 member's flag */
+  front(from: string, tabId: string | null, present: boolean, focused: boolean): void
+  /** the tab's current hub updates, for a member that attaches; a large review comes in parts, in order */
+  pushes(tabId: string): Promise<Array<{ k: PushKind; v: unknown }>>
 }
 
 export interface TabHostDeps {
@@ -125,6 +131,12 @@ export class TabHost {
         }
       }
     }
+  }
+
+  /** an attention of a tab of this device rings on a member that is present with the tab in front; a member not linked hears nothing */
+  ring(tabId: string, device: string, reason: NotificationCase): void {
+    if (this.disposed || !this.tabs.has(tabId)) return
+    this.members.get(device)?.link.send({ t: 'ring', id: tabId, reason })
   }
 
   /** sends the directory's changes to every member: the tabs that changed, and the tabs that closed */
@@ -238,7 +250,19 @@ export class TabHost {
     const member = this.members.get(device)
     if (!member || this.disposed) throw new CallError('not linked')
     this.watch(member, id)
-    for (const p of this.tabs.pushes(id)) this.pushTo(member, id, p.k, p.v)
+    const pushes = await this.tabs.pushes(id)
+    // a member detached or removed while the pushes were made gets none of them: the viewer attaches again
+    if (this.disposed || this.members.get(device) !== member || !member.watching.has(id)) throw new CallError('detached')
+    // the status, plan and images go at once; the parts of a review go one per turn, so a large review holds nothing up
+    let reviewed = false
+    for (const p of pushes) {
+      if (p.k === 'review' || p.k === 'review-part') {
+        if (reviewed) await nextTurn()
+        reviewed = true
+        if (this.disposed || this.members.get(device) !== member || !member.watching.has(id)) throw new CallError('detached')
+      }
+      this.pushTo(member, id, p.k, p.v)
+    }
     const snap = await this.mirrors.snapshot(id)
     // a member detached, removed or disposed while its snapshot waited gets no snapshot: the viewer attaches again
     if (this.disposed || this.members.get(device) !== member || !member.watching.has(id)) throw new CallError('detached')
@@ -260,8 +284,8 @@ export class TabHost {
         if (this.tabs.has(m.id)) this.tabs.claim(m.id, device, m.cols, m.rows)
         return
       case 'front':
-        if (m.id === null) this.tabs.front(device, null, m.focused)
-        else if (this.tabs.has(m.id)) this.tabs.front(device, m.id, m.focused)
+        if (m.id === null) this.tabs.front(device, null, m.present, m.focused)
+        else if (this.tabs.has(m.id)) this.tabs.front(device, m.id, m.present, m.focused)
         return
     }
   }
@@ -276,10 +300,16 @@ export class TabHost {
     if (member.watching.delete(id)) this.deps.onWatchers?.()
   }
 
-  /** a review push replaces a queued older one for the same tab; the other kinds are sent at once */
+  /**
+   * A review push replaces a queued older one for the same tab, and a review part the older part of its index, so the
+   * parts of a newer review take the place of an older review's unsent parts; the other kinds are sent at once.
+   */
   private pushTo(member: Member, id: string, k: PushKind, v: unknown): void {
     const m: Message = { t: 'push', id, k, v }
-    const sent = k === 'review' ? member.link.sendBulk(m, `push:review:${id}`) : member.link.send(m)
+    let sent: boolean
+    if (k === 'review') sent = member.link.sendBulk(m, `push:review:${id}`)
+    else if (k === 'review-part') sent = member.link.sendBulk(m, `push:review:${id}:${(v as { i: number }).i}`)
+    else sent = member.link.send(m)
     if (!sent) this.deps.onPushRefused?.(id, k)
   }
 

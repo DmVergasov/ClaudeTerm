@@ -50,16 +50,29 @@ export class Attention {
       this.d.banner(tabId, reason)
       signalled = true
     }
-    if (c.sound && !this.d.muted(tabId)) {
-      const now = this.d.now?.() ?? Date.now()
-      const prev = this.lastSound.get(tabId)
-      if (prev === undefined || now - prev >= ATTENTION_REPEAT_MS) {
-        this.lastSound.set(tabId, now)
-        this.d.play(s.sound)
-        signalled = true
-      }
-    }
+    if (c.sound && !this.d.muted(tabId) && this.sound(tabId, s.sound)) signalled = true
     return signalled
+  }
+
+  /**
+   * A ring from another device: the person is present there with the tab in front, so this device gives only the sound of a
+   * case set to Even in front, and nothing else.
+   */
+  ringInFront(tabId: string, reason: NotificationCase): void {
+    const s = this.d.settings()
+    const c = s[reason]
+    if (!c.front || !c.sound || this.d.muted(tabId)) return
+    this.sound(tabId, s.sound)
+  }
+
+  /** plays the sound unless the tab sounded within ATTENTION_REPEAT_MS; true when it played */
+  private sound(tabId: string, sound: string): boolean {
+    const now = this.d.now?.() ?? Date.now()
+    const prev = this.lastSound.get(tabId)
+    if (prev !== undefined && now - prev < ATTENTION_REPEAT_MS) return false
+    this.lastSound.set(tabId, now)
+    this.d.play(sound)
+    return true
   }
 
   removeTab(tabId: string): void {

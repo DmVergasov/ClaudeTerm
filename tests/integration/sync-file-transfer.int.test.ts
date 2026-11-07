@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { hostHandlers, hostTabs } from '../../src/main/remote-host'
 import { pathKey } from '../../src/main/path-key'
 import { Calls } from '../../src/main/sync/calls'
+import { quoteForShell } from '../../src/main/profiles'
 import { FileReceiver, receivedPeerGone } from '../../src/main/sync/file-receiver'
 import { sendFiles, type OutgoingFile } from '../../src/main/sync/file-sender'
 import { RemoteActions } from '../../src/main/sync/remote-actions'
@@ -16,7 +17,7 @@ import { RemoteTabs, type ViewerEvents } from '../../src/main/sync/tab-viewer'
 import type { HelloMessage } from '../../src/main/sync/wire'
 import type { DevicePlatform } from '../../src/shared/devices'
 import { REMOTE_COPY } from '../../src/shared/remote'
-import { B_ID, T1, T9, fakeHost } from '../fixtures/host-context'
+import { B_ID, T1, T2, T9, fakeHost } from '../fixtures/host-context'
 import { closeLinkPairs, linkPair, until } from '../fixtures/sync'
 
 // Files pasted or dropped on device B go to a remote tab on device A: they arrive in a new folder under A's received root.
@@ -41,6 +42,7 @@ const quietEvents: ViewerEvents = {
   size: () => {},
   attention: () => {},
   attentionCleared: () => {},
+  ring: () => {},
   push: () => {}
 }
 
@@ -127,16 +129,35 @@ afterEach(async () => {
 describe('sending files to a tab on another device', () => {
   it("a pasted image and dropped files land in a new folder under the receiving device's root, and the paths exist", async () => {
     await setUp()
-    const paths = await sendFiles(actions, T1, [file('shot.png', 1.5 * MB), file('notes.txt', 10)])
+    const { paths } = await sendFiles(actions, T1, [file('shot.png', 1.5 * MB), file('notes.txt', 10)])
     expect(paths.map((p) => basename(p))).toEqual(['shot.png', 'notes.txt'])
     expect(pathKey(dirname(dirname(paths[0])))).toBe(pathKey(root))
     expect(readFileSync(paths[0]).equals(bytes('shot.png', 1.5 * MB))).toBe(true)
     expect(existsSync(paths[1])).toBe(true)
   })
 
+  it('the text typed is quoted for the tab: single quotes for a shell tab, double quotes for a Claude tab, with $ and ! in the folder', async () => {
+    root = join(base, 'Bo$b!', 'ClaudeTerm', 'received')
+    await setUp()
+    const shell = await sendFiles(actions, T2, [file('shot.png', 10), file('notes.txt', 3)])
+    expect(shell.text).toBe(shell.paths.map((p) => quoteForShell('bash', p)).join(' '))
+    expect(shell.text).toContain('Bo$b!')
+    const claude = await sendFiles(actions, T1, [file('shot.png', 10)])
+    expect(claude.text).toBe(`"${claude.paths[0]}"`)
+  })
+
+  it("an older sender's recv-end, with no id, is answered its paths alone", async () => {
+    await setUp()
+    const { transfer } = await actions.askTab(T1, 'recv-begin', { id: T1, files: [{ name: 'a.txt', size: 1 }] })
+    await actions.askTab(T1, 'recv-part', { transfer, file: 0, offset: 0, data: b64('a') }, { bulk: true })
+    const reply = await actions.askTab(T1, 'recv-end', { transfer })
+    expect(reply.text).toBeUndefined()
+    expect(reply.paths).toHaveLength(1)
+  })
+
   it('names with .., separators or reserved names arrive made plain; two of one name both arrive', async () => {
     await setUp()
-    const paths = await sendFiles(actions, T1, [file('../../up.txt', 3), file('dir/a.txt', 3), file('a.txt', 3), file('NUL', 3)])
+    const { paths } = await sendFiles(actions, T1, [file('../../up.txt', 3), file('dir/a.txt', 3), file('a.txt', 3), file('NUL', 3)])
     expect(paths.map((p) => basename(p))).toEqual(['up.txt', 'a.txt', 'a (2).txt', '_NUL'])
     for (const p of paths) expect(pathKey(dirname(dirname(p)))).toBe(pathKey(root))
   })

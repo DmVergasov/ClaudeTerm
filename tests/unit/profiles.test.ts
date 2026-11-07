@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildClaudeCommandLine, buildLaunch, canHostClaude, detectPosixProfiles, detectProfiles, filterAvailable, mergeProfiles, parseWslList,
-  pickClaudeProfile, pickProfile, profileResolver, quoteForShell, shellFamily, type DetectDeps, type PosixDetectDeps
+  pickClaudeProfile, pickProfile, profileResolver, quoteForShell, shellFamily, type DetectDeps, type PosixDetectDeps, typedPaths
 } from '../../src/main/profiles'
 import type { ProfileDef } from '../../src/shared/types'
 
@@ -223,5 +223,50 @@ describe('Linux shells', () => {
   it('Automatic is the first profile, the login shell', () => {
     expect(pickProfile([ZSH, LBASH], null)).toBe(ZSH)
     expect(pickClaudeProfile([ZSH, LBASH], null)).toEqual({ profile: ZSH, warning: null })
+  })
+})
+
+describe('typedPaths', () => {
+  const FISH: ProfileDef = { name: 'fish', command: '/usr/bin/fish', args: [] }
+  const POSIX_BASH: ProfileDef = { name: 'Test Bash', command: '/bin/bash', args: ['--norc'] }
+
+  it('a Claude tab gets double quotes whatever its profile', () => {
+    expect(typedPaths(PS, 'claude', ['C:\\a b\\x.png'])).toBe('"C:\\a b\\x.png"')
+    expect(typedPaths(POSIX_BASH, 'claude', ['/home/bo$b/x.png'])).toBe('"/home/bo$b/x.png"')
+  })
+
+  it('a PowerShell tab gets single quotes, with a single quote doubled', () => {
+    expect(typedPaths(PS, 'shell', ["C:\\Bo$b\\it's.png"])).toBe("'C:\\Bo$b\\it''s.png'")
+  })
+
+  it('a bash tab gets single quotes, and a Git Bash Windows path is typed with slashes', () => {
+    expect(typedPaths(POSIX_BASH, 'shell', ['/home/bo$b/a!b.png'])).toBe("'/home/bo$b/a!b.png'")
+    expect(typedPaths(BASH, 'shell', ['C:\\T\\a.png'])).toBe("'C:/T/a.png'")
+    expect(typedPaths(BASH, 'shell', ["C:\\T\\it's.png"])).toBe("'C:/T/it'\\''s.png'")
+  })
+
+  it('a cmd tab gets double quotes', () => {
+    expect(typedPaths(CMD, 'shell', ['C:\\T\\a.png'])).toBe('"C:\\T\\a.png"')
+  })
+
+  it('a zsh or fish tab quotes as quoteForShell does', () => {
+    expect(typedPaths(ZSH, 'shell', ["/home/bo/it's.png"])).toBe(quoteForShell('zsh', "/home/bo/it's.png"))
+    expect(typedPaths(FISH, 'shell', ['/home/bo/a\\b.png'])).toBe(quoteForShell('fish', '/home/bo/a\\b.png'))
+  })
+
+  it('a WSL, other or missing profile gets double quotes', () => {
+    expect(typedPaths(WSL, 'shell', ['/mnt/c/a.png'])).toBe('"/mnt/c/a.png"')
+    expect(typedPaths({ name: 'x', command: 'C:\\nu.exe', args: [] }, 'shell', ['C:\\a.png'])).toBe('"C:\\a.png"')
+    expect(typedPaths(null, 'shell', ['C:\\a.png'])).toBe('"C:\\a.png"')
+  })
+
+  it('two paths are joined by one space', () => {
+    expect(typedPaths(PS, 'shell', ['C:\\a.png', "C:\\b c\\it's.png"])).toBe("'C:\\a.png' 'C:\\b c\\it''s.png'")
+  })
+
+  it('PowerShell also reads the typographic single quotes as quotes, so each one is doubled', () => {
+    // U+2018, U+2019, U+201A, U+201B: a dropped "Bob’s report.docx" must not end the string
+    expect(typedPaths(PS, 'shell', ['C:\\T\\Bob\u2019s.txt'])).toBe("'C:\\T\\Bob\u2019\u2019s.txt'")
+    expect(quoteForShell('powershell', 'C:\\T\\a\u2018b\u201ac\u201bd.txt')).toBe("'C:\\T\\a\u2018\u2018b\u201a\u201ac\u201b\u201bd.txt'")
   })
 })

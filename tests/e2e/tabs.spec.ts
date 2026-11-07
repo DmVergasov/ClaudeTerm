@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -74,6 +74,19 @@ test('tabs can be renamed and closed', async () => {
   await app.close()
 })
 
+test('the × of a background tab closes it and the active tab stays in front', async () => {
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const first = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await page.locator('.tab-new').click()
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const second = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await page.locator(`[data-tab-id="${first}"] .tab-close`).click()
+  expect(await page.evaluate(() => window.__ct!.activeTabId())).toBe(second)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await app.close()
+})
+
 test('the window title names the folder of the tab in front, and a tab\'s tooltip shows its full path', async () => {
   const offroad = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'Offroad')
   const engine = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'Engine')
@@ -92,5 +105,44 @@ test('the window title names the folder of the tab in front, and a tab\'s toolti
   await expect(page).toHaveTitle('Engine — ClaudeTerm')
   await page.locator(`[data-tab-id="${first}"]`).click()
   await expect(page).toHaveTitle('build — Offroad — ClaudeTerm')
+  await app.close()
+})
+
+/** the centre of a tab, measured in the page: a tab bar drawn again in between does not make it null, as boundingBox can */
+const centre = (tab: Locator): Promise<{ x: number, y: number }> => tab.evaluate((el) => {
+  const b = el.getBoundingClientRect()
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+})
+
+test('a click on a tab activates it even when the tab bar is drawn again between the press and the release', async () => {
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const firstId = (await page.evaluate(() => window.__ct!.tabIds()))[0]
+  await page.locator('.tab-new').click()
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const secondId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await expect(page.locator('#tabbar .tab')).toHaveCount(2)
+
+  const first = page.locator('#tabbar .tab').first()
+  const c = await centre(first)
+  await page.mouse.move(c.x, c.y)
+  await page.mouse.down()
+  await first.evaluate((el) => { (window as any).__pressed = el })
+  // a busy Claude retitles its tab: the tab bar is built again while the button is down
+  await page.evaluate((id) => window.ct.renameTab(id, 'redrawn'), secondId)
+  await expect.poll(() => page.evaluate(() => (window as any).__pressed.isConnected)).toBe(false)
+  await page.mouse.up()
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(firstId)
+
+  // a press on one tab released on another activates neither
+  await page.locator('#tabbar .tab').nth(1).click()
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(secondId)
+  const from = await centre(page.locator('#tabbar .tab').first())
+  const to = await centre(page.locator('#tabbar .tab').nth(1))
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(secondId)
   await app.close()
 })

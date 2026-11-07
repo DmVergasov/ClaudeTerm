@@ -166,7 +166,8 @@ export function pickClaudeProfile(profiles: ProfileDef[], preferred: string | nu
 export function quoteForShell(family: ShellFamily, value: string): string {
   switch (family) {
     case 'powershell':
-      return `'${value.replace(/'/g, "''")}'`
+      // PowerShell also reads the typographic single quotes as quotes: each one is doubled
+      return `'${value.replace(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`
     case 'cmd':
       return `"${value}"`
     case 'bash':
@@ -179,6 +180,14 @@ export function quoteForShell(family: ShellFamily, value: string): string {
     default:
       throw new Error(`cannot quote for shell family "${family}"`)
   }
+}
+
+const SHELL_QUOTED: ShellFamily[] = ['powershell', 'cmd', 'bash', 'zsh', 'fish']
+
+/** the text typed for dropped paths: a shell tab quotes them for its shell, a Claude tab (and a shell quoteForShell cannot handle) gets double quotes */
+export function typedPaths(profile: ProfileDef | null, kind: TabKind, paths: string[]): string {
+  const family = kind === 'shell' && profile ? shellFamily(profile) : null
+  return paths.map((p) => (family !== null && SHELL_QUOTED.includes(family) ? quoteForShell(family, p) : `"${p}"`)).join(' ')
 }
 
 export interface ClaudeLaunch {

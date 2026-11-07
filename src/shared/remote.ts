@@ -51,9 +51,10 @@ export interface RemoteDeviceView {
   online: boolean
 }
 
-export type PushKind = 'status' | 'plan' | 'review' | 'images'
+/** a review part is one of the parts of a review too large for one push; an older device drops the kind */
+export type PushKind = 'status' | 'plan' | 'review' | 'review-part' | 'images'
 
-export const PUSH_KINDS: readonly PushKind[] = ['status', 'plan', 'review', 'images']
+export const PUSH_KINDS: readonly PushKind[] = ['status', 'plan', 'review', 'review-part', 'images']
 
 export interface RemoteSnapshot {
   data: string
@@ -102,6 +103,12 @@ export const MAX_TRANSFER_BYTES = 50 * 1024 * 1024
 export const MAX_TRANSFER_FILES = 100
 export const TRANSFER_PART_BYTES = 1024 * 1024
 
+/** a review push over this many bytes of JSON goes in parts of at most this size, so that no message holds up a device */
+export const REVIEW_PART_BYTES = 2 * 1024 * 1024
+/** the most encoded bytes one file of a review keeps: a bigger file keeps its header, and its lines are not shown on another device */
+export const REVIEW_FILE_BYTES = REVIEW_PART_BYTES - 64 * 1024
+export const MAX_REVIEW_PARTS = 16
+
 export const IMAGE_PART_BYTES = 4 * 1024 * 1024
 export const IMAGE_CACHE_BYTES = 64 * 1024 * 1024
 /** the image part calls out at once to one device: the other reads wait their turn in RemoteActions */
@@ -115,6 +122,8 @@ export const COPY_TOAST_MS = 1_000
 export const MAX_FOLDER_ENTRIES = 500
 export const RECENT_FOLDER_COUNT = 10
 export const MAX_PATH_TEXT = 4096
+/** the text typed for the files of a transfer: each path quoted in full by bash or zsh (each ' is written as '\'', 4 characters), with its outer quotes and its space */
+export const MAX_TYPED_TEXT = MAX_TRANSFER_FILES * (4 * MAX_PATH_TEXT + 3)
 
 export const DEVICE_COLORS = ['#e8a33d', '#4fa3e0', '#9b7be8', '#4cbf8a', '#e86b6b', '#d97bc4', '#c9c14a', '#5fc4c4'] as const
 

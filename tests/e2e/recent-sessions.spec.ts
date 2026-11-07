@@ -68,6 +68,19 @@ test('a session whose folder is gone is not opened', async () => {
   await app.close()
 })
 
+test('a pick whose device is not a device id opens nothing; a pick without a device still opens the session', async () => {
+  const { config } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.evaluate(() => window.ct.listSessions())
+  await page.evaluate((id) => window.ct.openSession(id, 'not-a-uuid'), SID_A)
+  await page.waitForTimeout(1_000)
+  expect(await page.evaluate(() => window.__ct!.tabIds().length)).toBe(1)
+  await page.evaluate((id) => window.ct.openSession(id), SID_A)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  await app.close()
+})
+
 test('Ctrl+Shift+H opens the window: newest first, filter as you type, Enter continues the session', async () => {
   const { config, workB } = makeConfig()
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })

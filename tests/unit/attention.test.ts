@@ -213,6 +213,46 @@ describe('Attention', () => {
     expect(calls).toContain('play:system')
   })
 
+  it('a ring for a case set to Even in front plays its sound only, once per repeat window', () => {
+    const { a, calls, state } = setup({ focused: false, active: 't2' })
+    state.n.permission = { sound: true, flash: true, tab: true, front: true, banner: true }
+    a.ringInFront('t1', 'permission')
+    expect(calls).toEqual(['play:system'])
+    calls.length = 0
+    state.t += ATTENTION_REPEAT_MS - 1
+    a.ringInFront('t1', 'permission')
+    expect(calls).toEqual([])
+    state.t += 1
+    a.ringInFront('t1', 'permission')
+    expect(calls).toEqual(['play:system'])
+  })
+
+  it('a ring after a sound within the repeat window is silent: the window is shared with notify', () => {
+    const { a, calls, state } = setup({ focused: false, active: 't2' })
+    state.n.permission = { sound: true, flash: true, tab: true, front: true, banner: true }
+    a.notify('t1', 'permission')
+    expect(calls).toEqual(['mark:t1:permission', 'flash', 'banner:t1:permission', 'play:system'])
+    calls.length = 0
+    state.t += ATTENTION_REPEAT_MS - 1
+    a.ringInFront('t1', 'permission')
+    expect(calls).toEqual([])
+    state.t += 1
+    a.ringInFront('t1', 'permission')
+    expect(calls).toEqual(['play:system'])
+  })
+
+  it('a ring does nothing for a case without Even in front, without its sound, or for a muted tab', () => {
+    const { a, calls, state } = setup({ focused: true, active: 't1' })
+    state.n.permission = { sound: true, flash: true, tab: true, front: false, banner: true }
+    a.ringInFront('t1', 'permission')
+    state.n.permission = { sound: false, flash: true, tab: true, front: true, banner: true }
+    a.ringInFront('t1', 'permission')
+    state.n.permission = { sound: true, flash: true, tab: true, front: true, banner: true }
+    state.muted.add('t1')
+    a.ringInFront('t1', 'permission')
+    expect(calls).toEqual([])
+  })
+
   it('a turn another session started (peer) gives the signals of its own case, all off by default', () => {
     const { a, calls, state } = setup({ focused: false, active: 't2' })
     expect(a.notify('t1', 'peer')).toBe(false)

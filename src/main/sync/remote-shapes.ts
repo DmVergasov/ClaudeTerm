@@ -6,9 +6,12 @@ import {
   IMAGE_PART_BYTES,
   MAX_FOLDER_ENTRIES,
   MAX_PATH_TEXT,
+  MAX_REVIEW_PARTS,
   MAX_SNAPSHOT_BYTES,
+  REVIEW_PART_BYTES,
   MAX_TRANSFER_BYTES,
   MAX_TRANSFER_FILES,
+  MAX_TYPED_TEXT,
   RECENT_FOLDER_COUNT,
   TRANSFER_PART_BYTES,
   type FolderListing,
@@ -68,7 +71,7 @@ const MAX_CAPTION = 1000
 const MAX_NOTICE = 500
 const MAX_PLAN_TITLE = 500
 const MAX_PLAN_TASKS = 500
-const MAX_REVIEW_FILES = 5000
+export const MAX_REVIEW_FILES = 5000
 const MAX_HUNKS = 10_000
 const MAX_LINES = 100_000
 const MAX_LINE_CHARS = 100_000
@@ -120,7 +123,7 @@ export interface CallArgs {
   'change-folder': { id: string; path: string }
   'recv-begin': { id: string; files: { name: string; size: number }[] }
   'recv-part': { transfer: string; file: number; offset: number; data: string }
-  'recv-end': { transfer: string }
+  'recv-end': { transfer: string; id?: string }
   tabs: Empty
 }
 
@@ -149,7 +152,7 @@ export interface CallReplies {
   'change-folder': Empty
   'recv-begin': { transfer: string }
   'recv-part': Empty
-  'recv-end': { paths: string[] }
+  'recv-end': { paths: string[]; text?: string }
   tabs: Empty
 }
 
@@ -161,6 +164,49 @@ export type PushValue =
   | { k: 'plan'; v: PlanStatus | null; agentList: boolean }
   | { k: 'images'; v: Omit<ImagesUpdate, 'tabId' | 'remote'> }
   | { k: 'review'; v: Omit<ReviewUpdate, 'tabId' | 'remote'> }
+  | { k: 'review-part'; part: ReviewPart }
+
+/**
+ * A part of a review that comes in parts. Part 0 carries the review's head (its fields, with no files, as a review is
+ * checked) and the others carry none; `files` are the files of this part, in order.
+ */
+export interface ReviewPart {
+  rev: number
+  i: number
+  of: number
+  head: Omit<ReviewUpdate, 'tabId' | 'remote'> | null
+  files: ReviewFile[]
+  /** the part's size as JSON, without its escapes: a bound, which the viewer adds up over the parts of a review */
+  bytes: number
+}
+
+/**
+ * The JSON size of a value, measured without encoding it: the exact size of its strings, keys, numbers, brackets, colons and
+ * commas (n - 1 commas for n items), less only the escapes that encoding adds to a string.
+ */
+function jsonBytesOf(v: unknown): number {
+  if (typeof v === 'string') return Buffer.byteLength(v) + 2
+  if (typeof v === 'number') return String(v).length
+  if (typeof v === 'boolean') return v ? 4 : 5
+  if (v === null) return 4
+  if (Array.isArray(v)) {
+    let n = 2 + Math.max(v.length - 1, 0)
+    for (const x of v) n += jsonBytesOf(x)
+    return n
+  }
+  if (isPlainObject(v)) {
+    const keys = Object.keys(v).filter((k) => v[k] !== undefined)
+    let n = 2 + Math.max(keys.length - 1, 0)
+    for (const k of keys) n += Buffer.byteLength(k) + 3 + jsonBytesOf(v[k])
+    return n
+  }
+  return 0
+}
+
+/** the rev of a review push: the host's counter for the review, or null for a review of an older device */
+export function reviewRevOf(v: unknown): number | null {
+  return isPlainObject(v) && isNonNegativeSafeInteger(v.rev) ? v.rev : null
+}
 
 /** The arguments of each call method, or null when they do not fit. Returns a copy of the known fields only. */
 export const CALL_ARGS: { [M in CallMethod]: (a: unknown) => CallArgs[M] | null } = withoutPrototype({
@@ -258,7 +304,7 @@ export const CALL_ARGS: { [M in CallMethod]: (a: unknown) => CallArgs[M] | null 
     if (!isBase64(data, 1, TRANSFER_PART_BYTES)) return null
     return { transfer, file, offset, data }
   },
-  'recv-end': transferOf,
+  'recv-end': recvEndOf,
   tabs: emptyOf
 })
 
@@ -313,11 +359,39 @@ export function parsePush(k: PushKind, v: unknown, tabId: string): PushValue | n
     }
     case 'review': {
       const review = reviewOf(v)
-      return review ? { k: 'review', v: review } : null
+      // a rev that is not a count refuses the review: the viewer orders reviews by it
+      if (!review || (isPlainObject(v) && v.rev !== undefined && !isNonNegativeSafeInteger(v.rev))) return null
+      return { k: 'review', v: review }
+    }
+    case 'review-part': {
+      const part = reviewPartOf(v)
+      return part ? { k: 'review-part', part } : null
     }
     default:
       return null
   }
+}
+
+/** a part of a review, checked: its rev and place, the head in part 0 only, and its files as a review checks them */
+function reviewPartOf(v: unknown): ReviewPart | null {
+  if (!isPlainObject(v)) return null
+  const { rev, i, of, head, files } = v
+  if (!isNonNegativeSafeInteger(rev) || !isNonNegativeSafeInteger(i) || !isNonNegativeSafeInteger(of)) return null
+  if (of < 1 || of > MAX_REVIEW_PARTS || i >= of) return null
+  if ((i === 0) !== (head !== undefined)) return null
+  let headOf: Omit<ReviewUpdate, 'tabId' | 'remote'> | null = null
+  if (head !== undefined) {
+    if (!isPlainObject(head)) return null
+    headOf = reviewOf({ ...head, files: [] })
+    if (!headOf) return null
+  }
+  const fileList = listOf(files, MAX_REVIEW_FILES, fileOf)
+  if (!fileList) return null
+  // a part is one message, so a part clearly over its size is refused before its files are kept
+  // the host measures the clamped values and the viewer the decoded strings, so the edge gets 64 KiB of room: a valid part is never refused
+  const bytes = jsonBytesOf(v)
+  if (bytes > REVIEW_PART_BYTES + 64 * 1024) return null
+  return { rev, i, of, head: headOf, files: fileList, bytes }
 }
 
 // ---- helpers
@@ -453,11 +527,20 @@ function transferFileOf(v: unknown): { name: string; size: number } | null {
   return { name, size }
 }
 
-/** `{ transfer }`: the arguments of recv-end, and the reply of recv-begin */
+/** `{ transfer }`: the reply of recv-begin */
 function transferOf(v: unknown): { transfer: string } | null {
   if (!isPlainObject(v)) return null
   const { transfer } = v
   return isUuid(transfer) ? { transfer } : null
+}
+
+/** `{ transfer, id? }`: the arguments of recv-end; id is the tab the files went to, named by a sender that knows how to type them */
+function recvEndOf(v: unknown): { transfer: string; id?: string } | null {
+  if (!isPlainObject(v)) return null
+  const { transfer, id } = v
+  if (!isUuid(transfer)) return null
+  if (id === undefined) return { transfer }
+  return isUuid(id) ? { transfer, id } : null
 }
 
 // ---- call replies
@@ -557,11 +640,14 @@ function folderResultOf(v: unknown): FolderResult | null {
   return found ? { ok: true, listing: found } : null
 }
 
+/** the paths the files were saved at, and the text typed for them when the device names it (an older device names none) */
 function pathsOf(v: unknown): CallReplies['recv-end'] | null {
   if (!isPlainObject(v)) return null
-  const { paths } = v
+  const { paths, text } = v
   const list = listOf(paths, MAX_TRANSFER_FILES, (x) => (isPathText(x) ? x : null))
-  return list ? { paths: list } : null
+  if (!list) return null
+  if (text === undefined) return { paths: list }
+  return isString(text, 1, MAX_TYPED_TEXT) ? { paths: list, text } : null
 }
 
 // ---- pushes

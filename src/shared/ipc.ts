@@ -94,6 +94,7 @@ export const IPC = {
   remoteSessions: 'remote:sessions',
   remotePasteImage: 'remote:paste-image',
   remoteDropFiles: 'remote:drop-files',
+  typedPaths: 'paths:typed',
   screenSeed: 'screen:seed',
   evTabOpened: 'ev:tab-opened',
   evTabUpdated: 'ev:tab-updated',
@@ -267,8 +268,8 @@ export interface CtApi {
   listSessions(): Promise<RecentSession[]>
   /** the other devices' Recent sessions at once, from their last answers (without the sessions this device lists); asks every online device again in the background */
   listRemoteSessions(): Promise<DeviceAnswer<RecentSession[]>[]>
-  /** go to the tab in that conversation, or resume it in a new Claude tab */
-  openSession(id: string): void
+  /** go to the tab in that conversation, or resume it in a new Claude tab; device: the device of the section it was picked in */
+  openSession(id: string, device?: string): void
   /** star or unstar a session; answers when the change is saved */
   setSessionStarred(id: string, starred: boolean): Promise<void>
   /** the ids of all starred sessions */
@@ -343,10 +344,12 @@ export interface CtApi {
   listDeviceChoices(): Promise<{ self: string; devices: DeviceAnswer<DeviceChoices>[] }>
   /** opens a tab on another device, in its default folder; answers its id, or null (the window is told why) */
   openRemoteTab(device: string, kind: TabKind, profile: string | null, account: string | null): Promise<string | null>
-  /** the clipboard's image copied to the tab's device; answers the path it was saved at there, or null (no image, or a refusal, which is toasted) */
+  /** the clipboard's image copied to the tab's device; answers the text to type for the path it was saved at there, or null (no image, or a refusal, which is toasted) */
   pasteImageToRemote(tabId: string): Promise<string | null>
-  /** the files of this device copied to the tab's device; answers their paths there, or null (a refusal is toasted) */
-  dropFilesToRemote(tabId: string, paths: string[]): Promise<string[] | null>
+  /** the files of this device copied to the tab's device; answers the text to type for their paths there, or null (a refusal is toasted) */
+  dropFilesToRemote(tabId: string, paths: string[]): Promise<string | null>
+  /** the text typed for paths dropped on a local tab, quoted for its shell; null for an unknown tab or bad paths */
+  typedPaths(tabId: string, paths: string[]): Promise<string | null>
   /** the answer to onScreenSeed: the tab's screen, serialized (empty when the tab is unknown), with the token of the request */
   seedScreen(tabId: string, token: number, data: string): void
   onTabOpened(cb: (tab: TabInfo) => void): Unsubscribe

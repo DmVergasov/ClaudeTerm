@@ -74,6 +74,10 @@ export const isAbsPath = (v: unknown): v is string => typeof v === 'string' && v
 export const isDropPaths = (v: unknown): v is string[] =>
   Array.isArray(v) && v.length >= 1 && v.length <= MAX_TRANSFER_FILES && v.every((p) => isAbsPath(p) && p.length <= MAX_PATH_TEXT)
 
+/** the files dropped on a local tab, typed as text for its shell: 1 to 10 000 paths of 1 to MAX_PATH_TEXT characters (the copy's limit of 100 files does not apply) */
+export const isLocalDropPaths = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.length >= 1 && v.length <= 10_000 && v.every((p) => typeof p === 'string' && p.length >= 1 && p.length <= MAX_PATH_TEXT)
+
 /** a path of any system, as text: bounded, and nothing else checked; the device that owns the path checks it with its own rules */
 export const isPathText = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_PATH_TEXT
 

@@ -70,9 +70,22 @@ export class RemoteFront {
 
 /**
  * Whether a member's front clears its tab's attention. `was` is the member's front before this one (undefined: none yet,
- * as after a reconnect). A new tab in front clears; the same tab clears only when its window gains the focus, so a window
- * that loses the focus by itself leaves a waiting tab's mark where it is.
+ * as after a reconnect). A new tab in front clears; the same tab clears only when its member becomes present, so a member that
+ * stops being present by itself leaves a waiting tab's mark where it is.
  */
-export function frontClears(was: { tabId: string; focused: boolean } | undefined, tabId: string, focused: boolean): boolean {
-  return was?.tabId !== tabId || (focused && !was.focused)
+export function frontClears(was: { tabId: string; present: boolean } | undefined, tabId: string, present: boolean): boolean {
+  return was?.tabId !== tabId || (present && !was.present)
+}
+
+/**
+ * The flag a member's front clears its tab's mark by: a 0.15.1 member's presence, or a 0.15.0 member's focus, which it sends
+ * as focused and no present. Only present counts for who rings.
+ */
+export function clearFlag(f: { present: boolean; focused: boolean }): boolean {
+  return f.present || f.focused
+}
+
+/** the devices present with the tab in front: an attention of the tab rings on each of them, and starts nowhere else */
+export function presentViewers(tabId: string, fronts: ReadonlyMap<string, { tabId: string; present: boolean }>): string[] {
+  return [...fronts].filter(([, f]) => f.tabId === tabId && f.present).map(([device]) => device)
 }

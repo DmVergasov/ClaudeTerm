@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { RemoteTab } from '../../src/shared/remote'
 import type { MainStatus } from '../../src/shared/types'
-import { TabAttention, TabDirectory, statusSummary } from '../../src/main/sync/tab-directory'
+import { TabAttention, TabDirectory, TabInputs, statusSummary } from '../../src/main/sync/tab-directory'
 
 const T1 = 'a0000000-0000-4000-8000-000000000001'
+const T2 = 'a0000000-0000-4000-8000-000000000002'
 
 function tab(id: string, over: Partial<RemoteTab> = {}): RemoteTab {
   return {
@@ -103,6 +104,29 @@ describe('tab attention', () => {
     a.start(T1, 'bell')
     a.drop(T1)
     expect(a.get(T1)).toEqual({ reason: null, seq: 0 })
+  })
+})
+
+describe('tab inputs', () => {
+  let i: TabInputs
+
+  beforeEach(() => {
+    i = new TabInputs()
+  })
+
+  it('every bump raises the count of its tab only; a tab nothing happened to is at 0', () => {
+    expect(i.of(T1)).toBe(0)
+    i.bump(T1)
+    i.bump(T1)
+    i.bump(T2)
+    expect(i.of(T1)).toBe(2)
+    expect(i.of(T2)).toBe(1)
+  })
+
+  it('drop starts the tab over at 0', () => {
+    i.bump(T1)
+    i.drop(T1)
+    expect(i.of(T1)).toBe(0)
   })
 })
 

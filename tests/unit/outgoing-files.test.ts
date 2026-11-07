@@ -118,14 +118,20 @@ describe('fileToSend on the disk', () => {
 })
 
 describe('RemoteCopies', () => {
+  /** what a device answers for a copy: the paths the files are saved at, and the text typed for them */
+  const sentOf = (tabId: string, files: OutgoingFile[]): { paths: string[]; text: string } => {
+    const paths = files.map((f) => `/received/${tabId}/${f.name}`)
+    return { paths, text: paths.map((p) => `"${p}"`).join(' ') }
+  }
+
   /** a copier with the toasts, the sent files and the timers recorded; the timers run only when the test fires them */
-  function harness(o: { name?: string | null; send?: (tabId: string, files: OutgoingFile[]) => Promise<string[]> } = {}) {
+  function harness(o: { name?: string | null; send?: (tabId: string, files: OutgoingFile[]) => Promise<{ paths: string[]; text: string }> } = {}) {
     const toasts: string[] = []
     const timers = new Map<number, () => void>()
     let next = 1
     const copies = new RemoteCopies({
       toast: (m) => toasts.push(m),
-      sendFiles: o.send ?? (async (tabId, files) => files.map((f) => `/received/${tabId}/${f.name}`)),
+      sendFiles: o.send ?? (async (tabId, files) => sentOf(tabId, files)),
       nameOf: () => (o.name === undefined ? 'Studio' : o.name),
       timers: {
         set: (fn) => {
@@ -144,7 +150,7 @@ describe('RemoteCopies', () => {
   const file = (name: string, size = 1): OutgoingFile => ({ name, size, read: async () => Buffer.alloc(0) })
 
   it('says the copy is running once it runs past the slow time, and not before', async () => {
-    let finish: (paths: string[]) => void = () => {}
+    let finish: (sent: { paths: string[]; text: string }) => void = () => {}
     const { copies, toasts, timers } = harness({ send: () => new Promise((resolve) => { finish = resolve }) })
     const running = copies.copy('t1', async () => [file('a.png')])
     expect(toasts).toEqual([])
@@ -153,33 +159,33 @@ describe('RemoteCopies', () => {
     expect(toasts).toEqual([REMOTE_COPY.copying('Studio')])
     // the files are ready and sent once the event loop has run
     await new Promise((resolve) => setImmediate(resolve))
-    finish(['/received/t1/a.png'])
-    expect(await running).toEqual(['/received/t1/a.png'])
+    finish(sentOf('t1', [file('a.png')]))
+    expect(await running).toEqual(sentOf('t1', [file('a.png')]))
     expect(timers.size).toBe(0)
   })
 
   it('refuses a second copy of the same tab while the first runs, with the copying toast; another tab is not held up', async () => {
-    let finish: (paths: string[]) => void = () => {}
+    let finish: (sent: { paths: string[]; text: string }) => void = () => {}
     let sends = 0
     const { copies, toasts } = harness({
       send: async (tabId, files) => {
         sends++
-        if (tabId === 't1' && sends === 1) return new Promise<string[]>((resolve) => { finish = resolve })
-        return files.map((f) => `/received/${tabId}/${f.name}`)
+        if (tabId === 't1' && sends === 1) return new Promise<{ paths: string[]; text: string }>((resolve) => { finish = resolve })
+        return sentOf(tabId, files)
       }
     })
     const first = copies.copy('t1', async () => [file('a.png')])
     expect(await copies.copy('t1', async () => [file('b.png')])).toBeNull()
     expect(toasts).toEqual([REMOTE_COPY.copying('Studio')])
     expect(sends).toBe(1)
-    expect(await copies.copy('t2', async () => [file('c.png')])).toEqual(['/received/t2/c.png'])
-    finish(['/received/t1/a.png'])
-    expect(await first).toEqual(['/received/t1/a.png'])
+    expect(await copies.copy('t2', async () => [file('c.png')])).toEqual(sentOf('t2', [file('c.png')]))
+    finish(sentOf('t1', [file('a.png')]))
+    expect(await first).toEqual(sentOf('t1', [file('a.png')]))
   })
 
   it('releases the tab and the timer on every path: success, too large, a failure, and nothing to copy', async () => {
-    const cases: { name: string; prepare: () => Promise<OutgoingFile[] | null>; send?: () => Promise<string[]>; expect: (r: string[] | null, toasts: string[]) => void }[] = [
-      { name: 'success', prepare: async () => [file('a.png')], expect: (r) => expect(r).toEqual(['/received/t1/a.png']) },
+    const cases: { name: string; prepare: () => Promise<OutgoingFile[] | null>; send?: () => Promise<{ paths: string[]; text: string }>; expect: (r: { paths: string[]; text: string } | null, toasts: string[]) => void }[] = [
+      { name: 'success', prepare: async () => [file('a.png')], expect: (r) => expect(r).toEqual(sentOf('t1', [file('a.png')])) },
       {
         name: 'too large',
         prepare: async () => [file('big', MAX_TRANSFER_BYTES), file('more', 1)],
@@ -204,12 +210,12 @@ describe('RemoteCopies', () => {
     ]
     for (const c of cases) {
       let failing = c.send !== undefined
-      const { copies, toasts, timers } = harness({ send: (tabId, files) => (failing ? c.send!() : Promise.resolve(files.map((f) => `/received/${tabId}/${f.name}`))) })
+      const { copies, toasts, timers } = harness({ send: (tabId, files) => (failing ? c.send!() : Promise.resolve(sentOf(tabId, files))) })
       c.expect(await copies.copy('t1', c.prepare), toasts)
       expect(timers.size, c.name).toBe(0)
       // the tab takes a copy again
       failing = false
-      expect(await copies.copy('t1', async () => [file('again.png')]), c.name).toEqual(['/received/t1/again.png'])
+      expect(await copies.copy('t1', async () => [file('again.png')]), c.name).toEqual(sentOf('t1', [file('again.png')]))
       expect(timers.size, c.name).toBe(0)
     }
   })
@@ -220,10 +226,10 @@ describe('RemoteCopies', () => {
     let next = 1
     const pending: { id: number; due: number; run: () => void }[] = []
     const toasts: string[] = []
-    let finish: (paths: string[]) => void = () => {}
+    let finish: (sent: { paths: string[]; text: string }) => void = () => {}
     const copies = new RemoteCopies({
       toast: (m) => toasts.push(m),
-      sendFiles: () => new Promise<string[]>((resolve) => { finish = resolve }),
+      sendFiles: () => new Promise<{ paths: string[]; text: string }>((resolve) => { finish = resolve }),
       nameOf: () => 'Studio',
       timers: {
         set: (run, ms) => {
@@ -252,8 +258,8 @@ describe('RemoteCopies', () => {
     expect(pending).toHaveLength(1)
     runAt(COPY_TOAST_MS)
     expect(toasts).toEqual([REMOTE_COPY.copying('Studio')])
-    finish(['/received/t1/a.png'])
-    expect(await running).toEqual(['/received/t1/a.png'])
+    finish(sentOf('t1', [file('a.png')]))
+    expect(await running).toEqual(sentOf('t1', [file('a.png')]))
   })
 
   it('refuses a tab that is not remote, with no toast and no timer', async () => {
@@ -267,6 +273,11 @@ describe('RemoteCopies', () => {
     const { copies, toasts } = harness()
     expect(copies.refuse('t1', REMOTE_COPY.copyTooManyFiles)).toBeNull()
     expect(toasts).toEqual([REMOTE_COPY.copyFailed('Studio', REMOTE_COPY.copyTooManyFiles)])
-    expect(await copies.copy('t1', async () => [file('a.png')])).toEqual(['/received/t1/a.png'])
+    expect(await copies.copy('t1', async () => [file('a.png')])).toEqual(sentOf('t1', [file('a.png')]))
+  })
+
+  it('answers the text the device answers, unchanged, with the paths', async () => {
+    const { copies } = harness({ send: async () => ({ paths: ['/r/a.png'], text: "'/r/a.png'" }) })
+    expect(await copies.copy('t1', async () => [file('a.png')])).toEqual({ paths: ['/r/a.png'], text: "'/r/a.png'" })
   })
 })

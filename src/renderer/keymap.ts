@@ -43,6 +43,14 @@ export function imagePasteRoute(o: { platform: string; remote: boolean; asFile: 
   return o.platform === 'win32' && o.asFile ? 'file' : 'key'
 }
 
+/** Claude Code's image-paste key, which no key of ClaudeTerm uses: Ctrl+V on macOS, Alt+V on Windows (Ctrl+V on Linux is smart paste) */
+export function isImagePasteKey(e: KeyLike, platform: string): boolean {
+  if (e.type !== 'keydown' || e.code !== 'KeyV' || e.shiftKey) return false
+  if (platform === 'darwin') return e.ctrlKey && !e.metaKey && !e.altKey
+  if (platform === 'win32') return e.altKey && !e.ctrlKey && !e.metaKey
+  return false
+}
+
 /** Ctrl on Windows and Linux, ⌘ on macOS, without the other modifiers: the key of a panel's own shortcuts (Ctrl+F, Ctrl+D) */
 export function isPrimaryKey(e: KeyLike, platform: string): boolean {
   const mac = platform === 'darwin'

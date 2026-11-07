@@ -64,6 +64,24 @@ export class TabAttention {
   }
 }
 
+/** how many times the person answered each tab (typed into it, brought it to the front): a turn's end that waits for a read is answered by a change here */
+export class TabInputs {
+  private readonly counts = new Map<string, number>()
+
+  bump(tabId: string): void {
+    this.counts.set(tabId, this.of(tabId) + 1)
+  }
+
+  /** 0 for a tab nothing happened to */
+  of(tabId: string): number {
+    return this.counts.get(tabId) ?? 0
+  }
+
+  drop(tabId: string): void {
+    this.counts.delete(tabId)
+  }
+}
+
 /** the tabs with a repeated id once: the last entry of an id is the one kept, placed where the last one stands */
 function lastOfEach(tabs: readonly RemoteTab[]): RemoteTab[] {
   const byId = new Map<string, RemoteTab>()

@@ -3,14 +3,14 @@ import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { clampPush, hostHandlers, hostTabs, pruneListedMembers, readImagePart } from '../../src/main/remote-host'
+import { clampPush, hostHandlers, hostTabs, packFiles, pruneListedMembers, readImagePart, reviewPushes } from '../../src/main/remote-host'
 import { Calls, CallError, type CallLink } from '../../src/main/sync/calls'
 import { CALL_REPLIES, parsePush } from '../../src/main/sync/remote-shapes'
 import { parseRemoteTab } from '../../src/main/sync/remote-wire'
 import { MAX_FRAME_BYTES } from '../../src/main/sync/wire'
 import type { AccountView } from '../../src/shared/accounts'
 import { MAX_IMAGE_BYTES } from '../../src/shared/image-file'
-import { IMAGE_PART_BYTES, type PushKind } from '../../src/shared/remote'
+import { IMAGE_PART_BYTES, MAX_REVIEW_PARTS, REVIEW_PART_BYTES, type PushKind } from '../../src/shared/remote'
 import { REMOTE_COPY } from '../../src/shared/remote'
 import type { PlanStatus, PlanTask, RecentSession, TabPlace } from '../../src/shared/types'
 import { ACC_WORK, B_ID, T1, T2, T3, T9, T_LONG_CWD, fakeHost, imageCard, mainStatus, reviewUpdate, tabId, tabInfo } from '../fixtures/host-context'
@@ -66,30 +66,30 @@ describe('the directory of this device', () => {
     expect(entry).toMatchObject({ id: T2, size: { cols: 100, rows: 30, by: null }, attention: null, note: false, status: null })
   })
 
-  it('pushes give status, plan, images and the last review, in that order', () => {
+  it('pushes give status, plan, images and the last review, in that order', async () => {
     const f = fakeHost()
     f.plans.set(T1, { title: 'Plan', tasks: [], done: 0, total: 0, finished: false })
     f.reviews.set(T1, reviewUpdate(T1))
-    const pushes = hostTabs(f.ctx).pushes(T1)
+    const pushes = await hostTabs(f.ctx).pushes(T1)
     expect(pushes.map((p) => p.k)).toEqual(['status', 'plan', 'images', 'review'])
     for (const p of pushes) expect(parsePush(p.k, p.v, T1)).not.toBeNull()
   })
 
-  it('a plan push is the plan the status bar shows, with the flag that says whether it is the agent\'s task list; null when there is none', () => {
+  it('a plan push is the plan the status bar shows, with the flag that says whether it is the agent\'s task list; null when there is none', async () => {
     const f = fakeHost()
     const plan: PlanStatus = { title: 'Release prep', tasks: [], done: 0, total: 0, finished: false }
     f.plans.set(T1, plan)
-    const planPushOf = () => hostTabs(f.ctx).pushes(T1).find((p) => p.k === 'plan')
-    expect(planPushOf()).toEqual({ k: 'plan', v: { ...plan, agentList: false } })
+    const planPushOf = async () => (await hostTabs(f.ctx).pushes(T1)).find((p) => p.k === 'plan')
+    expect(await planPushOf()).toEqual({ k: 'plan', v: { ...plan, agentList: false } })
     f.agentLists.add(T1)
-    expect(planPushOf()).toEqual({ k: 'plan', v: { ...plan, agentList: true } })
+    expect(await planPushOf()).toEqual({ k: 'plan', v: { ...plan, agentList: true } })
     f.plans.delete(T1)
-    expect(planPushOf()).toEqual({ k: 'plan', v: null })
+    expect(await planPushOf()).toEqual({ k: 'plan', v: null })
   })
 
-  it('a tab with no review update pushes no review', () => {
+  it('a tab with no review update pushes no review', async () => {
     const f = fakeHost()
-    expect(hostTabs(f.ctx).pushes(T2).map((p) => p.k)).toEqual(['status', 'plan', 'images'])
+    expect((await hostTabs(f.ctx).pushes(T2)).map((p) => p.k)).toEqual(['status', 'plan', 'images'])
   })
 
   it('the directory holds only the tabs this device has, and a tab that is not here is refused', async () => {
@@ -344,7 +344,7 @@ describe('clampPush (R5): every push fits the receiver', () => {
   function fits(k: PushKind, v: unknown) {
     const out = parsePush(k, clampPush(k, v), T1)
     expect(out).not.toBeNull()
-    return out!.v as any
+    return (out as { v: unknown }).v as any
   }
 
   it('status: strings cut to 200 characters, at most 64 agents', () => {
@@ -381,12 +381,12 @@ describe('clampPush (R5): every push fits the receiver', () => {
     expect(out.tasks[5].n).toBe(7)
   })
 
-  it('a NUL is stripped from a card path, a plan task title and a status string', () => {
+  it('a NUL is stripped from a card path, a plan task title and a status string', async () => {
     const f = fakeHost()
     f.cards = [imageCard(1, { path: '/work/\u0000demo/img.png' })]
     f.plans.set(T1, { title: 'Plan', tasks: [{ n: 1, title: 'a\u0000b', state: 'left' }], done: 0, total: 1, finished: false })
     f.ctx.status = { get: (id: string) => ({ tabId: id, main: mainStatus('Opus\u0000 4.1', 41.6), agents: [], background: [] }) } as never
-    const pushes = hostTabs(f.ctx).pushes(T1)
+    const pushes = await hostTabs(f.ctx).pushes(T1)
     const at = (k: PushKind) => pushes.find((p) => p.k === k)!.v as any
     expect(at('images').cards[0].path).toBe('/work/demo/img.png')
     expect(at('plan').tasks[0].title).toBe('ab')
@@ -425,16 +425,20 @@ describe('clampPush (R5): every push fits the receiver', () => {
   })
 
   it('review: files, hunks, lines, labels, paths, hashes, samples, notes and reasons cut or capped to the receiver limits', () => {
-    const plainLine = { kind: 'context', text: 'x', oldNo: 1, newNo: 1 }
     const longLine = { kind: 'add', text: 'a'.repeat(99_999) + '😀', oldNo: null, newNo: 2 }
     const file = (over: Record<string, unknown> = {}) => ({
       path: 'src/a.ts', relPath: 'src/a.ts', status: 'modified', additions: 1, deletions: 0, hunks: [], note: null,
       canForce: false, hash: 'abc', viewed: false, markdown: false, lineCount: 0, ...over
     })
+    // a file of 100,001 lines is over REVIEW_FILE_BYTES: it keeps its header only, with the note too-many
+    const plainLine = { kind: 'context', text: 'x', oldNo: 1, newNo: 1 }
+    const huge = file({ hunks: [{ header: 'h', lines: Array.from({ length: 100_001 }, () => plainLine) }], hash: 'h'.repeat(200), path: 'p'.repeat(5000) })
+    // a small file keeps its hunks, their headers and lines, cut to the limits
     const hunks = Array.from({ length: 10_001 }, () => ({ header: '@@', lines: [] as unknown[] }))
-    hunks[0] = { header: 'h'.repeat(5000), lines: [longLine, ...Array.from({ length: 100_000 }, () => plainLine)] }
+    hunks[0] = { header: 'h'.repeat(5000), lines: [longLine] }
     const files = Array.from({ length: 5001 }, () => file())
-    files[0] = file({ hunks, hash: 'h'.repeat(200), path: 'p'.repeat(5000) })
+    files[0] = huge
+    files[1] = file({ hunks })
     const v = reviewUpdate(T1, {
       label: 'L'.repeat(5000),
       folder: 'F'.repeat(5000),
@@ -456,13 +460,14 @@ describe('clampPush (R5): every push fits the receiver', () => {
     expect(out.testsSample).toHaveLength(10)
     expect(out.outsideSample).toHaveLength(10)
     expect(out.files).toHaveLength(5000)
+    expect(out.files[0]).toMatchObject({ hunks: [], note: 'too-many' })
     expect(out.files[0].path).toHaveLength(4096)
     expect(out.files[0].hash).toHaveLength(128)
-    expect(out.files[0].hunks).toHaveLength(10_000)
-    expect(out.files[0].hunks[0].header).toHaveLength(4096)
-    expect(out.files[0].hunks[0].lines).toHaveLength(100_000)
+    expect(out.files[1].hunks).toHaveLength(10_000)
+    expect(out.files[1].hunks[0].header).toHaveLength(4096)
+    expect(out.files[1].hunks[0].lines).toHaveLength(1)
     // the long line is cut before its surrogate pair, so no half of it is left
-    const text: string = out.files[0].hunks[0].lines[0].text
+    const text: string = out.files[1].hunks[0].lines[0].text
     expect(text).toBe('a'.repeat(99_999))
   })
 
@@ -504,6 +509,117 @@ describe('clampPush (R5): every push fits the receiver', () => {
   it('a value that is not a push is passed on as it is, and parsePush refuses it', () => {
     expect(clampPush('status', 42)).toBe(42)
     expect(parsePush('status', clampPush('status', 42), T1)).toBeNull()
+  })
+})
+
+describe('reviewPushes (Task 9): a large review travels in parts', () => {
+  /** a stand-in for the turns of the event loop: counts the yields, and reports stale after `stopAfter` of them */
+  function turns(stopAfter = Infinity) {
+    let n = 0
+    return { yieldNow: async () => void n++, stale: () => n > stopAfter, count: () => n }
+  }
+  const line = { kind: 'add', text: 'x'.repeat(1024), oldNo: null, newNo: 1 }
+  const bigFile = (i: number, lines = 512) => ({
+    path: `src/big-${i}.ts`,
+    relPath: `src/big-${i}.ts`,
+    status: 'modified',
+    additions: lines,
+    deletions: 0,
+    hunks: [{ header: '@@ -1 +1 @@', lines: Array.from({ length: lines }, () => line) }],
+    note: null,
+    canForce: false,
+    hash: `h${i}`,
+    viewed: false,
+    markdown: false,
+    lineCount: lines
+  })
+
+  it('40 files of 512 KiB come as parts, each under REVIEW_PART_BYTES, in order, with the files the clamp keeps, and yield once per file', async () => {
+    const v = withoutTab(reviewUpdate(T1, { files: Array.from({ length: 40 }, (_, i) => bigFile(i)) as never }))
+    const t = turns()
+    const pushes = await reviewPushes(v, 7, t)
+    expect(pushes).not.toBeNull()
+    expect(pushes!.length).toBeGreaterThan(1)
+    expect(pushes!.every((p) => p.k === 'review-part')).toBe(true)
+    const bodies = pushes!.map((p) => p.v as { rev: number; i: number; of: number; head?: unknown; files: unknown[] })
+    bodies.forEach((b, i) => {
+      expect(b).toMatchObject({ rev: 7, i, of: bodies.length })
+      expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThanOrEqual(REVIEW_PART_BYTES)
+      expect(i === 0 ? b.head !== undefined : b.head === undefined).toBe(true)
+    })
+    const clamped = clampPush('review', v) as { files: unknown[] } & Record<string, unknown>
+    expect(bodies.flatMap((b) => b.files)).toEqual(clamped.files)
+    const head: Record<string, unknown> = { ...clamped }
+    delete head.files
+    expect(bodies[0].head).toEqual(head)
+    expect(t.count()).toBeGreaterThanOrEqual(40)
+  })
+
+  it('a small review is one review push, and it carries the rev', async () => {
+    const v = withoutTab(reviewUpdate(T1, { files: [bigFile(0, 2)] as never }))
+    const pushes = await reviewPushes(v, 7, turns())
+    expect(pushes).toEqual([{ k: 'review', v: { ...(clampPush('review', v) as Record<string, unknown>), rev: 7 } }])
+    expect(parsePush('review', pushes![0].v, T1)).not.toBeNull()
+  })
+
+  it('stale() turning true mid-way gives null: nothing is sent for a review a newer one replaced', async () => {
+    const v = withoutTab(reviewUpdate(T1, { files: Array.from({ length: 40 }, (_, i) => bigFile(i)) as never }))
+    expect(await reviewPushes(v, 7, turns(5))).toBeNull()
+  })
+
+  it('a file over REVIEW_FILE_BYTES keeps its header with note too-many; a file under it is kept whole', async () => {
+    const v = withoutTab(reviewUpdate(T1, { files: [bigFile(0, 2200), bigFile(1, 300)] as never }))
+    const clamped = clampPush('review', v) as { files: any[] }
+    expect(clamped.files[0]).toMatchObject({ path: 'src/big-0.ts', hunks: [], note: 'too-many' })
+    expect(clamped.files[1].hunks[0].lines).toHaveLength(300)
+    const pushes = await reviewPushes(v, 1, turns())
+    const sent = pushes!.flatMap((p) => (p.v as { files: unknown[] }).files)
+    expect(sent).toEqual(clamped.files)
+  })
+})
+
+// Fix 2: a valid part of many short lines is accepted by the viewer, though the parts are packed near the part size
+describe('the parts of a review of many short lines (Task 9 fix 2)', () => {
+  it('every part of 1500 files of 60 short lines is accepted by parsePush', async () => {
+    const line = { kind: 'add', text: 'x', oldNo: null, newNo: 1 }
+    const file = (i: number) => ({
+      path: `src/short-${i}.ts`,
+      relPath: `src/short-${i}.ts`,
+      status: 'modified',
+      additions: 60,
+      deletions: 0,
+      hunks: [{ header: '@@ -1 +1 @@', lines: Array.from({ length: 60 }, () => line) }],
+      note: null,
+      canForce: false,
+      hash: `h${i}`,
+      viewed: false,
+      markdown: false,
+      lineCount: 60
+    })
+    const v = withoutTab(reviewUpdate(T1, { files: Array.from({ length: 1500 }, (_, i) => file(i)) as never }))
+    const pushes = await reviewPushes(v, 4, { yieldNow: async () => {}, stale: () => false })
+    expect(pushes!.length).toBeGreaterThan(1)
+    for (const p of pushes!) {
+      expect(Buffer.byteLength(JSON.stringify(p.v))).toBeLessThanOrEqual(REVIEW_PART_BYTES)
+      expect(parsePush(p.k, p.v, T1)).not.toBeNull()
+    }
+  })
+})
+
+describe('packFiles (Task 9 fix 8): a review has at most MAX_REVIEW_PARTS parts', () => {
+  it('files just over half a part each never make more parts than MAX_REVIEW_PARTS; the files past the cap keep their headers', () => {
+    const half = REVIEW_PART_BYTES / 2 + 1
+    const kept = Array.from({ length: 20 }, (_, i) => {
+      // the size is in the lines, so that a header of the file is small
+      const file = { path: `p${i}`, relPath: `p${i}`, hunks: [{ header: 'h', lines: [{ text: 'x'.repeat(half) }] }], note: null }
+      return { file, bytes: Buffer.byteLength(JSON.stringify(file)) }
+    })
+    const groups = packFiles({ label: 'head' }, kept)
+    expect(groups.length).toBeLessThanOrEqual(MAX_REVIEW_PARTS)
+    expect(groups.flat().map((f) => f.path)).toEqual(kept.map((k) => k.file.path))
+    const last = groups[groups.length - 1]
+    expect(last.slice(1).every((f) => f.note === 'too-many' && Array.isArray(f.hunks) && f.hunks.length === 0)).toBe(true)
+    expect(groups[0][0].note).toBeNull()
   })
 })
 

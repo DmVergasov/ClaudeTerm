@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { imagePasteInput, imagePasteRoute, isPrimaryKey, mapKey, shortcutLabel, type KeyLike } from '../../src/renderer/keymap'
+import { imagePasteInput, imagePasteRoute, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyLike } from '../../src/renderer/keymap'
 
 describe('imagePasteInput', () => {
   it('Alt+V for Claude Code on Windows, Ctrl+V elsewhere', () => {
@@ -172,5 +172,32 @@ describe('shortcutLabel', () => {
     expect(shortcutLabel('toggleNote', 'darwin')).toBe('⌘N')
     expect(shortcutLabel('toggleDocs', 'win32')).toBe('Ctrl+Shift+O')
     expect(shortcutLabel('toggleDocs', 'darwin')).toBe('⌘O')
+  })
+})
+
+describe('isImagePasteKey', () => {
+  it('Ctrl+V on macOS and Alt+V on Windows are Claude Code\'s image-paste key', () => {
+    expect(isImagePasteKey(k('KeyV', { ctrlKey: true }, 'м'), 'darwin')).toBe(true)
+    expect(isImagePasteKey(k('KeyV', { altKey: true }, 'м'), 'win32')).toBe(true)
+  })
+  it('Cmd+V, Ctrl+V on Windows and Linux (smart paste) and Alt+V on macOS are not', () => {
+    expect(isImagePasteKey(k('KeyV', cmd), 'darwin')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { ctrlKey: true }), 'win32')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { ctrlKey: true }), 'linux')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { altKey: true }), 'darwin')).toBe(false)
+  })
+  it('any other modifier, Shift included, makes it another key', () => {
+    expect(isImagePasteKey(k('KeyV', { ctrlKey: true, shiftKey: true }), 'darwin')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { ctrlKey: true, altKey: true }), 'darwin')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { ctrlKey: true, metaKey: true }), 'darwin')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { altKey: true, shiftKey: true }), 'win32')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { altKey: true, ctrlKey: true }), 'win32')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { altKey: true, metaKey: true }), 'win32')).toBe(false)
+  })
+  it('is false on Linux for every key, and for a key release', () => {
+    expect(isImagePasteKey(k('KeyV', { altKey: true }), 'linux')).toBe(false)
+    expect(isImagePasteKey(k('KeyV', { ctrlKey: true, altKey: true }), 'linux')).toBe(false)
+    expect(isImagePasteKey({ ...k('KeyV', { ctrlKey: true }), type: 'keyup' }, 'darwin')).toBe(false)
+    expect(isImagePasteKey({ ...k('KeyV', { altKey: true }), type: 'keyup' }, 'win32')).toBe(false)
   })
 })

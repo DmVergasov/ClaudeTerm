@@ -518,6 +518,21 @@ describe('the limits of the transfers', () => {
     expect(paths.map((p) => basename(p))).toEqual(['A.txt', 'a (2).txt'])
   })
 
+  it('a begin with the same name in NFC and in NFD both arrive, the second renamed', async () => {
+    const t = await r.begin([{ name: 'é.txt', size: 1 }, { name: 'é.txt', size: 1 }], OWNER)
+    await r.part(t, 0, 0, Buffer.from('x'), OWNER)
+    await r.part(t, 1, 0, Buffer.from('y'), OWNER)
+    const paths = await r.end(t, OWNER)
+    // a normalizing file system (macOS) takes the two names for one file: they must differ once normalized
+    expect(paths.map((p) => basename(p).normalize('NFC').toLowerCase())).toEqual(['é.txt', 'é (2).txt'])
+  })
+
+  it('two empty files with the same name in NFC and in NFD both arrive, the second renamed', async () => {
+    const t = await r.begin([{ name: 'é.txt', size: 0 }, { name: 'é.txt', size: 0 }], OWNER)
+    const paths = await r.end(t, OWNER)
+    expect(paths.map((p) => basename(p).normalize('NFC').toLowerCase())).toEqual(['é.txt', 'é (2).txt'])
+  })
+
   it('three 2-byte files: none is open after begin, at most one handle is open at a time, and none once its file is complete', async () => {
     gate.opens = 0
     gate.live.clear()

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
-import { hostHandlers, hostTabs } from '../../src/main/remote-host'
+import { hostHandlers, hostTabs, withoutTabId } from '../../src/main/remote-host'
 import { RemoteActions, remoteTabInfo } from '../../src/main/sync/remote-actions'
 import { CallError, type CallEntry } from '../../src/main/sync/calls'
 import { connectPeer } from '../../src/main/sync/remote-link'
@@ -17,7 +17,7 @@ import type { DevicePlatform } from '../../src/shared/devices'
 import { IMAGE_PART_BYTES, IMAGE_PART_TIMEOUT_MS, LIST_TIMEOUT_MS, REMOTE_COPY, type RemoteTab } from '../../src/shared/remote'
 import { NOT_RUNNING } from '../../src/shared/review'
 import type { RecentSession, TabPlace } from '../../src/shared/types'
-import { ACC_WORK, B_ID, T1, T2, T3, T9, fakeHost, imageCard, tabId, tabInfo } from '../fixtures/host-context'
+import { ACC_WORK, B_ID, T1, T2, T3, T9, fakeHost, imageCard, reviewUpdate, tabId, tabInfo } from '../fixtures/host-context'
 import { closeLinkPairs, linkPair, until } from '../fixtures/sync'
 
 // Two devices on a loopback link: A (Studio) serves its tabs through hostHandlers, B (Laptop) asks through RemoteActions.
@@ -43,6 +43,7 @@ const quietEvents: ViewerEvents = {
   size: () => {},
   attention: () => {},
   attentionCleared: () => {},
+  ring: () => {},
   push: () => {}
 }
 
@@ -67,6 +68,8 @@ interface PairOptions {
   aLink?: Partial<PeerLinkOptions>
   wrapImage?: (entry: CallEntry) => CallEntry
   wrapSessions?: (entry: CallEntry) => CallEntry
+  /** the events of B's viewer, to record what the window would show */
+  viewerEvents?: ViewerEvents
 }
 
 /** A serves its fake tabs to B over one loopback link; B's RemoteActions asks A */
@@ -77,7 +80,7 @@ async function pair(o: PairOptions = {}): Promise<Pair> {
   const hostA = new TabHost({ tabs: hostTabs(a.ctx), mirrors: mirrorsA })
   const hostB = new TabHost({ tabs: hostTabs(fakeHost().ctx), mirrors: mirrorsB })
   const viewerA = new RemoteTabs({ selfId: () => A_ID, isLocal: () => false, events: quietEvents })
-  const viewerB = new RemoteTabs({ selfId: () => B_ID, isLocal: () => false, events: quietEvents })
+  const viewerB = new RemoteTabs({ selfId: () => B_ID, isLocal: () => false, events: o.viewerEvents ?? quietEvents })
   const link = await linkPair({}, o.aLink ?? {})
   hostA.changed()
   connectPeer(link.client, helloOf(A_ID, 'Studio'), hostB, viewerB, {})
@@ -147,7 +150,7 @@ function listAnswers(profiles: unknown, accounts: unknown) {
 }
 
 /** a third device, Cellar, linked to B: it answers the two lists as `lists` says */
-async function cellarJoins(p: Pair, lists: ReturnType<typeof listAnswers>): Promise<void> {
+async function cellarJoins(p: Pair, lists: ReturnType<typeof listAnswers>): Promise<ReturnType<typeof fakeHost> & { link: { close(reason: string): void } }> {
   const c = fakeHost()
   const mirrorsC = new ScreenMirrors({ maxSnapshotBytes: 1024 * 1024 })
   const hostC = new TabHost({ tabs: hostTabs(c.ctx), mirrors: mirrorsC })
@@ -159,6 +162,8 @@ async function cellarJoins(p: Pair, lists: ReturnType<typeof listAnswers>): Prom
   p.mirrors.push(mirrorsC)
   p.hosts.push(hostC)
   p.viewers.push(viewerC)
+  // B's end of the link to Cellar: closing it takes Cellar offline for B
+  return Object.assign(c, { link: link.client })
 }
 
 describe('the answers the new-tab menu shows', () => {
@@ -433,8 +438,8 @@ describe('the Changes actions of a remote tab', () => {
     await closeLinkPairs()
   })
 
-  async function open(): Promise<Pair> {
-    const p = await pair()
+  async function open(o: PairOptions = {}): Promise<Pair> {
+    const p = await pair(o)
     pairs.push(p)
     return p
   }
@@ -501,6 +506,40 @@ describe('the Changes actions of a remote tab', () => {
     p.linkB.close('test')
     await until(() => !p.viewerB.online(A_ID))
     expect(await p.actions.canSend(T1)).toEqual({ ok: false, reason: NOT_RUNNING })
+    expect(p.toasts).toEqual([])
+  })
+
+  it("a review published while the member was away reaches its open Changes panel when the link comes back, with no refresh", async () => {
+    const pushes: { id: string; value: unknown }[] = []
+    const p = await open({ viewerEvents: { ...quietEvents, push: (id, value) => pushes.push({ id, value }) } })
+    // the review seen by the window: the additions of each review push of T1, in order
+    const seen = (): number[] =>
+      pushes
+        .filter((x) => x.id === T1)
+        .map((x) => x.value as { k: string; v: { additions: number } })
+        .filter((x) => x.k === 'review')
+        .map((x) => x.v.additions)
+    p.a.reviews.set(T1, reviewUpdate(T1, { additions: 1 }))
+    p.viewerB.activated(T1)
+    await until(() => seen().includes(1))
+    p.linkB.close('test')
+    await until(() => !p.viewerB.online(A_ID))
+    // A publishes its newer review while the member is away: its host pushes it to nobody
+    const latest = reviewUpdate(T1, { additions: 7 })
+    p.a.reviews.set(T1, latest)
+    p.hostA.push(T1, 'review', withoutTabId(latest))
+    // the link comes back with the same tab ids; B does not ask for the review
+    const link = await linkPair()
+    connectPeer(link.client, helloOf(A_ID, 'Studio'), p.hostB, p.viewerB, {})
+    connectPeer(link.server, helloOf(B_ID, 'Laptop'), p.hostA, p.viewers[0], hostHandlers(p.a.ctx, B_ID))
+    await until(() => p.viewerB.online(A_ID))
+    await until(() => seen().includes(7))
+    expect(seen()).toEqual([1, 7])
+    expect(p.a.refreshed).toEqual([])
+    expect(p.a.scoped).toEqual([])
+    expect(p.a.cleared).toEqual([])
+    expect(p.a.viewed).toEqual([])
+    expect(p.a.shown).toEqual([])
     expect(p.toasts).toEqual([])
   })
 })
@@ -1170,6 +1209,49 @@ describe('the Recent sessions of the other devices', () => {
     p.linkB.close('test')
     await until(() => !p.viewerB.online(A_ID))
     expect(p.actions.deviceOfSession(SESSION_1)).toBe(C_ID)
+  })
+
+  it('a pick of a session both online devices list opens it on the device of the section it was picked in', async () => {
+    const p = await pair()
+    pairs.push(p)
+    // Studio's answer is kept first, so a pick without a device goes to Studio
+    p.a.sessionList = [sessionOf(SESSION_1)]
+    p.actions.refreshSessions()
+    await until(() => studioValue(p) !== null)
+    // Cellar's own host lists the session too, so its open-session accepts it
+    const c = await cellarJoins(p, listAnswers(['Fish'], [{ id: ACC_WORK, name: 'Work' }]))
+    c.sessionList = [sessionOf(SESSION_1)]
+    p.actions.refreshSessions()
+    await until(() => cellarValue(p) !== null)
+    expect(p.actions.deviceOfSession(SESSION_1)).toBe(A_ID)
+    // the pick made in Cellar's section carries Cellar's id, and the open goes there
+    const device = p.actions.deviceOfSession(SESSION_1, C_ID)
+    expect(device).toBe(C_ID)
+    expect(await p.actions.openSession(device!, SESSION_1)).toBe(T3)
+    expect(c.openedSessions).toEqual([SESSION_1])
+    expect(p.a.openedSessions).toEqual([])
+  })
+
+  it("a pick in an offline device's section opens nowhere else: the open asks that device and says it is not connected", async () => {
+    const p = await pair()
+    pairs.push(p)
+    // Studio's answer is kept first, and Cellar lists the session too
+    p.a.sessionList = [sessionOf(SESSION_1)]
+    p.actions.refreshSessions()
+    await until(() => studioValue(p) !== null)
+    const c = await cellarJoins(p, listAnswers(['Fish'], [{ id: ACC_WORK, name: 'Work' }]))
+    c.sessionList = [sessionOf(SESSION_1)]
+    p.actions.refreshSessions()
+    await until(() => cellarValue(p) !== null)
+    c.link.close('test')
+    await until(() => !p.viewerB.online(C_ID))
+    // the pick made in Cellar's section stays with Cellar, although Studio lists the session online
+    const device = p.actions.deviceOfSession(SESSION_1, C_ID)
+    expect(device).toBe(C_ID)
+    expect(await p.actions.openSession(device!, SESSION_1)).toBeNull()
+    expect(p.toasts).toEqual([REMOTE_COPY.deviceOffline('Cellar')])
+    expect(p.a.openedSessions).toEqual([])
+    expect(c.openedSessions).toEqual([])
   })
 
   it('a session of a device that is offline is not opened: the window says the device is not connected', async () => {

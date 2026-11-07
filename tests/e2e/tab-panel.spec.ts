@@ -38,6 +38,12 @@ const ptySizes = (page: Page, id: string): Promise<string[]> => page.evaluate((t
 /** the panel's width in px, measured as the layout draws it */
 const panelWidth = (page: Page): Promise<number> => page.locator('#tabpanel').evaluate((el) => el.getBoundingClientRect().width)
 
+/** the centre of a row, measured in the page: a panel drawn again in between does not make it null, as boundingBox can */
+const centre = (tab: Locator): Promise<{ x: number, y: number }> => tab.evaluate((el) => {
+  const b = el.getBoundingClientRect()
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+})
+
 /** a press on the handle's centre, a move by dx px, a release: what a user does with the mouse */
 async function dragBy(page: Page, handle: Locator, dx: number): Promise<void> {
   const box = (await handle.boundingBox())!
@@ -743,5 +749,35 @@ test('with the tabs on the left, a side panel dragged wider stops at 70% of the 
   expect(sizes.panel).toBeLessThanOrEqual(Math.round(sizes.workspace * 0.7))
   expect(sizes.panel).toBeGreaterThan(sizes.workspace * 0.6)
   expect(sizes.terminal).toBeGreaterThan(0)
+  await app.close()
+})
+
+test('a click on a tab in the left panel activates it even when the panel is drawn again between the press and the release', async () => {
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const firstId = (await page.evaluate(() => window.__ct!.tabIds()))[0]
+  const secondId = await openTab(page, 'shell', freshFolder())
+  await expect(row(page, secondId)).toBeVisible()
+
+  const c = await centre(row(page, firstId))
+  await page.mouse.move(c.x, c.y)
+  await page.mouse.down()
+  await row(page, firstId).evaluate((el) => { (window as any).__pressed = el })
+  // a busy Claude retitles its tab: the panel is built again while the button is down
+  await page.evaluate((id) => window.ct.renameTab(id, 'redrawn'), secondId)
+  await expect.poll(() => page.evaluate(() => (window as any).__pressed.isConnected)).toBe(false)
+  await page.mouse.up()
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(firstId)
+
+  // a press on one tab released on another activates neither
+  await row(page, secondId).click()
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(secondId)
+  const from = await centre(row(page, firstId))
+  const to = await centre(row(page, secondId))
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(secondId)
   await app.close()
 })

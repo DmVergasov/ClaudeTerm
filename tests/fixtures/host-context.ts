@@ -1,11 +1,15 @@
 import { changeFolderOf, folderListingOf, type TabFolderDeps } from '../../src/main/folder-browse'
 import type { HostContext } from '../../src/main/remote-host'
+import { typedPaths } from '../../src/main/profiles'
 import type { CallArgs } from '../../src/main/sync/remote-shapes'
 import { TabAttention } from '../../src/main/sync/tab-directory'
 import { TabSizes } from '../../src/main/sync/tab-sizes'
 import type { AccountView } from '../../src/shared/accounts'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from '../../src/shared/review'
-import type { ImageCard, MainStatus, PlanStatus, RecentSession, TabInfo, TabPlace } from '../../src/shared/types'
+import type { ImageCard, MainStatus, PlanStatus, ProfileDef, RecentSession, TabInfo, TabPlace } from '../../src/shared/types'
+
+/** the profile of the shell tab T2 runs */
+const BASH_PROFILE: ProfileDef = { name: 'Bash', command: '/bin/bash', args: [] }
 
 // Invented ids and names for the tests of this device's tabs (the host side of the tab calls).
 
@@ -120,6 +124,8 @@ export interface FakeHost {
   infos: Map<string, TabInfo>
   titles: Map<string, string>
   reviews: Map<string, ReviewUpdate>
+  /** the rev of each tab's review; a tab with none here has rev 0 */
+  reviewRevs: Map<string, number>
   plans: Map<string, PlanStatus>
   /** the cards of every tab; list, get and remove read them */
   cards: ImageCard[]
@@ -187,6 +193,7 @@ export function fakeHost(): FakeHost {
     ]),
     titles: new Map<string, string>([[T1, 'vim']]),
     reviews: new Map<string, ReviewUpdate>(),
+    reviewRevs: new Map<string, number>(),
     plans: new Map<string, PlanStatus>(),
     cards: [],
     marked: [],
@@ -295,6 +302,7 @@ export function fakeHost(): FakeHost {
     attention,
     titles: h.titles,
     reviews: h.reviews,
+    reviewRevs: h.reviewRevs,
     review: {
       setScope: (id, scope) => {
         h.scoped.push([id, scope])
@@ -334,6 +342,11 @@ export function fakeHost(): FakeHost {
       }
     },
     profiles: () => h.profilesAnswer as string[],
+    // the real quoting, with the fixture's profile of the tab: T2 runs 'Bash', the others are Claude tabs
+    typedPaths: (id, paths) => {
+      const info = h.infos.get(id)
+      return typedPaths(info?.profile === 'Bash' ? BASH_PROFILE : null, info?.kind ?? 'claude', paths)
+    },
     openTab: (req) => {
       h.opened.push(req)
       return tabInfo(T3, { kind: req.kind, profile: req.profile ?? 'Bash' })
@@ -344,8 +357,8 @@ export function fakeHost(): FakeHost {
     claim: (id, from, cols, rows) => {
       h.claims.push([id, from, cols, rows])
     },
-    front: (from, id, focused) => {
-      h.fronts.push([from, id, focused])
+    front: (from, id, present) => {
+      h.fronts.push([from, id, present])
     }
   }
   return Object.assign(h, { ctx })

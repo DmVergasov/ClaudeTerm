@@ -2,7 +2,7 @@ import { lstat, open, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { COPY_TOAST_MS, MAX_TRANSFER_BYTES, REMOTE_COPY } from '../../shared/remote'
 import { CallError } from './calls'
-import type { OutgoingFile } from './file-sender'
+import type { OutgoingFile, SentFiles } from './file-sender'
 
 // The files of this device that are dropped or pasted on a remote tab: each is read from its own path, part by part, and a
 // path that is not a regular file (a folder, a link to one) is refused before anything is sent. One copy per tab at a time.
@@ -81,8 +81,8 @@ export async function fileToSend(path: string, fs: DropFs = nodeFs): Promise<Out
 /** what a copy needs from the window: its toasts, the sending, the device's name, and the timers (injected in the tests) */
 export interface CopyDeps {
   toast(message: string): void
-  /** sends the files to the tab's device: their paths there, or the device's refusal */
-  sendFiles(tabId: string, files: OutgoingFile[]): Promise<string[]>
+  /** sends the files to the tab's device: their paths there and the text to type for them, or the device's refusal */
+  sendFiles(tabId: string, files: OutgoingFile[]): Promise<SentFiles>
   /** the device's name as the window shows it; null when the tab is not on another device */
   nameOf(tabId: string): string | null
   timers?: { set(run: () => void, ms: number): unknown; clear(handle: unknown): void }
@@ -102,11 +102,11 @@ export class RemoteCopies {
   constructor(private readonly deps: CopyDeps) {}
 
   /**
-   * Copies files to the tab's device and answers their paths there. `prepare` gives the files (null: nothing to copy). A copy
-   * already running for the tab is refused with the copying toast. A copy still running after the slow time says so; a refusal
-   * or a failure is toasted with the device's name and the device's words.
+   * Copies files to the tab's device and answers what the device sends back: their paths there and the text to type. `prepare`
+   * gives the files (null: nothing to copy). A copy already running for the tab is refused with the copying toast. A copy still
+   * running after the slow time says so; a refusal or a failure is toasted with the device's name and the device's words.
    */
-  async copy(tabId: string, prepare: () => Promise<OutgoingFile[] | null>): Promise<string[] | null> {
+  async copy(tabId: string, prepare: () => Promise<OutgoingFile[] | null>): Promise<SentFiles | null> {
     const name = this.deps.nameOf(tabId)
     if (name === null) return null
     if (this.running.has(tabId)) {
