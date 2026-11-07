@@ -422,8 +422,11 @@ test('a family moves together, and a fork stays in its family', async () => {
   const a1 = (await page.evaluate(() => window.__ct!.tabIds())).find((id) => id !== a && id !== b)!
 
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a, a1, b])
-  await row(page, a).dragTo(row(page, b))
-  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([b, a, a1])
+  // a shell that starts draws the panel again: a drag whose source went before it started is dragged again
+  await expect(async () => {
+    await row(page, a).dragTo(row(page, b))
+    await expect.poll(() => page.evaluate(() => window.__ct!.tabIds()), { timeout: 5000 }).toEqual([b, a, a1])
+  }).toPass({ timeout: 45_000 })
 
   await row(page, a1!).dragTo(row(page, b))
   await page.waitForTimeout(500)
@@ -762,17 +765,26 @@ test('a click on a tab in the left panel activates it even when the panel is dra
   await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(secondId)
   await expect.poll(() => page.evaluate((ids) => ids.every((id) => window.__ct!.placeEvents!(id).length > 0), [firstId, secondId])).toBe(true)
 
-  const c = await centre(row(page, firstId))
-  // the press lands on the first tab's row, nothing lies over it
-  const under = (p: { x: number, y: number }): Promise<string | null> => page.evaluate((q) => (document.elementFromPoint(q.x, q.y)?.closest('.tp-tab') as HTMLElement | null)?.dataset.tabId ?? null, p)
-  expect(await under(c)).toBe(firstId)
+  // what lies at a point: a row's tab id, or what is there instead, so a failure says it
+  const under = (p: { x: number, y: number }): Promise<string> => page.evaluate((q) => {
+    const el = document.elementFromPoint(q.x, q.y)
+    const id = (el?.closest('.tp-tab') as HTMLElement | null)?.dataset.tabId
+    return id ?? `${el?.tagName ?? 'nothing'}.${el?.className ?? ''} at ${q.x},${q.y} in ${innerWidth}x${innerHeight}`
+  }, p)
+  // the press lands on the first tab's row: measured and checked together, again while a starting shell still redraws
+  // the panel, since a row drawn anew between the two leaves a stale point
+  let c = { x: 0, y: 0 }
+  await expect.poll(async () => {
+    c = await centre(row(page, firstId))
+    return under(c)
+  }).toBe(firstId)
   await page.mouse.move(c.x, c.y)
   await page.mouse.down()
   await row(page, firstId).evaluate((el) => { (window as any).__pressed = el })
   // a busy Claude retitles its tab: the panel is built again while the button is down
   await page.evaluate((id) => window.ct.renameTab(id, 'redrawn'), secondId)
   await expect.poll(() => page.evaluate(() => (window as any).__pressed.isConnected)).toBe(false)
-  expect(await under(c)).toBe(firstId)
+  await expect.poll(() => under(c)).toBe(firstId)
   await page.mouse.up()
   await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(firstId)
 
