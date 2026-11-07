@@ -41,6 +41,15 @@ describe('statusSegments', () => {
     expect(at(10, RESET - FIVE_HOURS + 18 * 60_000)).toMatchObject({ title: 'resets at 21:40, in 4 h 42 min', level: 'normal' })
   })
 
+  it('with the pace turned off a limit has no bar and no forecast, and takes its color from the fixed 70% and 90%', () => {
+    const at = (usedPct: number) => statusSegments({ tabId: 't', main: { ...main, fiveHour: { usedPct, resetsAt: RESET / 1000 } }, agents: [], background: [] }, RESET - 4 * H, false)[2]
+    // 50% in the first hour runs out early at this pace, but is only half the limit
+    expect(at(50)).toEqual({ key: 'limit', text: '5h 50%', title: 'resets at 21:40, in 4 h', level: 'normal' })
+    expect(at(75)).toMatchObject({ level: 'warn' })
+    expect(at(100)).toEqual({ key: 'limit', text: '5h 100%', title: 'resets at 21:40, in 4 h\nused up', level: 'crit' })
+    expect(statusSegments({ tabId: 't', main, agents: [], background: [] }, NOW, false)[3]).toEqual({ key: 'week', text: '7d 41%', title: 'resets Fri 9 Oct, 14:00, in 3 d 18 h', level: 'normal' })
+  })
+
   it('shows only the model early in a session', () => {
     const early: MainStatus = { model: { id: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5' }, effort: null, context: null, fiveHour: null, sevenDay: null }
     expect(statusSegments({ tabId: 't', main: early, agents: [], background: [] }, 0)).toEqual([{ key: 'model', text: 'Haiku 4.5', title: 'claude-haiku-4-5-20251001', level: 'normal' }])

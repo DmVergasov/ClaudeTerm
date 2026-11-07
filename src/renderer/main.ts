@@ -169,7 +169,7 @@ function accountOf(tabId: string | null): string | null {
 }
 
 function renderStatus(tabId: string): void {
-  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null)
+  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null, settings.claude.limitPace)
 }
 
 /** Continue as …: the tab's conversation restarts on another account */

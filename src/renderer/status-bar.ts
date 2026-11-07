@@ -84,17 +84,23 @@ function duration(ms: number): string {
 
 const hoursAndMinutes = (d: Date): string => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 
-/** a usage limit's segment: its color, forecast and bar from the pace it is spent at */
-function limitSegment(key: 'limit' | 'week', label: string, limit: { usedPct: number; resetsAt: number }, windowMs: number, now: number, at: (d: Date) => string): Segment {
+/**
+ * a usage limit's segment: its color, forecast and bar from the pace it is spent at; with `paced` off (claude.limitPace),
+ * no bar and no forecast, and the color from the fixed 70% and 90%
+ */
+function limitSegment(key: 'limit' | 'week', label: string, limit: { usedPct: number; resetsAt: number }, windowMs: number, now: number, at: (d: Date) => string, paced: boolean): Segment {
   const reset = limit.resetsAt * 1000
-  const pace = limitPace(limit.usedPct, limit.resetsAt, windowMs, now)
   const lines = [`resets ${at(new Date(reset))}${reset > now ? `, in ${duration(reset - now)}` : ''}`]
   if (limit.usedPct >= 100) lines.push('used up')
-  else if (pace.runsOutAt !== null) lines.push(`at this pace: runs out ${at(new Date(pace.runsOutAt))}, ${duration(reset - pace.runsOutAt)} before the reset`)
+  const text = `${label} ${Math.round(limit.usedPct)}%`
+  if (!paced) return { key, text, title: lines.join('\n'), level: levelFor(limit.usedPct) }
+  // a limit used up has no forecast
+  const pace = limitPace(limit.usedPct, limit.resetsAt, windowMs, now)
+  if (pace.runsOutAt !== null) lines.push(`at this pace: runs out ${at(new Date(pace.runsOutAt))}, ${duration(reset - pace.runsOutAt)} before the reset`)
   else if (pace.atReset !== null) lines.push(`at this pace: lasts until the reset, about ${Math.round(pace.atReset)}% by then`)
   return {
     key,
-    text: `${label} ${Math.round(limit.usedPct)}%`,
+    text,
     title: lines.join('\n'),
     level: pace.level,
     bar: { used: Math.min(100, Math.max(0, Math.round(limit.usedPct))), elapsed: Math.round(pace.elapsed * 100) }
@@ -117,7 +123,8 @@ const taskLine = (t: BackgroundTask): string => [t.type, t.description, t.comman
 const agentLine = (a: AgentStatus, now: number): string =>
   [a.type, agentKind(a), minutes(now - a.startedAt), ...(a.description ? [`"${a.description}"`] : [])].join(' · ')
 
-export function statusSegments(u: StatusUpdate, now: number): Segment[] {
+/** `paced`: claude.limitPace, the limits' bar, color and forecast from the pace they are spent at */
+export function statusSegments(u: StatusUpdate, now: number, paced = true): Segment[] {
   const main = u.main
   if (!main) return []
   const segments: Segment[] = [
@@ -132,8 +139,8 @@ export function statusSegments(u: StatusUpdate, now: number): Segment[] {
       level: levelFor(c.usedPct)
     })
   }
-  if (main.fiveHour) segments.push(limitSegment('limit', '5h', main.fiveHour, FIVE_HOURS_MS, now, (d) => `at ${hoursAndMinutes(d)}`))
-  if (main.sevenDay) segments.push(limitSegment('week', '7d', main.sevenDay, SEVEN_DAYS_MS, now, dayAndTime))
+  if (main.fiveHour) segments.push(limitSegment('limit', '5h', main.fiveHour, FIVE_HOURS_MS, now, (d) => `at ${hoursAndMinutes(d)}`, paced))
+  if (main.sevenDay) segments.push(limitSegment('week', '7d', main.sevenDay, SEVEN_DAYS_MS, now, dayAndTime, paced))
   if (u.agents.length > 0) {
     segments.push({ key: 'agents', text: `⚙ ${u.agents.length}: ${agentGroups(u.agents)}`, title: u.agents.map((a) => agentLine(a, now)).join('\n'), level: 'normal' })
   }
@@ -178,10 +185,10 @@ export class StatusBar {
     })
   }
 
-  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, account: string | null = null, plan: PlanStatus | null = null, now = Date.now()): void {
+  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, account: string | null = null, plan: PlanStatus | null = null, paced = true, now = Date.now()): void {
     const segments = [
       ...(account !== null ? [accountSegment(account)] : []),
-      ...(u ? statusSegments(u, now) : []),
+      ...(u ? statusSegments(u, now, paced) : []),
       ...(plan ? [planSegment(plan)] : []),
       ...(changes ? [changesSegment(changes)] : [])
     ]
@@ -209,7 +216,7 @@ export class StatusBar {
 }
 
 function fill(span: HTMLElement, s: Segment): void {
-  const className = `status-seg status-${s.key}${s.level === 'normal' ? '' : ` ${s.level}`}`
+  const className = `status-seg status-${s.key}${s.level === 'normal' ? '' : ` ${s.level}`}${s.bar ? ' bar' : ''}`
   if (span.className !== className) span.className = className
   if (span.textContent !== s.text) span.textContent = s.text
   if (span.title !== s.title) span.title = s.title

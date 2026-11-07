@@ -61,7 +61,7 @@ Audio and video files (`mp4`, `mov`, `webm`, `mkv`, `mp3`, `wav`, `m4a`, `ogg`) 
 
 Under every Claude tab: the current model and reasoning effort, how full the context window is, how much of the 5-hour and weekly usage limits is spent, and which subagents are running right now with their model and effort. Hover for exact token counts, when each limit resets, and a list of the agents with their tasks.
 
-Each limit has a small bar: it fills with what is spent, and a mark on it shows how much of the limit's window has gone by, so a fill past the mark is a pace the limit will not last at. The color says where the pace leads: gray while the limit lasts until it resets, yellow when it would run out in the second half of the time left (or 90% is spent), red when sooner. Hover for when, at this pace, it runs out, or how much of it will be spent by the reset.
+Each limit has a small bar: it fills with what is spent, and a mark on it shows how much of the limit's window has gone by, so a fill past the mark is a pace the limit will not last at. The color says where the pace leads: gray while the limit lasts until it resets, yellow when it would run out in the second half of the time left (or 90% is spent), red when sooner. Hover for when, at this pace, it runs out, or how much of it will be spent by the reset. To do without it, clear **Show in the status bar how fast the usage limits are spent** in Settings → Claude Code: the limits then show the % alone, yellow from 70% and red from 90%.
 
 When Claude ends its turn with work still running in the background — a shell command, a monitor, an agent it started there — the status bar says how many and what: `2 in background: build, tail -f server.log`. A long list is cut short; hover for each one's kind and command. Every turn end renews the list; it goes away once nothing runs any more, and with the session.
 
@@ -222,7 +222,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "statusRefresh": true,         // refresh the status bar on a timer too; false = only with Claude Code's own updates (every message)
     "statusRefreshInterval": 5,    // that timer in seconds, 1–300; each refresh starts a few short processes per Claude tab
     "autoContinue": false,         // type a nudge into a Claude tab whose response a dropped connection cut off, up to 3 times in a row
-    "continueAfterRestore": true   // a restored tab Claude was working in when ClaudeTerm closed goes on by itself, also one whose background work it cut off
+    "continueAfterRestore": true,  // a restored tab Claude was working in when ClaudeTerm closed goes on by itself, also one whose background work it cut off
+    "limitPace": true              // each usage limit in the status bar has a bar, a color and a forecast from the pace it is spent at; false = the fixed 70% and 90% only
   },
   "profiles": [                    // added to (or overriding by name) the detected profiles
     { "name": "Git Bash", "command": "C:\\Program Files\\Git\\bin\\bash.exe", "args": ["--login", "-i"] }

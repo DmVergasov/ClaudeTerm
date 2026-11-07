@@ -86,8 +86,8 @@ describe('hook files', () => {
   })
 
   it('statusRefreshInterval is the interval of the claude settings while the timer is on, and null while it is off', () => {
-    expect(statusRefreshInterval({ command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 30, autoContinue: false, continueAfterRestore: true })).toBe(30)
-    expect(statusRefreshInterval({ command: 'claude', shellProfile: null, statusRefresh: false, statusRefreshInterval: 30, autoContinue: false, continueAfterRestore: true })).toBeNull()
+    expect(statusRefreshInterval({ command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 30, autoContinue: false, continueAfterRestore: true, limitPace: true })).toBe(30)
+    expect(statusRefreshInterval({ command: 'claude', shellProfile: null, statusRefresh: false, statusRefreshInterval: 30, autoContinue: false, continueAfterRestore: true, limitPace: true })).toBeNull()
   })
 
   it('writeClaudeTabFiles on Windows writes only the settings: the hooks run cmd.exe, never a batch file', () => {

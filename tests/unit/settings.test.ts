@@ -20,8 +20,16 @@ describe('parseSettings', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])
     expect(settings.font).toEqual({ family: DEFAULT_SETTINGS.font.family, size: 16 })
-    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true })
+    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true })
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
+  })
+
+  it('claude.limitPace is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.claude.limitPace).toBe(true)
+    expect(parseSettings(JSON.stringify({ claude: { limitPace: false } })).settings.claude.limitPace).toBe(false)
+    const r = parseSettings(JSON.stringify({ claude: { limitPace: 'no' } }))
+    expect(r.settings.claude.limitPace).toBe(true)
+    expect(r.errors).toEqual(['settings.json: invalid value for "claude.limitPace", using default'])
   })
 
   it('claude.continueAfterRestore is on unless turned off, and a value that is not a boolean falls back with a notice', () => {

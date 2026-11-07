@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
+import type { StatusMessage } from '../../src/shared/protocol'
 import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
 import { MAC } from '../fixtures/platform'
 import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, TEST_SHELL, windowPlaces, KEYS } from './helpers'
@@ -193,6 +194,34 @@ test('the checkbox for going on after a restore is checked by default and saves 
   await expect(box).toBeChecked()
   await box.uncheck()
   await expect.poll(() => readSettings(dataDir).claude?.continueAfterRestore).toBe(false)
+  await app.close()
+})
+
+test('the limit pace checkbox is checked by default; cleared, the limits in the status bar lose their bar and their color by pace', async () => {
+  const { app, page, tabId, pipeName, dataDir } = await launchClaudeTab(QUIET)
+  const now = Math.floor(Date.now() / 1000)
+  // half the 5h limit in its first hour: at this pace it runs out long before the reset
+  const status: StatusMessage = {
+    v: 1, type: 'status', tabId, sessionId: SID, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null,
+    fiveHour: { usedPct: 50, resetsAt: now + 4 * 3600 }, sevenDay: null
+  }
+  expect(await sendPipeMessage(pipeName, status)).toEqual({ ok: true })
+  const limit = page.locator('#statusbar .status-limit')
+  /** the bar before the limit's text: none when the status bar draws no bar */
+  const bar = (): Promise<string> => limit.evaluate((el) => getComputedStyle(el, '::before').content)
+  await expect(limit).toHaveText('5h 50%')
+  await expect(limit).toHaveClass(/\bcrit\b/)
+  expect(await bar()).not.toBe('none')
+
+  const win = await openSettings(app, page)
+  const box = win.locator('[data-key="claude.limitPace"]')
+  await expect(box).toBeChecked()
+  await box.uncheck()
+  await expect.poll(() => readSettings(dataDir).claude?.limitPace).toBe(false)
+  await expect(limit).not.toHaveClass(/\b(warn|crit)\b/)
+  await expect.poll(bar).toBe('none')
+  // the reset alone, with no forecast after it
+  await expect(limit).toHaveAttribute('title', /^resets at \d\d:\d\d, in [^\n]+$/)
   await app.close()
 })
 
