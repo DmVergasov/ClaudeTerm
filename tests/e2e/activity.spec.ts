@@ -20,6 +20,21 @@ const glyph = (page: Page, tabId: string): Promise<{ animation: string; content:
   return { animation: s.animationName, content: s.content }
 }, tabId)
 
+/** how a spinning icon looks: its color and the animation of its glyph, with the speed */
+const spinLook = (spin: Locator): Promise<{ color: string; animation: string; duration: string }> => spin.evaluate((el) => {
+  const s = getComputedStyle(el, '::before')
+  return { color: getComputedStyle(el).color, animation: s.animationName, duration: s.animationDuration }
+})
+
+/**
+ * waits until the window has drawn everything main said of its tabs so far: a rename of the tab sent after it comes
+ * after it, and shows in the tab's tooltip
+ */
+async function settled(page: Page, tabId: string, title: string): Promise<void> {
+  await page.evaluate(([id, t]) => window.ct.renameTab(id, t), [tabId, title] as const)
+  await expect(page.locator(`[data-tab-id="${tabId}"]`)).toHaveAttribute('title', new RegExp(`^${title}\\n`))
+}
+
 /** what the hooks report: a prompt starts a turn, Stop ends it, an agent starts and stops */
 const turn = (pipeName: string, tabId: string): Promise<unknown> => sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: null })
 const turnEnd = (pipeName: string, tabId: string): Promise<unknown> => sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })
@@ -74,16 +89,20 @@ test('a Claude tab spins its icon through a turn; the end of the turn and Esc st
   await app.close()
 })
 
-test('an agent Claude left running after its turn keeps the icon spinning in grey until the agent stops', async () => {
+test('an agent Claude left running after its turn keeps the icon spinning as in the turn until the agent stops', async () => {
+  // Claude Code waits for the agents it left and goes on when they report: the work is not over
   const { app, page, tabId, pipeName } = await launchClaudeTab(QUIET)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
   await turn(pipeName, tabId)
   expect(await agent(pipeName, tabId, 'start')).toEqual({ ok: true })
   await expect(icon(page, tabId)).toHaveClass(/\bspin\b/)
-  await expect(icon(page, tabId)).not.toHaveClass(/\bbg\b/)
+  const working = await spinLook(icon(page, tabId))
+  expect(working.animation).toBe('tab-spin')
 
   await turnEnd(pipeName, tabId)
+  await settled(page, tabId, 'after the turn')
   await expect(icon(page, tabId)).toHaveClass(/\bspin\b/)
-  await expect(icon(page, tabId)).toHaveClass(/\bbg\b/)
+  expect(await spinLook(icon(page, tabId))).toEqual(working)
 
   expect(await agent(pipeName, tabId, 'stop')).toEqual({ ok: true })
   await expect(icon(page, tabId)).not.toHaveClass(/\bspin\b/)
@@ -159,9 +178,9 @@ test('a Claude tab shows its title without the mark Claude Code puts before it',
   await app.close()
 })
 
-test('a folded group spins while Claude works in one of its tabs, in grey while only an agent it left runs, and not while Claude waits', async () => {
+test('a folded group spins while Claude works in one of its tabs, the agents it left running included, and not while Claude waits', async () => {
   const repo = gitRepo()
-  // the end of a turn leaves the tab unmarked, so the grey of the agent it left shows
+  // the end of a turn leaves the tab unmarked, so the spin of the agent it left shows
   const off = { sound: false, flash: false, tab: false, front: false, banner: false }
   const notifications = { permission: { ...off, tab: true }, question: off, done: off, bell: off }
   const { app, page, pipeName } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, notifications, defaultFolder: mkdtempSync(join(tmpdir(), 'ct-folder-')), tabs: { position: 'left' } } })
@@ -176,12 +195,16 @@ test('a folded group spins while Claude works in one of its tabs, in grey while 
   const spin = group.locator('.tp-group-spin')
   await expect(spin).toHaveCount(0)
 
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
   await turn(pipeName, claude)
   await expect(spin).toHaveCount(1)
-  await expect(spin).not.toHaveClass(/\bbg\b/)
+  const working = await spinLook(spin)
   await agent(pipeName, claude, 'start')
   await turnEnd(pipeName, claude)
-  await expect(spin).toHaveClass(/\bbg\b/)
+  // the Claude tab is in the folded group: the home tab, drawn with it, says when the window has caught up
+  await settled(page, home, 'after the turn')
+  await expect(spin).toHaveCount(1)
+  expect(await spinLook(spin)).toEqual(working)
   await agent(pipeName, claude, 'stop')
   await expect(spin).toHaveCount(0)
 

@@ -5,9 +5,8 @@ import type { TabBarCallbacks, TabBarItem } from './tabbar'
 
 /** one full fade in and out of the attention pulse: 2 × the 1.2 s alternate animation in styles.css */
 const PULSE_CYCLE_MS = 2400
-/** one round of the spinning icon's glyphs, as styles.css runs it: twice as slow for an agent left in the background */
+/** one round of the spinning icon's glyphs, as styles.css runs it */
 const SPIN_CYCLE_MS = 1200
-const SPIN_BACKGROUND_CYCLE_MS = 2400
 
 export const MUTED_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M1.65 5.65h2.7l3.5-3v10.7l-3.5-3h-2.7z"/><path d="M10.5 5.5l4 4M14.5 5.5l-4 4"/></svg>'
@@ -30,15 +29,14 @@ export function pulseDelay(): string {
 }
 
 /**
- * The icon that spins while Claude works: Claude Code's own spinner glyphs, grey for an agent it left running after the
- * turn. Like the pulse it carries on in phase when render() rebuilds it (a working Claude retitles its tab every second).
+ * The icon that spins while Claude works: Claude Code's own spinner glyphs. Like the pulse it carries on in phase when
+ * render() rebuilds it (a working Claude retitles its tab every second).
  */
-export function spinner(cls: string, activity: Exclude<TabActivity, null>): HTMLElement {
-  const background = activity === 'background'
+export function spinner(cls: string): HTMLElement {
   const el = document.createElement('span')
-  el.className = `${cls} spin${background ? ' bg' : ''}`
+  el.className = `${cls} spin`
   el.setAttribute('aria-hidden', 'true')
-  el.style.setProperty('--spin-delay', `${-(performance.now() % (background ? SPIN_BACKGROUND_CYCLE_MS : SPIN_CYCLE_MS))}ms`)
+  el.style.setProperty('--spin-delay', `${-(performance.now() % SPIN_CYCLE_MS)}ms`)
   return el
 }
 
@@ -55,9 +53,8 @@ export interface TabParts {
 
 /** what a tab shows of itself, on the tab bar and in the left panel alike: the kind icon, the title, the marks and × */
 export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCallbacks, 'close'>): TabParts {
-  const activity = shownActivity(item)
   let icon: HTMLElement
-  if (activity) icon = spinner('tab-icon', activity)
+  if (shownActivity(item)) icon = spinner('tab-icon')
   else {
     icon = document.createElement('span')
     icon.className = 'tab-icon'

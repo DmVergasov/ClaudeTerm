@@ -310,7 +310,7 @@ describe('TabManager', () => {
     expect(tm.snapshot().map((t) => t.working)).toEqual([false, false])
   })
 
-  it('a Claude tab is working through a turn, in the background while its agents outlast the turn, and idle after', () => {
+  it('a Claude tab is working through a turn and while its agents outlast the turn, and idle after', () => {
     const { tm, log } = setup()
     const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
     const shell = tm.open({ kind: 'shell', cwd: 'D:\\y' })
@@ -325,13 +325,19 @@ describe('TabManager', () => {
     tm.setAgentsRunning(tab.id, true)
     expect(activity()).toBe('working')
     expect(updates()).toBe(1)
-    // the turn ended, and the agent it left in the background still runs
+    // the turn ended, and the agent it left still runs: Claude Code waits for it, and the work goes on
     tm.setWorking(tab.id, false)
-    expect(activity()).toBe('background')
-    expect(updates()).toBe(2)
+    expect(activity()).toBe('working')
+    expect(updates()).toBe(1)
     tm.setAgentsRunning(tab.id, false)
     expect(activity()).toBeNull()
-    expect(updates()).toBe(3)
+    expect(updates()).toBe(2)
+
+    // an agent Claude starts with no turn running (a task notification's turn already ended) is work too
+    tm.setAgentsRunning(tab.id, true)
+    expect(activity()).toBe('working')
+    tm.setAgentsRunning(tab.id, false)
+    expect(activity()).toBeNull()
 
     tm.setWorking(shell.id, true)
     tm.setAgentsRunning(shell.id, true)

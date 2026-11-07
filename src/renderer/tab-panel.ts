@@ -147,10 +147,8 @@ export class TabPanel {
       count.className = 'tp-group-count'
       count.textContent = String(members.length)
       head.append(count)
-      // and the spinning icon while Claude works in one of them; grey when only agents left in the background run
-      const activities = members.map(shownActivity)
-      const activity = activities.includes('working') ? 'working' : activities.includes('background') ? 'background' : null
-      if (activity) head.append(spinner('tp-group-spin', activity))
+      // and the spinning icon while Claude works in one of them
+      if (members.some(shownActivity)) head.append(spinner('tp-group-spin'))
       const attention = members.some((m) => m.attention)
       if (attention || members.some((m) => m.bell)) {
         const dot = document.createElement('span')

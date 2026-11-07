@@ -300,7 +300,7 @@ export class TabManager {
     this.changed()
   }
 
-  /** whether agents of the tab's Claude run: past the end of the turn, they are the work it left in the background */
+  /** whether agents of the tab's Claude run: past the end of the turn too, Claude Code waits for them, and the work goes on */
   setAgentsRunning(tabId: string, running: boolean): void {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude' || rec.agents === running) return
@@ -503,7 +503,7 @@ export class TabManager {
 
   private activityOf(rec: TabRecord): TabActivity {
     if (rec.info.kind !== 'claude' || rec.info.exited) return null
-    return rec.working ? 'working' : rec.agents ? 'background' : null
+    return rec.working || rec.agents ? 'working' : null
   }
 
   /** the window hears of the tab's activity when it changes */

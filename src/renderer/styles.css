@@ -16,12 +16,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .tab.active { background: var(--bg); color: var(--fg); box-shadow: inset 0 2px 0 var(--accent); }
 .tab.exited .tab-title { text-decoration: line-through; }
 .tab-icon { font-size: 11px; color: var(--accent); }
-/* Claude works in the tab: its icon runs through Claude Code's own spinner glyphs; grey and slower for an agent it left
-   running after the turn. The delay (set from one clock) keeps the phase when the tabs are redrawn. */
+/* Claude works in the tab: its icon runs through Claude Code's own spinner glyphs. The delay (set from one clock) keeps
+   the phase when the tabs are redrawn. */
 .spin { display: inline-block; width: 1em; text-align: center; color: var(--accent); }
 .spin::before { content: '✳'; animation: tab-spin 1.2s steps(1) infinite; animation-delay: var(--spin-delay, 0ms); }
-.spin.bg { color: var(--muted); }
-.spin.bg::before { animation-duration: 2.4s; }
 @keyframes tab-spin { 0% { content: '·'; } 10% { content: '✢'; } 20% { content: '✳'; } 30% { content: '✶'; } 40% { content: '✻'; } 50% { content: '✽'; } 60% { content: '✻'; } 70% { content: '✶'; } 80% { content: '✳'; } 90% { content: '✢'; } }
 @media (prefers-reduced-motion: reduce) { .spin::before { animation: none; content: '✻'; } }
 .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

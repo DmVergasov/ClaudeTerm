@@ -39,8 +39,8 @@ export interface TabInfo {
   activity: TabActivity
 }
 
-/** working: Claude is in a turn; background: the turn ended, and an agent it left in the background still runs */
-export type TabActivity = 'working' | 'background' | null
+/** working: Claude is in a turn, or an agent it started still runs (Claude Code waits for it past the end of the turn) */
+export type TabActivity = 'working' | null
 
 export interface OpenTabRequest {
   kind: TabKind
