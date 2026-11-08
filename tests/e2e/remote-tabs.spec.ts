@@ -1821,12 +1821,18 @@ test("a fork that B makes after B dragged A's tabs into a new order stands right
   const y = await openShell(a)
   const barA = async () => (await b.page.evaluate(() => [...document.querySelectorAll('#tabbar .tab')].map((e) => (e as HTMLElement).dataset.tabId))).filter((id) => id !== b.firstTab)
   await expect.poll(barA, SLOW).toEqual([a.firstTab, x.id, y.id])
-  // B drags y onto x: this window's order is head, y, x
-  // a title that comes in the meantime draws the bar again: a drag whose source went before it started is dragged again
-  await expect(async () => {
-    await b.page.locator(`#tabbar .tab[data-tab-id="${y.id}"]`).dragTo(b.page.locator(`#tabbar .tab[data-tab-id="${x.id}"]`))
-    await expect.poll(barA, { timeout: 5000 }).toEqual([a.firstTab, y.id, x.id])
-  }).toPass(SLOW)
+  // B drags y onto x: this window's order is head, y, x. The drag is the tab bar's own drag events, the ones a person's
+  // drag fires: on the off-screen windows of a busy Windows runner the system's drag sometimes never starts for a whole
+  // test, and this test is about the fork's place (the drag has tests of its own)
+  await b.page.evaluate(([from, to]) => {
+    const tab = (id: string): Element => document.querySelector(`#tabbar .tab[data-tab-id="${id}"]`)!
+    const data = new DataTransfer()
+    tab(from).dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: data }))
+    tab(to).dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: data }))
+    tab(to).dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }))
+    tab(from).dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: data }))
+  }, [y.id, x.id] as [string, string])
+  await expect.poll(barA, SLOW).toEqual([a.firstTab, y.id, x.id])
   // B forks the head from its tab bar: the fork stands right after the head, before the tabs dragged after it
   const before = await tabIdsOf(a)
   await b.page.locator(`#tabbar .tab[data-tab-id="${a.firstTab}"]`).click({ button: 'right' })
