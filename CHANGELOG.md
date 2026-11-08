@@ -2,6 +2,13 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.16.0
+
+### New
+
+- **Open a tab on a device that has none open.** With the tabs on the left, a connected device keeps its header in the panel even when none of its tabs is open. Click the header to open a tab there: **New Claude Code tab**, or a new tab for one of its shell profiles. A device that is offline and has no tab is not shown, as before.
+- **A + on each device's header.** With the tabs on the left, the header of each connected device has a **+** that opens the same menu, so you no longer need the right-click to open a tab on another device.
+
 ## 0.15.1
 
 ### Changes

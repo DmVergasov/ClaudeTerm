@@ -19,8 +19,8 @@ interface Section {
 
 /**
  * The left tab panel: the header buttons, then this device's tabs as groups by project, each group with its tabs in rows
- * of two lines (the title, and the branch of the tab's folder). Then one section per other device that has tabs: its
- * header, and its tabs grouped the same way. Groups fold on a click on their header, a device on a click on its header;
+ * of two lines (the title, and the branch of the tab's folder). Then one section per other device that has tabs or is
+ * online: its header, and its tabs grouped the same way. Groups fold on a click on their header, a device on a click on its header;
  * the panel's right edge is dragged to change its width. Its items and callbacks are the tab bar's: main shows one or the other.
  */
 export class TabPanel {
@@ -138,14 +138,17 @@ export class TabPanel {
     this.saveLayout({ folded: [...this.folded] })
   }
 
-  /** the panel's parts in the order it shows them: this device's groups, then each other device's section that has tabs */
+  /**
+   * The panel's parts in the order it shows them: this device's groups, then a section for each other device that has
+   * tabs or is online. An online device with no tab keeps its header, the place to open a tab there from.
+   */
   private sections(): Section[] {
     const own = this.items.filter((item) => item.group === null)
     return [
       { device: null, groups: panelGroups(own) },
       ...this.devices.flatMap((device) => {
         const tabs = this.items.filter((item) => item.group === device.id)
-        return tabs.length === 0 ? [] : [{ device, groups: deviceGroups(device.id, tabs) }]
+        return tabs.length === 0 && !device.online ? [] : [{ device, groups: deviceGroups(device.id, tabs) }]
       })
     ]
   }
@@ -153,21 +156,34 @@ export class TabPanel {
   private renderSection(section: Section, byId: Map<string, TabBarItem>): HTMLElement[] {
     const device = section.device
     if (device === null) return this.renderGroups(section, byId)
+    const empty = section.groups.length === 0
+    // a device with no tab has nothing to fold: it is shown unfolded, whatever its fold says
+    const folded = device.folded && !empty
     const el = document.createElement('div')
-    el.className = `tp-section${device.online ? '' : ' offline'}${device.folded ? ' folded' : ''}`
+    el.className = `tp-section${device.online ? '' : ' offline'}${folded ? ' folded' : ''}${empty ? ' empty' : ''}`
     el.style.setProperty('--dc', device.color)
-    el.append(this.renderDeviceHead(device))
+    el.append(this.renderDeviceHead(device, folded, empty))
     // a folded device shows its header only: its count and its attention dot, as its chip does
-    if (!device.folded) el.append(...this.renderGroups(section, byId))
+    if (!folded) el.append(...this.renderGroups(section, byId))
     return [el]
   }
 
-  /** another device's header: its colour bar, its name (with the offline note), and folded, its count and attention dot */
-  private renderDeviceHead(device: TabBarGroup): HTMLElement {
+  /**
+   * Another device's header: its colour bar, its name (with the offline note), and folded, its count and attention dot.
+   * Online, it has a + that opens the device's menu of new tabs; with no tab, a click anywhere on it does the same.
+   */
+  private renderDeviceHead(device: TabBarGroup, folded: boolean, empty: boolean): HTMLElement {
     const head = document.createElement('div')
     head.className = 'tp-device'
     head.dataset.deviceId = device.id
-    head.addEventListener('click', () => this.cb.toggleGroup(device.id))
+    const menuUnder = (el: HTMLElement): void => {
+      const r = el.getBoundingClientRect()
+      this.cb.groupMenu(device.id, { x: r.left, y: r.bottom })
+    }
+    head.addEventListener('click', () => {
+      if (empty) menuUnder(head)
+      else this.cb.toggleGroup(device.id)
+    })
     head.addEventListener('contextmenu', (e) => {
       e.preventDefault()
       this.cb.groupMenu(device.id, { x: e.clientX, y: e.clientY })
@@ -181,7 +197,20 @@ export class TabPanel {
     name.className = 'tp-device-name'
     name.textContent = device.online ? device.name : `${device.name} ${REMOTE_COPY.offline}`
     head.append(chevron, bar, name)
-    if (device.folded) {
+    if (device.online) {
+      const add = document.createElement('button')
+      add.type = 'button'
+      add.className = 'tp-device-new'
+      add.textContent = '+'
+      add.title = REMOTE_COPY.newTabOn(device.name)
+      add.addEventListener('click', (e) => {
+        // the + opens the menu; the header's own click would fold the device
+        e.stopPropagation()
+        menuUnder(add)
+      })
+      head.append(add)
+    }
+    if (folded) {
       const count = document.createElement('span')
       count.className = 'tp-device-count'
       count.textContent = String(device.count)

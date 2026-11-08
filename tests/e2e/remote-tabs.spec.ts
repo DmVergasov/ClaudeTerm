@@ -1854,6 +1854,44 @@ test('stopping A dims its section on B: its header reads offline and its rows ar
   await expect(b.page.locator('#tabpanel .tp-tab.dim')).toHaveCount(0)
 })
 
+test("an online device with no tab keeps its header on the left: a click on it opens a tab there, its + does too, and an offline one with no tab has no header", async () => {
+  test.setTimeout(180_000)
+  const { a, b } = await pairedApps(LEFT_B)
+  await expect(rowIn(b, a.firstTab)).toBeVisible(SLOW)
+  // A closes its only tab: B's tab, listed on A, keeps A's window open with no tab of its own
+  await expect(a.page.locator(`.tab.remote[data-tab-id="${b.firstTab}"]`)).toBeVisible(SLOW)
+  await a.page.evaluate((id) => window.ct.closeTab(id), a.firstTab)
+  await expect(rowIn(b, a.firstTab)).toHaveCount(0, SLOW)
+  await expect(deviceHead(b, a)).toBeVisible()
+  await expect(sectionOfDevice(b, a)).toHaveClass(/empty/)
+
+  // a click on the header opens A's menu: a new tab there, and nothing to fold
+  await deviceHead(b, a).click()
+  const items = b.page.locator('.menu .menu-item')
+  await expect(items.first()).toHaveText(REMOTE_COPY.newClaudeTab, SLOW)
+  await expect(items.filter({ hasText: new RegExp(`^${REMOTE_COPY.fold}$`) })).toHaveCount(0)
+  const before = await tabIdsOf(b)
+  await items.first().click()
+  const newIds = async () => (await tabIdsOf(b)).filter((x) => !before.includes(x))
+  await expect.poll(newIds, SLOW).toHaveLength(1)
+  const id = (await newIds())[0]
+  await expect.poll(() => tabIdsOf(a), SLOW).toContain(id)
+  await expect(rowIn(b, id)).toBeVisible(SLOW)
+  await expect(sectionOfDevice(b, a)).not.toHaveClass(/empty/)
+
+  // with a tab, the header folds on a click as before, and its + opens the same menu without folding
+  await deviceHead(b, a).locator('.tp-device-new').click()
+  await expect(items.first()).toHaveText(REMOTE_COPY.newClaudeTab, SLOW)
+  await expect(sectionOfDevice(b, a)).not.toHaveClass(/folded/)
+  await b.page.keyboard.press('Escape')
+
+  // A closes that tab too and goes offline: a device that is offline and has no tab shows no header
+  await a.page.evaluate((x) => window.ct.closeTab(x), id)
+  await expect(sectionOfDevice(b, a)).toHaveClass(/empty/, SLOW)
+  await a.app.close()
+  await expect(deviceHead(b, a)).toHaveCount(0, SLOW)
+})
+
 test('at the narrowest width a device with a 64-character name keeps its header inside the panel: the name is cut, with an ellipsis', async () => {
   test.setTimeout(180_000)
   const repo = namedRepo('acme')

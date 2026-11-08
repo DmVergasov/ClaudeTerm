@@ -141,6 +141,7 @@ export const REMOTE_COPY = {
   tabTooltip: (title: string, device: string, folder: string) => `${title}\n${device}: ${folder}`,
   newClaudeTab: 'New Claude Code tab',
   newProfileTab: (profile: string) => `New ${profile} tab`,
+  newTabOn: (device: string) => `New tab on ${device}`,
   fold: 'Fold',
   unfold: 'Unfold',
   loading: 'Loading…',

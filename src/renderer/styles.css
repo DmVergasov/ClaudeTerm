@@ -101,6 +101,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .tp-device { display: flex; align-items: center; gap: 8px; height: 30px; margin-top: 10px; padding: 0 8px; border-top: 1px solid var(--border); cursor: pointer; }
 .tp-device:hover { background: #ffffff08; }
 .tp-section.folded > .tp-device > .tp-chevron { transform: rotate(-90deg); }
+/* a device with no tab has nothing to fold: no chevron */
+.tp-section.empty > .tp-device > .tp-chevron { visibility: hidden; }
+.tp-device-new { flex-shrink: 0; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font: inherit; font-size: 14px; line-height: 18px; cursor: pointer; }
+.tp-device-new:hover { color: var(--fg); background: #ffffff14; }
 .tp-device-bar { flex-shrink: 0; width: 3px; height: 14px; border-radius: 2px; background: var(--dc); }
 .tp-section.offline .tp-device-bar { width: 0; background: none; border-left: 3px dashed var(--dc); }
 .tp-device-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-size: 12px; font-weight: 600; }

@@ -740,15 +740,19 @@ function newTabMenu(anchor: HTMLElement): void {
   menuRequest(ct.listProfiles(), (names) => showChoiceMenu(at, () => newTabItems(names)))
 }
 
-/** a device's chip menu: its new Claude tab and one tab per profile (loading until it answers), then Fold or Unfold; offline, only that */
+/**
+ * A device's chip menu: its new Claude tab and one tab per profile (loading until it answers), then Fold or Unfold;
+ * offline, only that. A device with no tab has nothing to fold: its menu is the new tabs alone.
+ */
 function chipItems(deviceId: string): MenuItem[] {
-  const fold: MenuItem = { label: folded.has(deviceId) ? REMOTE_COPY.unfold : REMOTE_COPY.fold, action: () => toggleGroup(deviceId) }
-  if (!isOnline(deviceId)) return [fold]
+  const fold: MenuItem[] = groupTabs(deviceId).length === 0 ? [] : [{ label: folded.has(deviceId) ? REMOTE_COPY.unfold : REMOTE_COPY.fold, action: () => toggleGroup(deviceId) }]
+  if (!isOnline(deviceId)) return fold
   const answer = choices.devices.find((d) => d.device === deviceId)?.value ?? null
   const profiles: MenuItem[] = answer
     ? answer.profiles.map((p) => ({ label: REMOTE_COPY.newProfileTab(p), action: () => void ct.openRemoteTab(deviceId, 'shell', p, null) }))
     : [{ label: REMOTE_COPY.loading, disabled: true }]
-  return [{ label: REMOTE_COPY.newClaudeTab, action: () => void ct.openRemoteTab(deviceId, 'claude', null, null) }, ...profiles, { label: '', separator: true }, fold]
+  const tail: MenuItem[] = fold.length === 0 ? [] : [{ label: '', separator: true }, ...fold]
+  return [{ label: REMOTE_COPY.newClaudeTab, action: () => void ct.openRemoteTab(deviceId, 'claude', null, null) }, ...profiles, ...tail]
 }
 
 // the latest right-click wins when the star lookups of two of them overlap
