@@ -111,6 +111,19 @@ async function pairOfMembers(a: DeviceIdentity, b: DeviceIdentity): Promise<{ hA
   return { hA, hB }
 }
 
+/**
+ * Waits until both sides keep the same link. In pairOfMembers both dial at once, and each side keeps the first link it
+ * authenticates until the other one comes; in the end both keep the link the device with the lower id dialed
+ * (DeviceNet.keep). A message sent before that can go on a link the other side drops, and is not heard.
+ */
+async function sameLink(hA: Harness, a: DeviceIdentity, hB: Harness, b: DeviceIdentity): Promise<void> {
+  const aDialed = a.id < b.id
+  await until(() => {
+    const [la, lb] = [hA.net.links(), hB.net.links()]
+    return la.length === 1 && lb.length === 1 && la[0].outbound === aDialed && lb[0].outbound === !aDialed
+  })
+}
+
 describe('DeviceNet: listening', () => {
   it('listens only while it has members or shows a code', async () => {
     const [a] = await identities(1)
@@ -304,7 +317,7 @@ describe('DeviceNet: member links', () => {
     const [a, b] = await identities(2)
     const { hA, hB } = await pairOfMembers(a, b)
     await until(() => hA.linked.length >= 1 && hB.linked.length >= 1)
-    await until(() => hA.net.links().length === 1 && hB.net.links().length === 1)
+    await sameLink(hA, a, hB, b)
     const onB = once(hB.net.links()[0], 'message') as Promise<[Message]>
     hA.net.links()[0].send({ t: 'sync', seen: {} })
     expect((await onB)[0]).toEqual({ t: 'sync', seen: {} })
@@ -363,7 +376,7 @@ describe('DeviceNet: member links', () => {
   it('a removed notice that arrives on a member link reaches onRemovedNotice', async () => {
     const [a, b] = await identities(2)
     const { hA, hB } = await pairOfMembers(a, b)
-    await until(() => hA.linked.length >= 1 && hB.linked.length >= 1)
+    await sameLink(hA, a, hB, b)
     hA.net.links()[0].send({ t: 'removed', by: 'Studio' })
     await until(() => hB.removed.length === 1)
     expect(hB.removed).toEqual(['Studio'])
@@ -596,7 +609,7 @@ describe('DeviceNet: before authentication', () => {
   it('after authentication a member link accepts a 1 MiB frame', async () => {
     const [a, b] = await identities(2)
     const { hA, hB } = await pairOfMembers(a, b)
-    await until(() => hA.net.links().length === 1 && hB.net.links().length === 1)
+    await sameLink(hA, a, hB, b)
     const atB = once(hB.net.links()[0], 'message') as Promise<[Message]>
     hA.net.links()[0].send({ t: 'sync', seen: {}, pad: 'x'.repeat(1024 * 1024) } as unknown as Message)
     expect((await atB)[0]).toEqual({ t: 'sync', seen: {} })
