@@ -2,7 +2,7 @@ import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { historyBaseline, type HistoryEdit } from './baselines'
 import { BINARY_PROBE_BYTES, contentSha, isBinary, MAX_SNAPSHOT_BYTES, type FileRead, type Snapshot } from './edit-ledger'
-import { changedFiles, checkIgnored, execGit, headOrEmpty, numstat, readBlobs, repoRoot, revisionInfo, untrackedFiles, verifyRef, type GitChange, type GitRun, type RevInfo } from './git-source'
+import { changedFiles, checkIgnored, execGit, headOrEmpty, lfsUnchanged, MAX_POINTER, numstat, readBlobs, repoRoot, revisionInfo, untrackedFiles, verifyRef, type GitChange, type GitRun, type RevInfo } from './git-source'
 import { pathKey } from './path-key'
 import { MAX_FILES, MAX_FORCED_BYTES, MAX_SIDE_BYTES, MAX_TOTAL_BYTES, type DiffInput, type Side } from './review-diff'
 
@@ -154,6 +154,17 @@ function diskSide(io: SourceIo, path: string, forced: boolean, budget: Budget): 
 
 const byPath = <T extends { path: string }>(a: T, b: T): number => a.path.localeCompare(b.path)
 
+/**
+ * The files whose blob in the revision is small enough to be git-lfs's pointer: git runs without git-lfs's filter, so one
+ * it keeps aside reads as modified and binary when only its time changed (lfsUnchanged tells)
+ */
+function pointerCandidates(paths: string[], info: Map<string, RevInfo>): { path: string; id: string }[] {
+  return paths.flatMap((path) => {
+    const i = info.get(path)
+    return i?.kind === 'blob' && i.size < MAX_POINTER ? [{ path, id: i.id }] : []
+  })
+}
+
 /** `exclude` takes a file's path inside the repository (with /) and names the files left out of the view: listed in `excluded`, not read, not counted against the limits */
 export async function gitInputs(
   io: SourceIo, root: string, from: string, to: string | null, paths: string[], forced: (path: string) => boolean, exclude: (relPath: string) => boolean = () => false
@@ -175,6 +186,7 @@ export async function gitInputs(
   const after = to === null ? null : await revisionInfo(io.git, root, to, all)
   // git tells which tracked files are binary: their blobs are not read, and spend none of the budget
   const binary = new Set((await numstat(io.git, root, from, to, paths)).filter((c) => c.binary).map((c) => pathKey(c.path)))
+  const same = to === null ? await lfsUnchanged(io.git, root, pointerCandidates(changes.filter((c) => c.status === 'modified' && binary.has(pathKey(c.path))).map((c) => c.path), before)) : new Set<string>()
   const budget = new Budget()
   const ids = new Set<string>()
   type Planned = Side | { kind: 'blob'; id: string }
@@ -187,7 +199,7 @@ export async function gitInputs(
     ids.add(info.id)
     return { kind: 'blob', id: info.id }
   }
-  const planned = changes.map((c) => {
+  const planned = changes.filter((c) => !same.has(c.path)).map((c) => {
     const f = forced(c.path)
     const bin = binary.has(pathKey(c.path))
     return { c, f, b: plan(before.get(c.path), f, bin), a: after ? plan(after.get(c.path), f, bin) : diskSide(io, c.path, f, budget) }
@@ -334,7 +346,12 @@ export function lineCount(data: Buffer): number {
  * the others, and binary or too large files, count no lines.
  */
 export async function gitTotals(io: SourceIo, root: string): Promise<Totals> {
-  const tracked = await numstat(io.git, root, await headOrEmpty(io.git, root))
+  const head = await headOrEmpty(io.git, root)
+  const counted = await numstat(io.git, root, head)
+  const binary = counted.filter((c) => c.binary).map((c) => c.path)
+  const info = binary.length > 0 ? await revisionInfo(io.git, root, head, binary) : new Map<string, RevInfo>()
+  const same = await lfsUnchanged(io.git, root, pointerCandidates(binary, info))
+  const tracked = counted.filter((c) => !same.has(c.path))
   const untracked = await untrackedFiles(io.git, root, [])
   let additions = 0
   let deletions = 0

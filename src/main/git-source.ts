@@ -1,4 +1,6 @@
-import { existsSync, realpathSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { createReadStream, existsSync, realpathSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { RunError, runOffThread } from './off-thread-spawn'
 import { pathKey } from './path-key'
@@ -17,17 +19,23 @@ export const GIT_TIMEOUT_MS = 10_000
 /** git's id of the empty tree: what a repository without commits is compared with */
 export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 const MAX_OUTPUT = 64 * 1024 * 1024
+/**
+ * git-lfs's filter left out: git runs it for each modified file it compares with the work tree, and git-lfs starts slowly
+ * and writes the file's content into .git/lfs. A file it keeps aside is compared by its content instead (lfsUnchanged).
+ */
+const NO_LFS_FILTER = ['-c', 'filter.lfs.process=', '-c', 'filter.lfs.clean=', '-c', 'filter.lfs.required=false']
 
 /**
  * git without a shell; stdout raw (paths and contents are bytes), a time limit, input on stdin. No fsmonitor command
  * the repository configures, and no optional index lock that could collide with Claude's own git add or commit. The file system
- * cache of Git for Windows is forced on (its default; other gits ignore the key): `git status` is slow without it.
+ * cache of Git for Windows is forced on (its default; other gits ignore the key): `git status` is slow without it. git-lfs's
+ * filter does not run (NO_LFS_FILTER).
  * git starts off the main thread (off-thread-spawn.ts): the Changes panel and the tab places run it at every tab switch.
  */
 export const execGit: GitRun = async (args, cwd, input) => {
   const name = args.find((a) => !a.startsWith('-')) ?? 'git'
   try {
-    return await runOffThread('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', 'core.fscache=true', '--no-optional-locks', ...args], { cwd, input: input ?? '', timeoutMs: GIT_TIMEOUT_MS, maxOutput: MAX_OUTPUT })
+    return await runOffThread('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', 'core.fscache=true', '--no-optional-locks', ...NO_LFS_FILTER, ...args], { cwd, input: input ?? '', timeoutMs: GIT_TIMEOUT_MS, maxOutput: MAX_OUTPUT })
   } catch (e) {
     if (!(e instanceof RunError)) throw e
     if (e.reason === 'not-found') throw new GitError('git was not found')
@@ -194,6 +202,53 @@ export async function numstat(run: GitRun, root: string, from: string, to: strin
     if (m) out.push({ path: resolve(root, m[3]!), additions: m[1] === '-' ? 0 : Number(m[1]), deletions: m[2] === '-' ? 0 : Number(m[2]), binary: m[1] === '-' })
   }
   return out
+}
+
+// git-lfs's pointer: what git holds of a file git-lfs keeps aside, under 1024 bytes by its specification
+const LFS_POINTER = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\n(?:[^\n]*\n)*?oid sha256:([0-9a-f]{64})\n(?:[^\n]*\n)*?size (\d+)\n/
+export const MAX_POINTER = 1024
+
+/**
+ * Of files git calls modified and binary in the work tree, each with its blob in the revision it is compared with (under
+ * MAX_POINTER bytes: candidates for a pointer), the ones git-lfs keeps aside whose content is still the one their pointer
+ * names. Without git-lfs's filter (NO_LFS_FILTER) git tells such a file from its pointer by the bytes alone, so one whose
+ * time changed alone (git-lfs checked it out, an editor saved the same bytes) reads as modified: its size and SHA-256
+ * tell. Paths as given; one `git cat-file`, none when there is no candidate.
+ */
+export async function lfsUnchanged(run: GitRun, root: string, files: { path: string; id: string }[]): Promise<Set<string>> {
+  const same = new Set<string>()
+  if (files.length === 0) return same
+  const blobs = await readBlobs(run, root, [...new Set(files.map((f) => f.id))])
+  for (const { path, id } of files) {
+    const m = LFS_POINTER.exec(blobs.get(id)?.toString('utf8') ?? '')
+    if (m && (await hasContent(path, Number(m[2]), m[1]!))) same.add(path)
+  }
+  return same
+}
+
+/** SHA-256 of files by path, size and time: the Changes panel asks for the same files at every refresh */
+const hashes = new Map<string, string>()
+const MAX_HASHES = 4096
+
+/** whether a file holds the content of this size and SHA-256; false when it cannot be read */
+async function hasContent(path: string, size: number, sha256: string): Promise<boolean> {
+  try {
+    const s = await stat(path)
+    if (!s.isFile() || s.size !== size) return false
+    const key = `${pathKey(path)}|${s.size}|${s.mtimeMs}`
+    let hex = hashes.get(key)
+    if (hex === undefined) {
+      const hash = createHash('sha256')
+      // read in pieces: a large asset does not hold up the main process
+      for await (const piece of createReadStream(path)) hash.update(piece as Buffer)
+      hex = hash.digest('hex')
+      if (hashes.size >= MAX_HASHES) hashes.clear()
+      hashes.set(key, hex)
+    }
+    return hex === sha256
+  } catch {
+    return false
+  }
 }
 
 export type RevInfo = { kind: 'blob'; id: string; size: number } | { kind: 'absent' } | { kind: 'dir' }

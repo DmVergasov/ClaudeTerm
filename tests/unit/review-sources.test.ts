@@ -187,11 +187,13 @@ describe('gitTotals', () => {
   const ok = (stdout: string): GitResult => ({ code: 0, stdout: Buffer.from(stdout), stderr: '' })
   function fakeGit(numstat: string, untracked: string[]): { run: GitRun; calls: string[][] } {
     const calls: string[][] = []
-    const run: GitRun = async (args) => {
+    const run: GitRun = async (args, _cwd, input) => {
       calls.push(args)
       if (args.includes('rev-parse')) return ok('1111111111111111111111111111111111111111\n')
       if (args.includes('--numstat')) return ok(numstat)
       if (args.includes('status')) return ok(untracked.map((u) => `?? ${u}\0`).join(''))
+      // what a binary file is in HEAD, asked to tell the files git-lfs keeps aside: none here
+      if (args.includes('--batch-check')) return ok((input ?? '').split('\n').filter(Boolean).map((l) => `${l} missing\n`).join(''))
       throw new Error(`unexpected git ${args.join(' ')}`)
     }
     return { run, calls }
