@@ -21,6 +21,7 @@ const CASE_LABELS: Record<NotificationCase, string> = {
 const CHANNEL_LABELS: Record<keyof NotificationChannels, string> = { sound: 'Sound', flash: 'Taskbar flash', banner: 'Notification', tab: 'Tab highlight', front: 'Even in front' }
 const NO_ROOM_OPTIONS: Option[] = [{ value: 'overlay', label: 'Over the terminal' }, { value: 'narrow', label: 'Narrow the terminal' }]
 const TAB_POSITION_OPTIONS: Option[] = [{ value: 'top', label: 'On top' }, { value: 'left', label: 'On the left' }]
+const CONPTY_OPTIONS: Option[] = [{ value: 'bundled', label: 'Bundled with ClaudeTerm' }, { value: 'system', label: "Windows' own" }]
 
 /** one control: shows its part of the view; its inputs are disabled while settings.json is locked */
 interface Control {
@@ -229,7 +230,11 @@ root.append(
   section('Shells', null,
     selectField('Default shell', 'defaultProfile', (v) => profileOptions(v.profiles, v.settings.defaultProfile), profileValue, automaticHint),
     textField('Default folder', 'defaultFolder', 'text', (v) => v.settings.defaultFolder ?? '', checkOptionalText,
-      'new tabs open here; a Claude tab opens in the folder of the tab it is opened from · empty: your home folder')),
+      'new tabs open here; a Claude tab opens in the folder of the tab it is opened from · empty: your home folder'),
+    ...(ct.platform === 'win32'
+      ? [selectField('Console host', 'conpty', (v) => ({ options: CONPTY_OPTIONS, selected: v.settings.conpty }), (s) => s,
+        "applies to new tabs · the ConPTY of Windows Terminal; Windows' own one may leave lines of Claude Code's screen behind or double them")]
+      : [])),
   section('Claude Code', null,
     textField('Command', 'claude.command', 'text', (v) => v.settings.claude.command, checkText, 'applies to new tabs'),
     selectField('Shell for Claude tabs', 'claude.shellProfile', (v) => profileOptions(v.profiles, v.settings.claude.shellProfile), profileValue, 'applies to new tabs'),

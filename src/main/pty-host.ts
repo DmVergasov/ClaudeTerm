@@ -18,6 +18,8 @@ export interface SpawnOptions {
   env: Record<string, string>
   cols: number
   rows: number
+  /** Windows: the ConPTY bundled with node-pty (Windows Terminal's) instead of Windows' own */
+  bundledConpty?: boolean
   onData(data: string): void
   onExit(exitCode: number): void
 }
@@ -38,7 +40,8 @@ export const spawnPty: SpawnPty = (o) => {
     rows: Math.max(o.rows, 1),
     cwd: o.cwd,
     env: o.env,
-    useConpty: true
+    useConpty: true,
+    useConptyDll: o.bundledConpty === true
   })
   let alive = true
   let killed = false

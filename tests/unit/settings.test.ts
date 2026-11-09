@@ -233,6 +233,20 @@ describe('side panel settings', () => {
     const r = applySettingEdit('{}', 'tabs.position', 'left')
     expect(r.ok && JSON.parse(r.text)).toEqual({ tabs: { position: 'left' } })
   })
+
+  it("conpty: the console host bundled with ClaudeTerm by default, Windows' own when set, other values fall back with an error", () => {
+    expect(DEFAULT_SETTINGS.conpty).toBe('bundled')
+    expect(parseSettings(JSON.stringify({ conpty: 'system' })).settings.conpty).toBe('system')
+    const bad = parseSettings(JSON.stringify({ conpty: 'winpty' }))
+    expect(bad.settings.conpty).toBe('bundled')
+    expect(bad.errors.some((e) => e.includes('"conpty"'))).toBe(true)
+  })
+
+  it('the settings window saves conpty, bundled or system only', () => {
+    const r = applySettingEdit('{}', 'conpty', 'system')
+    expect(r.ok && JSON.parse(r.text)).toEqual({ conpty: 'system' })
+    expect(applySettingEdit('{}', 'conpty', 'winpty')).toEqual({ ok: false, error: 'Invalid value for conpty' })
+  })
 })
 
 describe('loadSettingsSafe', () => {

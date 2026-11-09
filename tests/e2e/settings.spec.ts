@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { StatusMessage } from '../../src/shared/protocol'
 import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
-import { MAC } from '../fixtures/platform'
+import { MAC, WIN } from '../fixtures/platform'
 import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, TEST_SHELL, windowPlaces, KEYS } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -481,5 +481,21 @@ test('the Test files field refuses more than 200 patterns and keeps the saved li
   await patterns.blur()
   await expect(win.locator('.field-error', { hasText: 'At most 200 patterns' })).toBeVisible()
   expect(readSettings(dataDir).review?.testPatterns).toEqual(['keep/**'])
+  await app.close()
+})
+
+test("on Windows the console host select shows the bundled ConPTY by default and saves Windows' own to settings.json; elsewhere it is not there", async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  const select = win.locator('[data-key="conpty"]')
+  if (!WIN) {
+    await expect(select).toHaveCount(0)
+    await app.close()
+    return
+  }
+  await expect(select).toHaveValue('bundled')
+  await select.selectOption('system')
+  await expect.poll(() => readSettings(dataDir).conpty).toBe('system')
   await app.close()
 })

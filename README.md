@@ -240,6 +240,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
   "theme": "Campbell",             // "Campbell", "One Half Dark", "One Half Light", or an xterm.js theme object
   "scrollback": 10000,
   "tabs": { "position": "top" },   // "top": the tab bar above the terminal; "left": a panel on the left, the tabs grouped by project
+  "conpty": "bundled",             // Windows: the ConPTY new tabs run in; "bundled": Windows Terminal's, shipped with ClaudeTerm; "system": Windows' own
   "imageWatch": {                  // new images in the session's scratchpad (Claude tabs only)
     "enabled": true,
     "extensions": ["png", "jpg", "jpeg", "gif", "webp", "bmp"],

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { isSettingKey, isSettingValue, SETTING_KEYS } from '../../src/shared/settings-keys'
 
 describe('settings keys', () => {
-  it('lists the 25 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-six plain settings', () => {
-    expect(SETTING_KEYS).toHaveLength(54)
+  it('lists the 25 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-seven plain settings', () => {
+    expect(SETTING_KEYS).toHaveLength(55)
     expect(SETTING_KEYS).toContain('devices.keepAwake')
     expect(SETTING_KEYS).toContain('notifications.bell.tab')
     expect(SETTING_KEYS).toContain('notifications.peer.tab')
@@ -28,6 +28,7 @@ describe('settings keys', () => {
     expect(SETTING_KEYS).toContain('review.renderMarkdown')
     expect(SETTING_KEYS).toContain('sidePanel.noRoom')
     expect(SETTING_KEYS).toContain('tabs.position')
+    expect(SETTING_KEYS).toContain('conpty')
   })
 
   it('isSettingKey accepts tabs.position', () => {

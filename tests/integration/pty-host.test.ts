@@ -1,8 +1,15 @@
+import { execFileSync } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
 import { spawnPty } from '../../src/main/pty-host'
 import { WIN } from '../fixtures/platform'
 
 const env = process.env as Record<string, string>
+
+/** a process's running children as "pid name", the name lower case */
+function children(pid: number): string[] {
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}" | ForEach-Object { "$($_.ProcessId) $($_.Name)" }`], { encoding: 'utf8' })
+  return out.split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0)
+}
 
 describe('spawnPty', () => {
   it.runIf(WIN)('runs a process and reports output and exit code', async () => {
@@ -20,6 +27,28 @@ describe('spawnPty', () => {
       spawnPty({ file: 'cmd.exe', args: '/c echo "quoted arg"', cwd: process.cwd(), env, cols: 80, rows: 24, onData: (d) => { out += d }, onExit: resolve })
     })
     await vi.waitFor(() => expect(out).toContain('"quoted arg"'))
+  })
+
+  // the console host is the process ConPTY starts beside the program, a child of the process that opens the PTY
+  it.runIf(WIN)("runs in the console host it is given: the one bundled with node-pty, or Windows' own", async () => {
+    // the names of the processes the PTY added: a console host an earlier test started may still be closing
+    const hosts = async (bundledConpty: boolean): Promise<string[]> => {
+      const before = new Set(children(process.pid))
+      let out = ''
+      const h = spawnPty({ file: 'cmd.exe', args: ['/k', 'echo host-up'], cwd: process.cwd(), env, cols: 80, rows: 24, bundledConpty, onData: (d) => { out += d }, onExit: () => {} })
+      try {
+        await vi.waitFor(() => expect(out).toContain('host-up'), { timeout: 10_000 })
+        return children(process.pid).filter((c) => !before.has(c)).map((c) => c.slice(c.indexOf(' ') + 1))
+      } finally {
+        h.kill()
+      }
+    }
+    const bundled = await hosts(true)
+    expect(bundled).toContain('openconsole.exe')
+    expect(bundled).not.toContain('conhost.exe')
+    const system = await hosts(false)
+    expect(system).toContain('conhost.exe')
+    expect(system).not.toContain('openconsole.exe')
   })
 
   it.runIf(WIN)('kill() is idempotent and write after kill is ignored', () => {

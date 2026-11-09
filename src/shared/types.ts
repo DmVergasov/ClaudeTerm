@@ -142,6 +142,9 @@ export type NoRoomMode = Exclude<PanelMode, 'beside'>
 /** where the tab bar sits: across the top, or as a column on the left */
 export type TabPosition = 'top' | 'left'
 
+/** Windows: the ConPTY tabs run in: the one bundled with node-pty (Windows Terminal's), or Windows' own (conhost) */
+export type ConptyHost = 'bundled' | 'system'
+
 export interface Settings {
   defaultProfile: string | null
   /** the folder new tabs open in, an absolute path; null: the home folder */
@@ -167,6 +170,8 @@ export interface Settings {
   /** where Images and Changes go when the window has no room to widen for them */
   sidePanel: { noRoom: NoRoomMode }
   tabs: { position: TabPosition }
+  /** applies to tabs opened after a change */
+  conpty: ConptyHost
   /** device sync: the port the group listens on; the group is open once this device has an identity (device-identity.json) */
   devices: { port: number; keepAwake: boolean }
   /** check GitHub for new versions in the background */

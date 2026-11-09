@@ -528,7 +528,8 @@ function bootstrap(): void {
       taskLists.removeTab(tabId)
       newerSide.delete(tabId)
     },
-    spawn: spawnPty,
+    // read at each start: the console host applies to tabs opened after a change
+    spawn: (o) => spawnPty({ ...o, bundledConpty: settings.conpty === 'bundled' }),
     pipeName,
     baseEnv: childEnv,
     resolveLaunch: (req) => {

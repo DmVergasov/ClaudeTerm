@@ -3,7 +3,7 @@ import { dirname, isAbsolute, win32 } from 'node:path'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import { DEFAULT_DEVICE_PORT } from '../shared/devices'
 import { DEFAULT_TEST_PATTERNS, MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
-import type { NoRoomMode, NotificationSettings, ProfileDef, Settings, TabPosition } from '../shared/types'
+import type { ConptyHost, NoRoomMode, NotificationSettings, ProfileDef, Settings, TabPosition } from '../shared/types'
 
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   review: { editor: null, statusBar: true, hideIgnored: true, hideTests: false, testPatterns: [...DEFAULT_TEST_PATTERNS], width: 640, fileTree: true, treeWidth: 200, renderMarkdown: true },
   sidePanel: { noRoom: 'overlay' },
   tabs: { position: 'top' },
+  conpty: 'bundled',
   devices: { port: DEFAULT_DEVICE_PORT, keepAwake: true },
   autoUpdate: true
 }
@@ -57,6 +58,7 @@ const isStrArr: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.ev
 const isTestPatterns: Guard<string[]> = (v): v is string[] => isStrArr(v) && v.length <= MAX_TEST_PATTERNS && v.every((p) => p.length <= MAX_TEST_PATTERN_LENGTH)
 const isNoRoom: Guard<NoRoomMode> = (v): v is NoRoomMode => v === 'overlay' || v === 'narrow'
 const isTabPosition: Guard<TabPosition> = (v): v is TabPosition => v === 'top' || v === 'left'
+const isConptyHost: Guard<ConptyHost> = (v): v is ConptyHost => v === 'bundled' || v === 'system'
 const numIn = (min: number, max: number): Guard<number> => (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
 const wholeIn = (min: number, max: number): Guard<number> => (v): v is number => numIn(min, max)(v) && Number.isInteger(v)
 const isPlainObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -162,6 +164,7 @@ export function parseSettings(text: string | null): ParsedSettings {
     },
     sidePanel: { noRoom: take('sidePanel.noRoom', sp.noRoom, isNoRoom, d.sidePanel.noRoom) },
     tabs: { position: take('tabs.position', obj(raw.tabs).position, isTabPosition, d.tabs.position) },
+    conpty: take('conpty', raw.conpty, isConptyHost, d.conpty),
     devices: {
       port: take('devices.port', dv.port, wholeIn(1024, 65535), d.devices.port),
       keepAwake: take('devices.keepAwake', dv.keepAwake, isBool, d.devices.keepAwake)
