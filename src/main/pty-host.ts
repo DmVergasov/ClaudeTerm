@@ -1,5 +1,5 @@
 import * as pty from 'node-pty'
-import { processAlive, sessionAlive, sessionPrograms, waitSessionGone } from './pty-session'
+import { consolePrograms, processAlive, sessionAlive, sessionPrograms, waitSessionGone } from './pty-session'
 
 /** how long a killed tab's programs get to quit after SIGHUP before its PTY counts as exited (not Windows) */
 export const SESSION_EXIT_WAIT_MS = 2000
@@ -83,7 +83,16 @@ export const spawnPty: SpawnPty = (o) => {
         } catch { /* process already gone */ }
       }
       if (process.platform === 'darwin') void sessionPrograms(p.pid).then((pids) => { programs = pids; hangUp() })
-      else hangUp()
+      // node-pty ends the console's programs at once for Windows' own ConPTY only. The bundled one would give them about
+      // 5 s to quit, longer than a restart waits for the old claude: end them as node-pty does, read before the close.
+      else if (process.platform === 'win32' && o.bundledConpty === true) {
+        void consolePrograms(p.pid).then((pids) => {
+          hangUp()
+          for (const c of pids) {
+            try { process.kill(c) } catch { /* already gone */ }
+          }
+        })
+      } else hangUp()
     }
   }
 }

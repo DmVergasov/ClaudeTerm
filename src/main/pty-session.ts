@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { runOffThread } from './off-thread-spawn'
 
 /** runs a program and resolves what it prints */
 export type OutputRunner = (file: string, args: string[]) => Promise<string>
@@ -67,6 +68,32 @@ export function descendantsOf(pid: number, ps: string): number[] {
 export async function sessionPrograms(pid: number, run: OutputRunner = output): Promise<number[]> {
   try {
     return descendantsOf(pid, await run('ps', ['-A', '-o', 'pid=,ppid=']))
+  } catch {
+    return []
+  }
+}
+
+/** how long reading a console's programs may take: its own close ends them after about 5 s anyway */
+const CONSOLE_LIST_TIMEOUT_MS = 5000
+
+// node-pty's reader of a console's programs (conpty_console_list.node), in a process of its own as node-pty runs it for
+// Windows' own ConPTY: a process can look into one console only, and the reader leaves itself out of the list
+const CONSOLE_LIST = "const { loadNativeModule } = require(process.argv[1]);" +
+  "const list = loadNativeModule('conpty_console_list').module.getConsoleProcessList(Number(process.argv[2]));" +
+  "process.stdout.write(JSON.stringify(list.filter((p) => p !== process.pid)))"
+
+/**
+ * Windows: the programs of the console a PTY's shell runs in, the shell among them. Read off the main thread; none when
+ * that fails or takes too long.
+ */
+export async function consolePrograms(pid: number): Promise<number[]> {
+  try {
+    const r = await runOffThread(process.execPath, ['-e', CONSOLE_LIST, require.resolve('node-pty/lib/utils'), String(pid)], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      timeoutMs: CONSOLE_LIST_TIMEOUT_MS
+    })
+    const list: unknown = JSON.parse(r.stdout.toString('utf8'))
+    return Array.isArray(list) ? list.filter((n): n is number => Number.isInteger(n) && n > 0) : []
   } catch {
     return []
   }

@@ -51,6 +51,36 @@ describe('spawnPty', () => {
     expect(system).not.toContain('openconsole.exe')
   })
 
+  // like claude.exe, the probe takes its time to quit when its console closes (CTRL_CLOSE_EVENT arrives as SIGHUP); a
+  // restart waits 3 s for the old process to exit before it starts the new one
+  it.runIf(WIN)('kill() ends the programs of the console at once and reports the exit after them, in either console host', async () => {
+    for (const bundledConpty of [true, false]) {
+      let out = ''
+      let exitedAt = 0
+      let child = 0
+      let childAliveAtExit = true
+      const script = "process.on('SIGHUP',()=>setTimeout(()=>process.exit(),8000));console.log('child '+process.pid);setInterval(()=>{},1000)"
+      const h = spawnPty({
+        file: 'cmd.exe', args: ['/c', 'node', '-e', script], cwd: process.cwd(), env, cols: 80, rows: 24, bundledConpty,
+        onData: (d) => { out += d },
+        onExit: () => {
+          exitedAt = Date.now()
+          try { process.kill(child, 0) } catch { childAliveAtExit = false }
+        }
+      })
+      try {
+        await vi.waitFor(() => expect(out).toMatch(/child \d+/), { timeout: 10_000 })
+        child = Number(/child (\d+)/.exec(out)![1])
+        const killedAt = Date.now()
+        h.kill()
+        await vi.waitFor(() => expect(exitedAt).toBeGreaterThan(0), { timeout: 10_000 })
+        expect({ bundledConpty, quitWithin3s: exitedAt - killedAt < 3000, childAliveAtExit }).toEqual({ bundledConpty, quitWithin3s: true, childAliveAtExit: false })
+      } finally {
+        try { process.kill(child) } catch { /* gone */ }
+      }
+    }
+  }, 30_000)
+
   it.runIf(WIN)('kill() is idempotent and write after kill is ignored', () => {
     const h = spawnPty({ file: 'cmd.exe', args: [], cwd: process.cwd(), env, cols: 80, rows: 24, onData: () => {}, onExit: () => {} })
     h.kill()
