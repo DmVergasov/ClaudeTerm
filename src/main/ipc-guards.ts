@@ -148,6 +148,12 @@ const TERMINAL_REPORTS = /^(?:\x1b\[[IO]|\x1b\[[?>]?[\d;]*c|\x1b\[\??[\d;]*R|\x1
 
 export const isUserInput = (data: string): boolean => !TERMINAL_REPORTS.test(data)
 
+// the answers among them (device attributes, cursor position, mode reports), not the focus reports
+const TERMINAL_ANSWERS = /^(?:\x1b\[[?>]?[\d;]*c|\x1b\[\??[\d;]*R|\x1b\[\??[\d;]*\$y)+$/
+
+/** what xterm.js answers to a program's question about the terminal, which is not typed */
+export const isTerminalAnswer = (data: string): boolean => TERMINAL_ANSWERS.test(data)
+
 // mouse reports (SGR, X10) and the keys that scroll a view: reading a reply, not writing a prompt
 const READING_INPUT = /^(?:\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3}|\x1b\[[1456](?:;\d+)?~|\x1b\[(?:1;\d+)?[HF])+$/
 

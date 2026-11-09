@@ -578,6 +578,26 @@ describe('remote tabs', () => {
     expect(a.fake.inputs).toEqual([[T1, 'ls\r', B_ID]])
   })
 
+  // the tab's own window answers every question its program asks the terminal (the bundled ConPTY asks one as it
+  // starts); the answer of this window would come second and reach the program as typed text
+  it("this window's answers to terminal questions stay here; its keys and focus reports still go", async () => {
+    const w = newWorld()
+    const a = newRemote(A_ID)
+    setTabs(a, [tab(T1)])
+    openTab(a, T1)
+    await connect(w, a)
+    await until(() => w.viewer.has(T1))
+    w.viewer.activated(T1)
+    w.viewer.fit(T1, 90, 20)
+    w.viewer.input(T1, '\x1b[?1;2c')
+    w.viewer.input(T1, '\x1b[12;40R')
+    w.viewer.input(T1, '\x1b[?2026;2$y')
+    w.viewer.input(T1, '\x1b[I')
+    w.viewer.input(T1, 'ls\r')
+    await until(() => a.fake.inputs.some(([, d]) => d === 'ls\r'))
+    expect(a.fake.inputs).toEqual([[T1, '\x1b[I', B_ID], [T1, 'ls\r', B_ID]])
+  })
+
   it('a device that goes leaves its tabs offline and drops input to them; when it comes back they come back from a fresh snapshot', async () => {
     const w = newWorld()
     const a = newRemote(A_ID)

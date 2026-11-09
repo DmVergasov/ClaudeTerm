@@ -1,6 +1,7 @@
 import { type DevicePlatform, type DeviceView } from '../../shared/devices'
 import { ATTACH_TIMEOUT_MS, MAX_INPUT_CHARS, MAX_REMOTE_TABS, REATTACH_MS, type RemoteDeviceView, type RemoteTab } from '../../shared/remote'
 import type { NotificationCase } from '../../shared/types'
+import { isTerminalAnswer } from '../ipc-guards'
 import { AttachedView, type StreamItem, type ViewStep } from './attached-view'
 import type { Calls } from './calls'
 import type { PeerLink } from './peer-link'
@@ -277,9 +278,13 @@ export class RemoteTabs {
     if (first || e.claimed) this.claim(e, cols, rows)
   }
 
-  /** input typed into a remote tab: a tab not sized for this device is claimed first, with this window's latest fit */
+  /**
+   * input typed into a remote tab: a tab not sized for this device is claimed first, with this window's latest fit.
+   * This window's answers to terminal questions stay here: the tab's own window answers every one, and a second answer
+   * would reach the program as typed text (the bundled ConPTY asks what the terminal is as it starts).
+   */
   input(tabId: string, data: string): void {
-    if (this.disposed) return
+    if (this.disposed || isTerminalAnswer(data)) return
     const e = this.entryOf(tabId)
     if (!e) return
     const link = this.known.get(e.device)?.link
