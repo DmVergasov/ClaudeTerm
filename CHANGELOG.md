@@ -2,6 +2,13 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.16.2
+
+### Fixes
+
+- **Claude Code's screen no longer keeps bits of old text.** Emoji such as ⚠️, ✔️, 1️⃣, 👨‍💻 and flags take two cells in Windows' console and in Claude Code, and ClaudeTerm counted them as one. Every redraw after such an emoji landed a cell off, so the status rows below Claude's answer showed letters of earlier text mixed into the new one until the window was resized.
+- **The Changes panel works in large projects that use Git LFS.** In an Unreal project with hundreds of changed assets the panel could show "git diff took longer than 10 s" and lose the diff, because git ran git-lfs for every changed asset, several times per refresh. ClaudeTerm now compares those files without git-lfs: the panel loads in a couple of seconds, and git-lfs no longer stores a copy of each changed asset in `.git/lfs` every time. A changed asset shows as a binary file instead of the text of its LFS pointer.
+
 ## 0.16.1
 
 ### Fixes
