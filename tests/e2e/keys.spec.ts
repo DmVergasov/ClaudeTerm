@@ -126,8 +126,9 @@ async function dropFileOnTab(page: Page, tabId: string): Promise<string> {
     data.items.add(input.files![0])
     host.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }))
   })
-  // without the focus reports xterm sends when the test moves focus (ESC [ I, ESC [ O)
-  const typed = () => page.evaluate((id) => window.__ct!.ptyInput!(id).replace(/\x1b\[(?:20[01]~|[IO])/g, ''), tabId)
+  // without the focus reports xterm sends when the test moves focus (ESC [ I, ESC [ O), and its answer when the console
+  // host asks what terminal it is (ESC [ ? 1 ; 2 c), which the console host keeps
+  const typed = () => page.evaluate((id) => window.__ct!.ptyInput!(id).replace(/\x1b\[(?:20[01]~|[IO]|\?[\d;]*c)/g, ''), tabId)
   await expect.poll(typed).toMatch(/my \$file\.txt/)
   return typed()
 }

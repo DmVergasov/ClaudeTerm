@@ -92,9 +92,10 @@ test('Esc closes the list without reaching Claude and gives the terminal the foc
   await page.locator('.terminal-host:visible .xterm-helper-textarea').focus()
   await page.keyboard.press('Escape')
   await expect(list).toBeHidden()
-  // the shell may report the focus (ESC [ I, ESC [ O) when the terminal takes it; a lone ESC would be the Esc key
+  // the shell may report the focus (ESC [ I, ESC [ O) when the terminal takes it, and the console host asks what terminal
+  // it is (the answer ESC [ ? 1 ; 2 c stays with it); a lone ESC would be the Esc key
   const sent = await page.evaluate((id) => window.__ct!.ptyInput!(id), tabId)
-  expect(sent.replace(/\x1b\[[IO]/g, '')).not.toContain('\x1b')
+  expect(sent.replace(/\x1b\[(?:[IO]|\?[\d;]*c)/g, '')).not.toContain('\x1b')
   expect(await page.evaluate(() => Boolean(document.activeElement?.closest('.xterm')))).toBe(true)
   await seg.click()
   await expect(list).toBeVisible()
