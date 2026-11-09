@@ -2,13 +2,13 @@ import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { SerializeAddon } from '@xterm/addon-serialize'
-import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { osc52Text } from './osc52'
 import type { Screen, ScreenRow } from './claude-screen'
 import { windowsPtyOption } from './util'
+import { useGraphemeWidths } from '../shared/grapheme-widths'
 import { boundedSerialize, scrollbackLines } from '../shared/screen-serialize'
 
 // Font sizes are in points, like Windows Terminal; xterm.js takes CSS pixels (1pt = 96/72 px)
@@ -74,8 +74,8 @@ export class TerminalView {
     this.serializer = new SerializeAddon()
     this.term.loadAddon(this.serializer)
     this.term.loadAddon(new WebLinksAddon((_e, uri) => o.onLink(uri)))
-    this.term.loadAddon(new Unicode11Addon())
-    this.term.unicode.activeVersion = '11'
+    // cells counted as ConPTY and Claude Code count them: ⚠️ takes two
+    useGraphemeWidths(this.term)
     this.term.open(this.element)
     if (o.useWebgl) {
       try {

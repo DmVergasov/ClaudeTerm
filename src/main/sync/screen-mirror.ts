@@ -1,6 +1,6 @@
 import { Terminal } from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
-import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { useGraphemeWidths } from '../../shared/grapheme-widths'
 import type { RemoteSnapshot } from '../../shared/remote'
 import { boundedSerialize, scrollbackLines } from '../../shared/screen-serialize'
 
@@ -67,8 +67,8 @@ export class ScreenMirrors implements ScreenMirrorsApi {
     const term = new Terminal({ cols, rows, scrollback, allowProposedApi: true })
     const serialize = new SerializeAddon()
     term.loadAddon(serialize)
-    term.loadAddon(new Unicode11Addon())
-    term.unicode.activeVersion = '11'
+    // the same cells as the window's terminal
+    useGraphemeWidths(term)
     const c: Copy = { term, serialize, scrollback, seq: opts.seq ?? 0, waiting: !!opts.awaitSeed, held: [], heldChars: 0, waiters: [], asks: new Set(), closed: false }
     term.onTitleChange((title) => {
       for (const cb of this.titleCbs) cb(tabId, title)
