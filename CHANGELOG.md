@@ -2,6 +2,16 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.16.1
+
+### Fixes
+
+- **Switching tabs and typing no longer stall while Claude works.** With several busy Claude tabs, a switch to another tab could take a second or two, and typed keys showed up late. ClaudeTerm started git (for the Changes panel and the tab groups) and the notification sound in the same place that handles the window, and on a busy machine Windows sometimes takes a second to start a program. They start in the background now.
+
+### Changes
+
+- **Tabs run in Windows Terminal's console host (Windows).** It comes with ClaudeTerm and takes the place of the one built into Windows, which on Windows 11 24H2 could leave lines of Claude Code's screen behind or show them twice until the window was resized. **Settings → Shells → Console host** switches new tabs back to Windows' own.
+
 ## 0.16.0
 
 ### New
