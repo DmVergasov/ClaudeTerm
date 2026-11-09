@@ -1,5 +1,4 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, type Rectangle } from 'electron'
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, hostname, release, tmpdir } from 'node:os'
@@ -85,7 +84,7 @@ import type { HelloMessage } from './sync/wire'
 import { DeviceGroup } from './sync/device-group'
 import { StoreBridge } from './sync/store-bridge'
 import { socketProblem } from './socket-file'
-import { createSoundPlayer, linuxSoundDeps, macSoundDeps, wavPlayer } from './sound'
+import { createSoundPlayer, linuxSoundDeps, macSoundDeps, startPlayer, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager } from './tab-manager'
@@ -315,7 +314,7 @@ function bootstrap(): void {
           ? macSoundDeps(process.env, existsSync)
           : linuxSoundDeps(process.env, (cmd) => findExecutable(cmd, process.env.PATH ?? '', isExecutableFile) !== null, existsSync)),
       beep: () => shell.beep(),
-      spawn: (p) => spawn(p.file, p.args, { env: p.env, windowsHide: true, stdio: 'ignore' }),
+      spawn: startPlayer,
       warn: toast
     })
 

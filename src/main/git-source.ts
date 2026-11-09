@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { RunError, runOffThread } from './off-thread-spawn'
 import { pathKey } from './path-key'
 
 export interface GitResult {
@@ -22,41 +22,20 @@ const MAX_OUTPUT = 64 * 1024 * 1024
  * git without a shell; stdout raw (paths and contents are bytes), a time limit, input on stdin. No fsmonitor command
  * the repository configures, and no optional index lock that could collide with Claude's own git add or commit. The file system
  * cache of Git for Windows is forced on (its default; other gits ignore the key): `git status` is slow without it.
+ * git starts off the main thread (off-thread-spawn.ts): the Changes panel and the tab places run it at every tab switch.
  */
-export const execGit: GitRun = (args, cwd, input) =>
-  new Promise((done, fail) => {
-    const name = args.find((a) => !a.startsWith('-')) ?? 'git'
-    const child = spawn('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', 'core.fscache=true', '--no-optional-locks', ...args], { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
-    const out: Buffer[] = []
-    let size = 0
-    let err = ''
-    const timer = setTimeout(() => {
-      child.kill()
-      fail(new GitError(`git ${name} took longer than ${GIT_TIMEOUT_MS / 1000} s`))
-    }, GIT_TIMEOUT_MS)
-    child.stdout.on('data', (c: Buffer) => {
-      size += c.length
-      if (size > MAX_OUTPUT) {
-        child.kill()
-        fail(new GitError(`git ${name}: output too large`))
-        return
-      }
-      out.push(c)
-    })
-    child.stderr.on('data', (c: Buffer) => {
-      if (err.length < 4096) err += c.toString('utf8')
-    })
-    child.on('error', (e: NodeJS.ErrnoException) => {
-      clearTimeout(timer)
-      fail(e.code === 'ENOENT' ? new GitError('git was not found') : new GitError(`cannot run git: ${e.message}`))
-    })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      done({ code: code ?? 1, stdout: Buffer.concat(out), stderr: err })
-    })
-    child.stdin.on('error', () => { /* git exited before reading everything */ })
-    child.stdin.end(input ?? '')
-  })
+export const execGit: GitRun = async (args, cwd, input) => {
+  const name = args.find((a) => !a.startsWith('-')) ?? 'git'
+  try {
+    return await runOffThread('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', 'core.fscache=true', '--no-optional-locks', ...args], { cwd, input: input ?? '', timeoutMs: GIT_TIMEOUT_MS, maxOutput: MAX_OUTPUT })
+  } catch (e) {
+    if (!(e instanceof RunError)) throw e
+    if (e.reason === 'not-found') throw new GitError('git was not found')
+    if (e.reason === 'timeout') throw new GitError(`git ${name} took longer than ${GIT_TIMEOUT_MS / 1000} s`)
+    if (e.reason === 'too-large') throw new GitError(`git ${name}: output too large`)
+    throw new GitError(`cannot run git: ${e.message}`)
+  }
+}
 
 /** the work tree root holding `cwd`; null outside a repository or when the folder is gone */
 export async function repoRoot(run: GitRun, cwd: string): Promise<string | null> {

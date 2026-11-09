@@ -1,4 +1,6 @@
+import { EventEmitter } from 'node:events'
 import { win32 } from 'node:path'
+import { runOffThread } from './off-thread-spawn'
 
 export interface ProcessSpec {
   file: string
@@ -55,6 +57,13 @@ export function createSoundPlayer(d: SoundPlayerDeps): (sound: string) => void {
       d.warn(`Cannot play the attention sound ${sound} (${reason}); using the system sound`)
     })
   }
+}
+
+/** Starts a sound player off the main thread (off-thread-spawn.ts): no window, no output */
+export function startPlayer(p: ProcessSpec): SoundChild {
+  const child = new EventEmitter()
+  runOffThread(p.file, p.args, { env: p.env, quiet: true }).then((r) => child.emit('exit', r.code), (e: Error) => child.emit('error', e))
+  return child
 }
 
 /** Plays a .wav with PowerShell's SoundPlayer; the path goes through the environment, never into the command line. */
