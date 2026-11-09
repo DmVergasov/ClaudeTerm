@@ -1,9 +1,17 @@
 import { execFileSync } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
-import { spawnPty } from '../../src/main/pty-host'
+import { type PtyHandle, spawnPty } from '../../src/main/pty-host'
 import { WIN } from '../fixtures/platform'
 
 const env = process.env as Record<string, string>
+
+/**
+ * Answers as a terminal does when the bundled ConPTY asks what it is (ESC [ c). Without an answer it waits about 3 s
+ * before the program's first output; in the app xterm answers.
+ */
+function answerTerminalQuestion(d: string, h: PtyHandle): void {
+  if (d.includes('\x1b[c')) h.write('\x1b[?1;2c')
+}
 
 /** a process's running children as "pid name", the name lower case */
 function children(pid: number): string[] {
@@ -35,7 +43,7 @@ describe('spawnPty', () => {
     const hosts = async (bundledConpty: boolean): Promise<string[]> => {
       const before = new Set(children(process.pid))
       let out = ''
-      const h = spawnPty({ file: 'cmd.exe', args: ['/k', 'echo host-up'], cwd: process.cwd(), env, cols: 80, rows: 24, bundledConpty, onData: (d) => { out += d }, onExit: () => {} })
+      const h = spawnPty({ file: 'cmd.exe', args: ['/k', 'echo host-up'], cwd: process.cwd(), env, cols: 80, rows: 24, bundledConpty, onData: (d) => { out += d; answerTerminalQuestion(d, h) }, onExit: () => {} })
       try {
         await vi.waitFor(() => expect(out).toContain('host-up'), { timeout: 10_000 })
         return children(process.pid).filter((c) => !before.has(c)).map((c) => c.slice(c.indexOf(' ') + 1))
@@ -49,7 +57,7 @@ describe('spawnPty', () => {
     const system = await hosts(false)
     expect(system).toContain('conhost.exe')
     expect(system).not.toContain('openconsole.exe')
-  })
+  }, 60_000) // four process lists, each a PowerShell start and a WMI query: seconds apiece on a fresh CI machine
 
   // like claude.exe, the probe takes its time to quit when its console closes (CTRL_CLOSE_EVENT arrives as SIGHUP); a
   // restart waits 3 s for the old process to exit before it starts the new one
@@ -62,7 +70,7 @@ describe('spawnPty', () => {
       const script = "process.on('SIGHUP',()=>setTimeout(()=>process.exit(),8000));console.log('child '+process.pid);setInterval(()=>{},1000)"
       const h = spawnPty({
         file: 'cmd.exe', args: ['/c', 'node', '-e', script], cwd: process.cwd(), env, cols: 80, rows: 24, bundledConpty,
-        onData: (d) => { out += d },
+        onData: (d) => { out += d; answerTerminalQuestion(d, h) },
         onExit: () => {
           exitedAt = Date.now()
           try { process.kill(child, 0) } catch { childAliveAtExit = false }
