@@ -239,6 +239,39 @@ export function buildLaunch(profile: ProfileDef, kind: TabKind, claude: ClaudeLa
   }
 }
 
+/** how the version probe runs a command line: the program, its arguments, and how they are passed */
+export interface ProbeSpec {
+  file: string
+  args: string[]
+  /** Windows: the arguments go to cmd.exe as they are, not quoted again */
+  verbatim: boolean
+  /** Unix: an interactive shell runs in a session of its own, without the terminal ClaudeTerm may have been started from */
+  detached: boolean
+}
+
+/**
+ * How the version probe runs `<command> --version`: in the shell a Claude tab runs the command in, read the way that
+ * shell reads it there (buildLaunch), so that the probe runs what the tab would run and the login shell sets its PATH.
+ */
+export function buildProbe(profile: ProfileDef, command: string, platform: NodeJS.Platform = process.platform): ProbeSpec {
+  const line = `${command} --version`
+  const detached = platform !== 'win32'
+  switch (shellFamily(profile)) {
+    case 'powershell':
+      return { file: profile.command, args: ['-NoLogo', '-NonInteractive', '-Command', line], verbatim: false, detached: false }
+    case 'cmd':
+      return { file: profile.command, args: ['/c', line], verbatim: true, detached: false }
+    case 'bash':
+      return { file: profile.command, args: ['--login', '-i', '-c', line], verbatim: false, detached }
+    case 'zsh':
+      return { file: profile.command, args: ['-l', '-i', '-c', line], verbatim: false, detached }
+    case 'fish':
+      return { file: profile.command, args: ['-l', '-c', line], verbatim: false, detached }
+    default:
+      throw new Error(`profile "${profile.name}" cannot host claude`)
+  }
+}
+
 export function parseWslList(buf: Buffer): string[] {
   const text = buf.includes(0) ? buf.toString('utf16le') : buf.toString('utf8')
   return text

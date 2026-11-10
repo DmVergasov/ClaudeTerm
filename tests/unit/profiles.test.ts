@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildClaudeCommandLine, buildLaunch, canHostClaude, detectPosixProfiles, detectProfiles, filterAvailable, mergeProfiles, parseWslList,
+  buildClaudeCommandLine, buildLaunch, buildProbe, canHostClaude, detectPosixProfiles, detectProfiles, filterAvailable, mergeProfiles, parseWslList,
   pickClaudeProfile, pickProfile, profileResolver, quoteForShell, shellFamily, type DetectDeps, type PosixDetectDeps, typedPaths
 } from '../../src/main/profiles'
 import type { ProfileDef } from '../../src/shared/types'
@@ -223,6 +223,26 @@ describe('Linux shells', () => {
   it('Automatic is the first profile, the login shell', () => {
     expect(pickProfile([ZSH, LBASH], null)).toBe(ZSH)
     expect(pickClaudeProfile([ZSH, LBASH], null)).toEqual({ profile: ZSH, warning: null })
+  })
+})
+
+describe('version probe', () => {
+  const GITBASH = BASH
+
+  it('runs `<command> --version` in the shell a Claude tab runs the command in, read the same way', () => {
+    expect(buildProbe(PS, '& "C:\\x\\claude.exe"', 'win32')).toEqual({ file: PS.command, args: ['-NoLogo', '-NonInteractive', '-Command', '& "C:\\x\\claude.exe" --version'], verbatim: false, detached: false })
+    expect(buildProbe(CMD, 'claude', 'win32')).toEqual({ file: CMD.command, args: ['/c', 'claude --version'], verbatim: true, detached: false })
+    expect(buildProbe(GITBASH, 'claude', 'win32')).toEqual({ file: GITBASH.command, args: ['--login', '-i', '-c', 'claude --version'], verbatim: false, detached: false })
+  })
+
+  it('a Unix login shell sets the PATH, in a session of its own', () => {
+    expect(buildProbe(LBASH, 'claude', 'linux')).toEqual({ file: '/bin/bash', args: ['--login', '-i', '-c', 'claude --version'], verbatim: false, detached: true })
+    expect(buildProbe(ZSH, 'claude', 'darwin')).toEqual({ file: '/usr/bin/zsh', args: ['-l', '-i', '-c', 'claude --version'], verbatim: false, detached: true })
+    expect(buildProbe(FISH, 'claude', 'linux')).toEqual({ file: '/usr/bin/fish', args: ['-l', '-c', 'claude --version'], verbatim: false, detached: true })
+  })
+
+  it('a profile that cannot host claude has no probe', () => {
+    expect(() => buildProbe(WSL, 'claude', 'win32')).toThrow()
   })
 })
 

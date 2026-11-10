@@ -40,7 +40,7 @@ import { claudeTempRoot, realTempRoot, sessionTempDir, watchImages, type ImageWa
 import { handleImgProtocol, registerImgScheme, remoteCardSource } from './img-protocol'
 import { createLogger } from './log'
 import { PanelRoom } from './panel-room'
-import { findExecutable, isExecutableFile, loginShellPath } from './login-env'
+import { findExecutable, isExecutableFile } from './login-env'
 import { macMenuTemplate } from './mac-menu'
 import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePage, startSwap } from './mac-update'
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
@@ -49,7 +49,7 @@ import { execGit } from './git-source'
 import { changeFolderOf, folderListingOf, type TabFolderDeps } from './folder-browse'
 import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
-import { buildLaunch, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver, typedPaths } from './profiles'
+import { buildLaunch, buildProbe, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver, typedPaths } from './profiles'
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
@@ -68,7 +68,7 @@ import { MailHub } from './mail/mail-hub'
 import { MailStore } from './mail/mail-store'
 import { MailSync } from './mail/mail-sync'
 import { nameAgents, type Agent, type AgentTab } from './mail/agent-directory'
-import { probeClaudeVersion, readVersionCache, versionAtLeast } from './claude-version'
+import { probeClaudeVersion, readVersionCache, versionAtLeast, type ProbeRun } from './claude-version'
 import { MAIL_MIN_CLAUDE, type MailConversationView, type MailUnread } from '../shared/mail'
 import { localAddresses } from './sync/address'
 import { formatDeviceStatus } from './sync/device-status'
@@ -1351,24 +1351,23 @@ function bootstrap(): void {
       toast(`Cannot update claude-tab-settings.json: ${(e as Error).message}`)
     }
   }
-  /** the environment a Claude tab's command runs with, asked once per run: on Unix the login shell's PATH, which a GUI app's own PATH misses */
-  let commandEnv: Promise<NodeJS.ProcessEnv | undefined> | null = null
-  const claudeCommandEnv = (): Promise<NodeJS.ProcessEnv | undefined> => {
-    if (process.platform === 'win32') return Promise.resolve(undefined)
-    commandEnv ??= (async (): Promise<NodeJS.ProcessEnv> => {
-      const shell = loginShell()
-      if (shell === null) return process.env
-      const PATH = (await loginShellPath(execRunner, shell).catch(() => null)) ?? process.env.PATH
-      return { ...process.env, PATH }
-    })()
-    return commandEnv
-  }
-  /** asks the command in use for its version, in the background; the answer decides the mail watcher and goes to the peers */
+  /**
+   * asks the command in use for its version, in the background; the answer decides the mail watcher and goes to the peers.
+   * It runs in the shell the Claude tabs run it in, as that shell reads the line: the login shell also sets the PATH a
+   * GUI app's own PATH misses (claude in ~/.local/bin, Homebrew, npm)
+   */
   const probeVersion = (): void => {
     const command = settings.claude.command
     if (asked.has(command)) return
     asked.add(command)
-    void claudeCommandEnv().then((env) => probeClaudeVersion(dataDir, command, process.platform, env)).then((version) => {
+    let run: ProbeRun
+    try {
+      run = buildProbe(pickClaudeProfile(profiles, settings.claude.shellProfile).profile, command)
+    } catch {
+      versions.set(command, null)
+      return
+    }
+    void probeClaudeVersion(dataDir, command, run).then((version) => {
       const watcherBefore = mailWatcher()
       const versionBefore = localVersion()
       versions.set(command, version)

@@ -6,6 +6,12 @@ describe('parseClaudeVersion', () => {
     expect(parseClaudeVersion('2.1.322 (Claude Code)')).toBe('2.1.322')
   })
 
+  it('a version the shell profile prints first does not count', () => {
+    expect(parseClaudeVersion('Loading nvm 0.39.7\n2.1.322 (Claude Code)\n')).toBe('2.1.322')
+    expect(parseClaudeVersion('2.1.322 (Claude Code)\nconda 24.1.2\n')).toBe('2.1.322')
+    expect(parseClaudeVersion('welcome to 1.2.3\n2.1.400\n')).toBe('2.1.400')
+  })
+
   it('returns null when the output names no version', () => {
     expect(parseClaudeVersion('fake-claude')).toBeNull()
   })

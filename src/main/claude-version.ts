@@ -16,10 +16,15 @@ export interface VersionProbe {
   version: string | null
 }
 
-/** the first x.y.z in the output of `claude --version`, e.g. "2.1.322 (Claude Code)" gives "2.1.322" */
+/**
+ * The version in the output of `claude --version`, e.g. "2.1.322 (Claude Code)" gives "2.1.322". The shell's profile may
+ * print first, a version of its own among it ("nvm 0.39.7"): the x.y.z before "(Claude Code)" wins, else the last one.
+ */
 export function parseClaudeVersion(output: string): string | null {
-  const m = /\d+\.\d+\.\d+/.exec(output)
-  return m ? m[0] : null
+  const named = /(\d+\.\d+\.\d+) \(Claude Code\)/.exec(output)
+  if (named) return named[1]
+  const all = output.match(/\d+\.\d+\.\d+/g)
+  return all ? all[all.length - 1] : null
 }
 
 /** whether version v is min or later, compared part by part as numbers */
@@ -48,12 +53,18 @@ export function readVersionCache(dataDir: string): VersionProbe | null {
   return { command, version }
 }
 
-async function runVersion(command: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv | undefined): Promise<string | null> {
+/** how the probe runs `<command> --version`: as buildProbe gives it for the Claude tabs' shell, optionally with an environment */
+export interface ProbeRun {
+  file: string
+  args: string[]
+  verbatim?: boolean
+  detached?: boolean
+  env?: NodeJS.ProcessEnv
+}
+
+async function runVersion(run: ProbeRun, cwd: string): Promise<string | null> {
   try {
-    const r = platform === 'win32'
-      // cmd /s strips the outer quotes; verbatim keeps the quoted paths of the command as they are
-      ? await runOffThread(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${command} --version"`], { verbatim: true, timeoutMs: 15000, maxOutput: 65536, env })
-      : await runOffThread('/bin/sh', ['-c', `${command} --version`], { timeoutMs: 15000, maxOutput: 65536, env })
+    const r = await runOffThread(run.file, run.args, { cwd, env: run.env, verbatim: run.verbatim, detached: run.detached, timeoutMs: 15000, maxOutput: 65536 })
     if (r.code !== 0) return null
     return parseClaudeVersion(r.stdout.toString('utf8'))
   } catch {
@@ -63,12 +74,17 @@ async function runVersion(command: string, platform: NodeJS.Platform, env: NodeJ
 
 /**
  * Asks `<command> --version` for its version, caches the answer in dataDir, and resolves null on any failure. Never rejects.
- * env is the environment the command runs with: the PATH of a shell finds a claude that a GUI app's PATH misses.
+ * It runs as `run` says, in dataDir: a file the command line happens to write lands there, never in the app's folder.
  */
-export async function probeClaudeVersion(dataDir: string, command: string, platform: NodeJS.Platform = process.platform, env?: NodeJS.ProcessEnv): Promise<string | null> {
-  const version = await runVersion(command, platform, env)
+export async function probeClaudeVersion(dataDir: string, command: string, run: ProbeRun): Promise<string | null> {
+  let version: string | null = null
   try {
     mkdirSync(dataDir, { recursive: true })
+    version = await runVersion(run, dataDir)
+  } catch {
+    // no data folder to run in: the version is not known
+  }
+  try {
     writeFileSync(join(dataDir, CACHE_FILE), JSON.stringify({ command, version }), 'utf8')
   } catch {
     // the cache only saves the next start a probe: a failed write is ignored

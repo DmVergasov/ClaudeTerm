@@ -29,6 +29,8 @@ export interface RunOptions {
   maxOutput?: number
   /** Windows: the arguments are passed as they are, unquoted (for cmd.exe) */
   verbatim?: boolean
+  /** Unix: the program runs in a session of its own, with no controlling terminal */
+  detached?: boolean
 }
 
 export type RunFailure = 'not-found' | 'failed' | 'timeout' | 'too-large'
@@ -66,7 +68,7 @@ parentPort.on('message', (m) => {
   const fail = (reason, message) => answer({ error: { reason, message } })
   let child
   try {
-    child = spawn(m.file, m.args, { cwd: m.cwd, env: m.env, windowsHide: true, stdio: m.quiet ? 'ignore' : ['pipe', 'pipe', 'pipe'], windowsVerbatimArguments: m.verbatim === true })
+    child = spawn(m.file, m.args, { cwd: m.cwd, env: m.env, windowsHide: true, stdio: m.quiet ? 'ignore' : ['pipe', 'pipe', 'pipe'], windowsVerbatimArguments: m.verbatim === true, detached: m.detached === true })
   } catch (e) {
     fail('failed', String(e && e.message))
     return
