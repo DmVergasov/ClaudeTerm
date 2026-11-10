@@ -34,17 +34,6 @@ jobs:
       - run: npm test
       - run: npm run build
 
-      - name: End-to-end tests
-        if: runner.os != 'Linux'
-        run: npx playwright test
-
-      - name: End-to-end tests
-        if: runner.os == 'Linux'
-        # no display and no setuid sandbox helper on the runner
-        env:
-          ELECTRON_DISABLE_SANDBOX: '1'
-        run: xvfb-run -a npx playwright test
-
       - name: Build the Linux package
         if: runner.os == 'Linux'
         run: npx electron-builder --linux deb --publish never
@@ -76,10 +65,42 @@ jobs:
           path: dist/ClaudeTerm-*.dmg
           retention-days: 7
 
+  e2e:
+    # the end-to-end tests run one at a time, each against its own app: three jobs per system share them out
+    name: End-to-end tests (${{ matrix.os }}, ${{ matrix.shard }}/3)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        shard: [1, 2, 3]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: End-to-end tests
+        if: runner.os != 'Linux'
+        run: npx playwright test --shard=${{ matrix.shard }}/3
+
+      - name: End-to-end tests
+        if: runner.os == 'Linux'
+        # no display and no setuid sandbox helper on the runner
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
+        run: xvfb-run -a npx playwright test --shard=${{ matrix.shard }}/3
+
       - name: Keep end-to-end results when they fail
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-results-${{ matrix.os }}
+          name: e2e-results-${{ matrix.os }}-${{ matrix.shard }}
           path: test-results/
           if-no-files-found: ignore
