@@ -1,4 +1,4 @@
-import type { ElectronApplication, Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
@@ -59,10 +59,16 @@ export async function activate(page: Page, tabId: string): Promise<void> {
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, tabId)
 }
 
-/** opens the Agent messages panel with the window focused, so that the panel reads the messages it shows */
-export async function openPanelFocused(app: ElectronApplication, page: Page): Promise<void> {
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.focus())
-  await page.bringToFront()
+/**
+ * opens the Agent messages panel with the window focused, so that the panel reads the messages it shows. The page is
+ * told it has the focus: a test run never takes the machine's focus (smoke.spec.ts), and the apps of tests that run at
+ * the same time would take it from each other
+ */
+export async function openPanelFocused(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    document.hasFocus = () => true
+    window.dispatchEvent(new Event('focus'))
+  })
   await messagesButton(page).click()
 }
 

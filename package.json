@@ -22,7 +22,7 @@
     "build": "npm run build:resources && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:e2e": "npm run build && playwright test",
+    "test:e2e": "npm run build && node scripts/e2e.mjs",
     "dist": "npm run build && electron-builder --win nsis",
     "dist:linux": "npm run build && electron-builder --linux deb",
     "dist:mac": "npm run build && electron-builder --mac",

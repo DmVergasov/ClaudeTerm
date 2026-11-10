@@ -6,7 +6,7 @@ import { FAKE_CLAUDE_SETTINGS, launchApp } from './helpers'
 
 // Quitting while a just-killed ConPTY session was still being torn down kept the process alive for seconds
 // (and indefinitely on CI runners) after the window was gone. A few cycles, because it was intermittent.
-test('closing the window right after closing a tab ends the app promptly', async () => {
+test('closing the window right after closing a tab ends the app promptly', { tag: '@alone' }, async () => {
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
   for (let cycle = 0; cycle < 4; cycle++) {
     const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, args: ['--claude', work] })

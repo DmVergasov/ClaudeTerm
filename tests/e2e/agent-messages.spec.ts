@@ -196,9 +196,7 @@ test('a message shown in the open panel while the window has focus counts as rea
     await activate(page, tab2)
     await expect(badge(page)).toHaveText('1')
 
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.focus())
-    await page.bringToFront()
-    await messagesButton(page).click()
+    await openPanelFocused(page)
     await expect(page.locator('.mail-text')).toHaveText('read me')
     await expect.poll(() => badge(page).textContent()).toBe('')
   } finally {
@@ -334,9 +332,7 @@ test('reading the messages clears the mark', async () => {
     await activate(page, tab2)
     await expect(envelopeOf(page, tab2)).toHaveCount(1)
 
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.focus())
-    await page.bringToFront()
-    await messagesButton(page).click()
+    await openPanelFocused(page)
     await expect(page.locator('.mail-text')).toHaveText('read me')
     await expect(envelopeOf(page, tab2)).toHaveCount(0)
   } finally {
@@ -366,9 +362,7 @@ test('with marks off the envelope and the badge go, and the panel still shows th
     await expect(badge(page)).toHaveText('')
 
     // the panel still lists the message, and the message is read when it is shown with the window focused
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.focus())
-    await page.bringToFront()
-    await messagesButton(page).click()
+    await openPanelFocused(page)
     await expect(page.locator('.mail-text')).toHaveText('no mark for this')
     await expect(envelopeOf(page, tab2)).toHaveCount(0)
   } finally {
@@ -398,7 +392,7 @@ test('after a restart the conversation and its read message are still there, and
   try {
     expect(await sendText(pipeName, tab1, sid2, 'kept over a restart')).toMatchObject({ ok: true })
     await activate(page, tab2)
-    await openPanelFocused(first.app, page)
+    await openPanelFocused(page)
     await expect(page.locator('.mail-text')).toHaveText('kept over a restart')
     await expect.poll(() => badge(page).textContent()).toBe('')
   } finally {
@@ -408,7 +402,7 @@ test('after a restart the conversation and its read message are still there, and
   // the same data folder: the store and the read marks are read back at start
   const again = await launchApp({ dataDir, args: ['--claude', work2] })
   try {
-    await openPanelFocused(again.app, again.page)
+    await openPanelFocused(again.page)
     await again.page.locator('.mail-scope', { hasText: 'All' }).click()
     await expect(again.page.locator('.mail-scope.active')).toHaveText('All')
     await expect(again.page.locator('.mail-head')).toHaveCount(1)

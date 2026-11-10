@@ -503,7 +503,7 @@ test('next, previous and go-to-tab walk this device\'s tabs and the unfolded gro
   await expect.poll(front, SLOW).toBe(first)
 })
 
-test("an image card of A's Claude tab shows on B, served from A; B copies it and removes it, and the local-only actions are hidden", async () => {
+test("an image card of A's Claude tab shows on B, served from A; B copies it and removes it, and the local-only actions are hidden", { tag: '@alone' }, async () => {
   test.setTimeout(180_000)
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
   const { a, b } = await pairedApps({ a: { args: ['--claude', work] } })
@@ -549,7 +549,7 @@ test("an image card of A's Claude tab shows on B, served from A; B copies it and
   await expect.poll(() => a.page.evaluate(() => window.__ct!.images!().length), SLOW).toBe(0)
 })
 
-test("an image pasted into A's tab on B is copied to A and its path typed there, never as the paste key", async () => {
+test("an image pasted into A's tab on B is copied to A and its path typed there, never as the paste key", { tag: '@alone' }, async () => {
   test.setTimeout(180_000)
   // on Windows B's PowerShell works, so a local paste there would send Claude Code's paste key (as in keys.spec.ts)
   const { a, b } = await pairedApps({ b: { env: WIN ? { CLAUDETERM_TEST_POWERSHELL: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'hostname.exe') } : {} } })
@@ -585,7 +585,7 @@ test("an image pasted into A's tab on B is copied to A and its path typed there,
 const CLAUDE_IMAGE_KEY = MAC ? 'Control+KeyV' : 'Alt+KeyV'
 const CLAUDE_IMAGE_INPUT = MAC ? '\x16' : '\x1bv'
 
-test("Claude Code's image-paste key in another device's Claude tab copies B's clipboard image to A and types its path there", async () => {
+test("Claude Code's image-paste key in another device's Claude tab copies B's clipboard image to A and types its path there", { tag: '@alone' }, async () => {
   test.skip(LINUX, 'Ctrl+V is smart paste on Linux')
   test.setTimeout(180_000)
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
@@ -615,7 +615,7 @@ test("Claude Code's image-paste key in another device's Claude tab copies B's cl
   })
 })
 
-test("with text only on B's clipboard, Claude Code's image-paste key reaches A's Claude tab as that key", async () => {
+test("with text only on B's clipboard, Claude Code's image-paste key reaches A's Claude tab as that key", { tag: '@alone' }, async () => {
   test.skip(LINUX, 'Ctrl+V is smart paste on Linux')
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
   const { a, b } = await pairedApps({ a: { args: ['--claude', work] } })
@@ -1578,7 +1578,7 @@ test("a fork of A's Claude tab that has no conversation is refused on B: the win
   expect(await tabIdsOf(b)).toEqual(before)
 })
 
-test('with A stopped, canForkTab on the tab of A answers false at once, well under the time limit for a device', async () => {
+test('with A stopped, canForkTab on the tab of A answers false at once, well under the time limit for a device', { tag: '@alone' }, async () => {
   test.setTimeout(180_000)
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
   const { a, b } = await pairedApps({ a: { args: ['--claude', work] } })

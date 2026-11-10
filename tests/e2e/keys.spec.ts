@@ -34,7 +34,7 @@ test('Ctrl+Shift+T opens, Ctrl+Tab cycles, Ctrl+Shift+W closes (⌘T, Ctrl+Tab, 
   await app.close()
 })
 
-test('the copy key copies the terminal\'s selection, the paste key pastes text', async () => {
+test('the copy key copies the terminal\'s selection, the paste key pastes text', { tag: '@alone' }, async () => {
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   await expect.poll(() => bufferText(page)).toMatch(PROMPT)
@@ -60,7 +60,7 @@ test('the copy key copies the terminal\'s selection, the paste key pastes text',
   await app.close()
 })
 
-test('on Windows where PowerShell cannot read the clipboard for Claude Code, the paste key hands a clipboard image to Claude as the pasted path of a PNG file holding it', async () => {
+test('on Windows where PowerShell cannot read the clipboard for Claude Code, the paste key hands a clipboard image to Claude as the pasted path of a PNG file holding it', { tag: '@alone' }, async () => {
   test.skip(!WIN, 'Windows paste')
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: POWERSHELL_FAILS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
@@ -79,7 +79,7 @@ test('on Windows where PowerShell cannot read the clipboard for Claude Code, the
   await app.close()
 })
 
-test('on Windows where PowerShell can read the clipboard for Claude Code, the paste key leaves a clipboard image to Claude Code\'s image-paste key', async () => {
+test('on Windows where PowerShell can read the clipboard for Claude Code, the paste key leaves a clipboard image to Claude Code\'s image-paste key', { tag: '@alone' }, async () => {
   test.skip(!WIN, 'Windows paste')
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: POWERSHELL_WORKS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)

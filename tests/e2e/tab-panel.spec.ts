@@ -1,4 +1,4 @@
-import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
+import { expect as baseExpect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,6 +7,9 @@ import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, PROMPT, writeTranscript } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+// a tab finds its project group once git answers for its folder, late on a busy machine, as when other tests run at the
+// same time: the waits get 15 s
+const expect = baseExpect.configure({ timeout: 15_000 })
 
 const freshFolder = (): string => mkdtempSync(join(tmpdir(), 'ct-folder-'))
 

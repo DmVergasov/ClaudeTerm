@@ -89,7 +89,7 @@ test('reading on one app clears the marks on both', async () => {
   await expect(envelopeOf(a.page, sa.tab)).toHaveCount(1, SLOW)
 
   await activate(b.page, sb.tab)
-  await openPanelFocused(b.app, b.page)
+  await openPanelFocused(b.page)
   await expect(b.page.locator('.mail-text')).toHaveText('read me on Laptop', SLOW)
   await expect(envelopeOf(b.page, sb.tab)).toHaveCount(0, SLOW)
   await expect(envelopeOf(a.page, sa.tab)).toHaveCount(0, SLOW)

@@ -36,7 +36,11 @@ npm run screenshots   # regenerates the README images
 ```
 
 CI runs typecheck, `npm test`, the build and the e2e suite on **`windows-latest`, `ubuntu-latest` and `macos-latest`**,
-and a change is done only when all three are green. On Linux without a display the e2e tests run under `xvfb-run -a`, with
+and a change is done only when all three are green. Locally `npm run test:e2e` runs three tests at a time
+(`node scripts/e2e.mjs --workers=1` on a busy machine), so a test must not depend on what the other apps on the machine
+share. A test that needs the machine to itself — the system clipboard, or a limit on how long something takes — is
+tagged `@alone` and runs after the others, on its own; a test never takes the machine's window focus, it tells the page
+it has the focus. On Linux without a display the e2e tests run under `xvfb-run -a`, with
 `ELECTRON_DISABLE_SANDBOX=1` where there is no setuid sandbox helper (Ubuntu 24.04, WSL).
 
 ## Bug fixes need a proving test

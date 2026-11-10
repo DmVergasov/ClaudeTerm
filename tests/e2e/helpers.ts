@@ -1,4 +1,4 @@
-import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron as electron, test, type ElectronApplication, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -151,8 +151,12 @@ export function gitWorktree(repo: string, branch: string): string {
 
 type SavedClipboard = { savedClipboard?: Record<string, Blob | Electron.ClipboardBookmark>[] }
 
-/** Runs the steps, then gives the system clipboard back what it held: the tests must not change the machine they run on */
+/**
+ * Runs the steps, then gives the system clipboard back what it held: the tests must not change the machine they run on.
+ * The test is tagged @alone, so that it runs while no other test uses the clipboard (playwright.config.ts)
+ */
 export async function keepingClipboard(app: ElectronApplication, steps: () => Promise<void>): Promise<void> {
+  if (!test.info().tags.includes('@alone')) throw new Error("a test that uses the system clipboard is tagged '@alone' (playwright.config.ts)")
   // the items clipboard.read() returns read the clipboard lazily and cannot be written back: keep their data. An empty
   // clipboard reads as one item without types, which ClipboardItem does not accept
   await app.evaluate(async ({ clipboard }) => {

@@ -140,7 +140,7 @@ test('the ▾ menu opens the settings window', async () => {
   await app.close()
 })
 
-test('closing the main window with settings open ends the app', async () => {
+test('closing the main window with settings open ends the app', { tag: '@alone' }, async () => {
   const { app, page } = await launchApp({ settings: QUIET })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await openSettings(app, page)

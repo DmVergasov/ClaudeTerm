@@ -9,7 +9,7 @@ import { FAKE_CLAUDE_SETTINGS, keepingClipboard, launchApp, PROMPT, bufferText, 
 const SENT = /^osc-sent *$/m
 
 // Claude Code in its fullscreen mode copies its own mouse selection with OSC 52
-test('a program copies text to the clipboard with OSC 52', async () => {
+test('a program copies text to the clipboard with OSC 52', { tag: '@alone' }, async () => {
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   await expect.poll(() => bufferText(page)).toMatch(PROMPT)
@@ -23,7 +23,7 @@ test('a program copies text to the clipboard with OSC 52', async () => {
   await app.close()
 })
 
-test('OSC 52 cannot read the clipboard', async () => {
+test('OSC 52 cannot read the clipboard', { tag: '@alone' }, async () => {
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   await expect.poll(() => bufferText(page)).toMatch(PROMPT)

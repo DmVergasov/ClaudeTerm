@@ -1,13 +1,18 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect as baseExpect, test, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { sendPipeMessage as sendOverPipe } from '../../src/shared/pipe-client'
 import { assistantLine, editResultLine } from '../fixtures/transcript'
 import { FAKE_CLAUDE_SETTINGS, gitRepo, launchApp, launchClaudeTab, KEYS, KEY_LABELS } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+
+// what the panel shows waits for git, which answers late on a busy machine, as when other tests run at the same time:
+// the waits for it, and the pipe requests that run git, get 15 s
+const expect = baseExpect.configure({ timeout: 15_000 })
+const sendPipeMessage = (pipeName: string, msg: Parameters<typeof sendOverPipe>[1]) => sendOverPipe(pipeName, msg, 15_000)
 
 /** a Claude tab in a fresh repository whose session ClaudeTerm knows, with an empty transcript; `edit` changes files first */
 async function reviewTab(edit?: (repo: string) => void, settings: object = FAKE_CLAUDE_SETTINGS) {
@@ -78,7 +83,7 @@ test('Last turn and Session compare with the files before Claude changed them', 
   expect(await before('toolu_2')).toEqual({ ok: true })
   writeFileSync(a, 'zero\none\ntwo\nthree\nfour\n')
   appendFileSync(transcriptPath, editResultLine({ toolUseId: 'toolu_2', filePath: a }) + '\n')
-  await expect(added(page, 'a.ts')).toHaveText('zero', { timeout: 10_000 })
+  await expect(added(page, 'a.ts')).toHaveText('zero')
   await page.locator('.review-seg-btn[data-scope="session"]').click()
   await expect(added(page, 'a.ts')).toHaveText(['zero', 'four'])
   await app.close()
@@ -199,10 +204,10 @@ test('Send waits while Claude shows a permission prompt, until the agent that as
   const subagents = join(dirname(transcriptPath), SID, 'subagents')
   mkdirSync(subagents, { recursive: true })
   writeFileSync(join(subagents, 'agent-a9.jsonl'), [now(assistantLine('claude-opus-5-5')), editResultLine({ toolUseId: 'toolu_9', filePath: a })].join('\n') + '\n')
-  await expect(added(page, 'a.ts')).toHaveText(['TWO', 'five'], { timeout: 10_000 })
+  await expect(added(page, 'a.ts')).toHaveText(['TWO', 'five'])
   await expect(sendBtn).toBeDisabled()
   appendFileSync(transcriptPath, now(assistantLine('claude-opus-5-5')) + '\n')
-  await expect(sendBtn).toBeEnabled({ timeout: 10_000 })
+  await expect(sendBtn).toBeEnabled()
   await app.close()
 })
 
@@ -255,7 +260,7 @@ test('show_diff opens a file git ignores when its paths name it', async () => {
 test('the status bar counter shows the uncommitted changes without a status line, and opens the panel', async () => {
   const { app, page } = await reviewTab(upper)
   const counter = page.locator('#statusbar .status-changes')
-  await expect(counter).toHaveText('± 1 file +1 −1', { timeout: 10_000 })
+  await expect(counter).toHaveText('± 1 file +1 −1')
   // the hidden panel keeps the update without building its rows; the badge follows it
   await expect(page.locator('.review-file')).toHaveCount(0)
   await expect(changesTab(page).locator('.badge')).toHaveText('1')
