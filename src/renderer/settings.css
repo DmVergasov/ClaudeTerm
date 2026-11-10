@@ -17,6 +17,7 @@ section { margin-top: 18px; }
 .field-error { grid-column: 2; color: #e06c75; font-size: 12px; }
 .check-field { margin: 6px 0; }
 .check-field .field-error { margin-left: 24px; }
+.check-field .hint { display: block; margin-left: 24px; }
 .hint { color: var(--muted); font-size: 12px; }
 .text-input, select { min-width: 0; padding: 4px 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font: inherit; outline: none; }
 .text-input:focus, select:focus { border-color: var(--accent); }

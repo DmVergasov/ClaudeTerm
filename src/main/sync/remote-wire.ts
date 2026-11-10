@@ -1,9 +1,11 @@
+import { type MailRecord } from '../../shared/mail'
 import { isUuid } from '../../shared/protocol'
 import { MAX_INPUT_CHARS, MAX_OUT_CHARS, MAX_PATH_TEXT, MAX_REMOTE_TABS, PUSH_KINDS, type PushKind, type RemoteTab } from '../../shared/remote'
 import type { ReviewCounter } from '../../shared/review'
 import { NOTIFICATION_CASES } from '../../shared/settings-keys'
 import { WORKTREE_COLORS, type NotificationCase, type TabKind, type TabPlace } from '../../shared/types'
 import { isPtySize } from '../ipc-guards'
+import { checkMailRecord } from '../mail/mail-record'
 import { isPlainObject } from './views'
 
 // The shapes of the part 2 messages: remote tabs, their output and input, and the calls and replies. Everything here is
@@ -26,6 +28,10 @@ export type RemoteMessage =
   | { t: 'claim'; id: string; cols: number; rows: number }
   | { t: 'front'; id: string | null; present: boolean; focused: boolean }
   | { t: 'ring'; id: string; reason: NotificationCase }
+  /** the ids and flags of the mail a device holds (1 delivered, 2 read), for the other side to send what it lacks */
+  | { t: 'mail-have'; have: [string, number][]; more?: true }
+  | { t: 'mail-records'; records: MailRecord[] }
+  | { t: 'mail-accept'; on: boolean; wakes: boolean; claude: string | null }
 
 /** The shape of a call's method name on the wire; a call whose name does not match is not sent, and a peer refuses one that does not. */
 export const METHOD_RE = /^[a-z][a-z-]{0,31}$/
@@ -40,6 +46,10 @@ const MAX_ACCOUNT_LENGTH = 64
 const MAX_ACCOUNT_NAME_LENGTH = 256
 const MAX_PLACE_NAME_LENGTH = 256
 const MAX_BRANCH_LENGTH = 256
+/** the most entries a mail-have may carry, and the most records a mail-records may carry */
+export const MAX_HAVE_ENTRIES = 20_000
+export const MAX_MAIL_RECORDS = 500
+const MAX_CLAUDE_LENGTH = 32
 // a C0 control character: a branch name holds none
 const C0_RE = /[\u0000-\u001f]/
 
@@ -125,6 +135,34 @@ export function parseRemoteMessage(v: Record<string, unknown>): RemoteMessage | 
       // a tab's attention rung on a member that is present with the tab in front: the tab and its case, nothing else
       const { id, reason } = v
       return isUuid(id) && NOTIFICATION_CASES.some((c) => c === reason) ? { t: 'ring', id, reason: reason as NotificationCase } : null
+    }
+    case 'mail-have': {
+      // every entry is an id and its flags; one entry that does not fit fails the whole list
+      const { have } = v
+      if (!Array.isArray(have) || have.length > MAX_HAVE_ENTRIES) return null
+      const list: [string, number][] = []
+      for (const e of have) {
+        if (!Array.isArray(e) || e.length !== 2 || !isUuid(e[0]) || !isFlags(e[1])) return null
+        list.push([e[0], e[1]])
+      }
+      // more is kept only when it is true: the digest goes on in the next message
+      return { t: 'mail-have', have: list, ...(v.more === true ? { more: true as const } : {}) }
+    }
+    case 'mail-records': {
+      // a record that fails its check is left out; the rest are kept
+      const { records } = v
+      if (!Array.isArray(records) || records.length > MAX_MAIL_RECORDS) return null
+      const list: MailRecord[] = []
+      for (const r of records) {
+        const record = checkMailRecord(r)
+        if (record) list.push(record)
+      }
+      return { t: 'mail-records', records: list }
+    }
+    case 'mail-accept': {
+      const { on, wakes, claude } = v
+      if (typeof on !== 'boolean' || typeof wakes !== 'boolean' || !orNull(claude, (s) => isString(s, 1, MAX_CLAUDE_LENGTH))) return null
+      return { t: 'mail-accept', on, wakes, claude: claude as string | null }
     }
     default:
       return 'unknown'
@@ -245,4 +283,9 @@ export function isPositiveSafeInteger(v: unknown): v is number {
 
 export function isNonNegativeSafeInteger(v: unknown): v is number {
   return Number.isSafeInteger(v) && (v as number) >= 0
+}
+
+/** the flags of a mail record: an integer from 0 to 3 */
+function isFlags(v: unknown): v is number {
+  return Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 3
 }

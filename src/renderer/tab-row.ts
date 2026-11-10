@@ -8,6 +8,19 @@ const PULSE_CYCLE_MS = 2400
 /** one round of the spinning icon's glyphs, as styles.css runs it */
 const SPIN_CYCLE_MS = 1200
 
+/** the envelope of a tab with unread agent messages: the Messages icon at 12 px */
+export const MAIL_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
+  '<rect x="1.65" y="3.15" width="12.7" height="9.7" rx="1.5"/><path d="M2 4.4l6 4.6 6-4.6"/></svg>'
+
+/** the envelope that a tab, a folded device chip or a device header shows while messages are unread */
+export function mailMark(): HTMLElement {
+  const m = document.createElement('span')
+  m.className = 'tab-mail'
+  m.title = 'Unread agent messages'
+  m.innerHTML = MAIL_ICON
+  return m
+}
+
 export const MUTED_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M1.65 5.65h2.7l3.5-3v10.7l-3.5-3h-2.7z"/><path d="M10.5 5.5l4 4M14.5 5.5l-4 4"/></svg>'
 
@@ -46,7 +59,7 @@ export const shownActivity = (item: Pick<TabBarItem, 'activity' | 'attention'>):
 export interface TabParts {
   icon: HTMLElement
   label: HTMLElement
-  /** the note, muted, bell and images marks, in this order */
+  /** the note, muted, bell, envelope and images marks, in this order */
   marks: HTMLElement[]
   close: HTMLButtonElement
 }
@@ -84,6 +97,7 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
     b.textContent = '●'
     marks.push(b)
   }
+  if (item.mail) marks.push(mailMark())
   if (item.images > 0) {
     const b = document.createElement('span')
     b.className = 'tab-images'

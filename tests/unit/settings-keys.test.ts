@@ -3,8 +3,10 @@ import { isSettingKey, isSettingValue, SETTING_KEYS } from '../../src/shared/set
 
 describe('settings keys', () => {
   it('lists the 25 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-seven plain settings', () => {
-    expect(SETTING_KEYS).toHaveLength(55)
+    expect(SETTING_KEYS).toHaveLength(57)
     expect(SETTING_KEYS).toContain('devices.keepAwake')
+    expect(SETTING_KEYS).toContain('agentMessages.enabled')
+    expect(SETTING_KEYS).toContain('agentMessages.marks')
     expect(SETTING_KEYS).toContain('notifications.bell.tab')
     expect(SETTING_KEYS).toContain('notifications.peer.tab')
     expect(SETTING_KEYS).toContain('notifications.done.front')

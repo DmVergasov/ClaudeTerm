@@ -3,7 +3,8 @@ import { encodeMessage, type PipeMessage, type PipeResponse } from './protocol'
 
 export class PipeUnavailableError extends Error {}
 
-export function sendPipeMessage(pipeName: string, msg: PipeMessage, timeoutMs = 2000): Promise<PipeResponse> {
+/** timeoutMs null arms no timer: the answer may take as long as it takes, a socket error or close still ends the wait */
+export function sendPipeMessage(pipeName: string, msg: PipeMessage, timeoutMs: number | null = 2000): Promise<PipeResponse> {
   return new Promise((resolve, reject) => {
     const socket = connect(pipeName)
     let buf = ''
@@ -15,7 +16,7 @@ export function sendPipeMessage(pipeName: string, msg: PipeMessage, timeoutMs = 
       socket.destroy()
       fn()
     }
-    const timer = setTimeout(() => finish(() => reject(new PipeUnavailableError(`timed out talking to ${pipeName}`))), timeoutMs)
+    const timer = timeoutMs === null ? undefined : setTimeout(() => finish(() => reject(new PipeUnavailableError(`timed out talking to ${pipeName}`))), timeoutMs)
     socket.setEncoding('utf8')
     socket.on('connect', () => socket.write(encodeMessage(msg)))
     socket.on('data', (chunk: string) => {

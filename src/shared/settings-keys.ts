@@ -25,7 +25,7 @@ export type SettingKey =
   | 'claude.continueAfterRestore' | 'claude.limitPace'
   | 'imageWatch.enabled' | 'imagePanel.autoOpen' | 'autoUpdate'
   | 'review.editor' | 'review.statusBar' | 'review.hideIgnored' | 'review.hideTests' | 'review.testPatterns' | 'review.fileTree'
-  | 'review.renderMarkdown' | 'sidePanel.noRoom' | 'tabs.position' | 'conpty' | 'devices.keepAwake'
+  | 'review.renderMarkdown' | 'sidePanel.noRoom' | 'tabs.position' | 'conpty' | 'devices.keepAwake' | 'agentMessages.enabled' | 'agentMessages.marks'
 
 export type SettingValue = string | number | boolean | null | string[]
 
@@ -35,7 +35,7 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'font.family', 'font.size', 'theme', 'scrollback',
   'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.autoContinue',
   'claude.continueAfterRestore', 'claude.limitPace',
-  'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'review.renderMarkdown', 'sidePanel.noRoom', 'tabs.position', 'conpty', 'autoUpdate', 'devices.keepAwake'
+  'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'review.renderMarkdown', 'sidePanel.noRoom', 'tabs.position', 'conpty', 'autoUpdate', 'devices.keepAwake', 'agentMessages.enabled', 'agentMessages.marks'
 ]
 
 export const isSettingKey = (v: unknown): v is SettingKey => typeof v === 'string' && (SETTING_KEYS as readonly string[]).includes(v)

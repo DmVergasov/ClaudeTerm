@@ -1,5 +1,5 @@
 import { createServer, type Socket } from 'node:net'
-import { type AttentionMessage, type DeviceStatusMessage, type EditBeforeMessage, encodeMessage, type OpenDeviceSettingsMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TaskListGetMessage, type TaskListMessage, type TurnMessage } from '../shared/protocol'
+import { type AgentListMessage, type AgentSendMessage, type AttentionMessage, type DeviceStatusMessage, type EditBeforeMessage, encodeMessage, type MailWaitMessage, type OpenDeviceSettingsMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TaskListGetMessage, type TaskListMessage, type TurnMessage } from '../shared/protocol'
 
 export interface PipeHandlers {
   showImage(msg: ShowImageMessage): Promise<PipeResponse>
@@ -16,6 +16,10 @@ export interface PipeHandlers {
   taskListGet(msg: TaskListGetMessage): PipeResponse
   deviceStatus(msg: DeviceStatusMessage): PipeResponse
   openDeviceSettings(msg: OpenDeviceSettingsMessage): PipeResponse
+  agentList(msg: AgentListMessage): PipeResponse
+  agentSend(msg: AgentSendMessage): PipeResponse
+  /** held until the watcher has mail or is superseded; `closed` aborts when its socket closes */
+  mailWait(msg: MailWaitMessage, closed: AbortSignal): Promise<PipeResponse>
 }
 
 export interface PipeServerHandle {
@@ -24,7 +28,7 @@ export interface PipeServerHandle {
 
 const MAX_LINE = 64 * 1024
 
-async function handleLine(line: string, h: PipeHandlers): Promise<PipeResponse> {
+async function handleLine(line: string, h: PipeHandlers, closed: AbortSignal): Promise<PipeResponse> {
   const parsed = parsePipeMessage(line)
   if (!parsed.ok) return { ok: false, error: parsed.error }
   const m = parsed.message
@@ -44,6 +48,9 @@ async function handleLine(line: string, h: PipeHandlers): Promise<PipeResponse> 
       case 'task_list_get': return h.taskListGet(m)
       case 'device_status': return h.deviceStatus(m)
       case 'open_device_settings': return h.openDeviceSettings(m)
+      case 'agent_list': return h.agentList(m)
+      case 'agent_send': return h.agentSend(m)
+      case 'mail_wait': return await h.mailWait(m, closed)
     }
   } catch (e) {
     return { ok: false, error: (e as Error).message }
@@ -55,6 +62,8 @@ export function startPipeServer(pipeName: string, handlers: PipeHandlers): Promi
   const server = createServer((socket) => {
     sockets.add(socket)
     socket.setEncoding('utf8')
+    // aborted when the socket goes away: a held mail_wait then ends with it
+    const gone = new AbortController()
     let buf = ''
     let chain: Promise<void> = Promise.resolve()
     let closed = false
@@ -78,14 +87,17 @@ export function startPipeServer(pipeName: string, handlers: PipeHandlers): Promi
         if (line.length > MAX_LINE) return reject()
         if (!line) continue
         enqueue(async () => {
-          const res = await handleLine(line, handlers)
-          if (!socket.destroyed) socket.write(encodeMessage(res))
+          const res = await handleLine(line, handlers, gone.signal)
+          if (socket.writable) socket.write(encodeMessage(res))
         })
       }
       if (buf.length > MAX_LINE) reject()
     })
-    socket.on('error', () => { /* client went away */ })
-    socket.on('close', () => sockets.delete(socket))
+    socket.on('error', () => { /* client went away */ gone.abort() })
+    socket.on('close', () => {
+      sockets.delete(socket)
+      gone.abort()
+    })
   })
   return new Promise((resolve, reject) => {
     server.once('error', reject)

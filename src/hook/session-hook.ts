@@ -11,7 +11,8 @@ type Obj = Record<string, unknown>
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-function parseInput(stdinText: string): Obj | null {
+/** the hook input (JSON on stdin) as an object, or null */
+export function parseInput(stdinText: string): Obj | null {
   try {
     const v: unknown = JSON.parse(stdinText)
     return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Obj) : null
@@ -80,9 +81,14 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
   return null
 }
 
+/** the pipe a hook reports to: CLAUDETERM_PIPE when the app set it, else the user's default pipe */
+export function hookPipe(env: NodeJS.ProcessEnv): string {
+  return env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username)
+}
+
 async function deliver(msg: PipeMessage, env: NodeJS.ProcessEnv, send: Sender): Promise<boolean> {
   try {
-    await send(env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username), msg)
+    await send(hookPipe(env), msg)
     return true
   } catch {
     return false

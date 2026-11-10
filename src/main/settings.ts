@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tabs: { position: 'top' },
   conpty: 'bundled',
   devices: { port: DEFAULT_DEVICE_PORT, keepAwake: true },
+  agentMessages: { enabled: true, marks: true },
   autoUpdate: true
 }
 
@@ -96,6 +97,7 @@ export function parseSettings(text: string | null): ParsedSettings {
   const rv = obj(raw.review)
   const sp = obj(raw.sidePanel)
   const dv = obj(raw.devices)
+  const am = obj(raw.agentMessages)
 
   const profiles: ProfileDef[] = take('profiles', raw.profiles, isProfiles, []).map((p) => ({ name: p.name, command: p.command, args: p.args ?? [] }))
 
@@ -165,6 +167,10 @@ export function parseSettings(text: string | null): ParsedSettings {
     sidePanel: { noRoom: take('sidePanel.noRoom', sp.noRoom, isNoRoom, d.sidePanel.noRoom) },
     tabs: { position: take('tabs.position', obj(raw.tabs).position, isTabPosition, d.tabs.position) },
     conpty: take('conpty', raw.conpty, isConptyHost, d.conpty),
+    agentMessages: {
+      enabled: take('agentMessages.enabled', am.enabled, isBool, d.agentMessages.enabled),
+      marks: take('agentMessages.marks', am.marks, isBool, d.agentMessages.marks)
+    },
     devices: {
       port: take('devices.port', dv.port, wholeIn(1024, 65535), d.devices.port),
       keepAwake: take('devices.keepAwake', dv.keepAwake, isBool, d.devices.keepAwake)

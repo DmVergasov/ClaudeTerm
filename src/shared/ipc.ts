@@ -1,5 +1,6 @@
 import type { AccountResult, AccountsView } from './accounts'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
+import type { MailConversationView, MailUnread } from './mail'
 import type { DeviceResult, DevicesView } from './devices'
 import type { Note, NoteForm } from './note'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
@@ -130,7 +131,11 @@ export const IPC = {
   evAttentionClear: 'ev:attention-clear',
   evScreenSeed: 'ev:screen-seed',
   /** the full set of starred session ids, sent when another device changes the set or sync restores it (not for a star set here): a listener replaces its set with it */
-  evStarred: 'ev:starred'
+  evStarred: 'ev:starred',
+  /** the unread agent messages per tab, local and remote, sent on every change of the mail and of the tabs */
+  evMail: 'ev:mail',
+  mailConversations: 'mail:conversations',
+  mailRead: 'mail:read'
 } as const
 
 export interface AppInfo {
@@ -233,6 +238,10 @@ export interface CtApi {
   resizePty(tabId: string, cols: number, rows: number): void
   /** the answer to a query of onPromptQuery */
   answerPrompt(queryId: number, state: PromptState): void
+  /** the agent messages of a tab's conversation, or of every conversation (null), for the panel */
+  getMailConversations(tabId: string | null): Promise<MailConversationView[]>
+  /** marks the messages with these ids read */
+  markMailRead(ids: string[]): Promise<void>
   listProfiles(): Promise<string[]>
   getSettings(): Promise<Settings>
   openSettingsFile(): void
@@ -406,4 +415,6 @@ export interface CtApi {
   onAttentionClear(cb: (tabId: string) => void): Unsubscribe
   /** main asks for the screen of a tab, to copy it on another device; answer with seedScreen, with the same token */
   onScreenSeed(cb: (tabId: string, token: number) => void): Unsubscribe
+  /** the unread agent messages per tab changed: the whole map, keyed by tab id */
+  onMail(cb: (unread: MailUnread) => void): Unsubscribe
 }

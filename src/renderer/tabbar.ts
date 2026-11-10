@@ -1,7 +1,7 @@
 import { REMOTE_COPY } from '../shared/remote'
 import type { TabActivity, TabKind, TabPlace } from '../shared/types'
 import { TabHeader } from './tab-header'
-import { beginRename, bindTab, pulseDelay, spinner, tabParts } from './tab-row'
+import { beginRename, bindTab, mailMark, pulseDelay, spinner, tabParts } from './tab-row'
 
 export interface TabBarItem {
   id: string
@@ -12,6 +12,8 @@ export interface TabBarItem {
   /** the tab makes no notification sound */
   muted: boolean
   bell: boolean
+  /** the tab has unread agent messages: an envelope shows on it, and on its device's chip when folded */
+  mail: boolean
   /** Claude in this tab is waiting for the user */
   attention: boolean
   /** what Claude is doing in the tab; the icon spins for it unless Claude waits for the user */
@@ -43,6 +45,8 @@ export interface TabBarGroup {
   count: number
   /** one of its tabs has attention: shown on the chip when folded */
   attention: boolean
+  /** one of its tabs has unread agent messages: the envelope shows on the chip when folded, and on the device header in the left panel */
+  mail: boolean
   /** one of its tabs is working (the spinner shows on the chip when folded) */
   working: boolean
 }
@@ -61,6 +65,7 @@ export interface TabBarCallbacks {
   toggleImages(): void
   toggleChanges(): void
   toggleDocs(): void
+  toggleMessages(): void
   toggleNote(): void
   switchPosition(): void
 }
@@ -88,7 +93,7 @@ export class TabBar {
   /** the bar is in the page only while it is shown: a hidden one would still match the selectors of the shown one */
   show(visible: boolean): void {
     const h = this.header
-    this.root.replaceChildren(...(visible ? [this.list, h.plus, h.more, h.changes, h.docs, h.images, h.note, h.position] : []))
+    this.root.replaceChildren(...(visible ? [this.list, h.plus, h.more, h.changes, h.docs, h.images, h.messages, h.note, h.position] : []))
   }
 
   /** this device's tabs first, then each group's chip with its tabs (none when folded); a group without tabs has no chip */
@@ -122,6 +127,7 @@ export class TabBar {
       count.className = 'tab-group-count'
       count.textContent = String(g.count)
       chip.append(count)
+      if (g.mail) chip.append(mailMark())
       if (g.working) chip.append(spinner('tab-group-spin'))
       if (g.attention) {
         const dot = document.createElement('span')
@@ -149,6 +155,11 @@ export class TabBar {
 
   setImages(visible: boolean, unseen: number): void {
     this.header.setImages(visible, unseen)
+  }
+
+  /** the Messages button exists while agent messages are on; it counts the unread messages of the active tab */
+  setMessages(available: boolean, visible: boolean, unread: number): void {
+    this.header.setMessages(available, visible, unread)
   }
 
   /** the Note button exists only for Claude tabs; it is lit while the note is shown */

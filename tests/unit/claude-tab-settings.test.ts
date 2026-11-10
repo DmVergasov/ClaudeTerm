@@ -5,6 +5,13 @@ import { describe, expect, it } from 'vitest'
 import { claudeTabSettingsJson, hookCommandString, hookShContent, statusRefreshInterval, windowsHookRun, windowsStatusCommand, writeClaudeTabFiles } from '../../src/main/claude-tab-settings'
 import { WIN } from '../fixtures/platform'
 
+type HookEntry = { hooks: { type: string; command: string; args?: string[]; timeout: number; asyncRewake?: boolean }[] }
+
+/** the hooks of a settings file, by event */
+function settingsHooks(json: string): Record<string, HookEntry[]> {
+  return (JSON.parse(json) as { hooks: Record<string, HookEntry[]> }).hooks
+}
+
 describe('hook files', () => {
   it('windowsHookRun runs the script under ELECTRON_RUN_AS_NODE from cmd.exe\'s command line and always exits 0', () => {
     const exe = 'C:\\Program Files\\ClaudeTerm\\ClaudeTerm.exe'
@@ -51,9 +58,9 @@ describe('hook files', () => {
     const hookRun = { command: 'C:\\WINDOWS\\System32\\cmd.exe', args: ['/d', '/s', '/c', 'hook'] }
     const run = { type: 'command', ...hookRun, timeout: 10 }
     const hook = [{ hooks: [run] }]
-    expect(JSON.parse(claudeTabSettingsJson(hookRun, 'status command', 5))).toEqual({
+    expect(JSON.parse(claudeTabSettingsJson(hookRun, 'status command', 5, null))).toEqual({
       statusLine: { type: 'command', command: 'status command', refreshInterval: 5 },
-      permissions: { allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list'] },
+      permissions: { allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent'] },
       hooks: {
         SessionStart: hook,
         SubagentStart: hook,
@@ -68,19 +75,45 @@ describe('hook files', () => {
     })
   })
 
-  it('claudeTabSettingsJson lets Claude use the two task list tools without asking, and nothing else', () => {
-    expect(JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', null)).permissions).toEqual({
-      allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list']
+  it('permissions allow the four claudeterm tools', () => {
+    expect(JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', null, null)).permissions).toEqual({
+      allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent']
     })
   })
 
+  it('with mail the SessionStart and Stop hooks hold a second entry with asyncRewake true and timeout 86400', () => {
+    const hooks = settingsHooks(claudeTabSettingsJson({ command: 'hook' }, 'status command', null, { command: 'mail hook' }))
+    const entry = [{ hooks: [{ type: 'command', command: 'hook', timeout: 10 }, { type: 'command', command: 'mail hook', asyncRewake: true, timeout: 86400 }] }]
+    expect(hooks.SessionStart).toEqual(entry)
+    expect(hooks.Stop).toEqual(entry)
+    expect(hooks.PermissionRequest).toEqual([{ hooks: [{ type: 'command', command: 'hook', timeout: 10 }] }])
+    expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: 'hook', timeout: 10 }] }])
+  })
+
+  it('without mail they hold only the normal entry', () => {
+    const hooks = settingsHooks(claudeTabSettingsJson({ command: 'hook' }, 'status command', null, null))
+    expect(hooks.SessionStart).toEqual([{ hooks: [{ type: 'command', command: 'hook', timeout: 10 }] }])
+    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: 'hook', timeout: 10 }] }])
+  })
+
+  it('the mail entry\'s command does not end in exit 0: cmd gives the exit code of mail, and sh has no exit 0 after it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ct-hook-'))
+    const win = settingsHooks(readFileSync(writeClaudeTabFiles(join(dir, 'win'), 'C:\\e.exe', 'C:\\h.js', 5, true, 'win32', { SystemRoot: 'C:\\Windows' }).settingsPath, 'utf8'))
+    const winMail = win.SessionStart[0].hooks[1] as { command: string; args: string[] }
+    expect(winMail.command).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(winMail.args).toEqual(['/d', '/s', '/c', 'set', 'ELECTRON_RUN_AS_NODE=1&&', 'C:\\e.exe', 'C:\\h.js', 'mail'])
+    expect(winMail.args).not.toContain('exit')
+    const linux = settingsHooks(readFileSync(writeClaudeTabFiles(join(dir, 'linux'), '/e', '/h.js', 5, true, 'linux').settingsPath, 'utf8'))
+    expect((linux.Stop[0].hooks[1] as { command: string }).command).toBe("ELECTRON_RUN_AS_NODE=1 '/e' '/h.js' mail")
+  })
+
   it('claudeTabSettingsJson has Claude Code refresh the statusLine at the interval given, in seconds', () => {
-    const statusLine = (JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', 30)) as { statusLine: unknown }).statusLine
+    const statusLine = (JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', 30, null)) as { statusLine: unknown }).statusLine
     expect(statusLine).toEqual({ type: 'command', command: 'status command', refreshInterval: 30 })
   })
 
   it('claudeTabSettingsJson without an interval leaves the statusLine to the updates Claude Code makes on its own', () => {
-    const statusLine = (JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', null)) as { statusLine: unknown }).statusLine
+    const statusLine = (JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', null, null)) as { statusLine: unknown }).statusLine
     expect(statusLine).toEqual({ type: 'command', command: 'status command' })
   })
 
@@ -92,18 +125,18 @@ describe('hook files', () => {
   it('writeClaudeTabFiles on Windows writes only the settings: the hooks run cmd.exe, never a batch file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ct-hook-'))
     const env = { SystemRoot: 'C:\\Windows' }
-    const files = writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', 5, 'win32', env)
+    const files = writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', 5, false, 'win32', env)
     expect(files).toEqual({ settingsPath: join(dir, 'claude-tab-settings.json'), hookPath: null })
     expect(readdirSync(dir)).toEqual(['claude-tab-settings.json'])
-    expect(readFileSync(files.settingsPath, 'utf8')).toBe(claudeTabSettingsJson(windowsHookRun('C:\\e.exe', 'C:\\h.js', env), windowsStatusCommand('C:\\e.exe', 'C:\\h.js'), 5))
+    expect(readFileSync(files.settingsPath, 'utf8')).toBe(claudeTabSettingsJson(windowsHookRun('C:\\e.exe', 'C:\\h.js', env), windowsStatusCommand('C:\\e.exe', 'C:\\h.js'), 5, null))
   })
 
   it('writeClaudeTabFiles writes the refresh interval it is given, and none when there is none', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ct-hook-'))
     const refreshOf = (path: string): unknown => (JSON.parse(readFileSync(path, 'utf8')) as { statusLine: { refreshInterval?: number } }).statusLine.refreshInterval
-    expect(refreshOf(writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', 60, 'win32', { SystemRoot: 'C:\\Windows' }).settingsPath)).toBe(60)
-    expect(refreshOf(writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', null, 'win32', { SystemRoot: 'C:\\Windows' }).settingsPath)).toBeUndefined()
-    expect(refreshOf(writeClaudeTabFiles(dir, '/e', '/h.js', 60, 'linux').settingsPath)).toBe(60)
+    expect(refreshOf(writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', 60, false, 'win32', { SystemRoot: 'C:\\Windows' }).settingsPath)).toBe(60)
+    expect(refreshOf(writeClaudeTabFiles(dir, 'C:\\e.exe', 'C:\\h.js', null, false, 'win32', { SystemRoot: 'C:\\Windows' }).settingsPath)).toBeUndefined()
+    expect(refreshOf(writeClaudeTabFiles(dir, '/e', '/h.js', 60, false, 'linux').settingsPath)).toBe(60)
   })
 
   it('hookShContent runs the script under ELECTRON_RUN_AS_NODE, passes the arguments on and always exits 0', () => {
@@ -126,12 +159,12 @@ describe('hook files', () => {
 
   it('writeClaudeTabFiles writes a runnable session-hook.sh on Linux', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ct-hook-'))
-    const files = writeClaudeTabFiles(dir, '/e', '/h.js', 5, 'linux')
+    const files = writeClaudeTabFiles(dir, '/e', '/h.js', 5, false, 'linux')
     const hookPath = join(dir, 'session-hook.sh')
     expect(files).toEqual({ settingsPath: join(dir, 'claude-tab-settings.json'), hookPath })
     expect(readFileSync(hookPath, 'utf8')).toBe(hookShContent('/e', '/h.js'))
     if (!WIN) expect(statSync(hookPath).mode & 0o777).toBe(0o755)
     const command = hookCommandString(hookPath)
-    expect(readFileSync(files.settingsPath, 'utf8')).toBe(claudeTabSettingsJson({ command }, `${command} status`, 5))
+    expect(readFileSync(files.settingsPath, 'utf8')).toBe(claudeTabSettingsJson({ command }, `${command} status`, 5, null))
   })
 })

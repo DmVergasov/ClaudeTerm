@@ -52,6 +52,8 @@ const api: CtApi = {
   runRestore: () => ipcRenderer.send(IPC.restoreRun),
   listSessions: () => ipcRenderer.invoke(IPC.sessionsList),
   listRemoteSessions: () => ipcRenderer.invoke(IPC.remoteSessions),
+  getMailConversations: (tabId) => ipcRenderer.invoke(IPC.mailConversations, tabId),
+  markMailRead: (ids) => ipcRenderer.invoke(IPC.mailRead, ids),
   openSession: (id, device) => ipcRenderer.send(IPC.sessionsOpen, id, device),
   setSessionStarred: (id, starred) => ipcRenderer.invoke(IPC.sessionsStar, id, starred),
   getStarredSessions: () => ipcRenderer.invoke(IPC.sessionsStarred),
@@ -129,7 +131,8 @@ const api: CtApi = {
   onDeviceChoices: (cb) => on(IPC.evDeviceChoices, cb),
   onRemoteSessions: (cb) => on(IPC.evRemoteSessions, cb),
   onAttentionClear: (cb) => on(IPC.evAttentionClear, cb),
-  onScreenSeed: (cb) => on(IPC.evScreenSeed, cb)
+  onScreenSeed: (cb) => on(IPC.evScreenSeed, cb),
+  onMail: (cb) => on(IPC.evMail, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

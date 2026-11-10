@@ -339,7 +339,8 @@ export class DeviceGroup {
         name: this.selfName(),
         platform: this.deps.platform,
         port: net.listeningPort() ?? this.deps.port,
-        addresses: this.deps.addresses()
+        addresses: this.deps.addresses(),
+        mail: 1
       }),
       members: () => this.netMembers(),
       keepListening: () => this.keepsListening(),

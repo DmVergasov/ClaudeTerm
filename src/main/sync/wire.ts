@@ -38,6 +38,8 @@ export interface HelloMessage {
   port: number
   addresses: string[]
   reachedYou: boolean | null
+  /** 1 when the device speaks the mail protocol; absent from a device that does not */
+  mail?: 1
 }
 
 export type Message = HelloMessage
@@ -234,7 +236,9 @@ function parseHello(v: Record<string, unknown>): HelloMessage | null {
   const list = parseStrings(addresses, MAX_ADDRESSES, MAX_ADDRESS_LENGTH)
   if (!list) return null
   if (reachedYou !== null && typeof reachedYou !== 'boolean') return null
-  return { t: 'hello', v: v.v, id, name, platform: known, port: port as number, addresses: list, reachedYou }
+  // only mail: 1 counts: a device that sends another value is taken as one that does not speak the mail protocol
+  const mail = v.mail === 1 ? { mail: 1 as const } : {}
+  return { t: 'hello', v: v.v, id, name, platform: known, port: port as number, addresses: list, reachedYou, ...mail }
 }
 
 function parseRecords(v: Record<string, unknown>): Message | null {

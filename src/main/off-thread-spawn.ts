@@ -27,6 +27,8 @@ export interface RunOptions {
   timeoutMs?: number
   /** the program is ended and RunError 'too-large' given once its stdout is larger */
   maxOutput?: number
+  /** Windows: the arguments are passed as they are, unquoted (for cmd.exe) */
+  verbatim?: boolean
 }
 
 export type RunFailure = 'not-found' | 'failed' | 'timeout' | 'too-large'
@@ -64,7 +66,7 @@ parentPort.on('message', (m) => {
   const fail = (reason, message) => answer({ error: { reason, message } })
   let child
   try {
-    child = spawn(m.file, m.args, { cwd: m.cwd, env: m.env, windowsHide: true, stdio: m.quiet ? 'ignore' : ['pipe', 'pipe', 'pipe'] })
+    child = spawn(m.file, m.args, { cwd: m.cwd, env: m.env, windowsHide: true, stdio: m.quiet ? 'ignore' : ['pipe', 'pipe', 'pipe'], windowsVerbatimArguments: m.verbatim === true })
   } catch (e) {
     fail('failed', String(e && e.message))
     return

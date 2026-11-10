@@ -149,9 +149,9 @@ function checkbox(key: SettingKey, get: (v: SettingsView) => boolean, error: Sho
   return box
 }
 
-function checkboxField(key: SettingKey, label: string, get: (v: SettingsView) => boolean): HTMLElement {
+function checkboxField(key: SettingKey, label: string, get: (v: SettingsView) => boolean, hint?: string): HTMLElement {
   const e = errorLine()
-  return el('div', { className: 'check-field' }, el('label', { className: 'check' }, checkbox(key, get, e.show, label), ` ${label}`), e.line)
+  return el('div', { className: 'check-field' }, el('label', { className: 'check' }, checkbox(key, get, e.show, label), ` ${label}`), ...hintOf(hint), e.line)
 }
 
 function notificationTable(): HTMLElement {
@@ -248,6 +248,11 @@ root.append(
       (v) => v.settings.claude.limitPace)),
   accountsSection(),
   devicesSection([checkboxField('devices.keepAwake', REMOTE_COPY.keepAwake, (v) => v.settings.devices.keepAwake)]),
+  section('Agent messages', null,
+    checkboxField('agentMessages.enabled', "Let agents message tabs that Claude Code's own messaging can't reach", (v) => v.settings.agentMessages.enabled,
+      "Agents use SendMessage first. ClaudeTerm carries a message only to a tab SendMessage doesn't list: another device, another account."),
+    checkboxField('agentMessages.marks', "Mark tabs that got messages you haven't read", (v) => v.settings.agentMessages.marks,
+      "An envelope on the tab and a counter; no sound, no pop-up.")),
   section('Media', 'applies to new tabs',
     checkboxField('imageWatch.enabled', 'Show new images, audio and video from the session scratchpad', (v) => v.settings.imageWatch.enabled),
     checkboxField('imagePanel.autoOpen', 'Open the Media panel when a new file arrives', (v) => v.settings.imagePanel.autoOpen)),

@@ -1,11 +1,11 @@
 import type { PanelMode } from '../shared/types'
 
-export type PanelTab = 'images' | 'changes' | 'docs'
+export type PanelTab = 'images' | 'changes' | 'docs' | 'messages'
 
-const TABS: readonly PanelTab[] = ['images', 'changes', 'docs']
-const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs' }
+const TABS: readonly PanelTab[] = ['images', 'changes', 'docs', 'messages']
+const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs', messages: 'Agent messages' }
 /** how wide a drag may make each tab, as a share of the workspace (the window less the left tab panel) */
-const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85 }
+const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85, messages: 0.85 }
 const MIN_WIDTH = 180
 /** how long the terminal waits for the window to take the size main gave it */
 const SETTLE_MS = 300
@@ -28,7 +28,7 @@ export class SidePanel {
   private isExpanded = false
   private readonly title: HTMLElement
   private readonly toolsBox: HTMLElement
-  private readonly available: Record<PanelTab, boolean> = { images: true, changes: false, docs: false }
+  private readonly available: Record<PanelTab, boolean> = { images: true, changes: false, docs: false, messages: false }
   private mode: PanelMode = 'beside'
   /** the width main was last asked to make room for */
   private asked = 0
@@ -51,8 +51,8 @@ export class SidePanel {
       el.className = 'panel-tool-group'
       return el
     }
-    this.tools = { images: group(), changes: group(), docs: group() }
-    this.toolsBox.append(this.tools.images, this.tools.changes, this.tools.docs)
+    this.tools = { images: group(), changes: group(), docs: group(), messages: group() }
+    this.toolsBox.append(this.tools.images, this.tools.changes, this.tools.docs, this.tools.messages)
     const hide = document.createElement('button')
     hide.className = 'panel-hide'
     hide.textContent = '–'
@@ -64,8 +64,8 @@ export class SidePanel {
       el.className = `panel-body panel-${tab}`
       return el
     }
-    this.bodies = { images: body('images'), changes: body('changes'), docs: body('docs') }
-    root.replaceChildren(handle, header, this.bodies.images, this.bodies.changes, this.bodies.docs)
+    this.bodies = { images: body('images'), changes: body('changes'), docs: body('docs'), messages: body('messages') }
+    root.replaceChildren(handle, header, this.bodies.images, this.bodies.changes, this.bodies.docs, this.bodies.messages)
     this.setupResize(handle)
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.isExpanded && !e.defaultPrevented) this.setExpanded(false)

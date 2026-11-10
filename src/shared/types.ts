@@ -172,6 +172,8 @@ export interface Settings {
   tabs: { position: TabPosition }
   /** applies to tabs opened after a change */
   conpty: ConptyHost
+  /** agent messages between Claude sessions: enabled turns them on; marks shows the unread messages on a tab */
+  agentMessages: { enabled: boolean; marks: boolean }
   /** device sync: the port the group listens on; the group is open once this device has an identity (device-identity.json) */
   devices: { port: number; keepAwake: boolean }
   /** check GitHub for new versions in the background */

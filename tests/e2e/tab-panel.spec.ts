@@ -664,9 +664,9 @@ test("the panel header's Docs button shows once a Claude tab has a document, and
   await expect(button).toBeVisible()
   await expect(button).toHaveClass(/active/)
   await expect(button).toHaveAttribute('title', `Docs (${KEY_LABELS.docs})`)
-  // the side-panel toggles stand as on top: Changes, Docs, Media, Note, then the position button
+  // the side-panel toggles stand as on top: Changes, Docs, Media, Messages, Note, then the position button
   const shown = await page.locator('#tabpanel .tp-head button').evaluateAll((els) => els.filter((el) => !(el as HTMLElement).hidden).map((el) => el.classList[0]))
-  expect(shown).toEqual(['tab-new', 'tab-menu', 'tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-note-toggle', 'tab-position'])
+  expect(shown).toEqual(['tab-new', 'tab-menu', 'tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-messages-toggle', 'tab-note-toggle', 'tab-position'])
 
   await button.click()
   await expect(panel).toHaveClass(/collapsed/)
@@ -704,7 +704,7 @@ test('at its narrowest, half its first width, the panel holds every header butto
   await dragBy(page, page.locator('#tabpanel .tp-resize'), -1000)
   await expect.poll(() => panelWidth(page)).toBe(110)
   const { head, buttons } = await headerBoxes(page)
-  expect(buttons.map((b) => b.name).sort()).toEqual(['tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-menu', 'tab-new', 'tab-note-toggle', 'tab-position'])
+  expect(buttons.map((b) => b.name).sort()).toEqual(['tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-menu', 'tab-messages-toggle', 'tab-new', 'tab-note-toggle', 'tab-position'])
   // every button lies inside the header: one past its right edge would lie under the terminal
   for (const b of buttons) {
     expect(b.left).toBeGreaterThanOrEqual(head.left)
@@ -722,7 +722,7 @@ test('at its narrowest, half its first width, the panel holds every header butto
   const top = (name: string): number => buttons.find((b) => b.name === name)!.top
   expect(top('tab-menu')).toBe(top('tab-new'))
   expect(top('tab-position')).toBe(top('tab-new'))
-  for (const toggle of ['tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-note-toggle']) expect(top(toggle)).toBeGreaterThan(top('tab-new'))
+  for (const toggle of ['tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-messages-toggle', 'tab-note-toggle']) expect(top(toggle)).toBeGreaterThan(top('tab-new'))
 
   // the toggles work there as anywhere
   await page.locator('#tabpanel .tp-head .tab-images-toggle').click()

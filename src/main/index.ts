@@ -40,7 +40,7 @@ import { claudeTempRoot, realTempRoot, sessionTempDir, watchImages, type ImageWa
 import { handleImgProtocol, registerImgScheme, remoteCardSource } from './img-protocol'
 import { createLogger } from './log'
 import { PanelRoom } from './panel-room'
-import { findExecutable, isExecutableFile } from './login-env'
+import { findExecutable, isExecutableFile, loginShellPath } from './login-env'
 import { macMenuTemplate } from './mac-menu'
 import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePage, startSwap } from './mac-update'
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
@@ -64,6 +64,12 @@ import { TaskListHub, shownPlan } from './task-list-hub'
 import { TaskListStore } from './task-list-store'
 import { TurnOrigins } from './turn-origins'
 import { TabLayoutStore } from './tab-layout'
+import { MailHub } from './mail/mail-hub'
+import { MailStore } from './mail/mail-store'
+import { MailSync } from './mail/mail-sync'
+import { nameAgents, type Agent, type AgentTab } from './mail/agent-directory'
+import { probeClaudeVersion, readVersionCache, versionAtLeast } from './claude-version'
+import { MAIL_MIN_CLAUDE, type MailConversationView, type MailUnread } from '../shared/mail'
 import { localAddresses } from './sync/address'
 import { formatDeviceStatus } from './sync/device-status'
 import { PortMirrors, screenWorkerPath } from './sync/mirror-port'
@@ -194,7 +200,20 @@ function bootstrap(): void {
   let lastNotices = [...loaded.errors, ...startProfiles.notices]
   startupNotices.push(...lastNotices)
   const hookScript = resourcePath('hook/session-hook.js')
-  const claudeFiles = writeClaudeTabFiles(dataDir, process.execPath, hookScript, statusRefreshInterval(settings.claude))
+  // the Claude Code version each command answered --version with: the last start's cache seeds it, a probe adds to it
+  const versions = new Map<string, string | null>()
+  const seededVersion = readVersionCache(dataDir)
+  if (seededVersion) versions.set(seededVersion.command, seededVersion.version)
+  /** the version the command in use answered with, null when no probe has answered for it */
+  const localVersion = (): string | null => versions.get(settings.claude.command) ?? null
+  /** whether this device's Claude tabs can receive mail: the command is Claude Code 2.1.287 or later */
+  const localWakes = (): boolean => {
+    const v = localVersion()
+    return v !== null && versionAtLeast(v, MAIL_MIN_CLAUDE)
+  }
+  /** whether Claude tabs get the mail watcher in their settings file: agent messages are on and the version allows it */
+  const mailWatcher = (): boolean => settings.agentMessages.enabled && localWakes()
+  const claudeFiles = writeClaudeTabFiles(dataDir, process.execPath, hookScript, statusRefreshInterval(settings.claude), mailWatcher())
   const sessions = new SessionStore(dataDir, { onError: (m) => log.warn(m) })
   // the previous run restarted into an update: reopen its tabs without asking
   const restoreAfterUpdate = consumeUpdateMarker(dataDir, Date.now())
@@ -567,12 +586,22 @@ function bootstrap(): void {
     events: {
       opened: (t) => {
         send(IPC.evTabOpened, t)
+        // a Claude tab asks its command for its version, once a run: the mail watcher depends on the answer
+        if (t.kind === 'claude') probeVersion()
+        mailKeys.set(t.id, mailKeyOf(t))
+        mailTabsChanged()
         // a new tab has printed nothing yet: its copy opens at number 0 and waits for no seed
         const size = tabs.size(t.id)
         if (size) remote?.host.opened(t.id, size.cols, size.rows, settings.scrollback)
       },
       updated: (t) => {
         send(IPC.evTabUpdated, t)
+        // the mail follows a tab's session, its exit and its folder: its working and title changes do not reach it
+        const mailKey = mailKeyOf(t)
+        if (mailKeys.get(t.id) !== mailKey) {
+          mailKeys.set(t.id, mailKey)
+          mailTabsChanged()
+        }
         // the other devices show the tab's activity and exit too: an update goes out in the directory
         remote?.host.changed()
         // an agent's start or stop changes the activity without a state change: the hold follows it
@@ -581,6 +610,8 @@ function bootstrap(): void {
       closed: (id) => {
         send(IPC.evTabClosed, id)
         remote?.closed(id)
+        mailKeys.delete(id)
+        mailTabsChanged()
         sizes.drop(id)
         deviceSized.delete(id)
         tabAttention.drop(id)
@@ -611,6 +642,7 @@ function bootstrap(): void {
       },
       exit: (id, code) => {
         send(IPC.evPtyExit, id, code)
+        mailTabsChanged()
         // the process that waited is gone: an attention still in its poll must not start
         tabInputs.bump(id)
         clearAttention(id)
@@ -746,6 +778,7 @@ function bootstrap(): void {
   const viewerEvents: ViewerEvents = {
     opened: (device, tab) => {
       devicesSoonIfShown()
+      mailTabsChanged()
       send(IPC.evTabOpened, remoteTabInfo(device, tab))
       if (tab.placeKnown) send(IPC.evTabPlace, tab.id, tab.place)
       if (tab.kind === 'claude') noteHub.addTab(tab.id, tab.claudeSessionId, { remote: true })
@@ -756,6 +789,7 @@ function bootstrap(): void {
     },
     updated: (device, tab, before) => {
       send(IPC.evTabUpdated, remoteTabInfo(device, tab))
+      if (tab.claudeSessionId !== before.claudeSessionId || tab.exited !== before.exited || tab.folder !== before.folder) mailTabsChanged()
       if (tab.placeKnown && (!before.placeKnown || JSON.stringify(tab.place) !== JSON.stringify(before.place))) send(IPC.evTabPlace, tab.id, tab.place)
       if (tab.claudeSessionId !== null && tab.claudeSessionId !== before.claudeSessionId) noteHub.session(tab.id, tab.claudeSessionId)
       // the device changed the tab's folder: the note of the old folder goes here too
@@ -763,6 +797,7 @@ function bootstrap(): void {
     },
     closed: (tabId) => {
       devicesSoonIfShown()
+      mailTabsChanged()
       send(IPC.evTabClosed, tabId)
       noteHub.removeTab(tabId)
       lastImages.delete(tabId)
@@ -775,6 +810,7 @@ function bootstrap(): void {
     devices: (list) => {
       // a device that went or came back changes the tab counts of the Devices section too
       devicesSoonIfShown()
+      mailTabsChanged()
       send(IPC.evRemoteDevices, list)
       // a device that went or came back changes the Recent sessions window's sections: they are drawn again
       send(IPC.evRemoteSessions, remoteSessionsView())
@@ -1297,6 +1333,145 @@ function bootstrap(): void {
   })
   updater.start()
 
+  // ---- agent messages: the mail between Claude sessions, kept in agent-messages.json and carried over the device links
+  const mailStore = MailStore.open({ dir: dataDir, onError: (m) => log.warn(m) })
+  // the messages older than 30 days go once a day; a run that stays open for days still drops them
+  setInterval(() => mailStore.prune(), 24 * 60 * 60 * 1000).unref()
+  /** this device's name in the group, or the host name while the group is not open */
+  const selfName = (): string => group?.view().self.name || hostname().slice(0, MAX_DEVICE_NAME)
+  /** whether an address' device is this device: null (a device never paired) is this device too */
+  const isSelfDevice = (device: string | null): boolean => device === null || device === selfDeviceId
+  /** the commands asked for their version this run: each is asked once */
+  const asked = new Set<string>()
+  /** the Claude tabs' settings file is written again as this device's version and settings say now */
+  const writeTabSettings = (): void => {
+    try {
+      writeClaudeTabFiles(dataDir, process.execPath, hookScript, statusRefreshInterval(settings.claude), mailWatcher())
+    } catch (e) {
+      toast(`Cannot update claude-tab-settings.json: ${(e as Error).message}`)
+    }
+  }
+  /** the environment a Claude tab's command runs with, asked once per run: on Unix the login shell's PATH, which a GUI app's own PATH misses */
+  let commandEnv: Promise<NodeJS.ProcessEnv | undefined> | null = null
+  const claudeCommandEnv = (): Promise<NodeJS.ProcessEnv | undefined> => {
+    if (process.platform === 'win32') return Promise.resolve(undefined)
+    commandEnv ??= (async (): Promise<NodeJS.ProcessEnv> => {
+      const shell = loginShell()
+      if (shell === null) return process.env
+      const PATH = (await loginShellPath(execRunner, shell).catch(() => null)) ?? process.env.PATH
+      return { ...process.env, PATH }
+    })()
+    return commandEnv
+  }
+  /** asks the command in use for its version, in the background; the answer decides the mail watcher and goes to the peers */
+  const probeVersion = (): void => {
+    const command = settings.claude.command
+    if (asked.has(command)) return
+    asked.add(command)
+    void claudeCommandEnv().then((env) => probeClaudeVersion(dataDir, command, process.platform, env)).then((version) => {
+      const watcherBefore = mailWatcher()
+      const versionBefore = localVersion()
+      versions.set(command, version)
+      if (mailWatcher() !== watcherBefore) writeTabSettings()
+      if (localVersion() !== versionBefore) mailSync.announce()
+    })
+  }
+  /** the agents: this device's Claude tabs with a session, then those of each connected device that takes mail */
+  const agentsNow = (): Agent[] => {
+    const self = selfDeviceId || null
+    const name = selfName()
+    const wakes = localWakes()
+    const claude = localVersion()
+    const list: AgentTab[] = []
+    for (const t of hostTabs(hostCtx).list()) {
+      const session = t.claudeSessionId
+      if (t.kind !== 'claude' || t.exited || session === null) continue
+      list.push({ device: self, deviceName: name, tabId: t.id, session, customTitle: t.customTitle, folder: t.folder, branch: t.place?.branch ?? null, title: t.title, busy: t.working, wakes, claude })
+    }
+    const r = remote
+    for (const d of group?.view().devices ?? []) {
+      const accept = mailSync.acceptOf(d.id)
+      if (!r?.viewer.online(d.id) || !accept?.on) continue
+      for (const t of r.viewer.tabsOf(d.id)) {
+        const session = t.claudeSessionId
+        if (t.kind !== 'claude' || t.exited || session === null) continue
+        list.push({ device: d.id, deviceName: d.name, tabId: t.id, session, customTitle: t.customTitle, folder: t.folder, branch: t.place?.branch ?? null, title: t.title, busy: t.working, wakes: accept.wakes, claude: accept.claude })
+      }
+    }
+    return nameAgents(list)
+  }
+  /** the tabs of this device and of the connected devices, with their sessions, for the unread counts */
+  const mailTabList = (): { tabId: string; device: string | null; session: string | null }[] => {
+    const r = remote
+    const list = hostTabs(hostCtx).list().map((t) => ({ tabId: t.id, device: selfDeviceId || null, session: t.claudeSessionId }))
+    for (const d of r?.viewer.devices() ?? []) {
+      for (const t of r?.viewer.tabsOf(d.id) ?? []) list.push({ tabId: t.id, device: d.id, session: t.claudeSessionId })
+    }
+    return list
+  }
+  const unreadNow = (): MailUnread => mailHub.unreadByTab(mailTabList())
+  /** the unread counts last sent, as JSON: an unchanged count is not sent again, unless the mail itself changed (a delivery keeps the counts) */
+  let lastMailSent: string | null = null
+  let mailChanged = false
+  /** asks for the unread counts to go to the window: one send per burst of changes, as the other frequent updates do */
+  const mailSoon = new Coalescer(0, () => {
+    const unread = unreadNow()
+    const json = JSON.stringify(unread)
+    const force = mailChanged
+    mailChanged = false
+    if (!force && json === lastMailSent) return
+    lastMailSent = json
+    send(IPC.evMail, unread)
+  })
+  /** what of a tab the mail depends on: its Claude session, whether it exited, and its folder */
+  const mailKeyOf = (t: { claudeSessionId: string | null; exited: boolean; folder: string }): string => JSON.stringify([t.claudeSessionId, t.exited, t.folder])
+  /** the mail key of each of this device's tabs as the mail last heard it */
+  const mailKeys = new Map<string, string>()
+  const mailHub = new MailHub({
+    store: mailStore,
+    enabled: () => settings.agentMessages.enabled,
+    caller: (tabId) => {
+      const a = agentsNow().find((x) => x.tabId === tabId && isSelfDevice(x.device))
+      return a ? { tabId, device: selfDeviceId || null, session: a.session, name: a.name } : null
+    },
+    agents: agentsNow,
+    notAccepting: () => {
+      const r = remote
+      return (group?.view().devices ?? []).filter((d) => r?.viewer.online(d.id) === true && mailSync.acceptOf(d.id)?.on !== true).map((d) => d.name)
+    },
+    deviceOnline: (device) => device === null || device === selfDeviceId || (remote?.viewer.online(device) ?? false),
+    deviceAccepts: (device) => (device === null || device === selfDeviceId ? settings.agentMessages.enabled : mailSync.acceptOf(device)?.on === true),
+    localTab: (session) => tabs.list().find((t) => t.kind === 'claude' && !t.exited && t.claudeSessionId === session)?.id ?? null,
+    tabOpen: (tabId) => {
+      const t = tabs.get(tabId)
+      return t !== null && !t.exited
+    },
+    working: (tabId) => tabs.isWorking(tabId),
+    sender: (a) => {
+      const x = agentsNow().find((g) => g.device === a.device && g.session === a.session)
+      return { folder: x?.folder ?? null, branch: x?.branch ?? null }
+    },
+    self: () => selfDeviceId || null,
+    deviceName: (device) => {
+      if (device === null || device === selfDeviceId) return selfName()
+      return group?.view().devices.find((d) => d.id === device)?.name ?? null
+    },
+    onUnread: () => {
+      mailChanged = true
+      mailSoon.request()
+    }
+  })
+  /** a tab, a device or the mail changed: the watchers are offered their mail again and the unread counts follow */
+  const mailTabsChanged = (): void => {
+    mailHub.tabsChanged()
+    mailSoon.request()
+  }
+  const mailSync = new MailSync({
+    store: mailStore,
+    accept: () => ({ on: settings.agentMessages.enabled, wakes: localWakes(), claude: localVersion() }),
+    onPeers: () => mailTabsChanged()
+  })
+
   // a socket left by a run that crashed would refuse the new one; a socket folder others can enter is never used
   const uid = process.getuid?.() ?? -1
   const pipeProblem = process.platform === 'win32' ? null : socketProblem(pipeName, { privateDir: socketDir({ platform: process.platform, env: {}, uid }), uid })
@@ -1308,7 +1483,10 @@ function bootstrap(): void {
     }),
     session: (msg) => {
       log.info(`session ${msg.source} tab=${msg.tabId} id=${msg.sessionId} transcript=${msg.transcriptPath ?? '-'}`)
+      const before = tabs.get(msg.tabId)?.claudeSessionId ?? null
       if (!tabs.setClaudeSession(msg.tabId, msg.sessionId, msg.source)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      // a conversation resumed under a new id keeps the mail it had: the old id reads as the new one from now on
+      if (msg.source === 'resume' && before !== null && before !== msg.sessionId) mailHub.alias(before, msg.sessionId)
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
       planHub.session(msg.tabId, msg.sessionId)
       noteHub.session(msg.tabId, msg.sessionId)
@@ -1322,6 +1500,7 @@ function bootstrap(): void {
         resumeAfterRestore.delete(msg.tabId)
         autoContinue.resumed(msg.tabId, cut)
       }
+      mailTabsChanged()
       return { ok: true }
     },
     status: (msg) => {
@@ -1354,6 +1533,8 @@ function bootstrap(): void {
     },
     attention: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      // a done ends the mail turn the tab was started for, if one was: taken on every done, so no later turn is taken for it
+      const mailTurn = msg.reason === 'done' && mailHub.takeMailTurn(msg.tabId)
       wakeFeed(msg.tabId)
       // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
       if (msg.reason === 'done') {
@@ -1375,7 +1556,7 @@ function bootstrap(): void {
           return
         }
         // a turn a message from another session started has its own settings: the transcript tells which turn this is
-        const reason = msg.reason === 'done' && turns.lastTurnIsPeer(msg.tabId) ? 'peer' : msg.reason
+        const reason = msg.reason === 'done' && (mailTurn || turns.lastTurnIsPeer(msg.tabId)) ? 'peer' : msg.reason
         // a done with background work still running gives no signal while doneWithBackgroundWork is off: no tab waits for it
         const share = msg.reason !== 'done' || msg.background !== true || settings.notifications.doneWithBackgroundWork
         raiseAttention(msg.tabId, reason, { background: msg.background === true, share })
@@ -1391,6 +1572,8 @@ function bootstrap(): void {
     },
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      // a prompt of the user starts a turn that is the user's, not a mail turn
+      mailHub.userTurn(msg.tabId)
       wakeFeed(msg.tabId)
       review.turn(msg.tabId, msg.sessionId)
       tabs.setWorking(msg.tabId, true)
@@ -1431,7 +1614,10 @@ function bootstrap(): void {
     openDeviceSettings: () => {
       settingsWindow.open('devices')
       return { ok: true }
-    }
+    },
+    agentList: (msg) => mailHub.list(msg.tabId),
+    agentSend: (msg) => mailHub.send(msg.tabId, msg.to, msg.text, msg.replyTo),
+    mailWait: (msg, closed) => mailHub.wait(msg.tabId, msg.sessionId, closed)
   })
     .then((h) => { pipe = h })
     .catch((e: unknown) => log.error(`pipe server failed: ${String(e)}`))
@@ -1493,9 +1679,12 @@ function bootstrap(): void {
           // a device that left the group can link no more: the sessions it was answered with are forgotten
           pruneListedMembers(hostCtx, view.devices.map((d) => d.id))
           remote?.viewer.members(view.devices)
+          mailTabsChanged()
         },
         onReset: () => bridge?.start(),
         onPeer: (link, hello) => {
+          // the mail needs no window: a peer that speaks the mail protocol gets its mail link at once
+          mailSync.attach(link, hello)
           if (remote) {
             remote.connect(link, hello)
             return
@@ -1620,6 +1809,9 @@ function bootstrap(): void {
   ipcMain.on(IPC.rendererReady, () => {
     rendererReady = true
     for (const n of startupNotices.splice(0)) send(IPC.evToast, n)
+    const unread = unreadNow()
+    lastMailSent = JSON.stringify(unread)
+    send(IPC.evMail, unread)
     for (const cmd of pendingLaunches.splice(0)) openFromLaunch(cmd)
     if (restoreAfterUpdate) void runRestore()
     // the window is ready: the open group's holder is built now, and its copies ask the window for their seeds
@@ -1646,6 +1838,18 @@ function bootstrap(): void {
     }
   })
   ipcMain.on(IPC.bell, (_e, tabId: unknown) => { if (isId(tabId) && tabs.get(tabId)) raiseAttention(tabId, 'bell') })
+  // the agent messages of a tab's conversation, or of every conversation (null), for the panel
+  ipcMain.handle(IPC.mailConversations, (_e, tabId: unknown): MailConversationView[] => {
+    if (tabId === null) return mailHub.conversations(null)
+    if (!isId(tabId)) return []
+    const local = tabs.get(tabId)
+    if (local) return local.claudeSessionId === null ? [] : mailHub.conversations({ device: selfDeviceId || null, session: local.claudeSessionId })
+    const r = remote
+    const device = r?.viewer.deviceOf(tabId) ?? null
+    const session = device === null ? null : (r?.viewer.tabsOf(device).find((t) => t.id === tabId)?.claudeSessionId ?? null)
+    return device === null || session === null ? [] : mailHub.conversations({ device, session })
+  })
+  ipcMain.handle(IPC.mailRead, (_e, ids: unknown): void => { if (isIdList(ids)) mailHub.markRead(ids.slice(0, 1000)) })
   // a fork comes only from Fork session (tabs:fork), never from a request to open a tab
   ipcMain.handle(IPC.tabsOpen, (_e, req: unknown) => (isOpenTabRequest(req) ? openTab(inDefaultFolder(openTabRequestFields(req))) : null))
   ipcMain.handle(IPC.sessionsList, listSessions)
@@ -2128,16 +2332,28 @@ function bootstrap(): void {
       const devicePortBefore = settings.devices.port
       const testsBefore = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
       const refreshBefore = statusRefreshInterval(settings.claude)
+      const watcherBefore = mailWatcher()
+      const agentsBefore = JSON.stringify(settings.agentMessages)
+      const commandBefore = settings.claude.command
+      const versionBefore = localVersion()
+      const wakesBefore = localWakes()
       settings = next.settings
-      // Claude tabs started from now on read their settings file with the new status bar refresh
+      // Claude tabs started from now on read their settings file with the new status bar refresh and mail watcher
       const refreshNow = statusRefreshInterval(settings.claude)
-      if (refreshNow !== refreshBefore) {
+      if (refreshNow !== refreshBefore || mailWatcher() !== watcherBefore) {
         try {
-          writeClaudeTabFiles(dataDir, process.execPath, hookScript, refreshNow)
+          writeClaudeTabFiles(dataDir, process.execPath, hookScript, refreshNow, mailWatcher())
         } catch (e) {
           notices = [...notices, `Cannot update claude-tab-settings.json: ${(e as Error).message}`]
         }
       }
+      // the peers hear of the agent messages setting at once; a command not asked this run is asked now, its version decides the watcher
+      const agentsChanged = JSON.stringify(settings.agentMessages) !== agentsBefore
+      // the peers carry this device's accept: its setting, whether its version lets it wake a session, and the version itself
+      if (agentsChanged || localVersion() !== versionBefore || localWakes() !== wakesBefore) mailSync.announce()
+      // messages off releases the held waits and on hands over waiting mail: the tabs are offered them again
+      if (agentsChanged) mailTabsChanged()
+      if (settings.claude.command !== commandBefore) probeVersion()
       const computed = computeProfiles(settings)
       profiles = computed.profiles
       notices = [...notices, ...computed.notices]
@@ -2250,7 +2466,12 @@ function bootstrap(): void {
     review.dispose()
     receiver.dispose()
     settingsWatcher.close()
+    // the pipe first, so no request comes in while the mail closes; then the pending count, the hub, the links, and the store last
     void pipe?.close()
+    mailSoon.cancel()
+    mailHub.close()
+    mailSync.close()
+    mailStore.flush()
     // Quitting while ConPTY sessions are still shutting down keeps the process alive for seconds after the
     // window is gone (indefinitely on some machines): let the killed PTYs exit first, then quit for real.
     e.preventDefault()

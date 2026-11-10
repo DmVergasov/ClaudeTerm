@@ -438,6 +438,16 @@ describe('devices settings', () => {
     expect(r.errors).toEqual(['settings.json: invalid value for "devices.keepAwake", using default'])
   })
 
+  it('agentMessages.enabled and agentMessages.marks: true by default, a false is kept, another value falls back with a notice naming the key', () => {
+    expect(DEFAULT_SETTINGS.agentMessages).toEqual({ enabled: true, marks: true })
+    expect(parseSettings(JSON.stringify({ agentMessages: { enabled: false, marks: false } })).settings.agentMessages).toEqual({ enabled: false, marks: false })
+    const r = parseSettings(JSON.stringify({ agentMessages: { enabled: 'yes' } }))
+    expect(r.settings.agentMessages).toEqual({ enabled: true, marks: true })
+    expect(r.errors).toEqual(['settings.json: invalid value for "agentMessages.enabled", using default'])
+    const edit = applySettingEdit('{}', 'agentMessages.marks', false)
+    expect(edit.ok && JSON.parse(edit.text)).toEqual({ agentMessages: { marks: false } })
+  })
+
   it('applySettingEdit writes devices.keepAwake, and refuses a value that is not a boolean', () => {
     const off = applySettingEdit('{}', 'devices.keepAwake', false)
     expect(off.ok && JSON.parse(off.text)).toEqual({ devices: { keepAwake: false } })

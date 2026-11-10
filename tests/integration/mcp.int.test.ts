@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startPipeServer, type PipeServerHandle } from '../../src/main/pipe-server'
-import type { ShowDiffMessage, ShowDocumentMessage, ShowImageMessage, TaskListGetMessage, TaskListMessage } from '../../src/shared/protocol'
+import type { AgentListMessage, AgentSendMessage, ShowDiffMessage, ShowDocumentMessage, ShowImageMessage, TaskListGetMessage, TaskListMessage } from '../../src/shared/protocol'
 import { testPipeName } from '../fixtures/platform'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
@@ -20,11 +20,13 @@ const docs: ShowDocumentMessage[] = []
 const taskLists: TaskListMessage[] = []
 const taskListGets: TaskListGetMessage[] = []
 const deviceMsgs: unknown[] = []
+const agentLists: AgentListMessage[] = []
+const agentSends: AgentSendMessage[] = []
 let server: PipeServerHandle
 
 beforeAll(async () => {
   await build({ entryPoints: [resolve(__dirname, '../../src/mcp/show-image-server.ts')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', target: 'node20', logLevel: 'silent' })
-  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), editBefore: () => ({ ok: true }), deviceStatus: (m) => { deviceMsgs.push(m); return { ok: true, info: 'status text' } }, openDeviceSettings: (m) => { deviceMsgs.push(m); return { ok: true } }, showDocument: async (m) => { docs.push(m); return { ok: true, info: 'Opened out/spec.md in the Docs panel.' } }, showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } }, taskList: (m) => { taskLists.push(m); return { ok: true, info: 'Task list updated: 1 of 2 done.' } }, taskListGet: (m) => { taskListGets.push(m); return { ok: true, info: 'Release prep: 1 of 2 done' } } })
+  server = await startPipeServer(pipe, { showImage: async (m) => { got.push(m); return { ok: true } }, session: () => ({ ok: true }), status: () => ({ ok: true }), subagent: () => ({ ok: true }), sessionEnd: () => ({ ok: true }), attention: () => ({ ok: true }), turn: () => ({ ok: true }), editBefore: () => ({ ok: true }), deviceStatus: (m) => { deviceMsgs.push(m); return { ok: true, info: 'status text' } }, openDeviceSettings: (m) => { deviceMsgs.push(m); return { ok: true } }, showDocument: async (m) => { docs.push(m); return { ok: true, info: 'Opened out/spec.md in the Docs panel.' } }, showDiff: async (m) => { diffs.push(m); return { ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' } }, taskList: (m) => { taskLists.push(m); return { ok: true, info: 'Task list updated: 1 of 2 done.' } }, taskListGet: (m) => { taskListGets.push(m); return { ok: true, info: 'Release prep: 1 of 2 done' } }, agentList: (m) => { agentLists.push(m); return { ok: true, info: 'api-server · Desktop [3be5d1] · idle' } }, agentSend: (m) => { agentSends.push(m); return { ok: true, info: 'Delivered to api-server · Desktop.' } }, mailWait: async () => ({ ok: true }) })
   mkdirSync(join(work, 'out'))
   writeFileSync(join(work, 'out', 'plot.png'), Buffer.from([1, 2, 3]))
   writeFileSync(join(work, 'out', 'spec.md'), '# Spec\n')
@@ -43,7 +45,9 @@ describe('show_image MCP server', () => {
     const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['device_status', 'get_task_list', 'open_device_settings', 'set_task_list', 'show_diff', 'show_document', 'show_image'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['device_status', 'get_task_list', 'list_agents', 'message_agent', 'open_device_settings', 'set_task_list', 'show_diff', 'show_document', 'show_image'])
+    const instructions = client.getInstructions() ?? ''
+    for (const name of ['ListAgents', 'SendMessage', 'list_agents', 'message_agent']) expect(instructions).toContain(name)
     const res = await client.callTool({ name: 'show_image', arguments: { path: 'out/plot.png', caption: 'Plot' } })
     expect(res.isError).toBeFalsy()
     expect(res.content).toEqual([{ type: 'text', text: `Shown in ClaudeTerm: ${join(work, 'out', 'plot.png')}` }])
@@ -132,6 +136,27 @@ describe('show_image MCP server', () => {
     expect(opened.isError).toBeFalsy()
     expect(opened.content).toEqual([{ type: 'text', text: 'Opened Settings → Devices in ClaudeTerm.' }])
     expect(deviceMsgs).toEqual([{ v: 1, type: 'device_status' }, { v: 1, type: 'open_device_settings' }])
+    await client.close()
+  })
+
+  it('forwards list_agents and message_agent to ClaudeTerm and answers what it says', async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [bundle],
+      cwd: work,
+      env: { ...(process.env as Record<string, string>), CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
+    })
+    const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
+    await client.connect(transport)
+    const listed = await client.callTool({ name: 'list_agents', arguments: {} })
+    expect(listed.isError).toBeFalsy()
+    expect(listed.content).toEqual([{ type: 'text', text: 'api-server · Desktop [3be5d1] · idle' }])
+    expect(agentLists).toEqual([{ v: 1, type: 'agent_list', tabId: TAB }])
+    const replyTo = '1b0e6d2a-7c3f-4e8b-9a51-0d4c2f6e8a73'
+    const sent = await client.callTool({ name: 'message_agent', arguments: { to: 'api-server', text: 'Hello', reply_to: replyTo } })
+    expect(sent.isError).toBeFalsy()
+    expect(sent.content).toEqual([{ type: 'text', text: 'Delivered to api-server · Desktop.' }])
+    expect(agentSends).toEqual([{ v: 1, type: 'agent_send', tabId: TAB, to: 'api-server', text: 'Hello', replyTo }])
     await client.close()
   })
 })

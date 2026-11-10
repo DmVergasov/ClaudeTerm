@@ -4,13 +4,14 @@ import { userInfo } from 'node:os'
 import { z } from 'zod'
 import { sendPipeMessage } from '../shared/pipe-client'
 import { defaultPipeName, isUuid } from '../shared/protocol'
+import { AGENT_INSTRUCTIONS, listAgents, messageAgent } from './agent-tools'
 import { handleDeviceStatus, handleOpenDeviceSettings } from './device-tools'
 import { handleShowDiff } from './show-diff-tool'
 import { handleShowDocument } from './show-document-tool'
 import { handleGetTaskList, handleSetTaskList } from './task-list-tool'
 import { handleShowImage } from './show-image-tool'
 
-const server = new McpServer({ name: 'claudeterm', version: '0.1.0' })
+const server = new McpServer({ name: 'claudeterm', version: '0.1.0' }, { instructions: AGENT_INSTRUCTIONS })
 
 server.registerTool(
   'show_image',
@@ -168,6 +169,54 @@ server.registerTool(
       pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
       send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
     })
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'list_agents',
+  {
+    title: 'List agents in ClaudeTerm',
+    description:
+      'List the agents that message_agent can reach: the Claude tabs in ClaudeTerm on this device and on connected paired devices, except this one. ' +
+      'Use it only for an agent that Claude Code\'s ListAgents does not show, such as one on another device or another Claude account.',
+    inputSchema: {}
+  },
+  async () => {
+    const tabId = process.env.CLAUDETERM_TAB_ID
+    const r = await listAgents({
+      tabId: isUuid(tabId) ? tabId : null,
+      pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+      send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
+    })
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'message_agent',
+  {
+    title: 'Message an agent in ClaudeTerm',
+    description:
+      'Send a message to an agent listed by list_agents, or answer a message from another agent by passing its id as reply_to. ' +
+      'Use it only for an agent that Claude Code\'s ListAgents does not show; use SendMessage for the others. ' +
+      'The reply says whether the message was delivered or is waiting for the agent\'s device to connect.',
+    inputSchema: {
+      to: z.string().describe('a name or a ref from list_agents, or the sender of a message being answered'),
+      text: z.string().describe('The message text, at most 8000 characters'),
+      reply_to: z.string().optional().describe('The id of the message being answered, from the id line of a message from another agent')
+    }
+  },
+  async ({ to, text, reply_to }) => {
+    const tabId = process.env.CLAUDETERM_TAB_ID
+    const r = await messageAgent(
+      { to, text, reply_to },
+      {
+        tabId: isUuid(tabId) ? tabId : null,
+        pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+        send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
+      }
+    )
     return { content: [{ type: 'text', text: r.text }], isError: r.isError }
   }
 )

@@ -390,6 +390,11 @@ export class TabManager {
     return rec ? { ...rec.info } : null
   }
 
+  /** whether a Claude tab is working now: a turn began and its end, an Esc or a Ctrl+C has not yet cleared it */
+  isWorking(tabId: string): boolean {
+    return this.tabs.get(tabId)?.working ?? false
+  }
+
   snapshot(): SessionSnapshotTab[] {
     return this.order.map((id) => {
       const { info: i, working, background } = this.tabs.get(id)!

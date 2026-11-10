@@ -2,7 +2,7 @@ import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout 
 import { REMOTE_COPY } from '../shared/remote'
 import { deviceGroups, groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
 import { TabHeader } from './tab-header'
-import { beginRename, bindTab, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
+import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
 import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarGroup, type TabBarItem } from './tabbar'
 
 /** the drag's data type that names the group dragged by its header */
@@ -51,7 +51,7 @@ export class TabPanel {
     const spacer = document.createElement('div')
     spacer.className = 'tp-spacer'
     const h = this.header
-    this.head.replaceChildren(h.plus, h.more, spacer, h.changes, h.docs, h.images, h.note, h.position)
+    this.head.replaceChildren(h.plus, h.more, spacer, h.changes, h.docs, h.images, h.messages, h.note, h.position)
     this.list.className = 'tp-list'
     this.handle.className = 'tp-resize'
     this.width = clampTabPanelWidth(layout.width)
@@ -111,6 +111,11 @@ export class TabPanel {
 
   setImages(visible: boolean, unseen: number): void {
     this.header.setImages(visible, unseen)
+  }
+
+  /** the Messages button exists while agent messages are on; it counts the unread messages of the active tab */
+  setMessages(available: boolean, visible: boolean, unread: number): void {
+    this.header.setMessages(available, visible, unread)
   }
 
   /** the Note button exists only for Claude tabs; it is lit while the note is shown */
@@ -197,6 +202,7 @@ export class TabPanel {
     name.className = 'tp-device-name'
     name.textContent = device.online ? device.name : `${device.name} ${REMOTE_COPY.offline}`
     head.append(chevron, bar, name)
+    if (device.mail) head.append(mailMark())
     if (device.online) {
       const add = document.createElement('button')
       add.type = 'button'

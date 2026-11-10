@@ -305,3 +305,29 @@ describe('parsePipeMessage: the device messages', () => {
     expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'open_device_settings' }))).toEqual({ ok: true, message: { v: 1, type: 'open_device_settings' } })
   })
 })
+
+describe('parsePipeMessage: the agent messages', () => {
+  it('agent_list, agent_send and mail_wait parse for UUIDs', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'agent_list', tabId: TAB }))).toEqual({ ok: true, message: { v: 1, type: 'agent_list', tabId: TAB } })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi', replyTo: null })))
+      .toEqual({ ok: true, message: { v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi', replyTo: null } })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi', replyTo: SID })))
+      .toEqual({ ok: true, message: { v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi', replyTo: SID } })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi' })))
+      .toEqual({ ok: true, message: { v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi', replyTo: null } })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'mail_wait', tabId: TAB, sessionId: SID })))
+      .toEqual({ ok: true, message: { v: 1, type: 'mail_wait', tabId: TAB, sessionId: SID } })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'agent_list', tabId: 'x' })).ok).toBe(false)
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'mail_wait', tabId: TAB, sessionId: 'x' })).ok).toBe(false)
+  })
+
+  it('agent_send refuses an empty text, a text over 8000 characters, a to over 300 characters, a replyTo that is not a UUID', () => {
+    const send = (over: Record<string, unknown>) => parsePipeMessage(JSON.stringify({ v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi', replyTo: null, ...over }))
+    expect(send({ text: '' }).ok).toBe(false)
+    expect(send({ text: 'x'.repeat(8001) }).ok).toBe(false)
+    expect(send({ text: 'x'.repeat(8000) }).ok).toBe(true)
+    expect(send({ to: '' }).ok).toBe(false)
+    expect(send({ to: 'x'.repeat(301) }).ok).toBe(false)
+    expect(send({ replyTo: 'not-a-uuid' }).ok).toBe(false)
+  })
+})

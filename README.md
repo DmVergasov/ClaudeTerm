@@ -155,6 +155,10 @@ A device's tabs can be typed into, closed, forked and given another folder (**Ch
 
 The computer stays awake while another device uses it: another device that types into one of its tabs, or has one of its Claude tabs open while that tab works, keeps it from sleeping (**Keep this computer awake while another device uses it** in Settings → **Devices**). Claude can read the state of your devices and their tabs with the `device_status` tool, and open Settings → **Devices** with `open_device_settings`, where you pair or remove devices yourself.
 
+**Agent messages** let an agent in one Claude tab message an agent on another device, or on another Claude account, which Claude Code's own `ListAgents` and `SendMessage` cannot reach. Agents use `SendMessage` first, as they always have; only an agent that `ListAgents` does not show is reached through ClaudeTerm, with the `list_agents` and `message_agent` tools. A message wakes an idle agent when its Claude Code is 2.1.287 or later, and a busy agent reads it at its next step; an older Claude Code is listed as unable to receive messages.
+
+The **Agent messages** button (in the tab bar, or in the left panel's header when the tabs are on the left) opens the **Agent messages** panel: **This tab** shows the conversations of the tab in front, **All** every conversation on this device, newest first. A tab with unread messages gets an envelope after its title, and so does a folded device chip or a device's header in the left panel; the button's badge counts the unread messages of the tab in front. Messages make no sound and no pop-up. In Settings → **Agent messages**, two options apply to each device on its own: **Let agents message tabs that Claude Code's own messaging can't reach** and **Mark tabs that got messages you haven't read**, both on by default.
+
 ## Install
 
 1. Install [Claude Code](https://docs.claude.com/en/docs/claude-code) so that `claude` is on your `PATH`.
@@ -179,7 +183,7 @@ On macOS ClaudeTerm updates itself as well: it downloads a new release and puts 
 
 From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. **What's new** in the update banner lists what changed. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — check for updates** to check right away.
 
-On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff`, `show_document`, `set_task_list`, `get_task_list`, `device_status` and `open_device_settings` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
+On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff`, `show_document`, `set_task_list`, `get_task_list`, `device_status`, `open_device_settings`, `list_agents` and `message_agent` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
 
 **Requirements:** Windows 10 or 11 (x64), macOS 12 or later (Apple Silicon or Intel), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code (on Windows 2.1.139 or later).
 
@@ -214,7 +218,7 @@ Right-click a tab → **Restart session** restarts Claude Code in the same tab a
 
 ## Settings
 
-Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notifications, font, theme, shells, Claude Code, accounts, devices, images and updates. Changes apply at once.
+Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notifications, font, theme, shells, Claude Code, accounts, devices, agent messages, images and updates. Changes apply at once.
 
 ![Settings window](docs/images/settings.png)
 
@@ -268,6 +272,10 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "fileTree": true,              // the file tree on the left of the diff (the ☰ button in the panel)
     "treeWidth": 200,              // the file tree's width in px; dragging its right edge changes it until the next start
     "renderMarkdown": true         // show Markdown files formatted, not as plain diffs (the Render Markdown checkbox in the panel)
+  },
+  "agentMessages": {               // agent messages, in Settings → Agent messages; each device has its own
+    "enabled": true,               // false: no messages in or out on this device, no mail watcher for its new Claude tabs, the Messages button hidden
+    "marks": true                  // false: no envelope marks and no badge; the messages still flow and the panel still shows them
   },
   "sidePanel": { "noRoom": "overlay" },  // a maximized window, or one with no room to widen for Media or Changes: "overlay" lays the panel over the terminal, "narrow" narrows the terminal
   "autoUpdate": true               // check GitHub for new versions in the background

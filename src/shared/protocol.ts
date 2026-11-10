@@ -1,4 +1,5 @@
 import { isAbsolute, posix } from 'node:path'
+import { MAIL_TEXT_MAX, MAIL_TO_MAX } from './mail'
 import { REVIEW_SCOPES, type ReviewScope } from './review'
 import { normalizeTaskList, type TaskList } from './task-list'
 import type { BackgroundTask, MainStatus } from './types'
@@ -147,10 +148,36 @@ export interface OpenDeviceSettingsMessage {
   type: 'open_device_settings'
 }
 
+/** agent_list from the MCP server: the Claude sessions this tab can message. */
+export interface AgentListMessage {
+  v: 1
+  type: 'agent_list'
+  tabId: string
+}
+
+/** agent_send from the MCP server: a message to another Claude session, as a reply to replyTo or not. */
+export interface AgentSendMessage {
+  v: 1
+  type: 'agent_send'
+  tabId: string
+  to: string
+  text: string
+  replyTo: string | null
+}
+
+/** mail_wait from the mail watcher: held by main until mail for the tab is ready, or the watcher is superseded. */
+export interface MailWaitMessage {
+  v: 1
+  type: 'mail_wait'
+  tabId: string
+  sessionId: string
+}
+
 export type PipeMessage =
   | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
   | TurnMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
   | TaskListMessage | TaskListGetMessage | DeviceStatusMessage | OpenDeviceSettingsMessage
+  | AgentListMessage | AgentSendMessage | MailWaitMessage
 export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
@@ -292,6 +319,20 @@ export function parsePipeMessage(line: string): ParseResult {
   }
   if (m.type === 'device_status') return { ok: true, message: { v: 1, type: 'device_status' } }
   if (m.type === 'open_device_settings') return { ok: true, message: { v: 1, type: 'open_device_settings' } }
+
+  if (m.type === 'agent_list' || m.type === 'agent_send' || m.type === 'mail_wait') {
+    if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
+    if (m.type === 'agent_list') return { ok: true, message: { v: 1, type: 'agent_list', tabId: m.tabId } }
+    if (m.type === 'mail_wait') {
+      if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
+      return { ok: true, message: { v: 1, type: 'mail_wait', tabId: m.tabId, sessionId: m.sessionId } }
+    }
+    if (typeof m.to !== 'string' || m.to.length < 1 || m.to.length > MAIL_TO_MAX) return { ok: false, error: `to must be 1 to ${MAIL_TO_MAX} characters` }
+    if (typeof m.text !== 'string' || m.text.length < 1 || m.text.length > MAIL_TEXT_MAX) return { ok: false, error: `text must be 1 to ${MAIL_TEXT_MAX} characters` }
+    const replyTo = m.replyTo === null || m.replyTo === undefined ? null : isUuid(m.replyTo) ? m.replyTo : undefined
+    if (replyTo === undefined) return { ok: false, error: 'replyTo must be a UUID or null' }
+    return { ok: true, message: { v: 1, type: 'agent_send', tabId: m.tabId, to: m.to, text: m.text, replyTo } }
+  }
 
   if (m.type === 'status' || m.type === 'subagent' || m.type === 'session_end' || m.type === 'attention') {
     if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }

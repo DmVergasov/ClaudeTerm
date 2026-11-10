@@ -2,11 +2,13 @@ import './styles.css'
 import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
+import type { MailUnread } from '../shared/mail'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import { deviceColor, MAX_SNAPSHOT_BYTES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type RemoteDeviceView } from '../shared/remote'
 import type { NotificationCase, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { DocPanel } from './doc-panel'
+import { MailPanel } from './mail-panel'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
 import { Lightbox } from './lightbox'
@@ -71,6 +73,9 @@ const reviewUpdates = new Map<string, ReviewUpdate>()
 /** tabs whose show_diff should open Changes when they come to the front */
 const pendingReveal = new Set<string>()
 let docPanel: DocPanel
+let mailPanel: MailPanel
+/** the unread agent messages per tab, as main last counted them */
+let mailUnread: MailUnread = {}
 const docUpdates = new Map<string, DocsUpdate>()
 /** tabs whose show_document should open Docs on the document it showed, when they come to the front: tab id → document id */
 const pendingDocReveal = new Map<string, string>()
@@ -134,6 +139,11 @@ function visibleOrder(): string[] {
   return [...own, ...remoteDevices.filter((d) => !folded.has(d.id)).flatMap((d) => groupTabs(d.id))]
 }
 
+/** a tab shows an envelope for its unread agent messages only while messages and their marks are on */
+function mailMarked(tabId: string): boolean {
+  return settings.agentMessages.enabled && settings.agentMessages.marks && (mailUnread[tabId] ?? 0) > 0
+}
+
 function tabBarItem(id: string): TabBarItem | null {
   const t = tabs.get(id)
   if (!t) return null
@@ -145,6 +155,7 @@ function tabBarItem(id: string): TabBarItem | null {
     kind: t.info.kind,
     muted: t.info.muted,
     bell: t.bell,
+    mail: mailMarked(id),
     attention: pulsing(t),
     activity: t.info.activity,
     // a remote tab's unseen Media count is its device's, as the directory gives it
@@ -177,6 +188,7 @@ function renderTabs(): void {
       folded: folded.has(d.id),
       count: tabsOf.length,
       attention: tabsOf.some((id) => pulsing(tabs.get(id))),
+      mail: tabsOf.some((id) => itemOf.get(id)?.mail === true),
       working: tabsOf.some((id) => { const item = itemOf.get(id); return item !== undefined && shownActivity(item) !== null })
     }
   })
@@ -244,10 +256,13 @@ function refreshPanelButtons(): void {
   const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
   const unviewed = claude && activeId ? reviewUpdates.get(activeId)?.unviewed ?? 0 : 0
   const docs = claude && (docUpdates.get(activeId ?? '')?.docs.length ?? 0) > 0
+  // the badge counts nothing while the marks are off: the panel still lists the messages
+  const unreadMail = activeId && settings.agentMessages.marks ? mailUnread[activeId] ?? 0 : 0
   for (const bar of [tabBar, tabPanel]) {
     bar.setImages(sidePanel.isShowing('images'), unseen)
     bar.setChanges(claude, sidePanel.isShowing('changes'), unviewed)
     bar.setDocs(docs, sidePanel.isShowing('docs'))
+    bar.setMessages(settings.agentMessages.enabled, sidePanel.isShowing('messages'), unreadMail)
     bar.setNote(claude, claude && noteOverlay.isShown())
   }
 }
@@ -649,6 +664,7 @@ function activate(tabId: string): void {
   sidePanel.setAvailable('changes', claude)
   if (pendingReveal.delete(tabId)) sidePanel.open('changes')
   showDocs(tabId, claude)
+  mailPanel.show(tabId)
   renderStatus(tabId)
 }
 
@@ -813,6 +829,17 @@ function applySettings(s: Settings): void {
     for (const t of tabs.values()) t.view.setTheme(theme)
   }
   if (activeId) renderStatus(activeId)
+  // the Messages panel closes with its setting: setAvailable alone would show Media in its place
+  if (s.agentMessages.enabled !== prev.agentMessages.enabled) {
+    if (!s.agentMessages.enabled && sidePanel.isShowing('messages')) sidePanel.hide()
+    sidePanel.setAvailable('messages', s.agentMessages.enabled)
+    refreshPanelButtons()
+  }
+  // the envelope marks follow the messages' setting and the marks setting
+  if (s.agentMessages.enabled !== prev.agentMessages.enabled || s.agentMessages.marks !== prev.agentMessages.marks) {
+    refreshPanelButtons()
+    renderTabs()
+  }
   reviewPanel.setTreeShown(s.review.fileTree)
   // only a change of the setting itself: another one must not undo a drag of the tree's edge
   if (s.review.treeWidth !== prev.review.treeWidth) reviewPanel.setTreeWidth(s.review.treeWidth)
@@ -859,6 +886,10 @@ async function boot(): Promise<void> {
     },
     toggleDocs: () => {
       runAction({ type: 'toggleDocs' }, activeId)
+      if (activeId) tabs.get(activeId)?.view.term.focus()
+    },
+    toggleMessages: () => {
+      sidePanel.toggle('messages')
       if (activeId) tabs.get(activeId)?.view.term.focus()
     },
     toggleNote: () => {
@@ -973,7 +1004,8 @@ async function boot(): Promise<void> {
     const text = t ? promptText(t.view.screen().rows) : null
     ct.answerPrompt(queryId, text === null ? 'none' : text === '' ? 'empty' : 'draft')
   })
-  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width }, (width, resize) => ct.setPanel(width, resize))
+  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width, messages: settings.review.width }, (width, resize) => ct.setPanel(width, resize))
+  sidePanel.setAvailable('messages', settings.agentMessages.enabled)
   ct.onPanelMode((mode) => sidePanel.setMode(mode))
   imagePanel = new ImagePanel(
     sidePanel.bodies.images,
@@ -1047,12 +1079,25 @@ async function boot(): Promise<void> {
     },
     ct.platform
   )
+  mailPanel = new MailPanel(sidePanel.bodies.messages, sidePanel.tools.messages, sidePanel, {
+    conversations: (tabId) => ct.getMailConversations(tabId),
+    markRead: (ids) => ct.markMailRead(ids)
+  })
   sidePanel.onChange = () => {
     imagePanel.panelChanged()
     reviewPanel.panelChanged()
     docPanel.panelChanged()
+    mailPanel.refresh()
     refreshPanelButtons()
   }
+  // the unread counts change with the mail: the badges, and the panel when it shows the messages
+  ct.onMail((unread) => {
+    mailUnread = unread
+    refreshPanelButtons()
+    mailPanel.refresh()
+    // the envelope marks of the tabs and the device chips follow the unread counts
+    renderTabs()
+  })
   ct.onReview((u) => {
     reviewUpdates.set(u.tabId, u)
     if (u.reveal) pendingReveal.add(u.tabId)

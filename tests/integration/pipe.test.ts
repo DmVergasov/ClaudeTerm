@@ -2,7 +2,7 @@ import { connect } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startPipeServer, type PipeHandlers, type PipeServerHandle } from '../../src/main/pipe-server'
 import { PipeUnavailableError, sendPipeMessage } from '../../src/shared/pipe-client'
-import type { SessionMessage, ShowImageMessage } from '../../src/shared/protocol'
+import type { PipeResponse, SessionMessage, ShowImageMessage } from '../../src/shared/protocol'
 import { testPipeName, WIN } from '../fixtures/platform'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
@@ -23,7 +23,10 @@ const okHandlers: PipeHandlers = {
   taskList: () => ({ ok: true }),
   taskListGet: () => ({ ok: true }),
   deviceStatus: () => ({ ok: true, info: '' }),
-  openDeviceSettings: () => ({ ok: true })
+  openDeviceSettings: () => ({ ok: true }),
+  agentList: () => ({ ok: true }),
+  agentSend: () => ({ ok: true }),
+  mailWait: async () => ({ ok: true })
 }
 
 let server: PipeServerHandle | null = null
@@ -161,5 +164,56 @@ describe('pipe server + client', () => {
     const cwd = WIN ? 'C:\\x' : '/x'
     expect(await sendPipeMessage(pipe, { v: 1, type: 'show_diff', tabId: TAB, cwd, scope: null, from: null, to: null, paths: [], title: null }))
       .toEqual({ ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' })
+  })
+
+  it('routes agent_list, agent_send and mail_wait to their handlers', async () => {
+    const pipe = newPipe()
+    const got: string[] = []
+    server = await startPipeServer(pipe, {
+      ...okHandlers,
+      agentList: (m) => { got.push(m.type); return { ok: true, info: 'list' } },
+      agentSend: (m) => { got.push(`${m.type}:${m.to}`); return { ok: true, info: 'sent' } },
+      mailWait: async (m) => { got.push(m.type); return { ok: true, info: 'mail' } }
+    })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'agent_list', tabId: TAB })).toEqual({ ok: true, info: 'list' })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi', replyTo: null })).toEqual({ ok: true, info: 'sent' })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'mail_wait', tabId: TAB, sessionId: SID })).toEqual({ ok: true, info: 'mail' })
+    expect(got).toEqual(['agent_list', 'agent_send:reviewer', 'mail_wait'])
+  })
+
+  it('a held mailWait does not delay another socket\'s message', async () => {
+    const pipe = newPipe()
+    let arrived: () => void = () => {}
+    const reached = new Promise<void>((resolve) => { arrived = resolve })
+    let release: (res: PipeResponse) => void = () => {}
+    server = await startPipeServer(pipe, {
+      ...okHandlers,
+      mailWait: () => new Promise<PipeResponse>((resolve) => { release = resolve; arrived() })
+    })
+    const held = sendPipeMessage(pipe, { v: 1, type: 'mail_wait', tabId: TAB, sessionId: SID }, null)
+    await reached
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'device_status' })).toEqual({ ok: true, info: '' })
+    release({ ok: true, info: 'mail' })
+    expect(await held).toEqual({ ok: true, info: 'mail' })
+  })
+
+  it('closing the client socket aborts the signal the handler got', async () => {
+    const pipe = newPipe()
+    const signals: AbortSignal[] = []
+    let arrived: () => void = () => {}
+    const reached = new Promise<void>((resolve) => { arrived = resolve })
+    server = await startPipeServer(pipe, {
+      ...okHandlers,
+      mailWait: (_m, closed) => { signals.push(closed); arrived(); return new Promise<PipeResponse>(() => {}) }
+    })
+    const s = connect(pipe)
+    s.on('error', () => { /* the server may hang up first */ })
+    s.on('connect', () => s.write(JSON.stringify({ v: 1, type: 'mail_wait', tabId: TAB, sessionId: SID }) + '\n'))
+    await reached
+    expect(signals[0].aborted).toBe(false)
+    s.destroy()
+    const deadline = Date.now() + 2000
+    while (!signals[0].aborted && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(signals[0].aborted).toBe(true)
   })
 })

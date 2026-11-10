@@ -83,4 +83,9 @@ describe('runOffThread', () => {
     await slow
     expect(ended).toEqual(['quick', 'slow'])
   })
+
+  it.runIf(process.platform === 'win32')('verbatim: the arguments reach cmd.exe as written, so a quoted command line runs', async () => {
+    const r = await runOffThread(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', '"echo a b"'], { verbatim: true })
+    expect(r.stdout.toString('utf8').trim()).toBe('a b')
+  })
 })
