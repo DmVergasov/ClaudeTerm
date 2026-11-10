@@ -144,6 +144,11 @@ function mailMarked(tabId: string): boolean {
   return settings.agentMessages.enabled && settings.agentMessages.marks && (mailUnread[tabId] ?? 0) > 0
 }
 
+/** the tabs that show an envelope, as one string: a change of it is what the tab bar and the left panel redraw for */
+function mailMarks(): string {
+  return Object.keys(mailUnread).filter(mailMarked).sort().join(' ')
+}
+
 function tabBarItem(id: string): TabBarItem | null {
   const t = tabs.get(id)
   if (!t) return null
@@ -1093,11 +1098,13 @@ async function boot(): Promise<void> {
   }
   // the unread counts change with the mail: the badges, and the panel when it shows the messages
   ct.onMail((unread) => {
+    const marksBefore = mailMarks()
     mailUnread = unread
     refreshPanelButtons()
     mailPanel.refresh()
-    // the envelope marks of the tabs and the device chips follow the unread counts
-    renderTabs()
+    // the envelope marks of the tabs and the device chips follow the unread counts; the tabs are redrawn only when
+    // a mark comes or goes, since a redraw replaces the group heads and can swallow a click on one
+    if (mailMarks() !== marksBefore) renderTabs()
   })
   ct.onReview((u) => {
     reviewUpdates.set(u.tabId, u)
