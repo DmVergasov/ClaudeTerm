@@ -917,8 +917,9 @@ async function boot(): Promise<void> {
     places.set(id, place)
     if (appInfo.test) placeLog.set(id, [...placeLog.get(id) ?? [], place])
     renderTabs()
-    // a new active tab unfolds its group once its place is known: until then it is in No project, which must stay folded
-    if (first && id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id)
+    // a new active tab unfolds its group once its place is known: until then it is in No project, which must stay folded;
+    // a group the user folded in the meantime stays folded
+    if (first && id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id, true)
   })
   searchBar = new SearchBar(
     document.getElementById('search')!,

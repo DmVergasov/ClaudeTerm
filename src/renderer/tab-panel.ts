@@ -32,6 +32,8 @@ export class TabPanel {
   /** the other devices, as the tab bar's chips show them: their sections come in this order */
   private devices: TabBarGroup[] = []
   private activeId: string | null = null
+  /** the groups the user folded or unfolded while this tab was the active one: its place arriving later keeps their fold */
+  private toggled: { tab: string | null; keys: Set<string> } = { tab: null, keys: new Set() }
   private editing: string | null = null
   private readonly folded: Set<string>
   private width: number
@@ -123,12 +125,16 @@ export class TabPanel {
     this.header.setNote(available, visible)
   }
 
-  /** a tab that becomes the active one shows: its group unfolds, and that is kept; a folded device stays folded */
-  unfoldFor(tabId: string): void {
+  /**
+   * a tab that becomes the active one shows: its group unfolds, and that is kept; a folded device stays folded. With
+   * `keepUserFold` (its place has just arrived) a group the user folded since the tab became the active one stays folded.
+   */
+  unfoldFor(tabId: string, keepUserFold = false): void {
     for (const section of this.sections()) {
       const group = section.groups.find((g) => g.rows.some((r) => r.id === tabId))
       if (!group) continue
       if (!this.folded.has(group.key) || section.device?.folded) return
+      if (keepUserFold && this.toggled.tab === tabId && this.toggled.keys.has(group.key)) return
       this.folded.delete(group.key)
       this.saveFolded()
       this.draw()
@@ -353,6 +359,8 @@ export class TabPanel {
   }
 
   private toggleFold(key: string): void {
+    if (this.toggled.tab !== this.activeId) this.toggled = { tab: this.activeId, keys: new Set() }
+    this.toggled.keys.add(key)
     if (this.folded.has(key)) this.folded.delete(key)
     else this.folded.add(key)
     this.saveFolded()
