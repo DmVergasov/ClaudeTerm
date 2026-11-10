@@ -24,7 +24,7 @@ test('a prompt has a transcript that went idle read again at once', async () => 
   // read at once, then 0.5, 1, 2, 4 and 8 s apart while nothing comes: the read after the one at 7.5 s is at 15.5 s
   await page.waitForTimeout(8000)
   appendFileSync(transcriptPath, pastedLine(Buffer.from('second image').toString('base64')) + '\n')
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: null })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })).toEqual({ ok: true })
   await expect.poll(() => sources(page), { timeout: 3000 }).toEqual(['pasted', 'tool'])
   await app.close()
 })

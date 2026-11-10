@@ -17,7 +17,6 @@ const okHandlers: PipeHandlers = {
   sessionEnd: () => ({ ok: true }),
   attention: () => ({ ok: true }),
   turn: () => ({ ok: true }),
-  cwd: () => ({ ok: true }),
   editBefore: () => ({ ok: true }),
   showDiff: async () => ({ ok: true }),
   showDocument: async () => ({ ok: true }),

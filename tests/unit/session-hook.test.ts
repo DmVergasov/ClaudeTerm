@@ -134,20 +134,14 @@ describe('runStatusLine', () => {
 
 describe('runSessionHook: a change of folder', () => {
   const OLD = process.platform === 'win32' ? 'D:\\proj' : '/proj'
-  const NEW = process.platform === 'win32' ? 'D:\\proj\\.claude\\worktrees\\feat' : '/proj/.claude/worktrees/feat'
-  const changed = (extra: object): string => JSON.stringify({ session_id: SID, hook_event_name: 'CwdChanged', cwd: NEW, old_cwd: OLD, new_cwd: NEW, ...extra })
+  const NEW = process.platform === 'win32' ? 'D:\\other' : '/other'
 
-  it('maps CwdChanged to the folder Claude moved to', async () => {
+  // a Bash cd only looks around; the session's own folder comes with the status line
+  it('sends nothing for CwdChanged, from the conversation or a subagent', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
-    await runSessionHook(changed({}), ENV, send)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'cwd', tabId: TAB, sessionId: SID, cwd: NEW })
-  })
-
-  it('sends nothing for a folder that is not absolute, or for a subagent that changed its own folder', async () => {
-    const send = vi.fn(async () => ({ ok: true as const }))
-    await runSessionHook(changed({ new_cwd: 'relative' }), ENV, send)
-    await runSessionHook(changed({ new_cwd: undefined }), ENV, send)
-    await runSessionHook(changed({ agent_id: AGENT }), ENV, send)
+    const changed = (extra: object): string => JSON.stringify({ session_id: SID, hook_event_name: 'CwdChanged', cwd: NEW, old_cwd: OLD, new_cwd: NEW, ...extra })
+    await expect(runSessionHook(changed({}), ENV, send)).resolves.toBe(false)
+    await expect(runSessionHook(changed({ agent_id: AGENT }), ENV, send)).resolves.toBe(false)
     expect(send).not.toHaveBeenCalled()
   })
 })
@@ -156,10 +150,10 @@ describe('runSessionHook: review events', () => {
   const CWD = process.platform === 'win32' ? 'D:\\proj' : '/proj'
   const ABS = process.platform === 'win32' ? 'D:\\proj\\src\\a.ts' : '/proj/src/a.ts'
 
-  it('maps UserPromptSubmit to a turn with the cwd', async () => {
+  it('maps UserPromptSubmit to a turn, without the folder Claude\'s shell is in', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'UserPromptSubmit', prompt: 'fix it', cwd: CWD }), ENV, send)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'turn', tabId: TAB, sessionId: SID, cwd: CWD })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'turn', tabId: TAB, sessionId: SID })
   })
 
   it('maps PreToolUse of Edit, Write, MultiEdit and NotebookEdit to edit_before', async () => {

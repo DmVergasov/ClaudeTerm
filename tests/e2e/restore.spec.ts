@@ -176,7 +176,7 @@ test('the snapshot keeps whether Claude is working: a prompt starts a turn, its 
     const saved = JSON.parse(readFileSync(join(dataDir, 'session-state.json'), 'utf8')) as { tabs: { working?: boolean }[] }
     return saved.tabs[0]?.working
   }
-  const turn = { v: 1, type: 'turn', tabId, sessionId: SID, cwd: null } as const
+  const turn = { v: 1, type: 'turn', tabId, sessionId: SID } as const
   expect(await sendPipeMessage(pipeName, turn)).toEqual({ ok: true })
   await expect.poll(working).toBe(true)
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })

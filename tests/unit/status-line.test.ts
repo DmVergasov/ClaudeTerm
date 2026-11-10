@@ -58,6 +58,22 @@ describe('statusFromStatusLine', () => {
     expect(s?.model).toEqual({ id: 'claude-opus-5-5', displayName: 'claude-opus-5-5' })
   })
 
+  // /cd and entering or leaving a worktree move the session to another folder; a Bash cd only moves current_dir
+  const PROJECT = process.platform === 'win32' ? 'D:\\proj\\.claude\\worktrees\\feat' : '/proj/.claude/worktrees/feat'
+  const SHELL = process.platform === 'win32' ? 'D:\\other' : '/other'
+
+  it('names the folder Claude Code gives as the session\'s (workspace.project_dir), not the one its shell is in', () => {
+    const input = { ...full, cwd: SHELL, workspace: { current_dir: SHELL, project_dir: PROJECT } }
+    expect(statusFromStatusLine(input, TAB)?.projectDir).toBe(PROJECT)
+  })
+
+  it('names no folder when workspace.project_dir is missing or not absolute', () => {
+    expect(statusFromStatusLine(full, TAB)).not.toHaveProperty('projectDir')
+    expect(statusFromStatusLine({ ...full, workspace: { current_dir: SHELL } }, TAB)).not.toHaveProperty('projectDir')
+    expect(statusFromStatusLine({ ...full, workspace: { project_dir: 'relative/dir' } }, TAB)).not.toHaveProperty('projectDir')
+    expect(statusFromStatusLine({ ...full, workspace: { project_dir: 7 } }, TAB)).not.toHaveProperty('projectDir')
+  })
+
   it('returns null without a session id or a model id, or for non-objects', () => {
     expect(statusFromStatusLine({ ...full, session_id: 'x' }, TAB)).toBe(null)
     expect(statusFromStatusLine({ ...full, model: {} }, TAB)).toBe(null)

@@ -39,7 +39,7 @@ async function settled(page: Page, tabId: string, title: string): Promise<void> 
 }
 
 /** what the hooks report: a prompt starts a turn, Stop ends it, an agent starts and stops */
-const turn = (pipeName: string, tabId: string): Promise<unknown> => sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: null })
+const turn = (pipeName: string, tabId: string): Promise<unknown> => sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })
 const turnEnd = (pipeName: string, tabId: string): Promise<unknown> => sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })
 const agent = (pipeName: string, tabId: string, event: 'start' | 'stop'): Promise<unknown> =>
   sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event, agentId: AGENT, agentType: 'general-purpose' })

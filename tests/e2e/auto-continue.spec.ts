@@ -15,7 +15,7 @@ const settings = (autoContinue: boolean): object => ({
 })
 /** what the StopFailure hook sends for a response cut off mid-stream */
 const cutOff = (tabId: string): PipeMessage => ({ v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', error: 'server_error' })
-const turn = (tabId: string): PipeMessage => ({ v: 1, type: 'turn', tabId, sessionId: SID, cwd: null })
+const turn = (tabId: string): PipeMessage => ({ v: 1, type: 'turn', tabId, sessionId: SID })
 const EMPTY_PROMPT = promptBox(DIM('Try "fix lint errors"'))
 
 /** the Claude tab goes to the background behind a shell tab */

@@ -80,9 +80,8 @@ export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string, r
         ],
         Stop: hook,
         // a turn that ends in an API error (a connection lost mid-response, a rate limit) runs this instead of Stop
-        StopFailure: hook,
-        // Claude works in another folder (a worktree it entered, a cd): the tab shows that folder and its branch
-        CwdChanged: hook
+        // (no CwdChanged: a Bash cd only looks around; the session's own folder comes with the statusLine)
+        StopFailure: hook
       }
     },
     null,

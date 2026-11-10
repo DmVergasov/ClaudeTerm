@@ -39,6 +39,8 @@ export interface StatusMessage extends MainStatus {
   type: 'status'
   tabId: string
   sessionId: string
+  /** the session's folder (the statusLine's workspace.project_dir): /cd and a worktree change it, a Bash cd does not */
+  projectDir?: string
 }
 
 export interface SubagentMessage {
@@ -83,16 +85,6 @@ export interface TurnMessage {
   type: 'turn'
   tabId: string
   sessionId: string
-  cwd: string | null
-}
-
-/** Claude Code works in another folder now (CwdChanged): a worktree it entered or left, a cd. */
-export interface CwdMessage {
-  v: 1
-  type: 'cwd'
-  tabId: string
-  sessionId: string
-  cwd: string
 }
 
 /** Claude is about to change a file (PreToolUse of an edit tool). ClaudeTerm reads the file before it replies. */
@@ -157,7 +149,7 @@ export interface OpenDeviceSettingsMessage {
 
 export type PipeMessage =
   | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
-  | TurnMessage | CwdMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
+  | TurnMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
   | TaskListMessage | TaskListGetMessage | DeviceStatusMessage | OpenDeviceSettingsMessage
 export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
@@ -255,17 +247,10 @@ export function parsePipeMessage(line: string): ParseResult {
     }
   }
 
-  if (m.type === 'turn' || m.type === 'cwd' || m.type === 'edit_before') {
+  if (m.type === 'turn' || m.type === 'edit_before') {
     if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
     if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
-    if (m.type === 'turn') {
-      const cwd = typeof m.cwd === 'string' && isAbsolute(m.cwd) ? m.cwd : null
-      return { ok: true, message: { v: 1, type: 'turn', tabId: m.tabId, sessionId: m.sessionId, cwd } }
-    }
-    if (m.type === 'cwd') {
-      if (typeof m.cwd !== 'string' || !isAbsolute(m.cwd)) return { ok: false, error: 'cwd must be an absolute path' }
-      return { ok: true, message: { v: 1, type: 'cwd', tabId: m.tabId, sessionId: m.sessionId, cwd: m.cwd } }
-    }
+    if (m.type === 'turn') return { ok: true, message: { v: 1, type: 'turn', tabId: m.tabId, sessionId: m.sessionId } }
     if (typeof m.toolUseId !== 'string' || !TOOL_USE_ID_RE.test(m.toolUseId)) return { ok: false, error: 'toolUseId must match [A-Za-z0-9_-]{1,200}' }
     if (typeof m.path !== 'string' || !isAbsolute(m.path)) return { ok: false, error: 'path must be an absolute path' }
     return { ok: true, message: { v: 1, type: 'edit_before', tabId: m.tabId, sessionId: m.sessionId, toolUseId: m.toolUseId, path: m.path } }
@@ -329,9 +314,10 @@ export function parsePipeMessage(line: string): ParseResult {
     const model: Obj = isObj(m.model) ? m.model : {}
     const id = label(model.id)
     if (!id) return { ok: false, error: 'model.id must be a non-empty string' }
+    const projectDir = typeof m.projectDir === 'string' && isAbsolute(m.projectDir) ? { projectDir: m.projectDir } : {}
     return {
       ok: true,
-      message: { v: 1, type: 'status', ...ids, model: { id, displayName: label(model.displayName) ?? id }, effort: label(m.effort), context: parseContext(m.context), fiveHour: parseLimit(m.fiveHour), sevenDay: parseLimit(m.sevenDay) }
+      message: { v: 1, type: 'status', ...ids, model: { id, displayName: label(model.displayName) ?? id }, effort: label(m.effort), context: parseContext(m.context), fiveHour: parseLimit(m.fiveHour), sevenDay: parseLimit(m.sevenDay), ...projectDir }
     }
   }
 

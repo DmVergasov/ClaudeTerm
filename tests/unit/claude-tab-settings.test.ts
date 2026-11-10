@@ -63,8 +63,7 @@ describe('hook files', () => {
         UserPromptSubmit: hook,
         PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [run] }, { matcher: 'Edit|MultiEdit|Write|NotebookEdit', hooks: [run] }],
         Stop: hook,
-        StopFailure: hook,
-        CwdChanged: hook
+        StopFailure: hook
       }
     })
   })

@@ -1372,6 +1372,12 @@ const recorded = (b: Device) => b.page.evaluate(() => {
   return { entries: w.entries, places: w.places }
 })
 
+/** what A's statusLine hook reports: the session's folder (workspace.project_dir), which /cd and a worktree change */
+const folderStatus = (tabId: string, sessionId: string, projectDir: string) => ({
+  v: 1 as const, type: 'status' as const, tabId, sessionId,
+  model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: null, context: null, fiveHour: null, sevenDay: null, projectDir
+})
+
 test("a Claude tab that moves into a linked worktree on A reaches B: its place, its folder, and its cwd kept", async () => {
   test.setTimeout(180_000)
   const repo = gitRepo()
@@ -1381,8 +1387,8 @@ test("a Claude tab that moves into a linked worktree on A reaches B: its place, 
   await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
   await recordEntries(b, claude)
 
-  // what the CwdChanged hook reports when Claude Code enters a worktree
-  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'cwd', tabId: claude, sessionId: ATTENTION_SID, cwd: worktree })).toEqual({ ok: true })
+  // the session entered a worktree: the status line names it as the session's folder
+  expect(await sendPipeMessage(a.pipeName, folderStatus(claude, ATTENTION_SID, worktree))).toEqual({ ok: true })
   await expect.poll(async () => (await recorded(b)).places.some((p) => p?.branch === 'feat/moved' && p.worktree?.path !== undefined), SLOW).toBe(true)
   await expect.poll(async () => (await recorded(b)).entries.some((e) => e.folder === worktree), SLOW).toBe(true)
   // the entries keep the folder the tab was opened in
@@ -1399,7 +1405,7 @@ test("a move to a subfolder of the same place reaches B's entry as its folder al
   await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
   await recordEntries(b, claude)
 
-  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'cwd', tabId: claude, sessionId: ATTENTION_SID, cwd: sub })).toEqual({ ok: true })
+  expect(await sendPipeMessage(a.pipeName, folderStatus(claude, ATTENTION_SID, sub))).toEqual({ ok: true })
   // only the folder changes here: the entry is republished by the folder change itself
   await expect.poll(async () => (await recorded(b)).entries.some((e) => e.folder === sub), SLOW).toBe(true)
   // the repository's own first place may come late (git answers A after the view): it is the main worktree's, and no new place
@@ -1619,14 +1625,14 @@ test("B forks A's tab and A's tab in front stays where it is", async () => {
   expect(await a.page.evaluate(() => window.__ct!.activeTabId())).toBe(frontOnA)
 })
 
-test("a cwd report of A's Claude tab makes its folder on B the new one; the cwd B has stays the one the tab opened in", async () => {
+test("a new session folder of A's Claude tab makes its folder on B the new one; the cwd B has stays the one the tab opened in", async () => {
   test.setTimeout(180_000)
   const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
   const { a, b } = await pairedApps({ a: { args: ['--claude', work] } })
   // the listener starts after the tab was listed: the report's own update carries both the folder and the cwd
   await recordTabInfos(b)
   const moved = mkdtempSync(join(tmpdir(), 'ct-moved-'))
-  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'cwd', tabId: a.firstTab, sessionId: '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', cwd: moved })).toEqual({ ok: true })
+  expect(await sendPipeMessage(a.pipeName, folderStatus(a.firstTab, '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', moved))).toEqual({ ok: true })
   await expect.poll(() => infoOf(b, a.firstTab), SLOW).toMatchObject({ folder: moved, cwd: work })
 })
 
@@ -2186,7 +2192,7 @@ test("a Claude tab that B watches keeps A awake while it works; its turn's end o
   await expect.poll(() => tabIdsOf(b), SLOW).toContain(claude.id)
 
   // a turn that nobody watches holds nothing
-  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'turn', tabId: claude.id, sessionId: ATTENTION_SID, cwd: null })).toEqual({ ok: true })
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'turn', tabId: claude.id, sessionId: ATTENTION_SID })).toEqual({ ok: true })
   expect(powerLines()).toEqual([])
 
   // B watches the tab while it works: A holds, and nothing was typed
@@ -2203,7 +2209,7 @@ test("a Claude tab that B watches keeps A awake while it works; its turn's end o
   await expect.poll(powerLines, SLOW).toEqual(['start', 'stop', 'start'])
   await expect(barIcon(b, claude.id)).toHaveClass(/\bspin\b/, SLOW)
   // a turn that ends while the agent still runs does not let A go
-  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'turn', tabId: claude.id, sessionId: ATTENTION_SID, cwd: null })).toEqual({ ok: true })
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'turn', tabId: claude.id, sessionId: ATTENTION_SID })).toEqual({ ok: true })
   expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude.id, sessionId: ATTENTION_SID, reason: 'done' })).toEqual({ ok: true })
   // the answer comes once the turn has ended on A: the hold is still there, as the agent runs
   expect(powerLines()).toEqual(['start', 'stop', 'start'])
@@ -2212,7 +2218,7 @@ test("a Claude tab that B watches keeps A awake while it works; its turn's end o
   await expect.poll(powerLines, SLOW).toEqual(['start', 'stop', 'start', 'stop'])
 
   // a second turn holds again; the tab's process ending in the middle of it lets A go
-  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'turn', tabId: claude.id, sessionId: ATTENTION_SID, cwd: null })).toEqual({ ok: true })
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'turn', tabId: claude.id, sessionId: ATTENTION_SID })).toEqual({ ok: true })
   await expect.poll(powerLines, SLOW).toEqual(['start', 'stop', 'start', 'stop', 'start'])
   await a.page.evaluate((id) => window.ct.activateTab(id), claude.id)
   await typeInTerminal(a.page, 'exit')
@@ -2421,7 +2427,7 @@ const RELEASE: TaskList = {
 const barIcon = (d: Device, id: string) => d.page.locator(`#tabbar .tab[data-tab-id="${id}"] .tab-icon`)
 const panelIcon = (d: Device, id: string) => d.page.locator(`#tabpanel .tp-tab[data-tab-id="${id}"] .tab-icon`)
 /** what the hooks of A report for its tab: a turn starts, its end, an agent starts and stops */
-const turnOn = (d: Device, id: string, sid: string) => sendPipeMessage(d.pipeName, { v: 1, type: 'turn', tabId: id, sessionId: sid, cwd: null })
+const turnOn = (d: Device, id: string, sid: string) => sendPipeMessage(d.pipeName, { v: 1, type: 'turn', tabId: id, sessionId: sid })
 const turnEndOn = (d: Device, id: string, sid: string) => sendPipeMessage(d.pipeName, { v: 1, type: 'attention', tabId: id, sessionId: sid, reason: 'done' })
 const agentOn = (d: Device, id: string, sid: string, event: 'start' | 'stop') =>
   sendPipeMessage(d.pipeName, { v: 1, type: 'subagent', tabId: id, sessionId: sid, event, agentId: 'a3f1c2d4e5b60718', agentType: 'general-purpose' })

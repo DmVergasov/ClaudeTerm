@@ -93,6 +93,16 @@ describe('status, subagent and session_end messages', () => {
     expect(r).toEqual({ ok: true, message: { ...ids, type: 'status', model: { id: 'claude-x', displayName: 'claude-x' }, effort: null, context: null, fiveHour: null, sevenDay: null } })
   })
 
+  it('keeps the session\'s folder of a status only when it is absolute', () => {
+    const dir = WIN ? 'D:\\proj\\.claude\\worktrees\\feat' : '/proj/.claude/worktrees/feat'
+    const status = (projectDir: unknown) => parsePipeMessage(JSON.stringify({ ...ids, type: 'status', model: { id: 'm' }, projectDir }))
+    const folder = (r: ReturnType<typeof parsePipeMessage>) => (r.ok && r.message.type === 'status' ? r.message.projectDir : 'not a status')
+    expect(folder(status(dir))).toBe(dir)
+    expect(folder(status('relative'))).toBe(undefined)
+    expect(folder(status(7))).toBe(undefined)
+    expect(folder(status(undefined))).toBe(undefined)
+  })
+
   it('rejects a zero context size', () => {
     const r = parsePipeMessage(JSON.stringify({ ...ids, type: 'status', model: { id: 'm' }, context: { usedTokens: 1, size: 0, usedPct: 1 } }))
     expect(r.ok && r.message.type === 'status' && r.message.context).toBe(null)
@@ -179,18 +189,15 @@ describe('parsePipeMessage: review messages', () => {
   const FILE = WIN ? 'D:\\proj\\src\\a.ts' : '/proj/src/a.ts'
   const CWD = WIN ? 'D:\\proj' : '/proj'
 
-  it('accepts a turn with or without a usable cwd', () => {
-    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn', cwd: CWD }))).toEqual({ ok: true, message: { ...ids, type: 'turn', cwd: CWD } })
-    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn', cwd: 'relative' }))).toEqual({ ok: true, message: { ...ids, type: 'turn', cwd: null } })
+  it('accepts a turn for UUIDs; a folder sent with it is dropped', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn' }))).toEqual({ ok: true, message: { ...ids, type: 'turn' } })
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn', cwd: CWD }))).toEqual({ ok: true, message: { ...ids, type: 'turn' } })
     expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn', tabId: 'x' })).ok).toBe(false)
   })
 
-  it('accepts a change of folder only to an absolute folder, for UUIDs', () => {
-    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: CWD }))).toEqual({ ok: true, message: { ...ids, type: 'cwd', cwd: CWD } })
-    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: 'relative' })).ok).toBe(false)
-    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: 7 })).ok).toBe(false)
-    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: CWD, tabId: 'x' })).ok).toBe(false)
-    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: CWD, sessionId: 'x' })).ok).toBe(false)
+  // the session's folder comes with the status line now; a cd in Claude's shell moves no tab
+  it('knows no change-of-folder message', () => {
+    expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'cwd', cwd: CWD }))).toEqual({ ok: false, error: 'unknown message type: cwd' })
   })
 
   it('accepts edit_before with a tool use id and an absolute path', () => {

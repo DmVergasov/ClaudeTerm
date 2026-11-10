@@ -134,7 +134,11 @@ test('every tab in git shows its branch; a linked worktree\'s tab has a colored 
   await app.close()
 })
 
-test('a Claude tab follows Claude into another folder: its row shows that folder\'s branch, and the tooltip and window title the folder', async () => {
+/** what the statusLine hook reports: the session's folder is workspace.project_dir, which /cd and a worktree change */
+const statusIn = (tabId: string, projectDir: string) =>
+  ({ v: 1 as const, type: 'status' as const, tabId, sessionId: SID, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: null, context: null, fiveHour: null, sevenDay: null, projectDir })
+
+test('a Claude tab follows its session into another folder (/cd, a worktree): its row shows that folder\'s branch, and the tooltip and window title the folder', async () => {
   const repo = gitRepo()
   const branch = currentBranch(repo)
   const worktree = gitWorktree(repo, 'feat/moved')
@@ -142,30 +146,18 @@ test('a Claude tab follows Claude into another folder: its row shows that folder
   await expect(row(page, tabId).locator('.tp-branch')).toHaveText(branch)
   await expect(row(page, tabId).locator('.tp-wtbar')).toHaveCount(0)
 
-  // what the CwdChanged hook reports when Claude Code enters a worktree
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'cwd', tabId, sessionId: SID, cwd: worktree })).toMatchObject({ ok: true })
+  // the session entered a worktree: the status line names it as the session's folder
+  expect(await sendPipeMessage(pipeName, statusIn(tabId, worktree))).toMatchObject({ ok: true })
   await expect(row(page, tabId).locator('.tp-branch')).toHaveText('feat/moved')
   await expect(row(page, tabId).locator('.tp-wtbar')).toHaveCount(1)
   // the tooltip's second line is the tab's folder
   await expect.poll(async () => (await row(page, tabId).getAttribute('title'))?.split('\n')[1]).toBe(worktree)
   await expect.poll(() => page.title()).toContain(basename(worktree))
-  await app.close()
-})
 
-test('a Claude tab goes back to the folder a new prompt reports, after a cd that Claude Code undid without a CwdChanged', async () => {
-  const repo = gitRepo()
-  const elsewhere = freshFolder()
-  const { app, page, pipeName, tabId } = await launchClaudeTab(left(freshFolder()), repo)
-  // the tooltip's second line is the tab's folder
-  const folderLine = async (): Promise<string | undefined> => (await row(page, tabId).getAttribute('title'))?.split('\n')[1]
-  await expect.poll(folderLine).toBe(repo)
-
-  // a cd out of the folders the session may work in: CwdChanged reports it, then Claude Code resets its shell and reports nothing
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'cwd', tabId, sessionId: SID, cwd: elsewhere })).toMatchObject({ ok: true })
-  await expect.poll(folderLine).toBe(elsewhere)
-  // the next prompt's UserPromptSubmit carries the folder Claude Code works in
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: repo })).toMatchObject({ ok: true })
-  await expect.poll(folderLine).toBe(repo)
+  // and left it again
+  expect(await sendPipeMessage(pipeName, statusIn(tabId, repo))).toMatchObject({ ok: true })
+  await expect(row(page, tabId).locator('.tp-branch')).toHaveText(branch)
+  await expect.poll(async () => (await row(page, tabId).getAttribute('title'))?.split('\n')[1]).toBe(repo)
   await app.close()
 })
 

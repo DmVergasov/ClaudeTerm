@@ -62,8 +62,8 @@ test('Ctrl+Shift+D opens Changes with the uncommitted diff; scopes switch', asyn
 
 // also the spec's edit_before round trip: main replies only after it has read the file, so the baseline is the old text
 test('Last turn and Session compare with the files before Claude changed them', async () => {
-  const { app, page, tabId, pipeName, transcriptPath, repo, a } = await reviewTab()
-  const turn = () => sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: repo })
+  const { app, page, tabId, pipeName, transcriptPath, a } = await reviewTab()
+  const turn = () => sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })
   const before = (toolUseId: string) => sendPipeMessage(pipeName, { v: 1, type: 'edit_before', tabId, sessionId: SID, toolUseId, path: a })
   expect(await turn()).toEqual({ ok: true })
   expect(await before('toolu_1')).toEqual({ ok: true })
@@ -90,7 +90,7 @@ test('Last turn leaves out the files git ignores and says how many', async () =>
     mkdirSync(join(r, 'dist'))
   })
   const out = join(repo, 'dist', 'out.js')
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: repo })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })).toEqual({ ok: true })
   for (const [id, path] of [['toolu_1', a], ['toolu_2', out]] as const) {
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'edit_before', tabId, sessionId: SID, toolUseId: id, path })).toEqual({ ok: true })
   }
@@ -114,7 +114,7 @@ test('Session shows only the files inside the tab folder and counts the rest', a
   const out = join(repo, 'dist', 'out.js')
   const elsewhere = join(mkdtempSync(join(tmpdir(), 'ct-memory-')), 'note.md')
   writeFileSync(elsewhere, 'old\n')
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: repo })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })).toEqual({ ok: true })
   for (const [id, path] of [['toolu_1', a], ['toolu_2', elsewhere], ['toolu_3', out]] as const) {
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'edit_before', tabId, sessionId: SID, toolUseId: id, path })).toEqual({ ok: true })
   }
@@ -135,18 +135,21 @@ test('Uncommitted stays in the tab folder repository after Claude cds into anoth
   const { app, page, tabId, pipeName, repo, a } = await reviewTab(upper)
   const other = gitRepo()
   writeFileSync(join(other, 'other.ts'), 'other\n')
-  /** a turn Claude starts in `cwd` that changes a.ts; its end computes the view again */
-  const turn = async (cwd: string, text: string): Promise<void> => {
-    expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd })).toEqual({ ok: true })
+  /** a turn that changes a.ts; its end computes the view again */
+  const turn = async (text: string): Promise<void> => {
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })).toEqual({ ok: true })
     writeFileSync(a, text)
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
   }
   await page.keyboard.press(KEYS.changes)
-  await turn(repo, 'one\nTWO\nthree\nFOUR\n')
+  await turn('one\nTWO\nthree\nFOUR\n')
   // the view computed after the first turn's change: no compute started before the next turn is left
   await expect(added(page, 'a.ts')).toHaveText(['TWO', 'FOUR'])
-  // a Bash `cd` in the first turn left Claude in the other repository: the next prompt's hook reports that folder
-  await turn(other, 'one\nTWO\nthree\nFOUR\nFIVE\n')
+  // a Bash `cd` in the first turn left Claude's shell in the other repository: the status line still names the tab's
+  // folder as the session's
+  const status = { v: 1, type: 'status', tabId, sessionId: SID, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: null, context: null, fiveHour: null, sevenDay: null, projectDir: repo } as const
+  expect(await sendPipeMessage(pipeName, status)).toEqual({ ok: true })
+  await turn('one\nTWO\nthree\nFOUR\nFIVE\n')
   await expect(added(page, 'a.ts')).toHaveText(['TWO', 'FOUR', 'FIVE'])
   await expect(page.locator('.review-file')).toHaveCount(1)
   await expect(page.locator('.status-changes')).toHaveAttribute('title', `Uncommitted changes in ${repo}`)
@@ -579,7 +582,7 @@ test('Hide tests applies to Last turn and Session, and to a show_diff request', 
   const { app, page, tabId, pipeName, transcriptPath, repo, a } = await reviewTab()
   const spec = join(repo, 'tests', 'a.test.ts')
   mkdirSync(join(repo, 'tests'), { recursive: true })
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID, cwd: repo })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })).toEqual({ ok: true })
   for (const [id, path] of [['toolu_1', a], ['toolu_2', spec]] as const) {
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'edit_before', tabId, sessionId: SID, toolUseId: id, path })).toEqual({ ok: true })
   }

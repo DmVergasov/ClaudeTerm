@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path'
 import { isUuid, type StatusMessage } from '../shared/protocol'
 
 type Obj = Record<string, unknown>
@@ -30,6 +31,8 @@ export function statusFromStatusLine(input: unknown, tabId: string): StatusMessa
     context = { usedTokens, size, usedPct: num(cw?.used_percentage) ?? (usedTokens / size) * 100 }
   }
   const limits = obj(i.rate_limits)
+  // the session's own folder, which /cd and entering or leaving a worktree change; a Bash cd moves only current_dir
+  const projectDir = str(obj(i.workspace)?.project_dir)
   return {
     v: 1,
     type: 'status',
@@ -39,6 +42,7 @@ export function statusFromStatusLine(input: unknown, tabId: string): StatusMessa
     effort: str(obj(i.effort)?.level),
     context,
     fiveHour: limitWindow(limits?.five_hour),
-    sevenDay: limitWindow(limits?.seven_day)
+    sevenDay: limitWindow(limits?.seven_day),
+    ...(projectDir !== null && isAbsolute(projectDir) ? { projectDir } : {})
   }
 }

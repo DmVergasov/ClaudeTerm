@@ -60,7 +60,7 @@ async function listen(): Promise<{ pipe: string; got: PipeMessage[] }> {
   }
   server = await startPipeServer(pipe, {
     showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take, attention: take,
-    turn: take, cwd: take, editBefore: take, showDiff: async (m) => take(m),
+    turn: take, editBefore: take, showDiff: async (m) => take(m),
     showDocument: async () => ({ ok: true }), taskList: take, taskListGet: take, deviceStatus: take, openDeviceSettings: take
   })
   return { pipe, got }
@@ -105,16 +105,31 @@ describe('session hook end to end', () => {
     expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error' }])
   })
 
-  it('node bundle: CwdChanged forwards the folder Claude moved to, for the CwdChanged hook of the settings file, and prints nothing', async () => {
-    const { pipe, got } = await listen()
+  // a Bash cd only looks around: Claude Code fires CwdChanged for it, and the tab must not follow
+  it('a cd in Claude\'s shell moves no tab: the settings file runs no hook on CwdChanged', () => {
     const { settingsPath } = writeClaudeTabFiles(join(work, 'data-cwd'), process.execPath, bundle, 5)
-    expect(settingsHook(settingsPath, 'CwdChanged')).toEqual(settingsHook(settingsPath, 'SessionStart'))
-    const from = WIN ? 'D:\\proj' : '/proj'
-    const to = WIN ? 'D:\\proj\\.claude\\worktrees\\feat' : '/proj/.claude/worktrees/feat'
-    const changed = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: to, hook_event_name: 'CwdChanged', old_cwd: from, new_cwd: to })
-    const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, changed)
+    const hooks = (JSON.parse(readFileSync(settingsPath, 'utf8')) as { hooks: Record<string, unknown> }).hooks
+    expect(hooks.SessionStart).toBeDefined()
+    expect(hooks.CwdChanged).toBeUndefined()
+  })
+
+  it('node bundle: the turn a prompt starts names no folder, whichever folder Claude\'s shell is in, and prints nothing', async () => {
+    const { pipe, got } = await listen()
+    const elsewhere = WIN ? 'D:\\other' : '/other'
+    const prompt = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: elsewhere, hook_event_name: 'UserPromptSubmit', prompt: 'go on' })
+    const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, prompt)
     expect(r).toEqual({ code: 0, stdout: '' })
-    expect(got).toEqual([{ v: 1, type: 'cwd', tabId: TAB, sessionId: SID, cwd: to }])
+    expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID }])
+  })
+
+  it('node bundle: the status line forwards the folder Claude Code names as the session\'s, not the one its shell is in, and prints nothing', async () => {
+    const { pipe, got } = await listen()
+    const project = WIN ? 'D:\\proj\\.claude\\worktrees\\feat' : '/proj/.claude/worktrees/feat'
+    const shell = WIN ? 'D:\\other' : '/other'
+    const input = JSON.stringify({ ...(JSON.parse(STATUS_INPUT) as object), cwd: shell, workspace: { current_dir: shell, project_dir: project } })
+    const r = await run(process.execPath, [bundle, 'status'], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, input)
+    expect(r).toEqual({ code: 0, stdout: '' })
+    expect(got).toEqual([{ ...expectedStatus, projectDir: project }])
   })
 
   it('node bundle: Stop forwards the background work still running as the turn ended, and prints nothing', async () => {

@@ -1327,6 +1327,8 @@ function bootstrap(): void {
     status: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       statusHub.status(msg)
+      // the session's folder: /cd and entering or leaving a worktree move the tab; a Bash cd only looks around
+      if (msg.projectDir !== undefined) tabs.setFolder(msg.tabId, msg.projectDir)
       return { ok: true }
     },
     subagent: (msg) => {
@@ -1390,17 +1392,9 @@ function bootstrap(): void {
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       wakeFeed(msg.tabId)
-      // the folder Claude Code works in now: it moves its shell back from a cd out of the session's folders without a CwdChanged
-      if (msg.cwd !== null) tabs.setFolder(msg.tabId, msg.cwd)
       review.turn(msg.tabId, msg.sessionId)
       tabs.setWorking(msg.tabId, true)
       autoContinue.turnStarted(msg.tabId)
-      return { ok: true }
-    },
-    cwd: (msg) => {
-      if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
-      log.info(`folder tab=${msg.tabId} ${msg.cwd}`)
-      tabs.setFolder(msg.tabId, msg.cwd)
       return { ok: true }
     },
     editBefore: (msg) => {
