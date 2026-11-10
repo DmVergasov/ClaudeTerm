@@ -2,6 +2,18 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.17.0
+
+### New
+
+- **Agents on your other devices and accounts can message each other.** Claude Code's own `SendMessage` reaches only the agents it lists itself, so a Claude tab on your other computer, or on another Claude account (where Remote Control does not work), was out of reach. ClaudeTerm now carries those messages over the device link: Claude finds such an agent with the `list_agents` tool and writes to it with `message_agent`, and the answer comes back the same way. An idle agent wakes up for a message (Claude Code 2.1.287 or later, in Claude tabs started after the update), and a message to a device that is offline goes out when it connects. Agents still use `SendMessage` first; ClaudeTerm only carries what it cannot.
+- **See what the agents write to each other.** The envelope button beside Media opens the **Agent messages** panel: the conversations of the tab in front, or all of them. A tab with messages you have not read carries an envelope, and so does its device's chip; there is no sound and no pop-up. **Settings → Agent messages** turns the messages, or only the marks, off. Every device needs 0.17.0 for messages between devices.
+
+### Fixes
+
+- **A Claude tab keeps its folder when Claude only looks elsewhere.** A `cd` Claude ran into another folder moved the tab there, with that folder's project group and branch. The tab now moves only when the session does: `/cd`, or entering or leaving a worktree.
+- **A tab group you fold right after a tab opens stays folded.** With the tabs on the left, a group folded in the first moments after a tab opened could unfold again on its own once ClaudeTerm learned the tab's branch.
+
 ## 0.16.2
 
 ### Fixes
