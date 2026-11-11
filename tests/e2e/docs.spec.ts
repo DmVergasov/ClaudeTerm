@@ -445,6 +445,8 @@ test('dragging the panel edge over a PDF frame keeps resizing; the release over 
   writeFileSync(pdf, minimalPdf())
   await show(pipeName, tabId, pdf)
   await expect(page.locator('iframe.doc-frame')).toHaveAttribute('src', /^ctdoc:\/\//)
+  // a panel that is still sliding in has its handle a few pixels off from where it comes to rest
+  await panelSettled(page)
   const panelEl = page.locator('#image-panel')
   const start = (await panelEl.boundingBox())!.width
   const box = (await panelEl.boundingBox())!

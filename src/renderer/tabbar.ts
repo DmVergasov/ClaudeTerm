@@ -95,8 +95,8 @@ export class TabBar {
   private readonly header: TabHeader
   private list = document.createElement('div')
   private readonly spacer = document.createElement('div')
-  /** the active tab whose pill was last brought into view */
-  private revealed: string | null = null
+  /** the active tab whose pill was last brought into view, and its place among the pills then */
+  private revealed: { id: string; at: number } | null = null
 
   /** the buttons are built once: a re-render (a busy Claude retitles its tab every second) must not drop a click or a tooltip */
   constructor(private readonly root: HTMLElement, private readonly cb: TabBarCallbacks, private readonly platform: string) {
@@ -149,13 +149,15 @@ export class TabBar {
       list.append(this.renderChip(g))
       if (!g.folded) for (const item of tabs) list.append(this.renderTab(item, item.id === activeId))
     }
-    // a re-render keeps the scroll; a tab that became the active one is brought into view
+    // a re-render keeps the scroll; a tab that became the active one is brought into view, and so is the active tab when it
+    // moved (its project became known, or the order changed)
     const scrolled = this.list.scrollLeft
     this.list.replaceWith(list)
     this.list = list
     list.scrollLeft = scrolled
-    if (this.activeId !== this.revealed && list.querySelector('.tab.active')) {
-      this.revealed = this.activeId
+    const at = [...list.querySelectorAll('.tab')].findIndex((pill) => pill.classList.contains('active'))
+    if (activeId !== null && at >= 0 && (this.revealed?.id !== activeId || this.revealed.at !== at)) {
+      this.revealed = { id: activeId, at }
       this.revealActive()
     }
   }

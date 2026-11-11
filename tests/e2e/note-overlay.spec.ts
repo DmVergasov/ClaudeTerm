@@ -375,7 +375,7 @@ test('the find box and the note do not cover each other, and the note\'s buttons
 
   // the label with the find box open
   await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+KeyF' : 'Control+Shift+KeyF')
+  await page.keyboard.press(KEYS.find)
   await expect(page.locator('#search')).toBeVisible()
   expect(overlap(await box('#search'), await box('#note .note-label')), 'the find box covers the note label').toBe(false)
 

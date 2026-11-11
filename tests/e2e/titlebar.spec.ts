@@ -170,9 +170,11 @@ test('wherever the app name shows, the search text is whole and nothing overlaps
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
   await expect(page.locator('#titlebar .tb-meters')).toBeVisible()
+  // a resized window's page is wider than its size by the frame Windows draws around it (16 px), and as wide on macOS and Linux
+  const frame = process.platform === 'win32' ? 16 : 0
   const setWidth = async (width: number): Promise<void> => {
     await app.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows().find((x) => x.getParentWindow() === null)!.setSize(w, 800), width)
-    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width + 16)
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width + frame)
   }
   // the widths around the threshold: where the name shows, the full layout must fit
   for (const width of [820, 830, 839, 850]) {

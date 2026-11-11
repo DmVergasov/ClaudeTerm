@@ -260,6 +260,12 @@ test('the tab bar scrolls: the active tab is in view whether it is the first or 
   await page.evaluate((id) => window.ct.activateTab(id), first)
   await expect.poll(() => inView(first)).toBe(true)
 
+  // the tab in front moves to the far end of the bar (its project becomes known late, or the order changes): the bar follows it
+  const ids = await page.evaluate(() => window.__ct!.tabIds())
+  await page.evaluate((o) => window.ct.reorderTabs(o), [...ids.filter((id) => id !== first), first])
+  await expect.poll(async () => (await shownTabIds(page)).at(-1)).toBe(first)
+  await expect.poll(() => inView(first)).toBe(true)
+
   // a tab bar drawn again (a tab renamed) keeps its scroll: the first tab stays in view
   await page.evaluate((id) => window.ct.renameTab(id, 'redrawn'), last)
   await expect(page.locator(`#tabbar .tab[data-tab-id="${last}"] .tab-title`)).toHaveText('redrawn')

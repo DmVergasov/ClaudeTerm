@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, PROMPT, writeTranscript } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, panelSettled, PROMPT, writeTranscript } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // a tab finds its project group once git answers for its folder, late on a busy machine, as when other tests run at the
@@ -49,6 +49,8 @@ const centre = (tab: Locator): Promise<{ x: number, y: number }> => tab.evaluate
 
 /** a press on the handle's centre, a move by dx px, a release: what a user does with the mouse */
 async function dragBy(page: Page, handle: Locator, dx: number): Promise<void> {
+  // a panel that is still sliding in has its handle a few pixels off from where it comes to rest
+  await panelSettled(page)
   const box = (await handle.boundingBox())!
   const x = box.x + box.width / 2
   const y = box.y + box.height / 2

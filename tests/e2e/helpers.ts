@@ -24,12 +24,12 @@ export const KEYS = MAC
   ? {
       newTab: 'Meta+KeyT', newClaudeTab: 'Meta+KeyL', closeTab: 'Meta+KeyW', nextTab: 'Control+Tab', copy: 'Meta+KeyC', paste: 'Meta+KeyV',
       images: 'Meta+KeyI', changes: 'Meta+KeyD', recentSessions: 'Meta+Shift+KeyH', settings: 'Meta+Comma', zoomIn: 'Meta+Equal',
-      panelFind: 'Meta+KeyF', star: 'Meta+KeyD', note: 'Meta+KeyN', docs: 'Meta+KeyO', nextWaiting: 'Meta+KeyJ'
+      panelFind: 'Meta+KeyF', star: 'Meta+KeyD', note: 'Meta+KeyN', docs: 'Meta+KeyO', nextWaiting: 'Meta+KeyJ', find: 'Meta+KeyF'
     }
   : {
       newTab: 'Control+Shift+KeyT', newClaudeTab: 'Control+Shift+KeyL', closeTab: 'Control+Shift+KeyW', nextTab: 'Control+Tab', copy: 'Control+Shift+KeyC', paste: 'Control+KeyV',
       images: 'Control+Shift+KeyI', changes: 'Control+Shift+KeyD', recentSessions: 'Control+Shift+KeyH', settings: 'Control+Comma', zoomIn: 'Control+Equal',
-      panelFind: 'Control+KeyF', star: 'Control+KeyD', note: 'Control+Shift+KeyN', docs: 'Control+Shift+KeyO', nextWaiting: 'Control+Shift+KeyJ'
+      panelFind: 'Control+KeyF', star: 'Control+KeyD', note: 'Control+Shift+KeyN', docs: 'Control+Shift+KeyO', nextWaiting: 'Control+Shift+KeyJ', find: 'Control+Shift+KeyF'
     }
 
 /** the shortcuts as the window's tooltips write them */

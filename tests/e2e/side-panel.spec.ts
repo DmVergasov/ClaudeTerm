@@ -310,7 +310,7 @@ test('an expanded panel keeps the sheet\'s width when the tabs move from the top
 
 test('the Find shortcut does nothing while an expanded panel covers the terminal, and works again once the panel is back', async () => {
   const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false } })
-  const findKey = process.platform === 'darwin' ? 'Meta+Shift+KeyF' : 'Control+Shift+KeyF'
+  const findKey = KEYS.find
   await page.keyboard.press(KEYS.changes)
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   await page.locator('.review-expand').click()

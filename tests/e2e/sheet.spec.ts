@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, launchApp, launchClaudeTab } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, launchClaudeTab } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // the icon and the line under the header are what these tests check; keep the desktop quiet while they run
@@ -114,6 +114,8 @@ test('the header\'s title element survives a redraw that changes nothing', async
   const { app, page, tabId } = await launchClaudeTab(QUIET)
   const title = page.locator('#sheet-header .sh-title')
   await expect(title).toHaveText(await page.evaluate((id) => window.__ct!.tabTitle(id)!, tabId))
+  // the tab's project is known: its answer redraws the header, and a slow git answers after the title shows
+  await expect.poll(() => page.evaluate((id) => window.__ct!.placeOf!(id) !== undefined, tabId)).toBe(true)
   await page.evaluate(() => { (window as unknown as Record<string, unknown>).probe = document.querySelector('#sheet-header .sh-title') })
   // a note with text redraws the tabs; the header's own part (its title, branch and folder) does not change
   await page.locator('#sheet-header .tab-note-toggle').click()
@@ -165,7 +167,7 @@ for (const position of ['top', 'left'] as const) {
   test(`the find box opens at the top right of the terminal, clear of the title bar and the header, with the tabs on ${position}`, async () => {
     const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, tabs: { position } })
     await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+KeyF' : 'Control+Shift+KeyF')
+    await page.keyboard.press(KEYS.find)
     await expect(page.locator('#search')).toBeVisible()
     const find = (await page.locator('#search').boundingBox())!
     for (const sel of ['#titlebar', '#tabbar', '#tabpanel', '#sheet-header']) {
