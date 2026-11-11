@@ -101,12 +101,15 @@ export class ImagePanel {
     name.className = 'card-name'
     name.textContent = card.name
     name.title = card.path
-    const tags = [new Date(card.touchedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }), SOURCE_LABEL[card.source]]
-    if (card.updated) tags.push('updated')
-    if (card.deleted) tags.push('deleted')
+    const when = new Date(card.touchedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    // the source is a chip of its own: the meta line keeps the same words in the same order
+    const source = document.createElement('span')
+    source.className = 'card-source'
+    source.textContent = SOURCE_LABEL[card.source]
+    const flags = [card.updated ? 'updated' : '', card.deleted ? 'deleted' : ''].filter((f) => f !== '')
     const sub = document.createElement('div')
     sub.className = 'card-sub'
-    sub.textContent = `${card.relPath} · ${tags.join(' · ')}`
+    sub.append(`${card.relPath} · ${when} · `, source, ...flags.map((f) => ` · ${f}`))
     meta.append(name, sub)
     if (card.caption) {
       const cap = document.createElement('div')

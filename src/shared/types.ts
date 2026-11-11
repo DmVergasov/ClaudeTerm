@@ -152,7 +152,7 @@ export interface Settings {
   /**
    * statusRefresh: Claude Code also re-runs a Claude tab's statusLine every statusRefreshInterval seconds; autoContinue: type a
    * nudge into a Claude tab whose response a dropped connection cut off, instead of calling the user; continueAfterRestore:
-   * the same for a restored tab Claude was working in when ClaudeTerm closed; limitPace: the status bar shows how fast each
+   * the same for a restored tab Claude was working in when ClaudeTerm closed; limitPace: the title bar shows how fast each
    * usage limit is spent, with a bar, a color and a forecast from the pace (off: the fixed 70% and 90% only)
    */
   claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean; limitPace: boolean }

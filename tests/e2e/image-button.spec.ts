@@ -10,7 +10,7 @@ test('image button toggles the panel and shows the unseen counter', async () => 
   const { app, page, pipeName } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false } }, args: ['--claude', work] })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
-  const button = page.locator('#tabbar .tab-images-toggle')
+  const button = page.locator('#sheet-header .tab-images-toggle')
   const badge = button.locator('.badge')
   const panel = page.locator('#image-panel')
   const show = async (name: string): Promise<void> => {

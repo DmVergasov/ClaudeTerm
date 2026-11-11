@@ -49,7 +49,7 @@ export const setSetting = (page: Page, key: string, value: unknown): Promise<unk
 export const sendText = (pipeName: string, from: string, sessionTo: string, text: string): Promise<unknown> =>
   sendPipeMessage(pipeName, { v: 1, type: 'agent_send', tabId: from, to: refOf(sessionTo), text, replyTo: null })
 
-export const messagesButton = (page: Page) => page.locator('#tabbar .tab-messages-toggle')
+export const messagesButton = (page: Page) => page.locator('#sheet-header .tab-messages-toggle')
 export const badge = (page: Page) => messagesButton(page).locator('.badge')
 export const envelopeOf = (page: Page, id: string) => page.locator(`#tabbar .tab[data-tab-id="${id}"] .tab-mail`)
 

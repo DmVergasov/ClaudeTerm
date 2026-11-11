@@ -1,3 +1,4 @@
+import '@fontsource-variable/inter'
 import './settings.css'
 import type { SettingsView } from '../shared/ipc'
 import { REMOTE_COPY } from '../shared/remote'
@@ -6,10 +7,14 @@ import { DEFAULT_TEST_PATTERNS } from '../shared/test-files'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
 import { accountsSection } from './accounts-section'
 import { devicesSection } from './devices-section'
-import { el, section } from './dom'
+import { el, loadInter, section } from './dom'
 import { checkNumber, checkOptionalText, checkPatterns, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions, type Checked, type Option } from './settings-form'
 
+// the bundled Inter is a local file: the wait is a frame or two, before any element is built
+await loadInter()
+
 const ct = window.ct
+document.body.classList.add(`platform-${ct.platform}`)
 
 const CASE_LABELS: Record<NotificationCase, string> = {
   permission: 'Claude asks for permission',
@@ -212,7 +217,6 @@ const notice = el('div', { className: 'settings-notice', hidden: true })
 const automaticHint = ct.platform === 'win32' ? '(PowerShell 7 if installed, else Windows PowerShell)' : '(your login shell)'
 const root = document.getElementById('settings')!
 root.append(
-  el('h1', { className: 'settings-heading', textContent: 'Settings' }),
   banner,
   notice,
   section('Notifications', 'when a tab you are not looking at needs you · Even in front: its sound also plays while you look at it', notificationTable(), soundField(),
@@ -244,7 +248,7 @@ root.append(
     checkboxField('claude.autoContinue', `Continue a response a dropped connection cut off (up to ${MAX_AUTO_CONTINUES} times in a row)`, (v) => v.settings.claude.autoContinue),
     checkboxField('claude.continueAfterRestore', 'Go on with the work Claude was doing when ClaudeTerm closed, in the tabs it restores',
       (v) => v.settings.claude.continueAfterRestore),
-    checkboxField('claude.limitPace', 'Show in the status bar how fast the usage limits are spent: a bar, and a color from the pace',
+    checkboxField('claude.limitPace', 'Show in the title bar how fast the usage limits are spent: a bar, and a color from the pace',
       (v) => v.settings.claude.limitPace)),
   accountsSection(),
   devicesSection([checkboxField('devices.keepAwake', REMOTE_COPY.keepAwake, (v) => v.settings.devices.keepAwake)]),
@@ -297,3 +301,5 @@ function showSection(name: string): void {
 
 ct.onSettingsSection(showSection)
 showSection(location.hash.slice(1))
+// the page scrolls here, so a key press scrolls it with no click first: focused once, unless something else already has the focus
+if (document.activeElement === document.body) document.getElementById('settings')!.focus({ preventScroll: true })

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { WIN } from '../fixtures/platform'
 import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, KEYS } from './helpers'
+import { setSetting } from './agent-mail'
 
 const panel = (page: Page) => page.locator('#image-panel')
 
@@ -20,12 +21,13 @@ function place(app: ElectronApplication): Promise<Place> {
 interface Layout { termWidth: number; termRight: number; panelLeft: number; panelWidth: number; inner: number }
 
 // measured after two animation frames, once the ResizeObserver -> fit chain has run
+// `inner` is the workspace's right edge, where a panel at the right lies: the sheet's margin and border are outside it
 function layout(page: Page): Promise<Layout> {
   return page.evaluate(async () => {
     await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
     const t = document.getElementById('terminals')!.getBoundingClientRect()
     const p = document.getElementById('image-panel')!.getBoundingClientRect()
-    return { termWidth: t.width, termRight: t.right, panelLeft: p.left, panelWidth: p.width, inner: window.innerWidth }
+    return { termWidth: t.width, termRight: t.right, panelLeft: p.left, panelWidth: p.width, inner: document.getElementById('workspace')!.getBoundingClientRect().right }
   })
 }
 
@@ -141,7 +143,7 @@ test('choosing "Narrow the terminal" in the settings window moves a panel shown 
 
   await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
   const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
-  await win.waitForSelector('#settings .settings-heading')
+  await win.waitForSelector('#settings .section-title')
   const select = win.locator('[data-key="sidePanel.noRoom"]')
   await expect(select.locator('option:checked')).toHaveText('Over the terminal')
   await select.selectOption('Narrow the terminal')
@@ -150,7 +152,7 @@ test('choosing "Narrow the terminal" in the settings window moves a panel shown 
   await app.close()
 })
 
-test('the expanded Changes panel lies over the whole window, and the terminal keeps its size', async () => {
+test('the expanded Changes panel covers the sheet, not the title bar or the tabs, and the terminal keeps its size', async () => {
   const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false }, review: { width: 300 } })
   await setWidth(app, page, roomyWidth(await place(app), 300))
   const start = (await place(app)).bounds
@@ -163,12 +165,23 @@ test('the expanded Changes panel lies over the whole window, and the terminal ke
 
   await page.locator('.review-expand').click()
   await expect(panel(page)).toHaveClass(/expanded/)
-  await expect.poll(async () => {
-    const l = await layout(page)
-    return { termWidth: l.termWidth, panelLeft: l.panelLeft, panelWidth: l.panelWidth }
-  }).toEqual({ termWidth: before.termWidth, panelLeft: 0, panelWidth: (await layout(page)).inner })
+  await expect.poll(async () => (await layout(page)).termWidth).toBe(before.termWidth)
+  // the panel covers the sheet below its header: left, right and bottom match the sheet's box (its own border lies outside the panel),
+  // its top is the header's bottom, and it lies below the title bar
+  const edges = await page.evaluate(() => {
+    const box = (sel: string): DOMRect => document.querySelector(sel)!.getBoundingClientRect()
+    const p = box('#image-panel')
+    const s = box('#sheet')
+    return { left: p.left - s.left, right: s.right - p.right, bottom: s.bottom - p.bottom, top: p.top - box('#sheet-header').bottom, belowTitleBar: p.top - box('#titlebar').bottom }
+  })
+  for (const side of ['left', 'right', 'bottom'] as const) expect(Math.abs(edges[side] - 1)).toBeLessThanOrEqual(1)
+  expect(Math.abs(edges.top)).toBeLessThanOrEqual(1)
+  expect(edges.belowTitleBar).toBeGreaterThanOrEqual(0)
   expect((await place(app)).bounds).toEqual(grown)
   expect(await ptySizes(page)).toEqual(sizes)
+  // the header's toggles stay clickable while the panel is expanded: Media takes the panel
+  await page.locator('#sheet-header .tab-images-toggle').click()
+  await expect(page.locator('.panel-title')).toHaveText('Media')
   await app.close()
 })
 
@@ -209,6 +222,107 @@ test('a panel closed while the window was maximized gives its width back when th
   await page.keyboard.press(KEYS.images)
   await expect(panel(page)).toHaveClass(/collapsed/)
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)!.unmaximize())
-  await expect.poll(async () => (await place(app)).bounds).toEqual(start)
+  // x and y are not compared: the test windows start parked off screen, and a restored frameless window is put back on a display
+  await expect.poll(async () => { const b = (await place(app)).bounds; return { width: b.width, height: b.height } }).toEqual({ width: start.width, height: start.height })
+  expect((await place(app)).maximized).toBe(false)
+  await app.close()
+})
+
+test('the panel slides in when it opens, and does not when the user asks for reduced motion', async () => {
+  const { app, page } = await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false } } })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const slides = () => page.evaluate(() => {
+    const p = document.getElementById('image-panel')!
+    return document.getAnimations().filter((a) => (a as CSSAnimation).animationName === 'panel-in' && (a.effect as KeyframeEffect | null)?.target === p).length
+  })
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.locator('#sheet-header .tab-images-toggle').click()
+  await expect(panel(page)).not.toHaveClass(/collapsed/)
+  expect(await slides()).toBe(1)
+  await page.locator('#sheet-header .tab-images-toggle').click()
+  await expect(panel(page)).toHaveClass(/collapsed/)
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.locator('#sheet-header .tab-images-toggle').click()
+  await expect(panel(page)).not.toHaveClass(/collapsed/)
+  expect(await slides()).toBe(0)
+  await app.close()
+})
+
+test('three quick clicks on the Media toggle, open, close, open, leave the panel shown and no resize trailing behind', async () => {
+  test.skip(!WIN && !process.env.XDG_CURRENT_DESKTOP, 'no desktop (xvfb): there is no window manager to maximize the window')
+  const { app, page } = await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false }, sidePanel: { noRoom: 'narrow' } } })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)!.maximize())
+  await expect.poll(async () => (await place(app)).maximized).toBe(true)
+  await layout(page)
+  const before = await ptySizes(page)
+
+  // the three clicks land within one task, far inside 100 ms; the count of sizes is then sampled on every frame for 400 ms
+  const samples = await page.evaluate(() => new Promise<number[]>((resolve) => {
+    const b = document.querySelector<HTMLButtonElement>('#sheet-header .tab-images-toggle')!
+    b.click()
+    b.click()
+    b.click()
+    const counts: number[] = []
+    const t0 = performance.now()
+    const frame = (): void => {
+      counts.push(window.__ct!.ptySizes!().length)
+      if (performance.now() - t0 < 400) requestAnimationFrame(frame)
+      else resolve(counts)
+    }
+    requestAnimationFrame(frame)
+  }))
+  // a refit per frame would add a size every frame; one resize for the final state is allowed
+  expect(Math.max(...samples) - samples[0]!).toBeLessThanOrEqual(1)
+  await expect(panel(page)).not.toHaveClass(/collapsed/)
+  const settled = await ptySizes(page)
+  expect(settled.length - before.length).toBeLessThanOrEqual(1)
+  await page.waitForTimeout(1000)
+  expect(await ptySizes(page)).toEqual(settled)
+  await app.close()
+})
+
+test('an expanded panel keeps the sheet\'s width when the tabs move from the top to the left and back', async () => {
+  const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false }, review: { width: 300 } })
+  await page.keyboard.press(KEYS.changes)
+  await expect(panel(page)).not.toHaveClass(/collapsed/)
+  await page.locator('.review-expand').click()
+  await expect(panel(page)).toHaveClass(/expanded/)
+  // the panel's left and right edges sit on the sheet's inner edges (inside its 1 px border)
+  const aligned = async (): Promise<boolean> => {
+    const e = await page.evaluate(() => {
+      const s = document.querySelector<HTMLElement>('#sheet')!
+      const p = document.querySelector('#image-panel')!.getBoundingClientRect()
+      const left = s.getBoundingClientRect().left + s.clientLeft
+      return { left: p.left - left, right: left + s.clientWidth - p.right }
+    })
+    return Math.abs(e.left) <= 1 && Math.abs(e.right) <= 1
+  }
+  await expect.poll(aligned).toBe(true)
+  expect(await setSetting(page, 'tabs.position', 'left')).toEqual({ ok: true })
+  await expect.poll(aligned).toBe(true)
+  expect(await setSetting(page, 'tabs.position', 'top')).toEqual({ ok: true })
+  await expect.poll(aligned).toBe(true)
+  await app.close()
+})
+
+test('the Find shortcut does nothing while an expanded panel covers the terminal, and works again once the panel is back', async () => {
+  const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false } })
+  const findKey = process.platform === 'darwin' ? 'Meta+Shift+KeyF' : 'Control+Shift+KeyF'
+  await page.keyboard.press(KEYS.changes)
+  await expect(panel(page)).not.toHaveClass(/collapsed/)
+  await page.locator('.review-expand').click()
+  await expect(panel(page)).toHaveClass(/expanded/)
+  await page.keyboard.press(findKey)
+  // the find box would sit under the panel and take keys nobody sees: the shortcut is ignored instead
+  await expect(page.locator('#search')).toBeHidden()
+
+  await page.locator('.review-expand').click()
+  await expect(panel(page)).not.toHaveClass(/expanded/)
+  await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
+  await page.keyboard.press(findKey)
+  await expect(page.locator('#search')).toBeVisible()
   await app.close()
 })

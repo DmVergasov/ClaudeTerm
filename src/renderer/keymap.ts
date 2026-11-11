@@ -65,6 +65,8 @@ const LABELS = {
   toggleDocs: ['Ctrl+Shift+O', '⌘O'],
   toggleNote: ['Ctrl+Shift+N', '⌘N'],
   nextWaiting: ['Ctrl+Shift+J', '⌘J'],
+  recentSessions: ['Ctrl+Shift+H', '⇧⌘H'],
+  openSettings: ['Ctrl+,', '⌘,'],
   panelFind: ['Ctrl+F', '⌘F'],
   star: ['Ctrl+D', '⌘D']
 } as const

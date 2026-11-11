@@ -1,5 +1,7 @@
 export interface MenuItem {
   label: string
+  /** a shortcut written at the right of the row */
+  hint?: string
   action?: () => void
   disabled?: boolean
   separator?: boolean
@@ -26,11 +28,11 @@ export function menuIsOpen(menu: HTMLElement): boolean {
   return current === menu
 }
 
-/** shows the menu at a place, replacing the one on screen; returns it */
-export function showMenu(at: { x: number; y: number }, items: MenuItem[]): HTMLElement {
+/** shows the menu at a place, replacing the one on screen; returns it. `animate: false` draws it in place without the pop-in */
+export function showMenu(at: { x: number; y: number }, items: MenuItem[], o: { animate?: boolean } = {}): HTMLElement {
   closeMenu()
   const menu = document.createElement('div')
-  menu.className = 'menu'
+  menu.className = o.animate === false ? 'menu menu-still' : 'menu'
   for (const it of items) {
     if (it.separator) {
       const sep = document.createElement('div')
@@ -41,6 +43,12 @@ export function showMenu(at: { x: number; y: number }, items: MenuItem[]): HTMLE
     const row = document.createElement('div')
     row.className = `menu-item${it.disabled ? ' disabled' : ''}`
     row.textContent = it.label
+    if (it.hint) {
+      const hint = document.createElement('span')
+      hint.className = 'menu-hint'
+      hint.textContent = it.hint
+      row.append(hint)
+    }
     if (!it.disabled && it.action) {
       const action = it.action
       row.addEventListener('click', () => {
@@ -53,7 +61,9 @@ export function showMenu(at: { x: number; y: number }, items: MenuItem[]): HTMLE
   document.body.append(menu)
   const r = menu.getBoundingClientRect()
   menu.style.left = `${Math.max(0, Math.min(at.x, window.innerWidth - r.width - 4))}px`
-  menu.style.top = `${Math.max(0, Math.min(at.y, window.innerHeight - r.height - 4))}px`
+  // a menu stays below the title bar, the window's drag strip, even when it is taller than the room under its anchor
+  const barBottom = document.getElementById('titlebar')?.getBoundingClientRect().bottom ?? 0
+  menu.style.top = `${Math.max(barBottom, Math.min(at.y, window.innerHeight - r.height - 4))}px`
   current = menu
   setTimeout(() => document.addEventListener('mousedown', onOutside, { once: true }), 0)
   return menu

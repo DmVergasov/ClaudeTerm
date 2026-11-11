@@ -44,12 +44,12 @@ test('a plan run shows its progress, follows the ledger and ends with ✓ when i
   const run = planRun()
   await startPlan(pipeName, tabId, run.ws)
   const seg = page.locator('#statusbar .status-plan')
-  await expect(seg).toHaveText('1/4 · Escape quotes and separators')
+  await expect(seg.locator('.status-text')).toHaveText('1/4 · Escape quotes and separators')
   await expect(seg).toHaveAttribute('title', 'CSV Export — 1 of 4 done. Click for the task list')
   appendFileSync(run.ledger, 'Task 2: complete (commits d4e5f6a..b7c8d9e, review clean)\n')
-  await expect(seg).toHaveText('2/4 · Export button in the toolbar')
+  await expect(seg.locator('.status-text')).toHaveText('2/4 · Export button in the toolbar')
   rmSync(run.ws, { recursive: true, force: true })
-  await expect(seg).toHaveText('✓ 4/4')
+  await expect(seg.locator('.status-text')).toHaveText('✓ 4/4')
   await app.close()
 })
 
@@ -125,7 +125,8 @@ test('an open list stays above the status bar when the status bar rebuilds its s
     model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh',
     context: { usedTokens: 82_314, size: 200_000, usedPct: 41.2 }, fiveHour: null, sevenDay: null
   })).toEqual({ ok: true })
-  await expect(page.locator('#statusbar .status-model')).toHaveText('Opus 5.5 · xhigh')
+  await expect(page.locator('#statusbar .status-model .status-text')).toHaveText('Opus 5.5')
+  await expect(page.locator('#statusbar .status-model .status-pill')).toHaveText('xhigh')
   appendFileSync(run.ledger, 'Task 2: complete\n')
   await expect(list.locator('.plan-count')).toHaveText('2 of 4 done')
   const box = (await list.boundingBox())!
@@ -143,13 +144,29 @@ test('a very long task title is cut with an ellipsis inside the status bar', asy
   const long = 'Rework the whole export pipeline so rows, quotes, separators, encodings and the save dialog all share one streaming writer'
   await startPlan(pipeName, tabId, planRun(['First task', long]).ws)
   const seg = page.locator('#statusbar .status-plan')
-  await expect(seg).toContainText('1/2 · Rework the whole export')
+  await expect(seg.locator('.status-text')).toContainText('1/2 · Rework the whole export')
   const m = await page.evaluate(() => {
     const s = document.querySelector('#statusbar .status-plan')!.getBoundingClientRect()
-    const el = document.querySelector('#statusbar .status-plan') as HTMLElement
+    const el = document.querySelector('#statusbar .status-plan .status-text') as HTMLElement
     return { scroll: el.scrollWidth, client: el.clientWidth, right: s.right, barRight: document.querySelector('#statusbar')!.getBoundingClientRect().right }
   })
   expect(m.scroll).toBeGreaterThan(m.client)
   expect(m.right).toBeLessThanOrEqual(m.barRight)
+  await app.close()
+})
+
+test('a long plan title is cut, and its progress bar still shows', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  const long = 'Rework the whole export pipeline so rows, quotes, separators, encodings and the save dialog all share one streaming writer and resume'
+  expect(long.length).toBeGreaterThanOrEqual(120)
+  await startPlan(pipeName, tabId, planRun(['First task', long]).ws)
+  const seg = page.locator('#statusbar .status-plan')
+  await expect(seg.locator('.status-text')).toContainText('1/2 · Rework the whole export')
+  const bar = (await seg.locator('.status-bar').boundingBox())!
+  const box = (await seg.boundingBox())!
+  expect(bar.width).toBeCloseTo(44, 0)
+  expect(bar.x).toBeGreaterThanOrEqual(box.x)
+  expect(bar.x + bar.width).toBeLessThanOrEqual(box.x + box.width)
+  expect(await seg.locator('.status-text').evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
   await app.close()
 })

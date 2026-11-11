@@ -175,3 +175,8 @@ export async function keepingClipboard(app: ElectronApplication, steps: () => Pr
     })
   }
 }
+
+/** the side panel's slide-in (panel-in) has ended: a test that acts on the panel right after it opens waits for this */
+export async function panelSettled(page: Page): Promise<void> {
+  await page.evaluate(() => Promise.all(document.getElementById('image-panel')!.getAnimations().map((a) => a.finished)))
+}

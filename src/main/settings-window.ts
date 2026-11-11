@@ -1,6 +1,7 @@
 import { BrowserWindow, screen, shell } from 'electron'
 import { IPC } from '../shared/ipc'
 import { showWindow } from './window-show'
+import { chromeOptions, SETTINGS_TITLE_BAR_HEIGHT } from './window-chrome'
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
@@ -65,7 +66,8 @@ export class SettingsWindow {
       maximizable: false,
       fullscreenable: false,
       title: 'ClaudeTerm Settings',
-      backgroundColor: '#1b1b1f',
+      backgroundColor: '#0A0A0C',
+      ...chromeOptions(process.platform, SETTINGS_TITLE_BAR_HEIGHT),
       ...(this.d.icon ? { icon: this.d.icon } : {}),
       webPreferences: { preload: this.d.preload, contextIsolation: true, nodeIntegration: false, sandbox: true }
     })

@@ -61,7 +61,7 @@ async function dragBy(page: Page, handle: Locator, dx: number): Promise<void> {
 async function openSettings(app: ElectronApplication, page: Page): Promise<Page> {
   await page.locator('.terminal-host:visible .xterm').click()
   const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
-  await win.waitForSelector('#settings .settings-heading')
+  await win.waitForSelector('#settings .section-title')
   return win
 }
 
@@ -85,6 +85,44 @@ test('the position button and the Settings window put the tabs on the left and b
   await win.locator('[data-key="tabs.position"]').selectOption('left')
   await expect(page.locator('#tabpanel')).toBeVisible()
   await expect(page.locator('#tabbar')).toBeHidden()
+  await app.close()
+})
+
+test('the column\'s New tab button opens a tab of the default profile', async () => {
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const button = page.locator('#tabpanel .tp-new')
+  await expect(button).toHaveText(/^New tab/)
+  await button.click()
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds().length)).toBe(2)
+  await app.close()
+})
+
+test('the column\'s footer opens Recent sessions and Settings', async () => {
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  // Settings first: the Recent sessions window covers the panel while it is open
+  await page.locator('#tabpanel .tp-settings').click()
+  await expect.poll(() => app.windows().length).toBe(2)
+  await page.locator('#tabpanel .tp-recent').click()
+  await expect(page.locator('#sessions')).toBeVisible()
+  await app.close()
+})
+
+test('the active row is raised, not barred', async () => {
+  const { app, page, tabId, work } = await launchClaudeTab(left(freshFolder()))
+  const other = await openTab(page, 'shell', work)
+  const style = (id: string): Promise<{ shadow: string, bg: string }> => row(page, id).evaluate((el) => {
+    const s = getComputedStyle(el)
+    return { shadow: s.boxShadow, bg: s.backgroundColor }
+  })
+  const active = await style(other)
+  const idle = await style(tabId)
+  // an inset edge of the border colour, not the accent bar of the old rows; the raised background of the active row
+  expect(active.shadow).toContain('inset')
+  expect(active.shadow).not.toContain('217, 119, 87')
+  expect(active.bg).toBe('rgb(30, 30, 35)')
+  expect(idle.bg).not.toBe(active.bg)
   await app.close()
 })
 
@@ -233,9 +271,9 @@ test('the panel header\'s buttons work like the tab bar\'s', async () => {
   const media = page.locator('#image-panel')
   await expect(media).toHaveClass(/collapsed/)
 
-  await page.locator('#tabpanel .tp-head .tab-images-toggle').click()
+  await page.locator('#sheet-header .tab-images-toggle').click()
   await expect(media).not.toHaveClass(/collapsed/)
-  await page.locator('#tabpanel .tp-head .tab-images-toggle').click()
+  await page.locator('#sheet-header .tab-images-toggle').click()
   await expect(media).toHaveClass(/collapsed/)
 
   await page.locator('#tabpanel .tp-head .tab-new').click()
@@ -359,6 +397,34 @@ test('Ctrl+Tab and Ctrl+Alt+N follow the panel\'s order', async () => {
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Digit2' : 'Control+Alt+Digit2')
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a2)
+  await app.close()
+})
+
+test('with the tabs on top, Ctrl+Tab and Ctrl+Alt+N walk the grouped order the bar shows', async () => {
+  const repoA = gitRepo()
+  const repoB = gitRepo()
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder(), tabs: { position: 'top' } } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const a1 = await openTab(page, 'shell', repoA)
+  const b1 = await openTab(page, 'shell', repoB)
+  const a2 = await openTab(page, 'shell', repoA)
+  // the bar shows A1, A2, B1 (No project last), though the tabs were opened in another order; the keys follow that order
+  await expect.poll(() => page.evaluate(() => [...document.querySelectorAll<HTMLElement>('#tabbar .tab')].map((t) => t.dataset.tabId))).toEqual([a1, a2, b1, home])
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, b1, home])
+  await page.evaluate((id) => window.ct.activateTab(id), a1)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
+  await page.locator('.terminal-host:visible .xterm').click()
+
+  await page.keyboard.press(KEYS.nextTab)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a2)
+  await page.keyboard.press(KEYS.nextTab)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, b1)
+
+  await page.evaluate((id) => window.ct.activateTab(id), a1)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, a1)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Digit3' : 'Control+Alt+Digit3')
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, b1)
   await app.close()
 })
 
@@ -569,7 +635,8 @@ test("a file dragged over a tab of the top bar is not a tab drop", async () => {
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repo)
   const a2 = await openTab(page, 'shell', repo)
-  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([home, a1, a2])
+  // the tab bar groups by project, No project last: the repository's tabs come first once the home tab's place is known
+  await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, home])
 
   await page.evaluate((id) => {
     document.querySelector(`#tabbar .tab[data-tab-id="${id}"]`)!.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: new DataTransfer() }))
@@ -582,7 +649,7 @@ test("a file dragged over a tab of the top bar is not a tab drop", async () => {
     tab.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: files }))
   }, a1)
   await page.waitForTimeout(500)
-  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([home, a1, a2])
+  expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, home])
   await app.close()
 })
 
@@ -611,7 +678,7 @@ test('a drag that ends off the rows leaves no tab to move, so a later drop reord
 
 test("the panel header's Note button shows and hides a Claude tab's note; a shell tab has no Note button", async () => {
   const { app, page } = await launchClaudeTab(left(freshFolder()))
-  const button = page.locator('#tabpanel .tp-head .tab-note-toggle')
+  const button = page.locator('#sheet-header .tab-note-toggle')
   const card = page.locator('#note .note-card')
   await expect(button).toBeVisible()
   await expect(button).toHaveAttribute('title', `Note (${KEY_LABELS.note})`)
@@ -655,9 +722,9 @@ test('a tab whose note has text shows the note mark in the first line of its row
 
 test("the panel header's Docs button shows once a Claude tab has a document, and opens and hides the Docs panel", async () => {
   const { app, page, pipeName, tabId, work } = await launchClaudeTab(left(freshFolder()))
-  const button = page.locator('#tabpanel .tp-head .tab-docs-toggle')
+  const button = page.locator('#sheet-header .tab-docs-toggle')
   const panel = page.locator('#image-panel')
-  await expect(page.locator('#tabpanel .tp-head .tab-changes-toggle')).toBeVisible()
+  await expect(page.locator('#sheet-header .tab-changes-toggle')).toBeVisible()
   await expect(button).toBeHidden()
 
   const spec = join(work, 'spec.md')
@@ -667,9 +734,11 @@ test("the panel header's Docs button shows once a Claude tab has a document, and
   await expect(button).toBeVisible()
   await expect(button).toHaveClass(/active/)
   await expect(button).toHaveAttribute('title', `Docs (${KEY_LABELS.docs})`)
-  // the side-panel toggles stand as on top: Changes, Docs, Media, Messages, Note, then the position button
+  // the panel's header holds + and ▾ and the position button: the side-panel toggles are in the sheet's header
   const shown = await page.locator('#tabpanel .tp-head button').evaluateAll((els) => els.filter((el) => !(el as HTMLElement).hidden).map((el) => el.classList[0]))
-  expect(shown).toEqual(['tab-new', 'tab-menu', 'tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-messages-toggle', 'tab-note-toggle', 'tab-position'])
+  expect(shown).toEqual(['tab-new', 'tab-menu'])
+  const foot = await page.locator('#tabpanel .tp-foot button').evaluateAll((els) => els.filter((el) => !(el as HTMLElement).hidden).map((el) => el.classList[0]))
+  expect(foot).toEqual(['tp-recent', 'tp-settings', 'tab-position'])
 
   await button.click()
   await expect(panel).toHaveClass(/collapsed/)
@@ -680,62 +749,72 @@ test("the panel header's Docs button shows once a Claude tab has a document, and
   await app.close()
 })
 
-/** the header's shown buttons by their first class, each with its box, and the header's own inner box */
-const headerBoxes = (page: Page): Promise<{ head: { left: number, top: number, right: number, bottom: number }, buttons: { name: string, left: number, top: number, right: number, bottom: number }[] }> =>
-  page.locator('#tabpanel .tp-head').evaluate((head) => {
-    const box = head.getBoundingClientRect()
+/** the column's buttons by their first class, each with its box, and the box of the part that holds them (its inner box) */
+const columnBoxes = (page: Page, holder: string): Promise<{ box: { left: number, top: number, right: number, bottom: number }, buttons: { name: string, left: number, top: number, right: number, bottom: number }[] }> =>
+  page.locator(holder).evaluate((el) => {
+    const box = el.getBoundingClientRect()
     return {
-      head: { left: box.left, top: box.top, right: box.left + head.clientWidth, bottom: box.top + head.clientHeight },
-      buttons: [...head.querySelectorAll('button')].filter((b) => !b.hidden).map((b) => {
+      box: { left: box.left, top: box.top, right: box.left + el.clientWidth, bottom: box.top + el.clientHeight },
+      buttons: [...el.querySelectorAll('button')].filter((b) => !b.hidden).map((b) => {
         const r = b.getBoundingClientRect()
         return { name: b.classList[0], left: r.left, top: r.top, right: r.right, bottom: r.bottom }
       })
     }
   })
 
-test('at its narrowest, half its first width, the panel holds every header button in two rows, Docs and Note included', async () => {
+test('at its narrowest, half its first width, the column keeps every button inside it: New tab and ▾ in the head, Recent sessions, Settings and the position switch in the foot', async () => {
   const { app, page, pipeName, tabId, work } = await launchClaudeTab(left(freshFolder()))
   const spec = join(work, 'spec.md')
   writeFileSync(spec, '# Spec\n')
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'show_document', tabId, path: spec, title: null })).toMatchObject({ ok: true })
-  await expect(page.locator('#tabpanel .tp-head .tab-docs-toggle')).toBeVisible()
-  await expect(page.locator('#tabpanel .tp-head .tab-note-toggle')).toBeVisible()
-  // as wide as it starts, the header is one row
-  const wide = await headerBoxes(page)
-  expect(new Set(wide.buttons.map((b) => b.top)).size).toBe(1)
+  await expect(page.locator('#sheet-header .tab-docs-toggle')).toBeVisible()
+  await expect(page.locator('#sheet-header .tab-note-toggle')).toBeVisible()
+  // as wide as it starts, the head is one row, the foot's Recent sessions has its own row, and the labels show
+  const wideHead = await columnBoxes(page, '#tabpanel .tp-head')
+  expect(new Set(wideHead.buttons.map((b) => b.top)).size).toBe(1)
+  await expect(page.locator('#tabpanel .tp-new .tp-label')).toBeVisible()
+  await expect(page.locator('#tabpanel .tp-recent .tp-label')).toBeVisible()
 
   await dragBy(page, page.locator('#tabpanel .tp-resize'), -1000)
   await expect.poll(() => panelWidth(page)).toBe(110)
-  const { head, buttons } = await headerBoxes(page)
-  expect(buttons.map((b) => b.name).sort()).toEqual(['tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-menu', 'tab-messages-toggle', 'tab-new', 'tab-note-toggle', 'tab-position'])
-  // every button lies inside the header: one past its right edge would lie under the terminal
-  for (const b of buttons) {
-    expect(b.left).toBeGreaterThanOrEqual(head.left)
-    expect(b.right).toBeLessThanOrEqual(head.right)
-    expect(b.top).toBeGreaterThanOrEqual(head.top)
-    expect(b.bottom).toBeLessThanOrEqual(head.bottom)
+  const head = await columnBoxes(page, '#tabpanel .tp-head')
+  const foot = await columnBoxes(page, '#tabpanel .tp-foot')
+  expect(head.buttons.map((b) => b.name).sort()).toEqual(['tab-menu', 'tab-new'])
+  expect(foot.buttons.map((b) => b.name).sort()).toEqual(['tab-position', 'tp-recent', 'tp-settings'])
+  // each row stays on one line
+  expect(new Set(head.buttons.map((b) => b.top)).size).toBe(1)
+  expect(new Set(foot.buttons.map((b) => b.top)).size).toBe(1)
+  // the narrow column drops the words: New tab keeps its icon, and so do the footer's buttons
+  await expect(page.locator('#tabpanel .tp-label').first()).toBeHidden()
+  await expect(page.locator('#tabpanel .tp-new svg')).toBeVisible()
+  await expect(page.locator('#tabpanel .tp-settings svg')).toBeVisible()
+  // every button lies inside the column: one past its right edge would lie under the terminal
+  const all = [...head.buttons, ...foot.buttons]
+  const column = (await columnBoxes(page, '#tabpanel')).box
+  for (const b of all) {
+    expect(b.left).toBeGreaterThanOrEqual(column.left)
+    expect(b.right).toBeLessThanOrEqual(column.right)
+    expect(b.top).toBeGreaterThanOrEqual(column.top)
+    expect(b.bottom).toBeLessThanOrEqual(column.bottom)
   }
   // no button covers another
-  for (const a of buttons) {
-    for (const b of buttons) {
+  for (const a of all) {
+    for (const b of all) {
       if (a !== b) expect(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top).toBe(true)
     }
   }
-  // + and ▾ and the position button on top, the side-panel toggles in the row under them
-  const top = (name: string): number => buttons.find((b) => b.name === name)!.top
-  expect(top('tab-menu')).toBe(top('tab-new'))
-  expect(top('tab-position')).toBe(top('tab-new'))
-  for (const toggle of ['tab-changes-toggle', 'tab-docs-toggle', 'tab-images-toggle', 'tab-messages-toggle', 'tab-note-toggle']) expect(top(toggle)).toBeGreaterThan(top('tab-new'))
+  // the side-panel toggles are in the sheet's header, out of the panel's way
+  await expect(page.locator('#sheet-header .tab-images-toggle')).toBeVisible()
 
   // the toggles work there as anywhere
-  await page.locator('#tabpanel .tp-head .tab-images-toggle').click()
+  await page.locator('#sheet-header .tab-images-toggle').click()
   await expect(page.locator('.panel-title')).toHaveText('Media')
   await app.close()
 })
 
 test('with the tabs on the left, a side panel dragged wider stops at 70% of the workspace, so the terminal keeps its width', async () => {
   const { app, page } = await launchClaudeTab(left(freshFolder()))
-  await page.locator('#tabpanel .tp-head .tab-images-toggle').click()
+  await page.locator('#sheet-header .tab-images-toggle').click()
   await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
 
   await dragBy(page, page.locator('#image-panel .panel-resize'), -1000)
@@ -744,7 +823,8 @@ test('with the tabs on the left, a side panel dragged wider stops at 70% of the 
     workspace: document.getElementById('workspace')!.getBoundingClientRect().width,
     terminal: document.getElementById('terminals')!.getBoundingClientRect().width
   }))
-  expect(sizes.panel).toBeLessThanOrEqual(Math.round(sizes.workspace * 0.7))
+  // whole pixels: the panel is laid out in fractions, and 900.00006 px is the 70% share
+  expect(Math.round(sizes.panel)).toBeLessThanOrEqual(Math.round(sizes.workspace * 0.7))
   expect(sizes.panel).toBeGreaterThan(sizes.workspace * 0.6)
   expect(sizes.terminal).toBeGreaterThan(0)
   await app.close()

@@ -30,8 +30,8 @@ const upper = (repo: string): void => writeFileSync(join(repo, 'a.ts'), 'one\nTW
 /** a transcript line written now: only an assistant entry newer than a dialog closes it */
 const now = (line: string): string => JSON.stringify({ ...(JSON.parse(line) as object), timestamp: new Date().toISOString() })
 const panel = (page: Page) => page.locator('#image-panel')
-const changesTab = (page: Page) => page.locator('#tabbar .tab-changes-toggle')
-const imagesTab = (page: Page) => page.locator('#tabbar .tab-images-toggle')
+const changesTab = (page: Page) => page.locator('#sheet-header .tab-changes-toggle')
+const imagesTab = (page: Page) => page.locator('#sheet-header .tab-images-toggle')
 const panelTitle = (page: Page) => page.locator('.panel-title')
 const file = (page: Page, rel: string) => page.locator(`.review-file[data-path="${rel}"]`)
 const added = (page: Page, rel: string) => file(page, rel).locator('.review-line.add .review-code')
@@ -260,7 +260,7 @@ test('show_diff opens a file git ignores when its paths name it', async () => {
 test('the status bar counter shows the uncommitted changes without a status line, and opens the panel', async () => {
   const { app, page } = await reviewTab(upper)
   const counter = page.locator('#statusbar .status-changes')
-  await expect(counter).toHaveText('± 1 file +1 −1')
+  await expect(counter.locator('.status-text')).toHaveText('± 1 file +1 −1')
   // the hidden panel keeps the update without building its rows; the badge follows it
   await expect(page.locator('.review-file')).toHaveCount(0)
   await expect(changesTab(page).locator('.badge')).toHaveText('1')
@@ -576,7 +576,7 @@ test('the Hide tests checkbox hides test files in the view, says how many, and s
   // saved like any other setting
   await expect.poll(() => (JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')) as { review?: { hideTests?: boolean } }).review?.hideTests).toBe(true)
   // the status bar keeps counting all the changes
-  await expect(page.locator('#statusbar .status-changes')).toContainText('4 files')
+  await expect(page.locator('#statusbar .status-changes .status-text')).toContainText('4 files')
   await box.uncheck()
   await expect(page.locator('.review-file')).toHaveCount(4)
   await expect(page.locator('.review-tests-hidden')).toHaveCount(0)
@@ -968,5 +968,31 @@ test('the expand buttons show the lines a hunk hides above and below it, 20 at a
   writeFileSync(join(repo, 'long.ts'), `${lines.join('\n')}\n`)
   await page.locator('.review-refresh').click()
   await expect(long.locator('.review-hunk-text')).toHaveText(['@@ -1,4 +1,4 @@', '@@ -27,7 +27,7 @@', '@@ -67,7 +67,7 @@'])
+  await app.close()
+})
+
+test('a long diff line can be scrolled into view sideways', async () => {
+  // one changed line of about 400 characters: its end lies past the right edge of the panel until the diff is scrolled
+  const long = `const value = "${'abcdefghij'.repeat(40)}END";`
+  const { app, page } = await reviewTab((repo) => writeFileSync(join(repo, 'a.ts'), `one\n${long}\nthree\n`))
+  await page.keyboard.press(KEYS.changes)
+  await expect(added(page, 'a.ts')).toHaveText(long)
+  const scroller = page.locator('.review-files')
+  const endBox = () => page.evaluate(() => {
+    const code = document.querySelector('.review-file[data-path="a.ts"] .review-line.add .review-code')!
+    const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT)
+    let last: Text | null = null
+    while (walker.nextNode()) last = walker.currentNode as Text
+    const range = document.createRange()
+    range.setStart(last!, last!.length - 3)
+    range.setEnd(last!, last!.length)
+    const box = range.getBoundingClientRect()
+    const view = document.querySelector('.review-files')!.getBoundingClientRect()
+    return { inside: box.left >= view.left - 0.5 && box.right <= view.right + 0.5 }
+  })
+  expect(await scroller.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true)
+  expect((await endBox()).inside).toBe(false)
+  await scroller.evaluate((e) => { e.scrollLeft = e.scrollWidth })
+  expect((await endBox()).inside).toBe(true)
   await app.close()
 })

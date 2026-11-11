@@ -40,7 +40,7 @@ describe('settings form', () => {
 
   it('themeOptions: the built-in themes; a custom object or an unknown name gets an extra selected item', () => {
     expect(themeOptions('One Half Dark')).toEqual({
-      options: [{ value: 'Campbell', label: 'Campbell' }, { value: 'One Half Dark', label: 'One Half Dark' }, { value: 'One Half Light', label: 'One Half Light' }],
+      options: [{ value: 'Graphite', label: 'Graphite' }, { value: 'Campbell', label: 'Campbell' }, { value: 'One Half Dark', label: 'One Half Dark' }, { value: 'One Half Light', label: 'One Half Light' }],
       selected: 'One Half Dark'
     })
     const custom = themeOptions({ background: '#000000' })

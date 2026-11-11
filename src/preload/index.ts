@@ -132,7 +132,8 @@ const api: CtApi = {
   onRemoteSessions: (cb) => on(IPC.evRemoteSessions, cb),
   onAttentionClear: (cb) => on(IPC.evAttentionClear, cb),
   onScreenSeed: (cb) => on(IPC.evScreenSeed, cb),
-  onMail: (cb) => on(IPC.evMail, cb)
+  onMail: (cb) => on(IPC.evMail, cb),
+  onFullScreen: (cb) => on(IPC.fullScreen, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

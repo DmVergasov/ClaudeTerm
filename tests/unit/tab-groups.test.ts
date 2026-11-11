@@ -7,6 +7,9 @@ import {
   orderToWrite,
   panelGroups,
   panelOrder,
+  showsGroupLabels,
+  moveInGroup,
+  storedGroups,
   type GroupInput,
   type PanelGroup
 } from '../../src/renderer/tab-groups'
@@ -161,6 +164,49 @@ describe('group labels', () => {
     expect(labels.get('c:/home/acme')).toBe('acme (home)')
     expect(labels.get('c:/w/blog')).toBe('blog')
     expect(labels.get(NO_PROJECT)).toBe('No project')
+  })
+})
+
+describe('moving a tab on the tab bar, in the order it shows', () => {
+  it('a tab dropped on a fork moves before it, and a fork dropped on a tab below it moves after it', () => {
+    const groups = storedGroups([tab('A', acme), tab('F', acme, 'A'), tab('B', acme)])
+    expect(moveInGroup(groups, 'B', 'F')).toEqual(['A', 'B', 'F'])
+    expect(moveInGroup(groups, 'F', 'B')).toEqual(['A', 'B', 'F'])
+  })
+
+  it('a tab moves down after its target and up before it; the rest keep their place', () => {
+    const groups = storedGroups([tab('X', acme), tab('H', acme), tab('Y', acme), tab('F', acme, 'H')])
+    expect(moveInGroup(groups, 'X', 'Y')).toEqual(['H', 'Y', 'X', 'F'])
+    expect(moveInGroup(groups, 'Y', 'X')).toEqual(['Y', 'X', 'H', 'F'])
+  })
+
+  it('a drop across groups, on itself, or on a tab not shown moves nothing', () => {
+    const groups = storedGroups([tab('A', acme), tab('B', blog)])
+    expect(moveInGroup(groups, 'A', 'B')).toBeNull()
+    expect(moveInGroup(groups, 'A', 'A')).toBeNull()
+    expect(moveInGroup(groups, 'A', 'Z')).toBeNull()
+  })
+})
+
+describe('the tab bar\'s groups keep the tabs\' order', () => {
+  it('a group\'s tabs stay in the order they have: a fork put before its head stays there, and the groups keep their order', () => {
+    const tabs = [tab('F', acme, 'H'), tab('H', acme), tab('B', blog)]
+    expect(panelOrder(panelGroups(tabs))).toEqual(['H', 'F', 'B'])
+    expect(panelOrder(storedGroups(tabs))).toEqual(['F', 'H', 'B'])
+    expect(storedGroups(tabs).map((g) => g.key)).toEqual(['c:/w/acme', 'c:/w/blog'])
+  })
+})
+
+describe('showing group labels', () => {
+  it('a single group shows no label: one project, or only tabs outside git', () => {
+    expect(showsGroupLabels(panelGroups([tab('A1', acme), tab('A2', acme)]))).toBe(false)
+    expect(showsGroupLabels(panelGroups([tab('N1', null)]))).toBe(false)
+    expect(showsGroupLabels(panelGroups([]))).toBe(false)
+  })
+
+  it('two groups show their labels, the No project group included', () => {
+    expect(showsGroupLabels(panelGroups([tab('A1', acme), tab('B1', blog)]))).toBe(true)
+    expect(showsGroupLabels(panelGroups([tab('A1', acme), tab('N1', null)]))).toBe(true)
   })
 })
 

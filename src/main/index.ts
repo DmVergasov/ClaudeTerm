@@ -31,6 +31,7 @@ import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './e
 import { ReviewHub } from './review-hub'
 import { DocHub, htmlFolderRefused } from './doc-hub'
 import { DOC_SCHEME_PRIVILEGES, frameNavigationAllowed, handleDocProtocol } from './doc-protocol'
+import { chromeOptions } from './window-chrome'
 import { createSources, nodeIo } from './review-sources'
 import { checkShowableFile, DEFAULT_IMAGE_EXTENSIONS, MEDIA_EXTENSIONS } from '../shared/image-file'
 import { ImageHub, showImageFile } from './image-hub'
@@ -41,6 +42,7 @@ import { handleImgProtocol, registerImgScheme, remoteCardSource } from './img-pr
 import { createLogger } from './log'
 import { PanelRoom } from './panel-room'
 import { findExecutable, isExecutableFile } from './login-env'
+import { migrateLook } from './look-migration'
 import { macMenuTemplate } from './mac-menu'
 import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePage, startSwap } from './mac-update'
 import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
@@ -190,6 +192,7 @@ function bootstrap(): void {
   const resolveProfiles = profileResolver(detectInstalledProfiles, existsSync)
   const computeProfiles = (s: Settings): { profiles: ProfileDef[]; notices: string[] } => resolveProfiles(s.profiles)
 
+  migrateLook(dataDir, (m) => log.warn(m))
   const loaded = loadSettingsSafe(settingsPath)
   let settings: Settings = loaded.settings
   let lastLoad: ParsedSettings = loaded
@@ -2395,9 +2398,10 @@ function bootstrap(): void {
     minWidth: MIN_WIDTH,
     minHeight: 300,
     show: false,
-    backgroundColor: '#0C0C0C',
+    backgroundColor: '#0A0A0C',
     autoHideMenuBar: true,
     title: 'ClaudeTerm',
+    ...chromeOptions(process.platform),
     // the installed app takes its icon from ClaudeTerm.exe; dev and test runs use electron.exe's own
     ...(app.isPackaged ? {} : { icon: join(__dirname, '..', '..', 'build', 'icon.png') }),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
@@ -2411,9 +2415,13 @@ function bootstrap(): void {
   win.on('unmaximize', refitLater)
   win.on('enter-full-screen', refitLater)
   win.on('leave-full-screen', refitLater)
+  const sendFullScreen = (): void => { if (win && !win.isDestroyed()) win.webContents.send(IPC.fullScreen, win.isFullScreen()) }
+  win.on('enter-full-screen', sendFullScreen)
+  win.on('leave-full-screen', sendFullScreen)
   win.on('close', () => { sessions.flush(); notes.flush(); taskListStore.flush(); bridge?.flush(); group?.flush() })
   win.once('ready-to-show', () => {
     if (!win) return
+    sendFullScreen()
     showWindow(win, isTest)
     // a window that starts focused gets no focus event: its presence is read now
     presence.check()

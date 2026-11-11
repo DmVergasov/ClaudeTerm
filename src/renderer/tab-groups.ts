@@ -207,3 +207,38 @@ export function groupLabels(groups: PanelGroup[]): Map<string, string> {
   }
   return labels
 }
+
+/** The tab bar names its groups only when there are several: one project (or only tabs outside git) needs no label. */
+export const showsGroupLabels = (groups: PanelGroup[]): boolean => groups.length > 1
+
+/**
+ * The tab bar's groups: panelGroups' groups, but each group's rows keep the order the tabs have (`tabs`, in their order).
+ * A fork the user put before its head stays there; panelGroups would move it after the head.
+ */
+export function storedGroups(tabs: GroupInput[]): PanelGroup[] {
+  return panelGroups(tabs).map((group) => {
+    const rows = new Map(group.rows.map((row) => [row.id, row]))
+    return { ...group, rows: tabs.flatMap((tab) => rows.get(tab.id) ?? []) }
+  })
+}
+
+/**
+ * The tab order after dragging `dragId` onto `targetId` in the tab bar, or null when nothing changes. Both must be in the
+ * same group, as the groups in `storedGroups` show them: a tab moves down after its target and up before it, a fork
+ * included, and the other tabs keep their place. Dropping a tab on itself, or across groups, moves nothing.
+ */
+export function moveInGroup(groups: PanelGroup[], dragId: string, targetId: string): string[] | null {
+  if (dragId === targetId) return null
+  const group = groups.find((g) => g.rows.some((r) => r.id === dragId))
+  if (!group || !group.rows.some((r) => r.id === targetId)) return null
+
+  const ids = group.rows.map((r) => r.id)
+  const from = ids.indexOf(dragId)
+  const to = ids.indexOf(targetId)
+  ids.splice(from, 1)
+  const at = ids.indexOf(targetId)
+  ids.splice(from < to ? at + 1 : at, 0, dragId)
+
+  const next = groups.flatMap((g) => (g === group ? ids : g.rows.map((r) => r.id)))
+  return sameOrder(next, panelOrder(groups)) ? null : next
+}

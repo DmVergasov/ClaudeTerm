@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MAC } from '../fixtures/platform'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, KEYS, KEY_LABELS, PNG_1x1, launchClaudeTab } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, KEYS, KEY_LABELS, PNG_1x1, launchClaudeTab, panelSettled } from './helpers'
 
 const SID = '7a1f2e3d-4c5b-4a69-8d7e-f0a1b2c3d4e5'
 
@@ -26,7 +26,7 @@ const show = (pipeName: string, tabId: string | null, path: string, title: strin
 
 const panel = (page: Page) => page.locator('#image-panel')
 const panelTitle = (page: Page) => page.locator('.panel-title')
-const docsTab = (page: Page) => page.locator('#tabbar .tab-docs-toggle')
+const docsTab = (page: Page) => page.locator('#sheet-header .tab-docs-toggle')
 const selector = (page: Page) => page.locator('.doc-select')
 const more = (page: Page) => page.locator('.doc-more')
 const heading = (page: Page, text: string) => page.locator('.doc-md h1', { hasText: text })
@@ -474,6 +474,8 @@ test('comment actions keep the scroll position of a long Markdown document: add,
   writeFileSync(spec, '# Long\n\n' + Array.from({ length: 200 }, (_, i) => `Paragraph ${i + 1}.`).join('\n\n') + '\n')
   await show(pipeName, tabId, spec)
   await expect(heading(page, 'Long')).toBeVisible()
+  // the panel is still sliding in: Playwright's own scroll-and-retry during the first actions moves the document, which is not what this test checks
+  await panelSettled(page)
   const content = page.locator('.panel-docs .doc-content')
   const row = page.locator('.doc-md .md-seg', { hasText: 'Paragraph 100.' })
   await row.evaluate((r) => r.scrollIntoView({ block: 'center' }))
@@ -645,13 +647,13 @@ test('a Markdown document that cannot be read shows the error of the read, its f
   await app.close()
 })
 
-test('the Docs toggle looks like the Media toggle in the top bar and in the left panel, and its active state shows', async () => {
+test('the Docs toggle looks like the Media toggle in the sheet\'s header, with the tabs on top or on the left, and its active state shows', async () => {
   for (const position of ['top', 'left'] as const) {
     const settings = position === 'top' ? FAKE_CLAUDE_SETTINGS : { ...FAKE_CLAUDE_SETTINGS, defaultFolder: mkdtempSync(join(tmpdir(), 'ct-folder-')), tabs: { position: 'left' } }
     const { app, page, pipeName, tabId, notes } = await claudeTab(settings)
-    const bar = position === 'top' ? '#tabbar' : '#tabpanel .tp-head'
-    const docs = page.locator(`${bar} .tab-docs-toggle`)
-    const media = page.locator(`${bar} .tab-images-toggle`)
+    // the toggles sit in the sheet's header whichever position the tabs have
+    const docs = page.locator('#sheet-header .tab-docs-toggle')
+    const media = page.locator('#sheet-header .tab-images-toggle')
     const looks = (el: Locator) => el.evaluate((b) => {
       const s = getComputedStyle(b)
       return { background: s.backgroundColor, borderTop: s.borderTopWidth, paddingLeft: s.paddingLeft, shadow: s.boxShadow }
@@ -664,12 +666,16 @@ test('the Docs toggle looks like the Media toggle in the top bar and in the left
     await expect(docs).toHaveClass(/active/)
     await docs.click()
     await expect(panel(page)).toHaveClass(/collapsed/)
+    // the pointer rests on Docs after the click: move it off, so no hover tints one toggle while the two are compared
+    await page.mouse.move(1, 1)
     expect(await resting(docs)).toEqual(await resting(media))
 
     await media.click()
     await expect(media).toHaveClass(/active/)
     const mediaOpen = await looks(media)
-    expect(mediaOpen.shadow).not.toBe('none')
+    // the active toggle is a lit pill (--raised-2), with no underline
+    expect(mediaOpen.background).toBe('rgb(30, 30, 35)')
+    expect(mediaOpen.shadow).toBe('none')
     expect(await show(pipeName, tabId, spec)).toMatchObject({ ok: true })
     await expect(docs).toHaveClass(/active/)
     expect(await looks(docs)).toEqual(mediaOpen)

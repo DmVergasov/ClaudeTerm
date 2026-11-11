@@ -5,14 +5,14 @@ import type { AgentStatus, BackgroundTask, PlanStatus } from '../shared/types'
 export type Level = 'normal' | 'warn' | 'crit'
 
 export interface Segment {
-  key: 'account' | 'model' | 'context' | 'limit' | 'week' | 'agents' | 'background' | 'plan' | 'changes'
+  key: 'account' | 'model' | 'context' | 'agents' | 'background' | 'plan' | 'changes'
   text: string
   title: string
   level: Level
-  /** 0..1, drawn as a progress bar before the text */
+  /** the effort, drawn as a small pill after the text; none when the model has no effort */
+  pill?: string
+  /** 0..1, drawn as a thin bar after the text and the pill */
   fill?: number
-  /** a usage limit's bar before the text: the % used, and a mark at the % of its window gone by */
-  bar?: { used: number; elapsed: number }
 }
 
 export function formatTokens(n: number): string {
@@ -23,8 +23,8 @@ export function formatTokens(n: number): string {
 
 export const levelFor = (pct: number): Level => (pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : 'normal')
 
-const FIVE_HOURS_MS = 5 * 3_600_000
-const SEVEN_DAYS_MS = 7 * 86_400_000
+export const FIVE_HOURS_MS = 5 * 3_600_000
+export const SEVEN_DAYS_MS = 7 * 86_400_000
 /** before this share of a window has gone by, its pace says too little: the fixed 70% and 90% apply */
 const PACE_FROM = 0.08
 
@@ -62,10 +62,10 @@ export function modelFamily(id: string): string {
 
 const groupDigits = (n: number): string => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 const pad2 = (n: number): string => String(n).padStart(2, '0')
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 /** Fri 9 Oct, 14:00 — a month name, so the date reads the same everywhere */
-const dayAndTime = (d: Date): string => `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+export const dayAndTime = (d: Date): string => `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 const agentKind = (a: AgentStatus): string => (a.model === null ? '…' : a.effort ? `${modelFamily(a.model)}·${a.effort}` : modelFamily(a.model))
 
 function minutes(ms: number): string {
@@ -74,7 +74,7 @@ function minutes(ms: number): string {
 }
 
 /** 42 min, 1 h 20 min, 3 d 18 h */
-function duration(ms: number): string {
+export function duration(ms: number): string {
   const m = Math.floor(ms / 60_000)
   if (m < 60) return minutes(ms)
   const h = Math.floor(m / 60)
@@ -82,30 +82,7 @@ function duration(ms: number): string {
   return h % 24 ? `${Math.floor(h / 24)} d ${h % 24} h` : `${Math.floor(h / 24)} d`
 }
 
-const hoursAndMinutes = (d: Date): string => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-
-/**
- * a usage limit's segment: its color, forecast and bar from the pace it is spent at; with `paced` off (claude.limitPace),
- * no bar and no forecast, and the color from the fixed 70% and 90%
- */
-function limitSegment(key: 'limit' | 'week', label: string, limit: { usedPct: number; resetsAt: number }, windowMs: number, now: number, at: (d: Date) => string, paced: boolean): Segment {
-  const reset = limit.resetsAt * 1000
-  const lines = [`resets ${at(new Date(reset))}${reset > now ? `, in ${duration(reset - now)}` : ''}`]
-  if (limit.usedPct >= 100) lines.push('used up')
-  const text = `${label} ${Math.round(limit.usedPct)}%`
-  if (!paced) return { key, text, title: lines.join('\n'), level: levelFor(limit.usedPct) }
-  // a limit used up has no forecast
-  const pace = limitPace(limit.usedPct, limit.resetsAt, windowMs, now)
-  if (pace.runsOutAt !== null) lines.push(`at this pace: runs out ${at(new Date(pace.runsOutAt))}, ${duration(reset - pace.runsOutAt)} before the reset`)
-  else if (pace.atReset !== null) lines.push(`at this pace: lasts until the reset, about ${Math.round(pace.atReset)}% by then`)
-  return {
-    key,
-    text,
-    title: lines.join('\n'),
-    level: pace.level,
-    bar: { used: Math.min(100, Math.max(0, Math.round(limit.usedPct))), elapsed: Math.round(pace.elapsed * 100) }
-  }
-}
+export const hoursAndMinutes = (d: Date): string => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 
 function agentGroups(agents: AgentStatus[]): string {
   const counts = new Map<string, number>()
@@ -123,12 +100,12 @@ const taskLine = (t: BackgroundTask): string => [t.type, t.description, t.comman
 const agentLine = (a: AgentStatus, now: number): string =>
   [a.type, agentKind(a), minutes(now - a.startedAt), ...(a.description ? [`"${a.description}"`] : [])].join(' · ')
 
-/** `paced`: claude.limitPace, the limits' bar, color and forecast from the pace they are spent at */
-export function statusSegments(u: StatusUpdate, now: number, paced = true): Segment[] {
+/** the usage limits are not here: the title bar draws them as meters (limit-meters.ts) */
+export function statusSegments(u: StatusUpdate, now: number): Segment[] {
   const main = u.main
   if (!main) return []
   const segments: Segment[] = [
-    { key: 'model', text: main.effort ? `${main.model.displayName} · ${main.effort}` : main.model.displayName, title: main.model.id, level: 'normal' }
+    { key: 'model', text: main.model.displayName, ...(main.effort ? { pill: main.effort } : {}), title: main.model.id, level: 'normal' }
   ]
   if (main.context) {
     const c = main.context
@@ -136,11 +113,10 @@ export function statusSegments(u: StatusUpdate, now: number, paced = true): Segm
       key: 'context',
       text: `ctx ${Math.round(c.usedPct)}% · ${formatTokens(c.usedTokens)}/${formatTokens(c.size)}`,
       title: `${groupDigits(c.usedTokens)} of ${groupDigits(c.size)} tokens`,
-      level: levelFor(c.usedPct)
+      level: levelFor(c.usedPct),
+      fill: c.usedPct / 100
     })
   }
-  if (main.fiveHour) segments.push(limitSegment('limit', '5h', main.fiveHour, FIVE_HOURS_MS, now, (d) => `at ${hoursAndMinutes(d)}`, paced))
-  if (main.sevenDay) segments.push(limitSegment('week', '7d', main.sevenDay, SEVEN_DAYS_MS, now, dayAndTime, paced))
   if (u.agents.length > 0) {
     segments.push({ key: 'agents', text: `⚙ ${u.agents.length}: ${agentGroups(u.agents)}`, title: u.agents.map((a) => agentLine(a, now)).join('\n'), level: 'normal' })
   }
@@ -185,10 +161,10 @@ export class StatusBar {
     })
   }
 
-  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, account: string | null = null, plan: PlanStatus | null = null, paced = true, now = Date.now()): void {
+  render(u: StatusUpdate | null, changes: ReviewCounter | null = null, account: string | null = null, plan: PlanStatus | null = null, now = Date.now()): void {
     const segments = [
       ...(account !== null ? [accountSegment(account)] : []),
-      ...(u ? statusSegments(u, now, paced) : []),
+      ...(u ? statusSegments(u, now) : []),
       ...(plan ? [planSegment(plan)] : []),
       ...(changes ? [changesSegment(changes)] : [])
     ]
@@ -205,7 +181,6 @@ export class StatusBar {
           if (i === 0) return [span]
           const sep = document.createElement('span')
           sep.className = 'status-sep'
-          sep.textContent = '│'
           return [sep, span]
         })
       )
@@ -215,14 +190,34 @@ export class StatusBar {
   }
 }
 
+/** the parts of a segment, in the order they sit in its span */
+const PARTS = ['status-text', 'status-pill', 'status-bar']
+
+/** the span's own part of the class: made when missing, placed before the parts that follow it */
+function part(span: HTMLElement, cls: string): HTMLElement {
+  const found = span.querySelector<HTMLElement>(`:scope > .${cls}`)
+  if (found) return found
+  const el = document.createElement('span')
+  el.className = cls
+  const next = PARTS.slice(PARTS.indexOf(cls) + 1).map((c) => span.querySelector(`:scope > .${c}`)).find((x) => x !== null)
+  span.insertBefore(el, next ?? null)
+  return el
+}
+
+/** the text, the pill and the bar are updated where they are, so a refresh keeps the nodes under the mouse */
 function fill(span: HTMLElement, s: Segment): void {
-  const className = `status-seg status-${s.key}${s.level === 'normal' ? '' : ` ${s.level}`}${s.bar ? ' bar' : ''}`
+  const className = `status-seg status-${s.key}${s.level === 'normal' ? '' : ` ${s.level}`}`
   if (span.className !== className) span.className = className
-  if (span.textContent !== s.text) span.textContent = s.text
   if (span.title !== s.title) span.title = s.title
-  if (s.fill !== undefined) span.style.setProperty('--plan-fill', `${Math.round(s.fill * 100)}%`)
-  if (s.bar) {
-    span.style.setProperty('--used', `${s.bar.used}%`)
-    span.style.setProperty('--elapsed', `${s.bar.elapsed}%`)
-  }
+  const text = part(span, 'status-text')
+  if (text.textContent !== s.text) text.textContent = s.text
+  if (s.pill !== undefined) {
+    const pill = part(span, 'status-pill')
+    if (pill.textContent !== s.pill) pill.textContent = s.pill
+  } else span.querySelector(':scope > .status-pill')?.remove()
+  if (s.fill !== undefined) {
+    const bar = part(span, 'status-bar')
+    const width = `${Math.round(s.fill * 100)}%`
+    if (bar.style.getPropertyValue('--fill') !== width) bar.style.setProperty('--fill', width)
+  } else span.querySelector(':scope > .status-bar')?.remove()
 }

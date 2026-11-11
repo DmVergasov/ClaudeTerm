@@ -39,7 +39,7 @@ async function launchDevice(extra: string[] = []): Promise<Device> {
 async function openSettings(device: Pick<Launched, 'app' | 'page'>): Promise<Page> {
   await device.page.locator('.terminal-host:visible .xterm').click()
   const [win] = await Promise.all([device.app.waitForEvent('window'), device.page.keyboard.press(KEYS.settings)])
-  await win.waitForSelector('#settings .settings-heading')
+  await win.waitForSelector('#settings .section-title')
   return win
 }
 
@@ -171,7 +171,7 @@ test('a name of 65 characters is refused under the input, and blur puts the name
     await name.fill('x'.repeat(65))
     await name.press('Enter')
     await expect(settingsA.getByText(DEVICE_COPY.badName, { exact: true })).toBeVisible(SLOW)
-    await settingsA.locator('.settings-heading').click()
+    await settingsA.locator('.section-title').first().click()
     await expect(name).toHaveValue(before)
   } finally {
     await a.app.close()

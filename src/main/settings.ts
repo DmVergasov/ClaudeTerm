@@ -11,7 +11,7 @@ export const DEFAULT_SETTINGS: Settings = {
   claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
-  theme: 'Campbell',
+  theme: 'Graphite',
   scrollback: 10000,
   imageWatch: {
     enabled: true,

@@ -1,6 +1,11 @@
 import type { ITheme } from '@xterm/xterm'
 
 export const THEMES: Record<string, ITheme> = {
+  Graphite: {
+    background: '#0E0E10', foreground: '#D4D4DA', cursor: '#D97757', cursorAccent: '#0E0E10', selectionBackground: '#FFFFFF30',
+    black: '#1B1B1F', red: '#F2867E', green: '#63C08F', yellow: '#E5B567', blue: '#7FA7F5', magenta: '#A78BFA', cyan: '#6CC5D1', white: '#D4D4DA',
+    brightBlack: '#85858F', brightRed: '#F7A39C', brightGreen: '#86D3A8', brightYellow: '#EECB8C', brightBlue: '#A3C0F8', brightMagenta: '#C0AAFC', brightCyan: '#93D7E0', brightWhite: '#EDEDF0'
+  },
   Campbell: {
     background: '#0C0C0C', foreground: '#CCCCCC', cursor: '#FFFFFF', selectionBackground: '#FFFFFF40',
     black: '#0C0C0C', red: '#C50F1F', green: '#13A10E', yellow: '#C19C00', blue: '#0037DA', magenta: '#881798', cyan: '#3A96DD', white: '#CCCCCC',
@@ -19,6 +24,6 @@ export const THEMES: Record<string, ITheme> = {
 }
 
 export function resolveTheme(theme: string | Record<string, string>): ITheme {
-  if (typeof theme === 'string') return THEMES[theme] ?? THEMES.Campbell
+  if (typeof theme === 'string') return THEMES[theme] ?? THEMES.Graphite
   return { ...THEMES.Campbell, ...theme }
 }

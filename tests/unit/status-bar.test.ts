@@ -19,40 +19,22 @@ const main: MainStatus = {
 const agent = (over: Partial<AgentStatus>): AgentStatus => ({ agentId: 'a', type: 'Explore', description: null, model: 'claude-opus-5-5', effort: 'high', startedAt: 0, ...over })
 
 describe('statusSegments', () => {
-  it('formats all five segments', () => {
+  it('formats the four segments that are not limits: model, context, agents and background, and no segment is a limit', () => {
     const agents = [agent({ type: 'code-reviewer', description: 'Review font fix', startedAt: NOW - 3 * 60_000 - 5_000 })]
-    expect(statusSegments({ tabId: 't', main, agents, background: [] }, NOW)).toEqual([
-      { key: 'model', text: 'Opus 5.5 · xhigh', title: 'claude-opus-5-5', level: 'normal' },
-      { key: 'context', text: 'ctx 41% · 82k/200k', title: '82,314 of 200,000 tokens', level: 'normal' },
-      // 23.5% in 3 of the 5 hours: about 39% by the reset
-      { key: 'limit', text: '5h 24%', title: 'resets at 21:40, in 2 h\nat this pace: lasts until the reset, about 39% by then', level: 'normal', bar: { used: 24, elapsed: 60 } },
-      // 41.2% in 77 h 40 min of the 168: about 89% by the reset
-      { key: 'week', text: '7d 41%', title: 'resets Fri 9 Oct, 14:00, in 3 d 18 h\nat this pace: lasts until the reset, about 89% by then', level: 'normal', bar: { used: 41, elapsed: 46 } },
+    const segments = statusSegments({ tabId: 't', main, agents, background: [] }, NOW)
+    expect(segments).toEqual([
+      { key: 'model', text: 'Opus 5.5', pill: 'xhigh', title: 'claude-opus-5-5', level: 'normal' },
+      { key: 'context', text: 'ctx 41% · 82k/200k', title: '82,314 of 200,000 tokens', level: 'normal', fill: expect.closeTo(0.412, 10) },
       { key: 'agents', text: '⚙ 1: opus·high', title: 'code-reviewer · opus·high · 3 min · "Review font fix"', level: 'normal' }
     ])
-  })
-
-  it('a limit that runs out before its reset says when, and one used up says so', () => {
-    const at = (usedPct: number, now: number) => statusSegments({ tabId: 't', main: { ...main, fiveHour: { usedPct, resetsAt: RESET / 1000 } }, agents: [], background: [] }, now)[2]
-    // 50% in the first hour: the rest goes in the next hour, at 18:40, three hours before the reset
-    expect(at(50, RESET - 4 * H)).toEqual({ key: 'limit', text: '5h 50%', title: 'resets at 21:40, in 4 h\nat this pace: runs out at 18:40, 3 h before the reset', level: 'crit', bar: { used: 50, elapsed: 20 } })
-    expect(at(100, NOW)).toEqual({ key: 'limit', text: '5h 100%', title: 'resets at 21:40, in 2 h\nused up', level: 'crit', bar: { used: 100, elapsed: 60 } })
-    // too early in the window for a pace: no forecast
-    expect(at(10, RESET - FIVE_HOURS + 18 * 60_000)).toMatchObject({ title: 'resets at 21:40, in 4 h 42 min', level: 'normal' })
-  })
-
-  it('with the pace turned off a limit has no bar and no forecast, and takes its color from the fixed 70% and 90%', () => {
-    const at = (usedPct: number) => statusSegments({ tabId: 't', main: { ...main, fiveHour: { usedPct, resetsAt: RESET / 1000 } }, agents: [], background: [] }, RESET - 4 * H, false)[2]
-    // 50% in the first hour runs out early at this pace, but is only half the limit
-    expect(at(50)).toEqual({ key: 'limit', text: '5h 50%', title: 'resets at 21:40, in 4 h', level: 'normal' })
-    expect(at(75)).toMatchObject({ level: 'warn' })
-    expect(at(100)).toEqual({ key: 'limit', text: '5h 100%', title: 'resets at 21:40, in 4 h\nused up', level: 'crit' })
-    expect(statusSegments({ tabId: 't', main, agents: [], background: [] }, NOW, false)[3]).toEqual({ key: 'week', text: '7d 41%', title: 'resets Fri 9 Oct, 14:00, in 3 d 18 h', level: 'normal' })
+    expect(segments.map((s) => s.key)).not.toContain('limit')
+    expect(segments.map((s) => s.key)).not.toContain('week')
   })
 
   it('shows only the model early in a session', () => {
     const early: MainStatus = { model: { id: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5' }, effort: null, context: null, fiveHour: null, sevenDay: null }
     expect(statusSegments({ tabId: 't', main: early, agents: [], background: [] }, 0)).toEqual([{ key: 'model', text: 'Haiku 4.5', title: 'claude-haiku-4-5-20251001', level: 'normal' }])
+    expect(statusSegments({ tabId: 't', main: early, agents: [], background: [] }, 0)[0]).not.toHaveProperty('pill')
   })
 
   it('lists the background work still running after the turn: how many and what, and on hover each with its kind and command', () => {
@@ -73,9 +55,10 @@ describe('statusSegments', () => {
     expect(statusSegments({ tabId: 't', main: null, agents: [agent({})], background: [] }, 0)).toEqual([])
   })
 
-  it('marks context warn from 70% and crit from 90%, and the limits too while their pace is not known', () => {
-    const s = statusSegments({ tabId: 't', main: { ...main, context: { usedTokens: 1, size: 2, usedPct: 91 }, fiveHour: { usedPct: 70, resetsAt: 0 }, sevenDay: { usedPct: 90, resetsAt: 0 } }, agents: [], background: [] }, 0)
-    expect(s.map((x) => x.level)).toEqual(['normal', 'crit', 'warn', 'crit'])
+  it('marks context warn from 70% and crit from 90%', () => {
+    const at = (usedPct: number) => statusSegments({ tabId: 't', main: { ...main, context: { usedTokens: 1, size: 2, usedPct }, fiveHour: null, sevenDay: null }, agents: [], background: [] }, 0)
+    expect(at(70).map((x) => x.level)).toEqual(['normal', 'warn'])
+    expect(at(91).map((x) => x.level)).toEqual(['normal', 'crit'])
   })
 
   it('groups many agents by model·effort, most frequent first; unknown model shows …', () => {

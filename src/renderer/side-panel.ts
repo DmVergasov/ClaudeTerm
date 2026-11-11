@@ -1,4 +1,5 @@
 import type { PanelMode } from '../shared/types'
+import { icon } from './icons'
 
 export type PanelTab = 'images' | 'changes' | 'docs' | 'messages'
 
@@ -55,7 +56,7 @@ export class SidePanel {
     this.toolsBox.append(this.tools.images, this.tools.changes, this.tools.docs, this.tools.messages)
     const hide = document.createElement('button')
     hide.className = 'panel-hide'
-    hide.textContent = '–'
+    hide.innerHTML = icon('x', 14)
     hide.title = 'Hide'
     hide.addEventListener('click', () => this.hide())
     header.append(this.title, this.toolsBox, hide)
@@ -198,8 +199,9 @@ export class SidePanel {
     this.toolsBox.hidden = this.currentTab === 'images'
     for (const t of TABS) this.tools[t].hidden = this.currentTab !== t
     const width = this.widths[this.currentTab]
-    this.root.style.width = `${this.isExpanded ? window.innerWidth : width}px`
-    // the expanded panel lies over the whole window, terminal and all; the terminal keeps the room it gave the panel
+    // the expanded panel lies over the sheet: the title bar and the tabs stay in view; the terminal keeps the room it gave the panel.
+    // Its width comes from the stylesheet, so it follows the sheet when the tabs move
+    this.root.style.width = this.isExpanded ? '' : `${width}px`
     this.terminals.style.marginRight = `${shown && this.mode !== 'overlay' ? width : 0}px`
     // what the panel covers of the terminal's right, for the note to sit left of it; the expanded panel covers the note too
     this.terminals.style.setProperty('--panel-cover', `${shown && this.mode === 'overlay' && !this.isExpanded ? width : 0}px`)

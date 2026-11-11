@@ -355,7 +355,7 @@ test('with marks off the envelope and the badge go, and the panel still shows th
     // the flip: the marks go off, and the envelope and the badge go with them
     expect(await setSetting(page, 'agentMessages.marks', false)).toEqual({ ok: true })
     await expect(page.locator(`#tabpanel .tp-tab[data-tab-id="${tab2}"] .tab-mail`)).toHaveCount(0)
-    await expect(page.locator('#tabpanel .tab-messages-toggle .badge')).toHaveText('')
+    await expect(page.locator('#sheet-header .tab-messages-toggle .badge')).toHaveText('')
 
     expect(await setSetting(page, 'tabs.position', 'top')).toEqual({ ok: true })
     await expect(envelopeOf(page, tab2)).toHaveCount(0)

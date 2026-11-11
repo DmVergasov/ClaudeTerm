@@ -77,12 +77,13 @@ test('Change folder empties the card, Changes, status, note and Docs of the old 
     writeFileSync(doc, '# Spec\n\nBody text.\n')
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'show_document', tabId, path: doc, title: null })).toMatchObject({ ok: true })
     // the note is typed in the window, as a person does: the window's text is its own, and main keeps it with the conversation
-    await page.locator('#tabbar .tab-note-toggle').click()
+    await page.locator('#sheet-header .tab-note-toggle').click()
     await expect(page.locator('#note .note-text')).toBeFocused()
     await page.keyboard.type('Goal: payments')
 
     const bar = page.locator('#statusbar')
-    await expect(bar.locator('.status-model')).toHaveText('Opus 5.5 · xhigh')
+    await expect(bar.locator('.status-model .status-text')).toHaveText('Opus 5.5')
+    await expect(bar.locator('.status-model .status-pill')).toHaveText('xhigh')
     await expect(page.locator('#image-panel .card')).toHaveCount(1)
     await expect(page.locator('#note .note-text')).toHaveValue('Goal: payments')
     await expect(page.locator('.doc-md h1')).toHaveText('Spec')
@@ -112,14 +113,14 @@ test('Change folder empties the card, Changes, status, note and Docs of the old 
     await expect(bar.locator('.status-model')).toBeHidden(SLOW)
     await expect(page.locator('#note .note-card')).toBeHidden(SLOW)
     // the Docs panel has no document left, so it is not offered any more
-    await expect(page.locator('#tabbar .tab-docs-toggle')).toBeHidden(SLOW)
+    await expect(page.locator('#sheet-header .tab-docs-toggle')).toBeHidden(SLOW)
     // the stand-in starts again in the new folder, with no conversation to resume: the restart clears the terminal, so the
     // new folder shows its one line, and that line has no --resume
     await expect.poll(() => bufferText(page, tabId), SLOW).not.toContain('before-move')
     await expect.poll(printed, SLOW).toBe(1)
     expect(await bufferText(page, tabId)).not.toContain('--resume')
     // the note of the old folder is gone: the note opens empty
-    await page.locator('#tabbar .tab-note-toggle').click()
+    await page.locator('#sheet-header .tab-note-toggle').click()
     await expect(page.locator('#note .note-text')).toHaveValue('', SLOW)
 
     // a picture shown in the new folder shows there
@@ -146,7 +147,7 @@ test('Change folder takes the task list of the old folder off the status bar; a 
     const list: TaskList = { title: 'Release prep', tasks: [{ title: 'Tag the release', status: 'completed' }, { title: 'Write the changelog', status: 'in_progress' }] }
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'task_list', tabId, list })).toEqual({ ok: true, info: 'Task list updated: 1 of 2 done.' })
     const seg = page.locator('#statusbar .status-plan')
-    await expect(seg).toHaveText('1/2 · Write the changelog')
+    await expect(seg.locator('.status-text')).toHaveText('1/2 · Write the changelog')
 
     expect(await page.evaluate(([id, dir]) => window.ct.changeFolder(id, dir), [tabId, other] as [string, string])).toEqual({ ok: true })
     await expect(seg).toHaveCount(0, SLOW)

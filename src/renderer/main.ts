@@ -1,3 +1,4 @@
+import '@fontsource-variable/inter'
 import './styles.css'
 import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
@@ -11,11 +12,13 @@ import { DocPanel } from './doc-panel'
 import { MailPanel } from './mail-panel'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
+import { SheetHeader } from './sheet-header'
 import { Lightbox } from './lightbox'
 import { PlanList } from './plan-list'
 import { RecentSessionsWindow } from './recent-sessions'
 import { imagePasteInput, imagePasteRoute, isImagePasteKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar } from './search'
+import { loadInter } from './dom'
 import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
 import { NoteOverlay } from './note-overlay'
 import { RestoreBanner } from './restore-banner'
@@ -33,6 +36,8 @@ import { promptText } from './claude-screen'
 import { leftUnfinished } from './unread'
 import { FrontFallback } from './front-fallback'
 import { FolderDialog } from './folder-dialog'
+import { TitleBar } from './title-bar'
+import { limitMeters } from './limit-meters'
 import { claudeTitle, folderName } from './util'
 
 interface TabState {
@@ -59,6 +64,7 @@ let appInfo: AppInfo
 let fontSize = 12
 let tabBar: TabBar
 let tabPanel: TabPanel
+let sheetHeader: SheetHeader
 /** where each tab's folder is in git, as main last published it: null for a folder outside git; no entry until git has answered */
 const places = new Map<string, TabPlace | null>()
 let noteOverlay: NoteOverlay
@@ -91,6 +97,7 @@ let folderDialog: FolderDialog
 let planList: PlanList
 const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
+let titleBar: TitleBar
 let updateBanner: UpdateBanner
 const statusUpdates = new Map<string, StatusUpdate>()
 const planUpdates = new Map<string, PlanUpdate>()
@@ -133,9 +140,9 @@ function groupTabs(deviceId: string): string[] {
   return tabBarOrder(here.map((id) => ({ id, forkOf: tabs.get(id)?.info.fork?.of ?? null })), remoteOrder.get(deviceId) ?? [])
 }
 
-/** this device's tabs, then the tabs of the groups not folded: the order Next, Previous and Go to tab walk */
+/** this device's tabs in the order the shown tab bar or panel lists them, then the tabs of the groups not folded: the order Next, Previous and Go to tab walk */
 function visibleOrder(): string[] {
-  const own = order.filter((id) => !tabs.get(id)?.info.remote)
+  const own = settings.tabs.position === 'left' ? tabPanel.visualOrder : tabBar.visualOrder
   return [...own, ...remoteDevices.filter((d) => !folded.has(d.id)).flatMap((d) => groupTabs(d.id))]
 }
 
@@ -200,14 +207,16 @@ function renderTabs(): void {
   tabBar.render(items, activeId, groups)
   // the left panel shows this device's groups, then a section per device with tabs: the same items and groups as the tab bar
   tabPanel.render(items, activeId, groups)
-  // on the left, the order is the panel's: main takes it when it differs, so the tab order follows the groups (the next render finds them equal).
+  // the sheet's header names the active tab; a remote tab shows its device's color
+  const active = items.find((item) => item.id === activeId)
+  sheetHeader.render(active ?? null, active?.group ? deviceColor(active.group) : undefined)
+  // the order is the shown bar's or panel's grouping: main takes it when it differs, so the tab order follows the groups (the next render finds them equal).
   // Not before every tab's place is known: until then a tab sits in No project and that temporary order must not reach main.
   // A remote tab's id never reaches main: its order is its device's
-  if (settings.tabs.position === 'left') {
-    const own = order.filter((id) => !tabs.get(id)?.info.remote)
-    const next = orderToWrite(own, tabPanel.visualOrder, own.every((id) => places.has(id)))
-    if (next) ct.reorderTabs(next)
-  }
+  const own = order.filter((id) => !tabs.get(id)?.info.remote)
+  const shownOwn = settings.tabs.position === 'left' ? tabPanel.visualOrder : tabBar.visualOrder
+  const next = orderToWrite(own, shownOwn, own.every((id) => places.has(id)))
+  if (next) ct.reorderTabs(next)
   if (imagePanel) refreshPanelButtons()
   renderTitle()
   reportAttentionCount()
@@ -255,7 +264,7 @@ function renderTitle(): void {
   document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')
 }
 
-/** the Media, Changes, Docs and Note buttons in the tab bar and the left panel: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
+/** the Media, Changes, Messages, Docs and Note buttons in the sheet's header: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
 function refreshPanelButtons(): void {
   const unseen = activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0
   const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
@@ -263,13 +272,12 @@ function refreshPanelButtons(): void {
   const docs = claude && (docUpdates.get(activeId ?? '')?.docs.length ?? 0) > 0
   // the badge counts nothing while the marks are off: the panel still lists the messages
   const unreadMail = activeId && settings.agentMessages.marks ? mailUnread[activeId] ?? 0 : 0
-  for (const bar of [tabBar, tabPanel]) {
-    bar.setImages(sidePanel.isShowing('images'), unseen)
-    bar.setChanges(claude, sidePanel.isShowing('changes'), unviewed)
-    bar.setDocs(docs, sidePanel.isShowing('docs'))
-    bar.setMessages(settings.agentMessages.enabled, sidePanel.isShowing('messages'), unreadMail)
-    bar.setNote(claude, claude && noteOverlay.isShown())
-  }
+  // the counts are the active tab's: the header may still show the tab before, so the badges are told which tab they count
+  sheetHeader.setImages(sidePanel.isShowing('images'), unseen, activeId)
+  sheetHeader.setChanges(claude, sidePanel.isShowing('changes'), unviewed, activeId)
+  sheetHeader.setDocs(docs, sidePanel.isShowing('docs'))
+  sheetHeader.setMessages(settings.agentMessages.enabled, sidePanel.isShowing('messages'), unreadMail, activeId)
+  sheetHeader.setNote(claude, claude && noteOverlay.isShown())
 }
 
 function logInput(tabId: string, data: string): void {
@@ -321,7 +329,8 @@ function accountOf(tabId: string | null): string | null {
 }
 
 function renderStatus(tabId: string): void {
-  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null, settings.claude.limitPace)
+  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null)
+  titleBar.render(limitMeters(statusUpdates.get(tabId) ?? null, Date.now(), settings.claude.limitPace))
 }
 
 /** Continue as …: the tab's conversation restarts on another account */
@@ -508,7 +517,8 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'smartPaste': if (t) void paste(t, true); break
     case 'copyOrInterrupt': break
     case 'send': if (tabId) handleInput(tabId, a.data); break
-    case 'find': searchBar.open(); break
+    // an expanded panel covers the terminal: a find box would open under it, taking keys nobody sees
+    case 'find': if (!sidePanel.expanded) searchBar.open(); break
     case 'toggleImages': toggleImagePanel(); break
     case 'toggleChanges': if (t?.info.kind === 'claude') sidePanel.toggle('changes'); break
     case 'toggleDocs': sidePanel.toggle('docs'); break
@@ -715,7 +725,8 @@ function redrawChoiceMenu(): void {
     choiceMenu = null
     return
   }
-  m.el = showMenu(m.at, m.build())
+  // drawn again in place: the menu on screen does not pop in a second time
+  m.el = showMenu(m.at, m.build(), { animate: false })
 }
 
 /** one device's entries of the new-tab menu: its name, its profiles, Claude Code and its accounts; loading until it answers */
@@ -745,10 +756,10 @@ function newTabItems(names: string[]): MenuItem[] {
     }))
   ]
   const tail: MenuItem[] = [
-    { label: 'Recent sessions…', action: () => void sessionsWindow.open() },
+    { label: 'Recent sessions…', hint: shortcutLabel('recentSessions', ct.platform), action: () => void sessionsWindow.open() },
     ...(restoreInfo ? [{ label: `Restore previous session (${restoreInfo.tabs})`, action: () => ct.runRestore() }] : []),
     { label: '', separator: true },
-    { label: 'Settings…', action: () => ct.openSettingsWindow() },
+    { label: 'Settings…', hint: shortcutLabel('openSettings', ct.platform), action: () => ct.openSettingsWindow() },
     { label: `ClaudeTerm ${appInfo.version} — check for updates`, action: () => { updateBanner.reveal(); ct.checkForUpdates() } }
   ]
   if (choices.devices.length === 0) return [...own, ...tail]
@@ -832,6 +843,8 @@ function applySettings(s: Settings): void {
   if (JSON.stringify(s.theme) !== JSON.stringify(prev.theme)) {
     const theme = resolveTheme(s.theme)
     for (const t of tabs.values()) t.view.setTheme(theme)
+    // the sheet's surround in the terminal's own background: the gutter reads as part of the terminal in every theme
+    document.documentElement.style.setProperty('--term-bg', resolveTheme(s.theme).background ?? '')
   }
   if (activeId) renderStatus(activeId)
   // the Messages panel closes with its setting: setAvailable alone would show Media in its place
@@ -857,6 +870,15 @@ function applySettings(s: Settings): void {
 }
 
 async function boot(): Promise<void> {
+  // the platform and the full-screen state style the window's own bar; the state is subscribed before the first wait,
+  // so the value main sends as the window shows is seen early. The window never starts in full screen, so a missed
+  // first value still leaves the right state
+  document.body.classList.add(`platform-${ct.platform}`)
+  ct.onFullScreen((on) => document.body.classList.toggle('fullscreen', on))
+  // the bundled Inter is a local file: the wait is a frame or two, and nothing reflows once the window is built. The title bar
+  // is built after it, as is every subscription below
+  await loadInter()
+  titleBar = new TitleBar(document.getElementById('titlebar')!, ct.platform, { openRecent: () => void sessionsWindow.open() })
   appInfo = await ct.appInfo()
   settings = await ct.getSettings()
   // the window must come up even when the accounts cannot be listed
@@ -877,6 +899,8 @@ async function boot(): Promise<void> {
       }
     },
     newTab: () => void ct.openTab({ kind: 'shell', cwd: defaultFolder() }),
+    openRecent: () => void sessionsWindow.open(),
+    openSettings: () => ct.openSettingsWindow(),
     openMenu: (anchor) => newTabMenu(anchor),
     tabMenu,
     toggleGroup,
@@ -909,6 +933,8 @@ async function boot(): Promise<void> {
   }
   tabBar = new TabBar(document.getElementById('tabbar')!, tabCallbacks, ct.platform)
   tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
+  sheetHeader = new SheetHeader(document.getElementById('sheet-header')!, tabCallbacks, ct.platform)
+  document.documentElement.style.setProperty('--term-bg', resolveTheme(settings.theme).background ?? '')
   showTabs(settings.tabs.position)
   noteOverlay = new NoteOverlay(document.getElementById('note')!, {
     setText: (id, text, generation) => ct.setNoteText(id, text, generation),
@@ -1179,6 +1205,7 @@ async function boot(): Promise<void> {
     if (activeId === id) {
       activeId = null
       statusBar.render(null)
+      titleBar.render([])
       // the Docs panel has no tab's documents to show: it falls back to another panel
       sidePanel.setAvailable('docs', false)
     }

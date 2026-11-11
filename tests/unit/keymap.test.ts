@@ -201,3 +201,25 @@ describe('isImagePasteKey', () => {
     expect(isImagePasteKey({ ...k('KeyV', { altKey: true }), type: 'keyup' }, 'win32')).toBe(false)
   })
 })
+
+describe('recent sessions shortcut', () => {
+  it('is labelled with the key that opens it on each platform', () => {
+    expect(mapKey(k('KeyH', { ctrlKey: true, shiftKey: true }), 'win32')).toEqual({ type: 'recentSessions' })
+    expect(mapKey(k('KeyH', { ctrlKey: true, shiftKey: true }), 'linux')).toEqual({ type: 'recentSessions' })
+    expect(shortcutLabel('recentSessions', 'win32')).toBe('Ctrl+Shift+H')
+    expect(shortcutLabel('recentSessions', 'linux')).toBe('Ctrl+Shift+H')
+    expect(mapKey(k('KeyH', { metaKey: true, shiftKey: true }), 'darwin')).toEqual({ type: 'recentSessions' })
+    expect(shortcutLabel('recentSessions', 'darwin')).toBe('⇧⌘H')
+  })
+})
+
+describe('settings shortcut', () => {
+  it('is labelled with the key that opens it on each platform', () => {
+    expect(mapKey(k('Comma', { ctrlKey: true }), 'win32')).toEqual({ type: 'openSettings' })
+    expect(mapKey(k('Comma', { ctrlKey: true }), 'linux')).toEqual({ type: 'openSettings' })
+    expect(shortcutLabel('openSettings', 'win32')).toBe('Ctrl+,')
+    expect(shortcutLabel('openSettings', 'linux')).toBe('Ctrl+,')
+    expect(mapKey(k('Comma', { metaKey: true }), 'darwin')).toEqual({ type: 'openSettings' })
+    expect(shortcutLabel('openSettings', 'darwin')).toBe('⌘,')
+  })
+})

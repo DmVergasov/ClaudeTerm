@@ -145,7 +145,7 @@ test('the ▾ menu opens a Claude tab on a chosen account', async () => {
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
   const id = (await page.evaluate(() => window.__ct!.activeTabId()))!
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`token=${WORK_TOKEN}`)
-  await expect(page.locator('#statusbar .status-account')).toHaveText('Work')
+  await expect(page.locator('#statusbar .status-account .status-text')).toHaveText('Work')
   await app.close()
 })
 
@@ -154,13 +154,13 @@ test('Continue as … in the tab menu resumes the conversation on another accoun
   const id = await openClaude(page, work, null)
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toMatch(/fake-claude token=/)
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: id, sessionId: SID, source: 'startup', transcriptPath: null })).toEqual({ ok: true })
-  await expect(page.locator('#statusbar .status-account')).toHaveText('Main account')
+  await expect(page.locator('#statusbar .status-account .status-text')).toHaveText('Main account')
   await page.locator('.tab').nth(1).click({ button: 'right' })
   await expect(page.locator('.menu-item', { hasText: 'Continue as Main account' })).toHaveCount(0)
   await page.locator('.menu-item', { hasText: 'Continue as Work' }).click()
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`--resume ${SID}`)
   expect(await bufferText(page, id)).toContain(`token=${WORK_TOKEN}`)
-  await expect(page.locator('#statusbar .status-account')).toHaveText('Work')
+  await expect(page.locator('#statusbar .status-account .status-text')).toHaveText('Work')
   await app.close()
 })
 
@@ -170,7 +170,7 @@ test('a click on the account in the status bar switches it', async () => {
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`token=${WORK_TOKEN}`)
   await page.locator('#statusbar .status-account').click()
   await page.locator('.menu-item', { hasText: 'Continue as Main account' }).click()
-  await expect(page.locator('#statusbar .status-account')).toHaveText('Main account')
+  await expect(page.locator('#statusbar .status-account .status-text')).toHaveText('Main account')
   // the first run's line is there until the restart clears the screen
   await expect.poll(async () => {
     const text = await bufferText(page, id)
@@ -215,7 +215,7 @@ test('without extra accounts there is no account in the status bar or the menus'
 async function openSettings(app: ElectronApplication, page: Page): Promise<Page> {
   await page.locator('.terminal-host:visible .xterm').click()
   const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
-  await win.waitForSelector('#settings .settings-heading')
+  await win.waitForSelector('#settings .section-title')
   return win
 }
 
@@ -285,7 +285,7 @@ test('a tab on the last extra account, deleted, shows Removed account and can go
   const id = await openClaude(page, mkdtempSync(join(tmpdir(), 'ct-work-')), WORK)
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`token=${WORK_TOKEN}`)
   expect(await page.evaluate((a) => window.ct.removeAccount(a), WORK)).toEqual({ ok: true })
-  await expect(page.locator('#statusbar .status-account')).toHaveText('Removed account')
+  await expect(page.locator('#statusbar .status-account .status-text')).toHaveText('Removed account')
   await page.locator('.tab').nth(1).click({ button: 'right' })
   await page.locator('.menu-item', { hasText: 'Continue as Main account' }).click()
   await expect(page.locator('#statusbar .status-account')).toHaveCount(0)

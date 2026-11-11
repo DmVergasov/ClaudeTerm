@@ -160,3 +160,39 @@ test('images from the session transcript appear, including lines appended later'
   await expect.poll(async () => (await images(page)).map((i) => i.source), { timeout: 10_000 }).toEqual(['pasted', 'tool'])
   await app.close()
 })
+
+test('a card shown by show_image names its source in a chip inside its meta line', async () => {
+  const { app, page, work, tabId, pipeName } = await claudeTab()
+  const file = join(work, 'chart.png')
+  writeFileSync(file, PNG_1x1)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'show_image', tabId, path: file, caption: null })).toEqual({ ok: true })
+  await expect.poll(() => images(page), { timeout: 10_000 }).toHaveLength(1)
+  await expect(page.locator('#image-panel .card .card-sub .card-source')).toHaveText('show_image')
+  await expect(page.locator('#image-panel .card .card-sub')).toContainText('show_image')
+  await app.close()
+})
+
+/** a picture over the pipe, then a click on its card opens the lightbox */
+async function openPictureLightbox(page: Page, work: string, tabId: string, pipeName: string): Promise<void> {
+  const picture = join(work, 'chart.png')
+  writeFileSync(picture, PNG_1x1)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'show_image', tabId, path: picture, caption: null })).toEqual({ ok: true })
+  await expect.poll(() => images(page), { timeout: 10_000 }).toHaveLength(1)
+  await page.locator('.card').click()
+  await expect(page.locator('#lightbox')).toBeVisible()
+}
+
+test('the lightbox fades in with fade-in', async () => {
+  const { app, page, work, tabId, pipeName } = await claudeTab()
+  await openPictureLightbox(page, work, tabId, pipeName)
+  expect(await page.evaluate(() => getComputedStyle(document.getElementById('lightbox')!).animationName)).toBe('fade-in')
+  await app.close()
+})
+
+test('the lightbox does not fade under reduced motion', async () => {
+  const { app, page, work, tabId, pipeName } = await claudeTab()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await openPictureLightbox(page, work, tabId, pipeName)
+  expect(await page.evaluate(() => getComputedStyle(document.getElementById('lightbox')!).animationName)).toBe('none')
+  await app.close()
+})

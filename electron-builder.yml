@@ -17,6 +17,8 @@ extraResources:
   - from: resources/hook
     to: hook
     filter: ["*.js"]
+  - from: THIRD-PARTY-NOTICES.md
+    to: THIRD-PARTY-NOTICES.md
 npmRebuild: false
 win:
   target:

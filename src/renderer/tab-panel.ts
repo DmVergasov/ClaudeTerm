@@ -1,8 +1,9 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
 import { REMOTE_COPY } from '../shared/remote'
 import { deviceGroups, groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
+import { icon } from './icons'
 import { TabHeader } from './tab-header'
-import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
+import { beginRename, bindTab, mailMark, shownActivity, spinner, tabParts } from './tab-row'
 import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarGroup, type TabBarItem } from './tabbar'
 
 /** the drag's data type that names the group dragged by its header */
@@ -18,7 +19,7 @@ interface Section {
 }
 
 /**
- * The left tab panel: the header buttons, then this device's tabs as groups by project, each group with its tabs in rows
+ * The left tab panel: the head (New tab and ▾), then this device's tabs as groups by project, each group with its tabs in rows
  * of two lines (the title, and the branch of the tab's folder). Then one section per other device that has tabs or is
  * online: its header, and its tabs grouped the same way. Groups fold on a click on their header, a device on a click on its header;
  * the panel's right edge is dragged to change its width. Its items and callbacks are the tab bar's: main shows one or the other.
@@ -27,6 +28,7 @@ export class TabPanel {
   private readonly header: TabHeader
   private readonly head = document.createElement('div')
   private readonly list = document.createElement('div')
+  private readonly foot = document.createElement('div')
   private readonly handle = document.createElement('div')
   private items: TabBarItem[] = []
   /** the other devices, as the tab bar's chips show them: their sections come in this order */
@@ -50,11 +52,11 @@ export class TabPanel {
     this.folded = new Set(layout.folded)
     this.header = new TabHeader(cb, platform, 'left')
     this.head.className = 'tp-head'
-    const spacer = document.createElement('div')
-    spacer.className = 'tp-spacer'
     const h = this.header
-    this.head.replaceChildren(h.plus, h.more, spacer, h.changes, h.docs, h.images, h.messages, h.note, h.position)
+    this.head.replaceChildren(h.plus, h.more)
     this.list.className = 'tp-list'
+    this.foot.className = 'tp-foot'
+    this.foot.replaceChildren(h.recent, h.settings, h.position)
     this.handle.className = 'tp-resize'
     this.width = clampTabPanelWidth(layout.width)
     root.style.width = `${this.width}px`
@@ -63,7 +65,7 @@ export class TabPanel {
 
   /** the panel is in the page only while it is shown: a hidden one would still match the selectors of the shown tab bar */
   show(visible: boolean): void {
-    this.root.replaceChildren(...(visible ? [this.head, this.list, this.handle] : []))
+    this.root.replaceChildren(...(visible ? [this.head, this.list, this.foot, this.handle] : []))
     // the list's scroll is lost while the panel is out of the page: the active row is brought back into view
     if (visible) this.revealActive()
   }
@@ -99,30 +101,6 @@ export class TabPanel {
 
   private revealActive(): void {
     this.list.querySelector<HTMLElement>('.tp-tab.active')?.scrollIntoView({ block: 'nearest' })
-  }
-
-  /** the Changes button exists only for Claude tabs; it shows the files not yet viewed */
-  setChanges(available: boolean, visible: boolean, unviewed: number): void {
-    this.header.setChanges(available, visible, unviewed)
-  }
-
-  /** the Docs button is hidden while the tab has no document to show; it is lit while the Docs panel is shown */
-  setDocs(available: boolean, visible: boolean): void {
-    this.header.setDocs(available, visible)
-  }
-
-  setImages(visible: boolean, unseen: number): void {
-    this.header.setImages(visible, unseen)
-  }
-
-  /** the Messages button exists while agent messages are on; it counts the unread messages of the active tab */
-  setMessages(available: boolean, visible: boolean, unread: number): void {
-    this.header.setMessages(available, visible, unread)
-  }
-
-  /** the Note button exists only for Claude tabs; it is lit while the note is shown */
-  setNote(available: boolean, visible: boolean): void {
-    this.header.setNote(available, visible)
   }
 
   /**
@@ -213,7 +191,7 @@ export class TabPanel {
       const add = document.createElement('button')
       add.type = 'button'
       add.className = 'tp-device-new'
-      add.textContent = '+'
+      add.innerHTML = icon('plus', 13)
       add.title = REMOTE_COPY.newTabOn(device.name)
       add.addEventListener('click', (e) => {
         // the + opens the menu; the header's own click would fold the device
@@ -297,7 +275,6 @@ export class TabPanel {
     const remote = item.group !== null
     el.className = `tp-tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${row.fork ? ' fork' : ''}${remote ? ' remote' : ''}${item.dim ? ' dim' : ''}`
     el.dataset.tabId = item.id
-    if (item.attention) el.style.animationDelay = pulseDelay()
     el.draggable = true
     el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(TAB_DRAG, item.id) })
     el.addEventListener('dragover', (e) => { if (dragCarries(e, TAB_DRAG)) e.preventDefault() })

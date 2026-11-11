@@ -16,6 +16,11 @@ describe('parseSettings', () => {
     expect(DEFAULT_SETTINGS.font.family).toBe('Cascadia Mono, Consolas, Menlo, monospace')
   })
 
+  it('the default theme is Graphite, and a theme named in settings.json is kept', () => {
+    expect(DEFAULT_SETTINGS.theme).toBe('Graphite')
+    expect(parseSettings(JSON.stringify({ theme: 'Campbell' })).settings.theme).toBe('Campbell')
+  })
+
   it('merges partial overrides', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])

@@ -27,7 +27,7 @@ const tabStatusLine = (dataDir: string): Record<string, unknown> =>
 async function openSettings(app: ElectronApplication, page: Page): Promise<Page> {
   await page.locator('.terminal-host:visible .xterm').click()
   const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
-  await win.waitForSelector('#settings .settings-heading')
+  await win.waitForSelector('#settings .section-title')
   return win
 }
 
@@ -136,7 +136,7 @@ test('the ▾ menu opens the settings window', async () => {
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await page.locator('.tab-menu').click()
   const [win] = await Promise.all([app.waitForEvent('window'), page.locator('.menu-item', { hasText: 'Settings…' }).click()])
-  await expect(win.locator('#settings .settings-heading')).toHaveText('Settings')
+  await expect(win.locator('#settings-titlebar')).toHaveText('Settings')
   await app.close()
 })
 
@@ -206,12 +206,12 @@ test('the limit pace checkbox is checked by default; cleared, the limits in the 
     fiveHour: { usedPct: 50, resetsAt: now + 4 * 3600 }, sevenDay: null
   }
   expect(await sendPipeMessage(pipeName, status)).toEqual({ ok: true })
-  const limit = page.locator('#statusbar .status-limit')
-  /** the bar before the limit's text: none when the status bar draws no bar */
-  const bar = (): Promise<string> => limit.evaluate((el) => getComputedStyle(el, '::before').content)
-  await expect(limit).toHaveText('5h 50%')
+  const limit = page.locator('#titlebar .meter-limit')
+  /** the meter's bar: none when the title bar draws no bar */
+  const bar = limit.locator('.meter-bar')
+  await expect(limit.locator('.meter-pct')).toHaveText('50%')
   await expect(limit).toHaveClass(/\bcrit\b/)
-  expect(await bar()).not.toBe('none')
+  await expect(bar).toHaveCount(1)
 
   const win = await openSettings(app, page)
   const box = win.locator('[data-key="claude.limitPace"]')
@@ -219,7 +219,7 @@ test('the limit pace checkbox is checked by default; cleared, the limits in the 
   await box.uncheck()
   await expect.poll(() => readSettings(dataDir).claude?.limitPace).toBe(false)
   await expect(limit).not.toHaveClass(/\b(warn|crit)\b/)
-  await expect.poll(bar).toBe('none')
+  await expect(bar).toHaveCount(0)
   // the reset alone, with no forecast after it
   await expect(limit).toHaveAttribute('title', /^resets at \d\d:\d\d, in [^\n]+$/)
   await app.close()
@@ -514,5 +514,50 @@ test('the Agent messages section holds its two checkboxes, both on, and turning 
   await expect(win.getByText('An envelope on the tab and a counter; no sound, no pop-up.')).toBeVisible()
   await enabled.uncheck()
   await expect.poll(() => readSettings(dataDir).agentMessages?.enabled).toBe(false)
+  await app.close()
+})
+
+test('the settings window has its own title bar that drags the window', async () => {
+  const { app, page } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  const bar = win.locator('#settings-titlebar')
+  await expect(bar).toHaveText('Settings')
+  expect(await bar.evaluate((el) => getComputedStyle(el).getPropertyValue('-webkit-app-region'))).toBe('drag')
+  const box = (await bar.boundingBox())!
+  expect(Math.round(box.height)).toBe(36)
+  expect(box.y).toBe(0)
+  expect(await win.evaluate(() => getComputedStyle(document.body).fontFamily)).toContain('"Inter Variable"')
+  await app.close()
+})
+
+test('the settings title bar stays at the top while the page scrolls, and the page itself never scrolls', async () => {
+  const { app, page } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  // the page scrolls inside #settings, below the bar: the window's buttons sit over the bar, not over the scrollbar
+  await win.evaluate(() => { document.getElementById('settings')!.scrollTop = 1e6 })
+  await expect.poll(() => win.evaluate(() => document.getElementById('settings')!.scrollTop)).toBeGreaterThan(0)
+  const box = (await win.locator('#settings-titlebar').boundingBox())!
+  expect(box.y).toBe(0)
+  expect((await win.locator('#settings').boundingBox())!.y).toBeGreaterThanOrEqual(36)
+  expect(await win.evaluate(() => document.scrollingElement!.scrollTop)).toBe(0)
+  await app.close()
+})
+
+test('the Theme list starts with Graphite, the default', async () => {
+  const { app, page } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  expect(await win.locator('[data-key="theme"] option').first().getAttribute('value')).toBe('Graphite')
+  await app.close()
+})
+
+test('PageDown scrolls Settings without a click first', async () => {
+  const { app, page } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page)
+  await win.keyboard.press('PageDown')
+  await expect.poll(() => win.evaluate(() => document.getElementById('settings')!.scrollTop)).toBeGreaterThan(0)
   await app.close()
 })

@@ -142,16 +142,22 @@ function writeDemoSessions(config: string, sessions: DemoSession[]): void {
 }
 
 /**
- * The shots fix the page size, which a window widened for a side panel would undo: the window gets the width of the work
- * area, so a panel finds no room to widen it and takes its room from the terminal (sidePanel.noRoom "narrow"), the way it
- * looks beside a widened window.
+ * The window gets the size of the captured page, and its maximum width is that size too. The title bar keeps room for the
+ * window buttons with env(titlebar-area-*), which the real window sets: a window wider than the page puts the limit
+ * meters off the picture's right edge. A side panel that wants more room finds none (sidePanel.noRoom "narrow"), as it
+ * would beside a window fitted to the work area.
+ * The window is moved onto the primary screen for this: off the screen (as the test runs keep it) Windows lays the title
+ * bar out 16 px differently, and the meters would sit into the room the window buttons take.
  */
-function fillWorkAreaWidth(app: ElectronApplication): Promise<void> {
-  return app.evaluate(({ BrowserWindow, screen }) => {
+function fitWindowTo(app: ElectronApplication, width: number, height: number): Promise<void> {
+  return app.evaluate(({ BrowserWindow, screen }, size) => {
     const w = BrowserWindow.getAllWindows()[0]!
+    const area = screen.getPrimaryDisplay().workArea
+    w.setPosition(area.x, area.y)
+    w.setContentSize(size.width, size.height)
     const b = w.getBounds()
-    w.setBounds({ ...b, width: screen.getDisplayMatching(b).workArea.width })
-  })
+    w.setMaximumSize(b.width, b.height)
+  }, { width, height })
 }
 
 test('README screenshots', async () => {
@@ -186,7 +192,7 @@ test('README screenshots', async () => {
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
   // a 1280x800 window at 2x regardless of the monitor (a forced scale factor would not fit a 1080p screen)
-  await fillWorkAreaWidth(app)
+  await fitWindowTo(app, 1280, 800)
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false })
   await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight, window.devicePixelRatio].join('x'))).toBe('1280x800x2')
@@ -252,7 +258,7 @@ test('README screenshots', async () => {
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'start', agentId: id, agentType: type })).toEqual({ ok: true })
   }
   const bar = page.locator('#statusbar')
-  await expect(bar.locator('.status-agents')).toHaveText('⚙ 3: sonnet·medium, opus·high, haiku', { timeout: 10_000 })
+  await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ 3: sonnet·medium, opus·high, haiku', { timeout: 10_000 })
 
   await page.mouse.move(400, 400)
   await page.screenshot({ path: join(OUT, 'hero.png') })
@@ -365,7 +371,7 @@ test('review panel screenshot', async () => {
   })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
-  await fillWorkAreaWidth(app)
+  await fitWindowTo(app, 1440, 800)
   const cdp = await page.context().newCDPSession(page)
   // wider than the other shots: the 800 px panel holds the file tree and the diff, and the terminal keeps the 640 px it has there
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 800, deviceScaleFactor: 2, mobile: false })

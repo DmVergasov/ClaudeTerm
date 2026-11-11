@@ -36,11 +36,20 @@ test('a claude tab shows model, context, the 5h and weekly limits and running su
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'start', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
 
   const bar = page.locator('#statusbar')
-  await expect(bar.locator('.status-model')).toHaveText('Opus 5.5 · xhigh')
-  await expect(bar.locator('.status-context')).toHaveText('ctx 41% · 82k/200k')
-  await expect(bar.locator('.status-limit')).toHaveText('5h 24%')
-  await expect(bar.locator('.status-week')).toHaveText('7d 41%')
-  await expect(bar.locator('.status-agents')).toHaveText('⚙ 1: opus·high', { timeout: 10_000 })
+  await expect(bar.locator('.status-model .status-text')).toHaveText('Opus 5.5')
+  await expect(bar.locator('.status-model .status-pill')).toHaveText('xhigh')
+  await expect(bar.locator('.status-context .status-text')).toHaveText('ctx 41% · 82k/200k')
+  // the separators are empty thin lines, and the context segment draws the share of the window it uses
+  await expect(bar.locator('.status-sep').first()).toHaveText('')
+  expect(await bar.locator('.status-sep').first().evaluate((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height])).toEqual([1, 14])
+  expect(await bar.locator('.status-context .status-bar').evaluate((el) => el.style.getPropertyValue('--fill'))).toBe('41%')
+  expect(parseFloat(await bar.locator('.status-context .status-bar').evaluate((el) => getComputedStyle(el, '::before').width))).toBeCloseTo(44 * 0.41, 0)
+  // the limits are meters in the title bar, not segments of the status bar
+  await expect(page.locator('#titlebar .meter-limit .meter-pct')).toHaveText('24%')
+  await expect(page.locator('#titlebar .meter-week .meter-pct')).toHaveText('41%')
+  await expect(bar.locator('.status-limit')).toHaveCount(0)
+  await expect(bar.locator('.status-week')).toHaveCount(0)
+  await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ 1: opus·high', { timeout: 10_000 })
   await expect(bar.locator('.status-agents')).toHaveAttribute('title', 'Explore · opus·high · <1 min · "Find asar users"')
 
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'stop', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
@@ -54,12 +63,12 @@ test('a claude tab shows model, context, the 5h and weekly limits and running su
 test('the 5h limit takes its color from the pace it is spent at, says the forecast in its tooltip, and shows the time gone by on its bar', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   const now = Math.floor(Date.now() / 1000)
-  const limit = page.locator('#statusbar .status-limit')
-  const bar = (): Promise<string[]> => limit.evaluate((el) => [el.style.getPropertyValue('--used'), el.style.getPropertyValue('--elapsed')])
+  const limit = page.locator('#titlebar .meter-limit')
+  const bar = (): Promise<string[]> => limit.locator('.meter-bar').evaluate((el) => [el.style.getPropertyValue('--used'), el.style.getPropertyValue('--elapsed')])
 
   // half the limit in the first of the five hours: the rest goes in the next hour
   expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), fiveHour: { usedPct: 50, resetsAt: now + 4 * 3600 } })).toEqual({ ok: true })
-  await expect(limit).toHaveText('5h 50%')
+  await expect(limit.locator('.meter-pct')).toHaveText('50%')
   await expect(limit).toHaveClass(/\bcrit\b/)
   await expect(limit).toHaveAttribute('title', /\nat this pace: runs out at \d\d:\d\d, /)
   await expect.poll(bar).toEqual(['50%', '20%'])
@@ -76,17 +85,18 @@ test('the background work a turn ended with shows in the status bar until a late
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
   const segment = page.locator('#statusbar .status-background')
-  await expect(page.locator('#statusbar .status-model')).toHaveText('Opus 5.5 · xhigh')
+  await expect(page.locator('#statusbar .status-model .status-text')).toHaveText('Opus 5.5')
+  await expect(page.locator('#statusbar .status-model .status-pill')).toHaveText('xhigh')
   await expect(segment).toHaveCount(0)
 
   const tasks = [{ id: 'b1', type: 'shell', description: 'Run the e2e suite', command: 'npx playwright test' }, { id: 'm1', type: 'monitor', description: null, command: 'tail -f server.log' }]
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks })).toEqual({ ok: true })
-  await expect(segment).toHaveText('2 in background: Run the e2e suite, tail -f server.log')
+  await expect(segment.locator('.status-text')).toHaveText('2 in background: Run the e2e suite, tail -f server.log')
   await expect(segment).toHaveAttribute('title', 'Still running after the turn:\nshell · Run the e2e suite · npx playwright test\nmonitor · tail -f server.log')
 
   // the next turn ends with the monitor alone, the one after it with nothing in the background
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks: [tasks[1]!] })).toEqual({ ok: true })
-  await expect(segment).toHaveText('1 in background: tail -f server.log')
+  await expect(segment.locator('.status-text')).toHaveText('1 in background: tail -f server.log')
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', tasks: [] })).toEqual({ ok: true })
   await expect(segment).toHaveCount(0)
 
@@ -104,7 +114,7 @@ test('long background work takes no more than about 40 characters of the status 
   const description = 'Watch the invoice export queue and re-arm the watcher on every restart of the billing service'
   const tasks = [{ id: 'm1', type: 'monitor', description, command: 'node scripts/watch-queue.js --billing --retry 5' }]
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks })).toEqual({ ok: true })
-  await expect(segment).toHaveText(`1 in background: ${description}`)
+  await expect(segment.locator('.status-text')).toHaveText(`1 in background: ${description}`)
   await expect(segment).toHaveAttribute('title', `Still running after the turn:\nmonitor · ${description} · node scripts/watch-queue.js --billing --retry 5`)
 
   // 40 characters of the status bar's font, measured beside the segment; the font's own measure of a character (CSS ch)
@@ -117,7 +127,8 @@ test('long background work takes no more than about 40 characters of the status 
     probe.remove()
     return width
   })
-  const shown = await segment.evaluate((el) => ({ width: el.getBoundingClientRect().width, cut: el.scrollWidth > el.clientWidth }))
+  // the cut is the text's: the segment itself is only as wide as its cap, and its pill and bar keep their place
+  const shown = { width: (await segment.boundingBox())!.width, cut: await segment.locator('.status-text').evaluate((el) => el.scrollWidth > el.clientWidth) }
   expect(shown.width).toBeLessThanOrEqual(forty * 1.1)
   expect(shown.cut).toBe(true)
   await app.close()
@@ -127,10 +138,11 @@ test('a new status updates the segments in place, so an open tooltip is not dism
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
   const model = page.locator('#statusbar .status-model')
-  await expect(model).toHaveText('Opus 5.5 · xhigh')
+  await expect(model.locator('.status-text')).toHaveText('Opus 5.5')
+  await expect(model.locator('.status-pill')).toHaveText('xhigh')
   const handle = await model.elementHandle()
   expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), context: { usedTokens: 90_000, size: 200_000, usedPct: 45 } })).toEqual({ ok: true })
-  await expect(page.locator('#statusbar .status-context')).toHaveText('ctx 45% · 90k/200k')
+  await expect(page.locator('#statusbar .status-context .status-text')).toHaveText('ctx 45% · 90k/200k')
   expect(await handle!.evaluate((e) => e.isConnected)).toBe(true)
   await app.close()
 })

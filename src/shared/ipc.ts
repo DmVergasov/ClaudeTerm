@@ -17,6 +17,8 @@ export const IPC = {
   tabsActivate: 'tabs:activate',
   /** a click on a system notification: the window comes forward */
   windowFocus: 'window:focus',
+  /** the main window entered or left full screen (or shows at start): the bar drops the space of the traffic lights */
+  fullScreen: 'window:full-screen',
   /** how many tabs need the user: the app icon shows it */
   attentionCount: 'attention:count',
   tabsRename: 'tabs:rename',
@@ -417,4 +419,6 @@ export interface CtApi {
   onScreenSeed(cb: (tabId: string, token: number) => void): Unsubscribe
   /** the unread agent messages per tab changed: the whole map, keyed by tab id */
   onMail(cb: (unread: MailUnread) => void): Unsubscribe
+  /** the main window's full-screen state changed (sent when it shows, too) */
+  onFullScreen(cb: (on: boolean) => void): Unsubscribe
 }

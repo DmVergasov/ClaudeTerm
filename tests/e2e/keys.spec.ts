@@ -165,3 +165,23 @@ test('a local drop of more than 100 files is typed in full, every path quoted', 
   expect(text).toBe(paths.map((p) => `"${p}"`).join(' '))
   await app.close()
 })
+
+test('the ▾ menu shows the shortcuts of Recent sessions… and Settings…', async () => {
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.locator('.tab-menu').click()
+  await expect(page.locator('.menu-item', { hasText: 'Recent sessions…' }).locator('.menu-hint')).toHaveText(MAC ? '⇧⌘H' : 'Ctrl+Shift+H')
+  await expect(page.locator('.menu-item', { hasText: 'Settings…' }).locator('.menu-hint')).toHaveText(MAC ? '⌘,' : 'Ctrl+,')
+  await page.keyboard.press('Escape')
+  await app.close()
+})
+
+test('a menu the user opens pops in', async () => {
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await page.locator('.tab-menu').click()
+  await expect(page.locator('.menu')).toBeVisible()
+  expect(await page.locator('.menu').evaluate((el) => getComputedStyle(el).animationName)).toBe('pop-in')
+  await page.keyboard.press('Escape')
+  await app.close()
+})

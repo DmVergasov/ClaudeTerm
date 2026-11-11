@@ -26,8 +26,11 @@ test('Claude waiting in a background tab makes that tab pulse until it is opened
   await expect(claudeTab).not.toHaveClass(/\battention\b/)
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
   await expect(claudeTab).toHaveClass(/\battention\b/)
-  // found and read in one go: a redraw of the tab bar replaces its elements, and a replaced one has no style left
-  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`[data-tab-id="${id}"]`)!).animationName, tabId)).toBe('tab-attention')
+  // the badge breathes on the tab; the tab itself does not animate. Found and read in one go: a redraw of the tab bar
+  // replaces its elements, and a replaced one has no style left
+  await expect(claudeTab.locator('.tab-attn')).toHaveCount(1)
+  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`[data-tab-id="${id}"] .tab-attn`)!, '::after').animationName, tabId)).toBe('tab-breathe')
+  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`[data-tab-id="${id}"]`)!).animationName, tabId)).toBe('none')
   await expect(claudeTab.locator('.tab-bell')).toHaveCount(0)
 
   await claudeTab.click()
@@ -46,7 +49,7 @@ test('the pulse keeps its phase when the tab bar is redrawn', async () => {
   await expect(claudeTab).toHaveClass(/\battention\b/)
   // how far into the pulse the tab is; a recreated element restarts its CSS animation from 0 unless it keeps the phase
   const phase = () => page.evaluate(() => {
-    const a = document.getAnimations().find((x) => (x as CSSAnimation).animationName === 'tab-attention')
+    const a = document.getAnimations().find((x) => (x as CSSAnimation).animationName === 'tab-breathe')
     const t = a?.effect?.getComputedTiming()
     return t ? Number(t.localTime) - Number(t.delay) : -1
   })
@@ -56,10 +59,25 @@ test('the pulse keeps its phase when the tab bar is redrawn', async () => {
   await page.evaluate((id) => window.ct.renameTab(id, 'renamed'), other)
   await expect(page.locator(`[data-tab-id="${other}"]`)).toHaveAttribute('title', `renamed\n${work}`)
   const after = await phase()
-  // the pulse runs on one clock: the redraw carries on where it was (modulo a full 2.4 s cycle) instead of restarting;
+  // the pulse runs on one clock: the redraw carries on where it was (modulo a full 2 s cycle) instead of restarting;
   // measured both ways round the cycle, since the two readings can come out a fraction of a millisecond apart either way
-  const drift = (((after - before) % 2400) + 2400) % 2400
-  expect(Math.min(drift, 2400 - drift)).toBeLessThan(500)
+  const drift = (((after - before) % 2000) + 2000) % 2000
+  expect(Math.min(drift, 2000 - drift)).toBeLessThan(500)
+  await app.close()
+})
+
+test('with the tabs on the left, the row of a tab that waits for the user shows the breathing badge', async () => {
+  const { app, page, tabId, work, pipeName } = await launchClaudeTab({ ...QUIET, tabs: { position: 'left' } })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  // the waiting tab is a background one: another tab is the active one
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  const row = page.locator(`#tabpanel .tp-tab[data-tab-id="${tabId}"]`)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
+  await expect(row).toHaveClass(/\battention\b/)
+  await expect(row.locator('.tab-attn')).toHaveCount(1)
+  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`#tabpanel [data-tab-id="${id}"] .tab-attn`)!, '::after').animationName, tabId)).toBe('tab-breathe')
+  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`#tabpanel [data-tab-id="${id}"]`)!).animationName, tabId)).toBe('none')
   await app.close()
 })
 

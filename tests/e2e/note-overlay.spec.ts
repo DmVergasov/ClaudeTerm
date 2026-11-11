@@ -23,7 +23,7 @@ function note(page: Page) {
     card,
     label: page.locator('#note .note-label'),
     text: card.locator('.note-text'),
-    button: page.locator('#tabbar .tab-note-toggle'),
+    button: page.locator('#sheet-header .tab-note-toggle'),
     mark: page.locator('#tabbar .tab .tab-note')
   }
 }
@@ -152,7 +152,7 @@ test('a shell tab has no Note button, and the shortcut does nothing there', asyn
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   const { button } = note(page)
-  await expect(page.locator('#tabbar .tab-images-toggle')).toBeVisible()
+  await expect(page.locator('#sheet-header .tab-images-toggle')).toBeVisible()
   await expect(button).toBeHidden()
   await page.locator('.terminal-host:visible .xterm').click()
   await page.keyboard.press(KEYS.note)
@@ -317,7 +317,7 @@ test('showing the note while the Changes panel is expanded brings the panel back
   const { card, button } = note(page)
   const panel = page.locator('#image-panel')
   const expand = page.locator('.review-expand')
-  await page.locator('#tabbar .tab-changes-toggle').click()
+  await page.locator('#sheet-header .tab-changes-toggle').click()
   await expect(panel).not.toHaveClass(/collapsed/)
   await expand.click()
   await expect(panel).toHaveClass(/expanded/)
@@ -358,5 +358,32 @@ test('with the side panel lying over the terminal, the note sits left of it', as
     const p = await panel.boundingBox()
     return c !== null && p !== null && c.x + c.width <= p.x
   }).toBe(true)
+  await app.close()
+})
+
+test('the find box and the note do not cover each other, and the note\'s buttons still click with Find open', async () => {
+  const { app, page } = await launchClaudeTab()
+  const { card, label, button, text } = note(page)
+  await button.click()
+  await expect(card).toBeVisible()
+  await text.fill('Goal: payments')
+  await page.locator('#note .note-collapse').click()
+  await expect(label).toBeVisible()
+  const box = async (sel: string): Promise<{ x: number, y: number, width: number, height: number }> => (await page.locator(sel).boundingBox())!
+  const overlap = (a: { x: number, y: number, width: number, height: number }, b: { x: number, y: number, width: number, height: number }): boolean =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+
+  // the label with the find box open
+  await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+KeyF' : 'Control+Shift+KeyF')
+  await expect(page.locator('#search')).toBeVisible()
+  expect(overlap(await box('#search'), await box('#note .note-label')), 'the find box covers the note label').toBe(false)
+
+  // the open card with the find box open: its collapse button must still take the click
+  await label.click()
+  await expect(card).toBeVisible()
+  expect(overlap(await box('#search'), await box('#note .note-card')), 'the find box covers the note card').toBe(false)
+  await page.locator('#note .note-collapse').click()
+  await expect(label).toBeVisible()
   await app.close()
 })

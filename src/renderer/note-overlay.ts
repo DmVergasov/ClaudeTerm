@@ -1,5 +1,6 @@
 import { hasText as noteHasText, MAX_NOTE_LENGTH, type Note, type NoteForm } from '../shared/note'
 import { el } from './dom'
+import { icon as iconSvg } from './icons'
 import { mapKey } from './keymap'
 
 /** the sticky note: the Note button, the label, the card and the mark on a tab */
@@ -46,7 +47,7 @@ export class NoteOverlay {
     const collapse = el('button', { className: 'note-collapse', textContent: '–', title: 'Collapse to a label' })
     // an empty note has no label to collapse to
     collapse.addEventListener('click', () => this.present(this.active !== null && this.hasText(this.active) ? 'label' : null))
-    const hide = el('button', { className: 'note-hide', textContent: '×', title: 'Hide the note' })
+    const hide = el('button', { className: 'note-hide', innerHTML: iconSvg('x', 12), title: 'Hide the note' })
     hide.addEventListener('click', () => this.present(null))
     this.text = el('textarea', { className: 'note-text', placeholder: 'Write a note for this session…', maxLength: MAX_NOTE_LENGTH, spellcheck: false })
     this.text.addEventListener('input', () => this.typed())

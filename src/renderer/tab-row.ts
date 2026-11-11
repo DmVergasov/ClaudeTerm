@@ -1,10 +1,11 @@
 import type { TabActivity } from '../shared/types'
+import { icon } from './icons'
 import { shortcutLabel } from './keymap'
 import { noteIcon } from './note-overlay'
 import type { TabBarCallbacks, TabBarItem } from './tabbar'
 
-/** one full fade in and out of the attention pulse: 2 × the 1.2 s alternate animation in styles.css */
-const PULSE_CYCLE_MS = 2400
+/** one full breath of the attention badge: the 2 s tab-breathe animation in styles.css */
+const PULSE_CYCLE_MS = 2000
 /** one round of the spinning icon's glyphs, as styles.css runs it */
 const SPIN_CYCLE_MS = 1200
 
@@ -34,8 +35,9 @@ export function button(text: string, cls: string, title: string, onClick: (e: Mo
 }
 
 /**
- * The animation delay of a tab that pulses. render() rebuilds every tab, which would restart the pulse each time (a busy
- * Claude retitles its tab every second); a negative delay from one shared clock makes a rebuilt tab carry on in the same phase.
+ * The animation delay of a breathing badge, set on it as --pulse-delay. render() rebuilds every tab, which would restart the
+ * breath each time (a busy Claude retitles its tab every second); a negative delay from one shared clock makes a rebuilt
+ * badge carry on in the same phase.
  */
 export function pulseDelay(): string {
   return `${-(performance.now() % PULSE_CYCLE_MS)}ms`
@@ -56,27 +58,39 @@ export function spinner(cls: string): HTMLElement {
 /** a tab's activity as its icon shows it: none while Claude waits for the user, whose pulse says more */
 export const shownActivity = (item: Pick<TabBarItem, 'activity' | 'attention'>): TabActivity => item.attention ? null : item.activity
 
+/** a tab's kind icon: the spinner while Claude works in it; otherwise ✳ for a Claude tab and the terminal glyph for a shell tab */
+export function tabIcon(item: TabBarItem): HTMLElement {
+  if (shownActivity(item)) return spinner('tab-icon')
+  const el = document.createElement('span')
+  el.className = 'tab-icon'
+  if (item.kind === 'claude') el.textContent = '✳'
+  else el.innerHTML = icon('terminal', 13)
+  return el
+}
+
 export interface TabParts {
   icon: HTMLElement
   label: HTMLElement
-  /** the note, muted, bell, envelope and images marks, in this order */
+  /** the attention badge, then the note, muted, bell, envelope and images marks, in this order */
   marks: HTMLElement[]
   close: HTMLButtonElement
 }
 
 /** what a tab shows of itself, on the tab bar and in the left panel alike: the kind icon, the title, the marks and × */
 export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCallbacks, 'close'>): TabParts {
-  let icon: HTMLElement
-  if (shownActivity(item)) icon = spinner('tab-icon')
-  else {
-    icon = document.createElement('span')
-    icon.className = 'tab-icon'
-    icon.textContent = item.kind === 'claude' ? '✳' : '>'
-  }
+  const kindIcon = tabIcon(item)
   const label = document.createElement('span')
   label.className = 'tab-title'
   label.textContent = item.title
   const marks: HTMLElement[] = []
+  if (item.attention) {
+    // Claude waits for the user here: a dot that breathes until the tab is opened
+    const a = document.createElement('span')
+    a.className = 'tab-attn'
+    a.title = 'Claude waits for you'
+    a.style.setProperty('--pulse-delay', pulseDelay())
+    marks.push(a)
+  }
   if (item.note) {
     const n = document.createElement('span')
     n.className = 'tab-note'
@@ -101,14 +115,15 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
   if (item.images > 0) {
     const b = document.createElement('span')
     b.className = 'tab-images'
-    b.textContent = `🖼${item.images}`
+    b.innerHTML = icon('image', 12)
+    b.append(String(item.images))
     marks.push(b)
   }
   const close = button('×', 'tab-close', `Close (${shortcutLabel('closeTab', platform)})`, (e) => {
     e.stopPropagation()
     cb.close(item.id)
   })
-  return { icon, label, marks, close }
+  return { icon: kindIcon, label, marks, close }
 }
 
 /**

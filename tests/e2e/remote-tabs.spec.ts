@@ -236,7 +236,7 @@ test("the chip's menu opens a shell tab on that device", async () => {
   await expect.poll(newIds, SLOW).toHaveLength(1)
   const id = (await newIds())[0]
   await expect.poll(() => tabIdsOf(a), SLOW).toContain(id)
-  await expect(b.page.locator(`.tab.remote[data-tab-id="${id}"] .tab-icon`)).toHaveText('>', SLOW) // a shell tab
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${id}"] .tab-icon svg`)).toHaveCount(1, SLOW) // a shell tab: the terminal glyph
 })
 
 test("with A's tab in front, B's own Claude Code entry opens a tab on B in B's default folder, and so does the key", async () => {
@@ -288,11 +288,15 @@ test('an open + menu gains a device\'s new account in the same place when the an
   // the device's own Claude Code entry: the first one after the device's name, as the other + menu tests find it
   await expect(menu.locator('.menu-item.disabled', { hasText: /^Studio$/ })
     .locator('xpath=following::div[contains(concat(" ", normalize-space(@class), " "), " menu-item ") and normalize-space(.)="Claude Code"][1]')).toBeVisible(SLOW)
+  // the menu's own pop-in ends before its place is taken
+  await menu.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
   const before = await menu.boundingBox()
   expect(await a.page.evaluate(() => window.ct.addAccount('Work', 'e2e-token-work-0000000001'))).toEqual({ ok: true })
   // asking for the lists refreshes Studio's answer while the menu stays open; the answer draws the new entry in the menu on screen
   await b.page.evaluate(() => window.ct.listDeviceChoices())
   await expect(menu.locator('.menu-item', { hasText: 'Claude Code — Work' })).toBeVisible(SLOW)
+  // drawn again in place: the menu does not pop in again
+  expect(await menu.evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
   const after = await menu.boundingBox()
   expect(after!.x).toBe(before!.x)
   expect(after!.y).toBe(before!.y)
@@ -311,16 +315,16 @@ test("a remote Claude tab's Continue as lists its device's accounts; its status 
   // Studio gets an extra account: the tab's device names its main account
   expect(await a.page.evaluate(() => window.ct.addAccount('Work', 'e2e-token-work-0000000001'))).toEqual({ ok: true })
   await expect.poll(async () => ((await b.page.evaluate(() => window.ct.listDeviceChoices())).devices.find((d) => d.name === 'Studio')?.value?.accounts ?? []).map((x) => x.name), SLOW).toContain('Work')
-  await expect(b.page.locator('#statusbar .status-account')).toHaveText('Main account', SLOW)
+  await expect(b.page.locator('#statusbar .status-account .status-text')).toHaveText('Main account', SLOW)
   // the title leaves the main account out, as the device's own title does, even while its device has extra accounts
   await expect(b.page).not.toHaveTitle(/Main account/)
   // Continue as Work switches the tab on Studio, and both windows then name Work
   await b.page.locator(`.tab.remote[data-tab-id="${id}"]`).click({ button: 'right' })
   await b.page.locator('.menu-item', { hasText: 'Continue as Work' }).click(SLOW)
-  await expect(b.page.locator('#statusbar .status-account')).toHaveText('Work', SLOW)
+  await expect(b.page.locator('#statusbar .status-account .status-text')).toHaveText('Work', SLOW)
   await expect(b.page).toHaveTitle(/ — Work — ClaudeTerm$/)
   await a.page.evaluate((x) => window.ct.activateTab(x), id)
-  await expect(a.page.locator('#statusbar .status-account')).toHaveText('Work', SLOW)
+  await expect(a.page.locator('#statusbar .status-account .status-text')).toHaveText('Work', SLOW)
 })
 
 test("a local tab's account menu asks no device for its lists; a remote tab's account menu asks its device", async () => {
@@ -330,7 +334,7 @@ test("a local tab's account menu asks no device for its lists; a remote tab's ac
   await expect(b.page.locator(`.tab.remote[data-tab-id="${id}"]`)).toBeVisible(SLOW)
   expect(await a.page.evaluate(() => window.ct.addAccount('Work', 'e2e-token-work-0000000001'))).toEqual({ ok: true })
   await a.page.evaluate((x) => window.ct.activateTab(x), id)
-  await expect(a.page.locator('#statusbar .status-account')).toHaveText('Main account', SLOW)
+  await expect(a.page.locator('#statusbar .status-account .status-text')).toHaveText('Main account', SLOW)
   // this machine's own accounts need no answer from another device
   const asksOnA = await listAsks(a)
   await a.page.locator('#statusbar .status-account').click()
@@ -340,7 +344,7 @@ test("a local tab's account menu asks no device for its lists; a remote tab's ac
   await b.page.evaluate((x) => window.ct.activateTab(x), id)
   await expect.poll(() => b.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(id)
   await expect.poll(async () => ((await b.page.evaluate(() => window.ct.listDeviceChoices())).devices.find((d) => d.name === 'Studio')?.value?.accounts ?? []).map((x) => x.name), SLOW).toContain('Work')
-  await expect(b.page.locator('#statusbar .status-account')).toHaveText('Main account', SLOW)
+  await expect(b.page.locator('#statusbar .status-account .status-text')).toHaveText('Main account', SLOW)
   const asksOnB = await listAsks(b)
   await b.page.locator('#statusbar .status-account').click()
   await expect(b.page.locator('.menu-item', { hasText: 'Continue as Work' })).toBeVisible(SLOW)
@@ -515,7 +519,7 @@ test("an image card of A's Claude tab shows on B, served from A; B copies it and
   expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'show_image', tabId: a.firstTab, path: file, caption: null })).toEqual({ ok: true })
 
   // the badge of the tab on B counts the unseen card before B opens the tab
-  await expect(b.page.locator(`.tab.remote[data-tab-id="${a.firstTab}"] .tab-images`)).toHaveText('🖼1', SLOW)
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${a.firstTab}"] .tab-images`)).toHaveText('1', SLOW)
   await b.page.evaluate((id) => window.ct.activateTab(id), a.firstTab)
   await expect.poll(() => b.page.evaluate(() => (document.querySelector('#image-panel img') as HTMLImageElement | null)?.naturalWidth ?? 0), SLOW).toBe(1)
   // a new image opens the panel by itself; Media is opened by its key only when it is still closed
@@ -1492,13 +1496,14 @@ test("a status change on A shows on B after B attached, background tasks include
 
   const bar = b.page.locator('#statusbar')
   expect(await sendPipeMessage(a.pipeName, statusOf(claude, 41.2))).toEqual({ ok: true })
-  await expect(bar.locator('.status-model')).toHaveText('Opus 5.5 · xhigh', SLOW)
+  await expect(bar.locator('.status-model .status-text')).toHaveText('Opus 5.5', SLOW)
+  await expect(bar.locator('.status-model .status-pill')).toHaveText('xhigh', SLOW)
   // a change after B has the tab's status: it comes as a live push
   expect(await sendPipeMessage(a.pipeName, statusOf(claude, 45))).toEqual({ ok: true })
-  await expect(bar.locator('.status-context')).toHaveText('ctx 45% · 82k/200k', SLOW)
+  await expect(bar.locator('.status-context .status-text')).toHaveText('ctx 45% · 82k/200k', SLOW)
   const tasks = [{ id: 'b1', type: 'shell', description: 'Run the e2e suite', command: 'npx playwright test' }]
   expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: STATUS_SID, reason: 'done', background: true, tasks })).toEqual({ ok: true })
-  await expect(bar.locator('.status-background')).toHaveText('1 in background: Run the e2e suite', SLOW)
+  await expect(bar.locator('.status-background .status-text')).toHaveText('1 in background: Run the e2e suite', SLOW)
 })
 
 test("a Changes view of a remote tab has no expand buttons; A's own view of the same file has them", async () => {
@@ -1987,7 +1992,7 @@ test("Change folder on another device empties the card that device shows for A's
   writeFileSync(file, PNG_1x1)
   expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'show_image', tabId: a.firstTab, path: file, caption: null })).toEqual({ ok: true })
 
-  await expect(b.page.locator(`.tab.remote[data-tab-id="${a.firstTab}"] .tab-images`)).toHaveText('🖼1', SLOW)
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${a.firstTab}"] .tab-images`)).toHaveText('1', SLOW)
   await b.page.evaluate((id) => window.ct.activateTab(id), a.firstTab)
   if (await b.page.locator('#image-panel').evaluate((el) => el.classList.contains('collapsed'))) await b.page.keyboard.press(KEYS.images)
   const card = b.page.locator('#image-panel .card')
@@ -2001,14 +2006,15 @@ test("Change folder on another device empties the card that device shows for A's
     window.ct.setNoteText(id, 'Goal: payments', 0)
     window.ct.setNoteView(id, true, 'card', 0)
   }, a.firstTab)
-  await expect(b.page.locator('#statusbar .status-model')).toHaveText('Opus 5.5 · xhigh', SLOW)
+  await expect(b.page.locator('#statusbar .status-model .status-text')).toHaveText('Opus 5.5', SLOW)
+  await expect(b.page.locator('#statusbar .status-model .status-pill')).toHaveText('xhigh', SLOW)
   await expect(b.page.locator('#note .note-text')).toHaveValue('Goal: payments', SLOW)
 
   expect(await b.page.evaluate(([id, dir]) => window.ct.changeFolder(id, dir), [a.firstTab, other] as [string, string])).toEqual({ ok: true })
   await expect(card).toHaveCount(0, SLOW)
   // the status of the old conversation is gone on B, and the note B shows for the tab opens empty
   await expect(b.page.locator('#statusbar .status-model')).toBeHidden(SLOW)
-  await b.page.locator('#tabbar .tab-note-toggle').click()
+  await b.page.locator('#sheet-header .tab-note-toggle').click()
   await expect(b.page.locator('#note .note-text')).toHaveValue('', SLOW)
 })
 
@@ -2148,7 +2154,7 @@ test('B typing into A keeps A awake; unticking the setting on A lets it sleep', 
   // before the pairing this device is in no group: the checkbox is not offered
   await a.page.locator('.terminal-host:visible .xterm').click()
   const [settings] = await Promise.all([a.app.waitForEvent('window'), a.page.keyboard.press(KEYS.settings)])
-  await settings.waitForSelector('#settings .settings-heading')
+  await settings.waitForSelector('#settings .section-title')
   const keep = settings.getByRole('checkbox', { name: 'Keep this computer awake while another device uses it' })
   await expect(keep).toBeHidden()
 
@@ -2254,7 +2260,7 @@ test("a connected device whose tabs are not listed yet shows no count, and a sec
   const { a, b } = await startApps()
   await a.page.locator('.terminal-host:visible .xterm').click()
   const [settings] = await Promise.all([a.app.waitForEvent('window'), a.page.keyboard.press(KEYS.settings)])
-  await settings.waitForSelector('#settings .settings-heading')
+  await settings.waitForSelector('#settings .section-title')
   // a device that is connected before its tab list has come is not counted as having no tabs: the text is never 'No tabs open'
   await settings.evaluate(() => {
     document.body.dataset.noTabs = 'never'
@@ -2285,7 +2291,7 @@ test("B's Settings shows A's tab count again once A's link comes back", async ()
   const { a, b } = await pairedApps()
   await b.page.locator('.terminal-host:visible .xterm').click()
   const [settings] = await Promise.all([b.app.waitForEvent('window'), b.page.keyboard.press(KEYS.settings)])
-  await settings.waitForSelector('#settings .settings-heading')
+  await settings.waitForSelector('#settings .section-title')
   await expect(settings.locator('#devices')).toContainText(REMOTE_COPY.tabCount(1), SLOW)
   // A goes: its count goes with its link; when it comes back its first list shows the count again
   await a.app.close()
@@ -2307,7 +2313,7 @@ test("no devices view reaches B's window once its Settings window has closed, ev
   const views = () => b.page.evaluate(() => Number(document.body.dataset.views))
   await b.page.locator('.terminal-host:visible .xterm').click()
   const [settings] = await Promise.all([b.app.waitForEvent('window'), b.page.keyboard.press(KEYS.settings)])
-  await settings.waitForSelector('#settings .settings-heading')
+  await settings.waitForSelector('#settings .section-title')
   await new Promise((resolve) => setTimeout(resolve, 300))
   const listed = (await tabIdsOf(b)).length
   // two tabs opened on A without waiting for each: the first one B lists starts a coalesced view that is still pending
@@ -2389,7 +2395,8 @@ test('open_device_settings brings a Settings window that is open to the Devices 
   const top = (): Promise<number> => win.locator('#devices').evaluate((e) => e.getBoundingClientRect().top)
   // the page is built (its tab count is listed); the person then scrolls the window back to its top, where the Devices section is below the fold
   await expect(win.locator('#devices')).toContainText(REMOTE_COPY.tabCount(1), SLOW)
-  await win.evaluate(() => window.scrollTo(0, 0))
+  // the page scrolls inside #settings, below the bar
+  await win.evaluate(() => { document.getElementById('settings')!.scrollTop = 0 })
   await expect.poll(top, SLOW).toBeGreaterThan(40)
   expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'open_device_settings' })).toEqual({ ok: true })
   await expect.poll(top, SLOW).toBeLessThan(40)
@@ -2443,13 +2450,13 @@ test("a task list Claude keeps on A shows in B's status bar; Clear on B removes 
   await b.page.evaluate((id) => window.ct.activateTab(id), claude)
   await expect.poll(() => b.page.evaluate(() => window.__ct!.activeTabId()), SLOW).toBe(claude)
   const seg = b.page.locator('#statusbar .status-plan')
-  await expect(seg).toHaveText('1/3 · Write the changelog', SLOW)
+  await expect(seg.locator('.status-text')).toHaveText('1/3 · Write the changelog', SLOW)
   await expect(seg).toHaveAttribute('title', 'Release prep — 1 of 3 done. Click for the task list')
 
   // a list sent while B has the tab shows on B too
   const SECOND: TaskList = { title: 'Release prep', tasks: [...RELEASE.tasks.slice(0, 2).map((t) => ({ ...t, status: 'completed' as const })), { title: 'Publish the installers', status: 'in_progress' }] }
   expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'task_list', tabId: claude, list: SECOND })).toEqual({ ok: true, info: 'Task list updated: 2 of 3 done.' })
-  await expect(seg).toHaveText('2/3 · Publish the installers', SLOW)
+  await expect(seg.locator('.status-text')).toHaveText('2/3 · Publish the installers', SLOW)
   await expect(seg).toHaveAttribute('title', 'Release prep — 2 of 3 done. Click for the task list')
   await seg.click()
   const box = b.page.locator('#plan-list')
