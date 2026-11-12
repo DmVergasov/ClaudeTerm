@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { IPC } from '../../src/shared/ipc'
 import type { ChatSnapshot } from '../../src/shared/chat'
-import { launchChatTab } from './chat-helpers'
+import { chatSettled, launchChatTab } from './chat-helpers'
 import { claudeTempRoot, sessionTempDir } from '../../src/main/image-watcher'
 import { gitRepo, KEYS, keepingClipboard, launchApp, openTabInFront, PNG_1x1 } from './helpers'
 
@@ -631,7 +631,7 @@ test('subagents of a Task call are listed with their state', async () => {
   }
 })
 
-test('running agents show in a dock above the composer, outside the conversation, and no card is in the tool step', async () => {
+test('running agents show in a dock at the end of the conversation, before the working line, and no card is in the tool step', async () => {
   const { app, page } = await launchChatTab({
     turns: {
       team: [{
@@ -652,9 +652,12 @@ test('running agents show in a dock above the composer, outside the conversation
     await expect(dock).toBeVisible()
     await expect(dock.locator('.chat-agent')).toHaveCount(2)
     await expect(page.locator('.chat-steps .chat-agents')).toHaveCount(0)
-    // the dock is not among the conversation's items, and ends above the composer's field
-    await expect(page.locator('.chat-host:visible .chat-column .chat-agents-dock')).toHaveCount(0)
+    // the dock is the conversation's last element: after its last item, right before the working line, above the composer's field
+    const order = await page.locator('.chat-host:visible .chat-column').evaluate((col) => [...col.children].map((n) => n.classList.contains('chat-agents-dock') ? 'dock' : n.classList.contains('chat-working') ? 'working' : 'item'))
+    expect(order.slice(-2)).toEqual(['dock', 'working'])
     const box = await dock.boundingBox()
+    const working = await page.locator('.chat-host:visible .chat-working').boundingBox()
+    expect(working!.y).toBeGreaterThanOrEqual(box!.y + box!.height - 0.5)
     const field = await page.locator('.chat-host:visible .chat-input').boundingBox()
     expect(box!.y + box!.height).toBeLessThanOrEqual(field!.y)
   } finally {
@@ -662,7 +665,7 @@ test('running agents show in a dock above the composer, outside the conversation
   }
 })
 
-test('the dock is as wide as the composer, and lines up with it in a wide window', async () => {
+test('the dock\'s card lines up with the conversation\'s messages and the working line in a wide window', async () => {
   const { app, page } = await launchChatTab({
     turns: {
       team: [{
@@ -683,22 +686,29 @@ test('the dock is as wide as the composer, and lines up with it in a wide window
     const card = page.locator('.chat-host:visible .chat-agents-dock .chat-agents')
     await expect(card).toBeVisible()
     const box = await card.boundingBox()
-    const field = await page.locator('.chat-host:visible .chat-field').boundingBox()
-    expect(Math.abs(box!.x - field!.x)).toBeLessThanOrEqual(1)
-    expect(Math.abs(box!.x + box!.width - (field!.x + field!.width))).toBeLessThanOrEqual(1)
+    // the column's content box: where its messages and the working line start and end
+    const content = await page.locator('.chat-host:visible .chat-column').evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      const s = getComputedStyle(el)
+      return { left: r.left + parseFloat(s.paddingLeft), right: r.right - parseFloat(s.paddingRight) }
+    })
+    const working = await page.locator('.chat-host:visible .chat-working').boundingBox()
+    expect(Math.abs(box!.x - content.left)).toBeLessThanOrEqual(1)
+    expect(Math.abs(box!.x + box!.width - content.right)).toBeLessThanOrEqual(1)
+    expect(Math.abs(box!.x - working!.x)).toBeLessThanOrEqual(1)
   } finally {
     await app.close()
   }
 })
 
-test('the dock keeps its place while the column scrolls and while items arrive', async () => {
+test('the dock moves with the conversation: new items go above it and the view keeps it in sight at the bottom, scrolled to the top it is out of view', async () => {
   const { app, page, tabId, pipeName } = await launchChatTab({
     turns: {
       team: [{
         task: {
           description: 'Check the totals',
           result: 'Checked.',
-          agents: [{ type: 'general-purpose', description: 'Check the totals', ms: 9000 }]
+          agents: [{ type: 'general-purpose', description: 'Check the totals', ms: 20000 }]
         }
       }, { text: 'Done.' }]
     }
@@ -706,16 +716,27 @@ test('the dock keeps its place while the column scrolls and while items arrive',
   try {
     await send(page, 'team')
     const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    const scroll = page.locator('.chat-host:visible .chat-scroll')
     await expect(dock).toBeVisible()
-    // a long conversation: the column scrolls
+    // a long conversation: the column scrolls, the view stays at its end, and the dock is in sight after the last item
     await sendDividers(pipeName, tabId, 60)
-    const top = async (): Promise<number> => (await dock.boundingBox())!.y
-    const before = await top()
-    await page.locator('.chat-host:visible .chat-scroll').evaluate((el) => { el.scrollTop = 0 })
-    expect(Math.abs((await top()) - before)).toBeLessThanOrEqual(1)
-    // new items below the step, while the agent runs
+    const place = (): Promise<{ dockTop: number, dockBottom: number, lastBottom: number, frameTop: number, frameBottom: number }> => scroll.evaluate((el) => {
+      const d = el.querySelector('.chat-agents-dock')!.getBoundingClientRect()
+      const items = [...el.querySelectorAll('.chat-column > [data-item]')].map((n) => n.getBoundingClientRect())
+      const f = el.getBoundingClientRect()
+      return { dockTop: d.top, dockBottom: d.bottom, lastBottom: Math.max(...items.map((r) => r.bottom)), frameTop: f.top, frameBottom: f.bottom }
+    })
+    await expect.poll(async () => { const p = await place(); return p.dockBottom <= p.frameBottom + 1 && p.dockTop >= p.lastBottom - 0.5 }).toBe(true)
+    // scrolled to the top: the dock is down at the end of the conversation, out of view
+    await scroll.evaluate((el) => { el.scrollTop = 0 })
+    await expect.poll(async () => { const p = await place(); return p.dockTop >= p.frameBottom }).toBe(true)
+    // back at the bottom, new items arrive while the agent runs: they go above the dock, and the dock stays in sight. The
+    // view has taken the scroll (its scroll event ran) before they come, as it has when a person scrolls down
+    await scroll.evaluate((el) => { el.scrollTop = el.scrollHeight })
+    await expect.poll(async () => { const p = await place(); return p.dockBottom <= p.frameBottom + 1 }).toBe(true)
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
     await sendDividers(pipeName, tabId, 10)
-    expect(Math.abs((await top()) - before)).toBeLessThanOrEqual(1)
+    await expect.poll(async () => { const p = await place(); return p.dockBottom <= p.frameBottom + 1 && p.dockTop >= p.lastBottom - 0.5 }).toBe(true)
   } finally {
     await app.close()
   }
@@ -878,38 +899,70 @@ test('a background agent that outlives its turn stays in the dock while the next
   }
 })
 
-test('the agents dock is the conversation\'s last element: it never covers the last line of an answer, and it stays at the bottom when scrolled up', async () => {
-  const paragraphs = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1} of the answer.`)
+test('the agents dock is the conversation\'s last message: no line is ever under it, streaming or scrolled up, and the working line follows it', async () => {
+  const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}: the answer keeps coming while the agents work.`)
   const { app, page, tabId } = await launchChatTab({
     turns: {
-      long: [{
+      start: [{
         task: {
           description: 'Background audit',
           result: 'unused',
           background: true,
-          agents: [{ type: 'general-purpose', description: 'Background audit', ms: 60000 }]
+          agents: [
+            { type: 'general-purpose', description: 'Background audit', ms: 60000 },
+            { type: 'Explore', description: 'Search the sales folder', ms: 60000 }
+          ]
         }
-      }, { text: [...paragraphs, 'The last line of the answer.'].join('\n\n') }]
+      }, { text: 'Started two agents.' }],
+      more: [{ text: paragraphs.join('\n\n'), rate: 60 }]
     }
   })
   try {
-    await send(page, 'long')
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1100, 760))
     const dock = page.locator('.chat-host:visible .chat-agents-dock')
     const scroll = page.locator('.chat-host:visible .chat-scroll')
+    await send(page, 'start')
+    await expect(dock).toHaveClass(/shown/)
+    await waitForTurn(page, tabId, 'idle')
+    // where the dock is against the conversation: the items it lies over, the last item's bottom, the working line's top
+    const measure = (): Promise<{ under: number, lastBottom: number, dockTop: number, dockBottom: number, workingTop: number | null }> => scroll.evaluate((el) => {
+      const d = el.querySelector('.chat-agents-dock')!.getBoundingClientRect()
+      const items = [...el.querySelectorAll('.chat-column > [data-item]')].map((n) => n.getBoundingClientRect()).filter((r) => r.height > 0)
+      const working = el.querySelector<HTMLElement>('.chat-working')!
+      return {
+        under: items.filter((r) => r.bottom > d.top + 0.5 && r.top < d.bottom - 0.5).length,
+        lastBottom: Math.max(...items.map((r) => r.bottom)),
+        dockTop: d.top,
+        dockBottom: d.bottom,
+        workingTop: working.hidden ? null : working.getBoundingClientRect().top
+      }
+    })
+
+    // the answer streams in at the bottom while the agents run: the dock comes after its last line, the working line after the dock
+    await send(page, 'more')
+    await expect(scroll.getByText('Paragraph 12:')).toBeVisible({ timeout: 15_000 })
+    const streaming = await measure()
+    expect.soft(streaming.under).toBe(0)
+    expect.soft(streaming.dockTop).toBeGreaterThanOrEqual(streaming.lastBottom - 0.5)
+    expect.soft(streaming.workingTop).not.toBeNull()
+    expect.soft(streaming.workingTop!).toBeGreaterThanOrEqual(streaming.dockBottom - 0.5)
+    // and the dock stays in view while the answer grows: the view follows the end of the conversation
+    const frame = (await scroll.boundingBox())!
+    expect.soft(streaming.dockBottom).toBeLessThanOrEqual(frame.y + frame.height + 1)
+
+    // the answer is done, the agents still run: at the bottom the last line is above the dock
     await waitForTurn(page, tabId, 'idle')
     await expect(dock).toHaveClass(/shown/)
-    // at the bottom: the answer's last line is fully above the dock
-    const last = scroll.getByText('The last line of the answer.')
-    await expect(last).toBeVisible()
-    const lastBox = (await last.boundingBox())!
-    const dockBox = (await dock.boundingBox())!
-    expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(dockBox.y + 1)
-    // scrolled up to the top: the dock stays at the bottom of the visible column
-    await scroll.evaluate((el) => { el.scrollTop = 0 })
-    const frame = (await scroll.boundingBox())!
-    const docked = (await dock.boundingBox())!
-    expect(docked.y).toBeGreaterThanOrEqual(frame.y - 1)
-    expect(docked.y + docked.height).toBeLessThanOrEqual(frame.y + frame.height + 1)
+    const done = await measure()
+    expect.soft(done.under).toBe(0)
+    expect.soft(done.dockTop).toBeGreaterThanOrEqual(done.lastBottom - 0.5)
+
+    // scrolled up a little: the dock stays at the end of the conversation, so no line of the answer is under it
+    await scroll.evaluate((el) => { el.scrollTop -= 300 })
+    await page.waitForTimeout(300)
+    const up = await measure()
+    expect.soft(up.under).toBe(0)
+    expect.soft(up.dockTop).toBeGreaterThanOrEqual(up.lastBottom - 0.5)
   } finally {
     await app.close()
   }
@@ -1058,8 +1111,10 @@ async function waitForTurn(page: Page, tabId: string, turn: 'idle' | 'working' |
 
 const atBottom = (scroll: Locator): Promise<boolean> => scroll.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 2)
 
-/** the number of nodes the chat column holds, the working line included */
+/** the number of nodes the chat column holds, the agents dock and the working line included */
 const columnNodes = (page: Page): Promise<number> => page.locator('.chat-column > *').count()
+/** the most the column holds: the window's 120 items, the agents dock and the working line */
+const MOST_NODES = 122
 
 /** closes the window, which keeps the tabs in the session snapshot of the data folder */
 async function closeWindow(app: ElectronApplication): Promise<void> {
@@ -1228,7 +1283,7 @@ test('a long conversation shows its end and holds a small DOM', async () => {
   try {
     await expect(page.locator('.chat-text', { hasText: 'Hi there' })).toHaveCount(1)
     await expect(page.locator('.chat-text', { hasText: 'Hi there' })).toBeInViewport()
-    expect(await columnNodes(page)).toBeLessThanOrEqual(121)
+    expect(await columnNodes(page)).toBeLessThanOrEqual(MOST_NODES)
   } finally {
     await app.close()
   }
@@ -1240,7 +1295,7 @@ test('scrolling up brings older items', async () => {
     await expect(page.locator('.chat-user', { hasText: /^pair 0$/ })).toHaveCount(0)
     await walkUp(page, { selector: '.chat-user', text: 'pair 0' })
     await expect(page.locator('.chat-user', { hasText: /^pair 0$/ })).toHaveCount(1)
-    expect(await columnNodes(page)).toBeLessThanOrEqual(121)
+    expect(await columnNodes(page)).toBeLessThanOrEqual(MOST_NODES)
   } finally {
     await app.close()
   }
@@ -1355,7 +1410,7 @@ test('the pill click with more than 120 items held out ends at the newest item',
       return items[items.length - 1]?.className ?? ''
     })
     expect(last).toContain('chat-divider')
-    expect(await columnNodes(page)).toBeLessThanOrEqual(121)
+    expect(await columnNodes(page)).toBeLessThanOrEqual(MOST_NODES)
   } finally {
     await app.close()
   }
@@ -1533,8 +1588,10 @@ test('a chat keeps its place, its older pages and its open steps when you switch
     }, { timeout: 60_000 }).toBe(1)
     await page.locator('.chat-steps.folded .chat-step-head').click()
     await expect(page.locator('.chat-steps')).toHaveClass(/open/)
-    // a little up from the bottom: the reader is in the middle of the chat, with items above them
+    // a little up from the bottom: the reader is in the middle of the chat, with items above them, once the view has
+    // taken the scroll (a page of the window may still come in and be kept in place)
     await page.locator(SCROLL).evaluate((el) => { el.scrollTop -= 1500 })
+    await chatSettled(page)
     const before = await readingPlace(page)
     expect(before.id).not.toBeNull()
     await openTabInFront(page, 'shell', work)

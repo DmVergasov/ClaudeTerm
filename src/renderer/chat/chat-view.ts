@@ -92,7 +92,7 @@ export class ChatView {
   private readonly quote: QuoteButton
   private readonly cb: ItemCallbacks
   private items: ChatItem[] = []
-  /** the dock above the composer: the subagents of the Agent calls that run, outside the scrolling column */
+  /** the dock: the subagents of the Agent calls that run, the column's last message, right before the working line */
   private readonly dock = document.createElement('div')
   /** the dock is open: a running agent opened it, and it stays open until its linger ends */
   private dockOpen = false
@@ -168,7 +168,10 @@ export class ChatView {
     this.activitySweep.className = 'chat-activity-sweep'
     this.activityBar.append(this.activitySweep)
     this.working.append(this.glyph, this.verb, this.elapsedSep, this.elapsed, this.hintSep, this.hint, this.activityBar)
-    this.column.append(this.working)
+    // the dock is the conversation's last message, in the column's flow: it takes its own room after the items, so no line is
+    // ever under it, and it moves with the conversation when the column scrolls
+    this.dock.className = 'chat-agents-dock'
+    this.column.append(this.dock, this.working)
     this.scroll.append(this.column)
     this.scroll.addEventListener('scroll', () => this.onScroll())
     this.resize.observe(this.scroll)
@@ -232,9 +235,6 @@ export class ChatView {
       this.dropFiles(Array.from(e.dataTransfer?.files ?? []))
     })
     this.body.append(this.scroll, this.fade, this.pill)
-    // the dock is the conversation's last element, after the column: it takes its own room, and sticks to the bottom of the scroll area
-    this.dock.className = 'chat-agents-dock'
-    this.scroll.append(this.dock)
     this.resize.observe(this.dock)
     this.element.append(this.body, this.composer.element)
     o.container.append(this.element)
@@ -694,7 +694,7 @@ export class ChatView {
     const wanted = new Set<string>()
     for (let i = this.from; i < this.to; i++) wanted.add(this.items[i].id)
     for (const id of [...this.drawn.keys()]) if (!wanted.has(id)) this.unmount(id)
-    let before: HTMLElement = this.working
+    let before: HTMLElement = this.dock
     for (let i = this.to - 1; i >= this.from; i--) {
       const item = this.items[i]
       let node = this.drawn.get(item.id)

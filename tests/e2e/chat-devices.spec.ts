@@ -315,7 +315,8 @@ test('a member attaching a 5 000-item conversation shows its end and pages older
   await frontOnMember(b, a.firstTab)
   await expect(b.page.locator(COLUMN)).toContainText('Hi there', SLOW)
   await expect(b.page.locator('.chat-host:visible .chat-text', { hasText: 'Hi there' })).toBeInViewport()
-  expect(await b.page.locator(`${COLUMN} > *`).count()).toBeLessThanOrEqual(121)
+  // the window's 120 items, the agents dock and the working line
+  expect(await b.page.locator(`${COLUMN} > *`).count()).toBeLessThanOrEqual(122)
   const mirror = (await snapshotOf(b, a.firstTab))!
   expect(mirror.hasOlder).toBe(true)
   expect(mirror.items.length).toBeLessThan(5000)

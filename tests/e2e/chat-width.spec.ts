@@ -42,7 +42,7 @@ test('turned on through the settings, the conversation and the message box take 
   }
 })
 
-test('full width takes the agents above the message box along: their card lines up with the box', async () => {
+test('full width takes the agents dock at the end of the conversation along: its card lines up with the message box', async () => {
   const { app, page } = await launchChatTab({
     turns: { team: [{ task: { description: 'Check the totals', result: 'Checked.', agents: [{ type: 'Explore', description: 'Search the sales folder', ms: 20000 }] } }, { text: 'Done.' }] }
   })

@@ -892,34 +892,32 @@
   overflow-wrap: anywhere;
 }
 
-/* the dock: the subagents that run, the conversation's last element. It slides open and shut (height and opacity, about 150 ms);
-   shut, it takes no room and no focus. It sticks to the bottom of the scroll area when the column is scrolled up, on the chat's
-   own background, so the text under it is hidden */
-/* the dock has the composer's side padding and measure, so its card lines up with the composer's field */
+/* the dock: the subagents that run, the column's last message, before the working line. It lies in the column's flow, so no
+   line of the conversation is ever under it, and it moves with the conversation when the column scrolls. It slides open and
+   shut (height and opacity, about 150 ms); shut, it takes no room (its negative margin takes back the column's gap) and no focus */
 .chat-agents-dock {
   box-sizing: border-box;
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  background: var(--bg);
-  padding: 0 36px;
+  flex: none;
   max-height: 0;
+  margin-top: -16px;
   overflow: hidden;
+  overflow-anchor: none;
   opacity: 0;
   visibility: hidden;
-  transition: max-height 150ms ease, opacity 150ms ease, visibility 150ms ease;
+  transition: max-height 150ms ease, margin-top 150ms ease, opacity 150ms ease, visibility 150ms ease;
 }
 
 .chat-agents-dock.shown {
   max-height: 260px;
+  margin-top: 0;
   opacity: 1;
   visibility: visible;
 }
 
+/* the card has the measure of the conversation's messages */
 .chat-agents-dock .chat-agents {
   box-sizing: border-box;
-  max-width: 860px;
-  margin: 0 auto 8px;
+  margin: 0;
 }
 
 /* five rows at most, then the list scrolls inside the dock */
@@ -1911,20 +1909,9 @@
   max-width: none;
 }
 
-/* the agents above the message box keep its measure: the composer's gutter, and no reading column */
-.chat-host.chat-wide .chat-agents-dock {
-  padding-left: 24px;
-  padding-right: 24px;
-}
-
-.chat-host.chat-wide .chat-agents-dock .chat-agents {
-  max-width: none;
-}
-
 @media (max-width: 599px) {
   .chat-host.chat-wide .chat-column,
-  .chat-host.chat-wide .chat-composer,
-  .chat-host.chat-wide .chat-agents-dock {
+  .chat-host.chat-wide .chat-composer {
     padding-left: 16px;
     padding-right: 16px;
   }
