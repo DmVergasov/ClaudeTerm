@@ -33,8 +33,9 @@ test('a session message moves a chat tab to the new conversation', async () => {
 })
 
 test('an unknown context fill shows no context segment', async () => {
-  // every turn waits, so the turn is still running when the status bar is read
-  const { app, page, tabId } = await launchChatTab({ turns: {}, fallback: [{ wait: 3000 }] })
+  // every turn waits, so the turn is still running when the status bar is read; the fill read as the turn starts has no
+  // percentage and no counts
+  const { app, page, tabId } = await launchChatTab({ turns: {}, fallback: [{ wait: 3000 }], contextPct: null, contextTokens: null, contextMax: null })
   try {
     expect(await page.evaluate((id) => window.ct.chatSend(id, { text: 'wait', attachments: [] }), tabId)).toBeNull()
     await expect.poll(() => page.evaluate((id) => window.ct.chatSnapshot(id).then((s) => s?.state.turn ?? null), tabId)).toBe('working')

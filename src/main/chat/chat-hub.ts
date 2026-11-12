@@ -27,6 +27,8 @@ const CANCELLED = 'Cancelled'
 /** exit codes of a command that cannot run: 126 and 127 (POSIX), 9009 (cmd.exe "not recognized") */
 const CANNOT_RUN = new Set([126, 127, 9009])
 const REASON_CAP = 500
+/** while a turn runs, its context fill is read again as Claude answers, at most this often */
+const CONTEXT_EVERY_MS = 10_000
 /** the modes every chat offers; Auto joins them once Claude Code reports it (the account may have it) */
 const MODES: ChatPermissionMode[] = ['default', 'acceptEdits', 'plan']
 /** a command name part that is a file or folder name of its own: a name from Claude Code is never a path part beyond that */
@@ -135,6 +137,8 @@ interface Live {
   remoteFrom: number
   remoteTimer: ReturnType<typeof setTimeout> | null
   cards: Map<string, PendingCard>
+  /** when the context fill was last asked for (the hub's clock); null before the first ask */
+  contextAt: number | null
 }
 
 /**
@@ -198,7 +202,7 @@ export class ChatHub {
       tabId, req, engine: null, waiting: [], ended: false, ready: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
       kept: null, restarted: restart,
       queued: new Map(), stopping: false, exitDue: false, working: false,
-      rev: this.revs.get(tabId) ?? 0, batch: [], batchFrom: 0, timer: null, remoteBatch: [], remoteFrom: 0, remoteTimer: null, cards: new Map(),
+      rev: this.revs.get(tabId) ?? 0, batch: [], batchFrom: 0, timer: null, remoteBatch: [], remoteFrom: 0, remoteTimer: null, cards: new Map(), contextAt: null,
       model: new ChatModel({ now: () => this.d.now(), newId: () => randomUUID(), folder: () => req.tab.cwd }),
     }
     this.tabs.set(tabId, live)
@@ -616,17 +620,23 @@ export class ChatHub {
         this.d.recordSession(sessionId)
       }
       this.report(live)
+      // a turn starts: its fill shows from the start, not only once the turn has ended
+      this.readContext(live)
     } else if (msg.type === 'rate_limit_event') {
       this.report(live)
     } else if (msg.type === 'result') {
+      this.readEffort(live)
       this.readContext(live)
+    } else if (msg.type === 'assistant' && (msg.parent_tool_use_id === undefined || msg.parent_tool_use_id === null)) {
+      // the main conversation grows while the turn runs; a subagent's messages are in its own context, not this one
+      if (live.contextAt === null || this.d.now() - live.contextAt >= CONTEXT_EVERY_MS) this.readContext(live)
     }
   }
 
   private readContext(live: Live): void {
     const engine = live.engine
     if (!engine) return
-    this.readEffort(live)
+    live.contextAt = this.d.now()
     engine.context().then(
       c => {
         if (live.ended || this.tabs.get(live.tabId) !== live) return

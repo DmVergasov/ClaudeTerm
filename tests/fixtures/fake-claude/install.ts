@@ -56,8 +56,8 @@ export interface FakeScript {
   beforeInit?: FakeStep[]
   turns: Record<string, FakeStep[]>
   fallback?: FakeStep[]
-  /** the percentage the get_context_usage answer gives (the context fill the chat reads after each turn); the recorded one when not given */
-  contextPct?: number
+  /** the percentage the get_context_usage answer gives (the context fill the chat reads); the recorded one when not given, none when null */
+  contextPct?: number | null
   /** the token counts of the get_context_usage answer (totalTokens, maxTokens); the recorded ones when not given */
   contextTokens?: number | null
   contextMax?: number | null // null: the answer carries no count of this kind

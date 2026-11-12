@@ -87,7 +87,11 @@ class FakeEngine implements ChatEngine {
     return []
   }
 
+  /** the reads of the context fill so far */
+  contextReads = 0
+
   async context(): Promise<{ pct: number | null; used: number | null; size: number | null }> {
+    this.contextReads++
     return { pct: this.pct, used: null, size: null }
   }
 
@@ -167,7 +171,7 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history'>> & { att
     now: () => clock.t,
     log: { warn: m => calls.warn.push(m) },
   }
-  return { hub: new ChatHub(deps), engines, windows, remotes, watched, calls, env, cards, files, alive }
+  return { hub: new ChatHub(deps), engines, windows, remotes, watched, calls, env, cards, files, alive, clock }
 }
 
 /** an assistant message that reads one file: a Read of an image shows it in the chat */
@@ -780,6 +784,52 @@ describe('ChatHub', () => {
 
     expect(last(calls.status)).toEqual([TAB, expect.objectContaining({ contextPct: 37 })])
     expect(hub.snapshot(TAB)).not.toBeNull()
+  })
+
+  it('context is read when a turn starts, so a long turn shows it before its end', async () => {
+    const { hub, engines, calls } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].pct = 12
+    // the turn starts: its init comes, and no result for a long while
+    engines[0].h.message(init())
+    await settle()
+
+    expect(last(calls.status)).toEqual([TAB, expect.objectContaining({ contextPct: 12 })])
+  })
+
+  it('during a turn the context is read again as Claude answers, at most every 10 s; a subagent\'s message does not count; the result always reads it', async () => {
+    const { hub, engines, calls, clock } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    const engine = engines[0]
+    const answer = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] }, ...extra })
+    engine.h.message(init())
+    await settle()
+    expect(engine.contextReads).toBe(1)
+    // an answer soon after: the fill read at the start is recent enough
+    clock.t += 3_000
+    engine.h.message(answer())
+    await settle()
+    expect(engine.contextReads).toBe(1)
+    // 10 s on: the answer reads the fill again, and the tab shows the new one
+    clock.t += 7_000
+    engine.pct = 55
+    engine.h.message(answer())
+    await settle()
+    expect(engine.contextReads).toBe(2)
+    expect(last(calls.status)).toEqual([TAB, expect.objectContaining({ contextPct: 55 })])
+    // a subagent's message is not the main conversation's: its context is not the one the tab shows
+    clock.t += 20_000
+    engine.h.message(answer({ parent_tool_use_id: 'agent-1' }))
+    await settle()
+    expect(engine.contextReads).toBe(2)
+    // the turn ends: the result reads the fill, however recent the last read
+    engine.h.message(result())
+    await settle()
+    expect(engine.contextReads).toBe(3)
   })
 
   it('a queued ask settles Cancelled when the process exits before the history arrives', async () => {
