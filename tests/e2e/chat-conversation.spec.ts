@@ -1,7 +1,7 @@
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
@@ -727,9 +727,18 @@ test('the dock moves with the conversation: new items go above it and the view k
       return { dockTop: d.top, dockBottom: d.bottom, lastBottom: Math.max(...items.map((r) => r.bottom)), frameTop: f.top, frameBottom: f.bottom }
     })
     await expect.poll(async () => { const p = await place(); return p.dockBottom <= p.frameBottom + 1 && p.dockTop >= p.lastBottom - 0.5 }).toBe(true)
-    // scrolled to the top: the dock is down at the end of the conversation, out of view
-    await scroll.evaluate((el) => { el.scrollTop = 0 })
-    await expect.poll(async () => { const p = await place(); return p.dockTop >= p.frameBottom }).toBe(true)
+    // scrolled to the top: the dock is down at the end of the conversation, out of view. The view takes the scroll once its
+    // scroll event has run (a frame later, or never in a window the system does not draw), so the scroll is made again until
+    // it has; what the view shows otherwise is the value the poll reports
+    await expect.poll(async () => {
+      await scroll.evaluate(async (el) => {
+        el.scrollTop = 0
+        await new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); setTimeout(resolve, 50) })
+      })
+      const p = await place()
+      const top = await scroll.evaluate((el) => ({ scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }))
+      return p.dockTop >= p.frameBottom ? 'out of view' : JSON.stringify({ ...p, ...top })
+    }).toBe('out of view')
     // back at the bottom, new items arrive while the agent runs: they go above the dock, and the dock stays in sight. The
     // view has taken the scroll (its scroll event ran) before they come, as it has when a person scrolls down
     await scroll.evaluate((el) => { el.scrollTop = el.scrollHeight })
@@ -1795,8 +1804,9 @@ test('a hidden chat tab is not touched', async () => {
 })
 
 test('an image whose Media card was deleted shows no broken image', async () => {
-  // the session's scratchpad is the watched folder: the hook's session message starts the watch, as Claude Code's does
-  const temp = mkdtempSync(join(tmpdir(), 'ct-temp-'))
+  // the session's scratchpad is the watched folder: the hook's session message starts the watch, as Claude Code's does. Claude
+  // Code names it by its real path (on macOS the temp folder is under a link, /var to /private/var), and so does the file here
+  const temp = realpathSync(mkdtempSync(join(tmpdir(), 'ct-temp-')))
   const env: Record<string, string> = process.platform === 'win32' ? {} : { CLAUDE_CODE_TMPDIR: temp }
   const { app, page, pipeName, tabId, config } = await launchChatTab({ turns: { hello: [{ text: 'Hi there' }] } }, { env })
   try {
