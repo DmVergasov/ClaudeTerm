@@ -10,7 +10,7 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 - **A new look.** The Graphite theme, a title bar with your usage limits, tabs on a sheet, and restyled panels, dialogs and settings. The chat takes the colours of the terminal theme you choose, light themes included.
 - **A new settings window,** with a search box and a page for each part of the app.
 - **Quote Claude's words.** Select text in an answer and click **Quote**: it goes above the message box as a quote, up to five of them, and your message carries them.
-- **The agents Claude runs, above the message box.** A card lists them with their progress while they work, and stays at the bottom of the conversation when you scroll up. Agents that outlive their turn, and agents resumed with `SendMessage`, stay on it until they end.
+- **The agents Claude runs, at the end of the conversation.** A card lists them with their progress while they work, as the conversation's last message, above the "Working" line: it never covers Claude's text, and it stays in view while the answer comes in. Agents that outlive their turn, and agents resumed with `SendMessage`, stay on it until they end.
 - **Compaction and restarts show what happens.** "Compacting conversation" while it runs, then how many tokens were left; "Restarting Claude Code" and "Session restarted" when you restart a session, with the conversation kept on screen.
 - **Messages Claude Code puts in the conversation look like what they are.** The end of a background task, a message from another session or a scheduled prompt is a short row you can unfold, not a message bubble of yours full of tags.
 - **Settings → Claude Code → Chat:** **Full-width chat** lets the conversation and the message box use the whole width of the window; **Copy selected chat text** (on by default) copies what you select with the mouse, as a terminal does.
@@ -19,7 +19,9 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 
 - **The model button shows the effort** Claude works at, for example "Opus · xhigh".
 - **Claude's thinking is open from the start.** Click its "Thought for…" row to fold it; a block you fold stays folded.
-- **The status bar keeps the session in the middle:** the account on the left, the context, agents, background tasks and plan in the centre, the changed files on the right.
+- **The status bar keeps the session in the middle:** the account on the left, the context, agents, background tasks and plan in the centre, under the message box even while a side panel is open, the changed files on the right.
+- **A chat shows its context fill while Claude works,** from the start of the turn and refreshed as it goes, not only once the turn has ended.
+- **In a narrow window the tab's header buttons show their icons only,** so the tab's title stays readable; their names are in their tooltips.
 - **Side panels slide** in and out instead of jumping.
 - **`Ctrl+F` finds text in a chat** (as well as `Ctrl+Shift+F`).
 
