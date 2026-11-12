@@ -1224,6 +1224,16 @@ describe('TabManager resumeSession', () => {
     expect(tm.get(tab.id)).toMatchObject({ claudeSessionId: SID_B, fork: { of: null, from: null } })
   })
 
+  it('resumeSession of a fork on the session it already shows is a new conversation, not a restart over the old one', async () => {
+    const onTabNewConversation = vi.fn()
+    const { tm, ptys } = setup({ onTabNewConversation }, { exitOnKill: true })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, fork: { of: null, from: SID_B } })
+
+    expect(await tm.resumeSession(tab.id, SID_A)).toBe(true)
+    expect(onTabNewConversation).toHaveBeenCalledWith(tab.id)
+    expect(ptys).toHaveLength(2)
+  })
+
   it('resumeSession is refused while the tab works, and changes nothing', async () => {
     const { tm, ptys } = setup({}, { exitOnKill: true })
     const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })

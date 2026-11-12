@@ -1,6 +1,7 @@
 import type { ChatCard, ChatItem } from '../../shared/chat'
 import type { FindTarget } from '../search'
 import { chatMarkdownText } from './chat-markdown'
+import { splitQuotes } from './chat-quote'
 import { openForMatch } from './chat-steps'
 import type { ChatView } from './chat-view'
 
@@ -43,20 +44,33 @@ function cardText(card: ChatCard): string {
   }
 }
 
+/**
+ * The text a user bubble draws: each quote as its text, without the `> ` it is written with, then the typed text, then the names of
+ * the files that are not drawn as thumbnails. A bubble's picture with a Media card is a thumbnail, which shows no text.
+ */
+function bubbleText(item: Extract<ChatItem, { kind: 'user' }>, hasCard: (cardId: string | null) => boolean): string {
+  const { quotes, rest } = splitQuotes(item.text)
+  return [...quotes, rest, ...item.attachments.filter((a) => !(a.kind === 'image' && hasCard(a.cardId))).map((a) => a.name)].join('\n')
+}
+
 /** what an item shows as text when it is open: a step's tool names, subjects and outputs are text of the conversation, folded or not */
-function searchText(item: ChatItem): string {
+function searchText(item: ChatItem, hasCard: (cardId: string | null) => boolean): string {
   switch (item.kind) {
-    case 'user': return [item.text, ...item.attachments.map((a) => a.name)].join('\n')
+    case 'user': return bubbleText(item, hasCard)
     case 'text': return item.markdown
-    // a step's rows draw the names, subjects, details, errors and subagents, and a Bash well draws its output: nothing else is text of it
-    case 'tools': return item.calls.map((c) => [c.name, c.subject, c.detail, c.name === 'Bash' ? c.output : null, c.error, ...c.agents.map((a) => a.description)]
+    // a step's rows draw the names, subjects, details and errors, and a Bash well draws its output: nothing else is text of it, and
+    // the subagents are drawn in the dock above the composer, not in the step
+    case 'tools': return item.calls.map((c) => [c.name, c.subject, c.detail, c.name === 'Bash' ? c.output : null, c.error]
       .filter((s): s is string => typeof s === 'string' && s !== '').join('\n')).join('\n')
     case 'command': return `${item.command}\n${item.output}`
     case 'notice': return item.text
     case 'divider': return item.text
+    // a row shows its title; its folded text is text of the conversation only when it is unfolded, as a thinking block's
+    case 'event': return item.title
     case 'card': return item.answered ?? cardText(item.card)
-    // a thinking block shows its summary only when it is unfolded, and an image shows no text
-    case 'thinking': return ''
+    // a thinking block shows its summary when it is open, which is its start; a folded one draws no summary, and the search reads a drawn
+    // item first, so the summary is not found then. An image shows no text.
+    case 'thinking': return item.summary ?? ''
     case 'images': return ''
   }
 }
@@ -67,15 +81,15 @@ const foldedTexts = new WeakMap<ChatItem, string>()
 const foldedSources = new WeakMap<ChatItem, string>()
 
 /**
- * The text an item shows, as the search compares it. A text item is its Markdown as it renders; a user bubble's picture with a
- * Media card is a thumbnail, which shows no text. Its names are not searched then, so the bubble is not drawn for the search.
+ * The text an item shows, as the search compares it. A text item is its Markdown as it renders; a user bubble is its text as drawn
+ * (see bubbleText). A user bubble is not cached: whether its pictures are thumbnails changes with the cards.
  */
 function shownText(item: ChatItem, caseSensitive: boolean, hasCard: (cardId: string | null) => boolean): string {
   if (item.kind === 'user') {
-    const raw = [item.text, ...item.attachments.filter((a) => !(a.kind === 'image' && hasCard(a.cardId))).map((a) => a.name)].join('\n')
+    const raw = bubbleText(item, hasCard)
     return caseSensitive ? raw : fold(raw)
   }
-  const raw = item.kind === 'text' ? chatMarkdownText(item.markdown) : searchText(item)
+  const raw = item.kind === 'text' ? chatMarkdownText(item.markdown) : searchText(item, hasCard)
   if (caseSensitive) return raw
   let folded = foldedTexts.get(item)
   if (folded === undefined) {

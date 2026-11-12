@@ -1,10 +1,11 @@
-import type { ChatAnswer, ChatAttachment, ChatItem } from '../../shared/chat'
+import type { ChatAnswer, ChatAttachment, ChatEventSource, ChatItem } from '../../shared/chat'
 import { icon } from '../icons'
 import type { ImageCard } from '../../shared/types'
 import { imageUrl } from '../image-url'
 import { chatMarkdownHtml, markdownClick, splitStable } from './chat-markdown'
 import { renderCard } from './chat-cards'
 import { renderImages, renderSteps, type StepKeep } from './chat-steps'
+import { splitQuotes } from './chat-quote'
 
 export interface ItemCallbacks {
   answer(cardId: string, a: ChatAnswer): void | Promise<boolean>
@@ -46,9 +47,10 @@ export function renderItem(item: ChatItem, cb: ItemCallbacks, keep: StepKeep | n
     case 'notice': return noticeItem(item.tone, item.text, item.action, item.line ?? null, cb)
     case 'divider': return el('div', 'chat-divider', item.text)
     case 'card': return renderCard(item, cb)
-    case 'thinking': return thinkingItem(item.ms, item.summary, keep?.open === true)
+    case 'thinking': return thinkingItem(item.ms, item.summary, keep?.open !== false)
     case 'images': return renderImages(item, cb)
     case 'command': return commandItem(item.command, item.output)
+    case 'event': return eventItem(item.source, item.title, item.status, item.body)
   }
 }
 
@@ -90,10 +92,19 @@ export function streamText(node: HTMLElement, markdown: string): void {
 
 function userItem(item: Extract<ChatItem, { kind: 'user' }>, cb: ItemCallbacks): HTMLElement {
   const row = el('div', `chat-item chat-user-row${item.queued ? ' queued' : ''}`)
-  if (item.text !== '') row.append(el('div', 'chat-user', item.text))
+  if (item.text !== '') row.append(userBubble(item.text))
   if (item.attachments.length > 0) row.append(attachments(item.attachments, cb))
   if (item.queued) row.append(el('div', 'chat-quiet', 'Queued'))
   return row
+}
+
+/** a message's bubble: the quotes it starts with are blocks above its text; a message with no leading quote is its text */
+function userBubble(text: string): HTMLElement {
+  const { quotes, rest } = splitQuotes(text)
+  const bubble = el('div', 'chat-user')
+  for (const quote of quotes) bubble.append(el('div', 'chat-quote-block', quote))
+  if (rest !== '') bubble.append(rest)
+  return bubble
 }
 
 /** the files of a message: an image with its Media card shows as a thumbnail, anything else as a chip with its name */
@@ -123,8 +134,9 @@ function attachments(list: ChatAttachment[], cb: ItemCallbacks): HTMLElement {
 }
 
 /**
- * Claude's thinking: one folded row that unfolds to the summary as text. A thinking block with no summary draws no row, but an
- * element stays in its place, so the column's indexes and paging do not move; `open` is the user's kept choice
+ * Claude's thinking: a row with the summary as text under it, open from the start; a click folds it to the row. A thinking block
+ * with no summary draws no row, but an element stays in its place, so the column's indexes and paging do not move; `open` is
+ * false only when the user folded it
  */
 function thinkingItem(ms: number | null, summary: string | null, open: boolean): HTMLElement {
   if (summary === null) return el('div', 'chat-thinking-none')
@@ -150,6 +162,39 @@ function thinkingItem(ms: number | null, summary: string | null, open: boolean):
   })
   if (open) unfold()
   return box
+}
+
+/**
+ * A message Claude Code put in the conversation that is not the person's: a compact muted row with its title (and its status
+ * when it is not completed); its text is folded under it and unfolds on a click. The text is set as text, never as markup.
+ */
+function eventItem(source: ChatEventSource, title: string, status: string | null, body: string): HTMLElement {
+  const failed = status === 'failed' || status === 'stopped'
+  const row = el('div', `chat-item chat-event ${source}${failed ? ' failed' : ''}`)
+  const head = el(body === '' ? 'div' : 'button', 'chat-event-head')
+  if (head instanceof HTMLButtonElement) {
+    head.type = 'button'
+    head.setAttribute('aria-expanded', 'false')
+  }
+  const mark = el('span', 'chat-event-icon')
+  mark.innerHTML = icon(source === 'task' ? (failed ? 'x' : 'check') : source === 'peer' ? 'message-square' : 'mail', 14)
+  head.append(mark, el('span', 'chat-event-title', title))
+  if (status !== null) head.append(el('span', 'chat-event-status', status))
+  row.append(head)
+  if (body === '') return row
+  let text: HTMLElement | null = null
+  head.addEventListener('click', () => {
+    if (text !== null) {
+      text.remove()
+      text = null
+      head.setAttribute('aria-expanded', 'false')
+    } else {
+      text = el('div', 'chat-event-body', body)
+      row.append(text)
+      head.setAttribute('aria-expanded', 'true')
+    }
+  })
+  return row
 }
 
 /** a local command's answer (/context): a quiet block, its output scrolls once it is tall */

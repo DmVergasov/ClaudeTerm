@@ -11,6 +11,7 @@ import { capSnapshot } from './chat-mirror'
 import { answeredLine, cardFor, resultFor, type PermissionAsk, type SdkPermissionResult } from './chat-cards'
 import type { ChatEngine, ChatEngineHandlers, StartChatEngine } from './chat-engine'
 import { ChatModel, isPermissionMode } from './chat-model'
+import { sessionFolderOf } from './chat-folder'
 import type { ChatLaunch } from './claude-spawn'
 
 // One conversation model per Claude tab, in the main process: the engine's messages fold into it, the chat window gets
@@ -29,6 +30,8 @@ const REASON_CAP = 500
 /** the modes every chat offers; Auto joins them once Claude Code reports it (the account may have it) */
 const MODES: ChatPermissionMode[] = ['default', 'acceptEdits', 'plan']
 /** a command name part that is a file or folder name of its own: a name from Claude Code is never a path part beyond that */
+/** the effort levels Claude Code applies */
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const COMMAND_PART = /^\w[\w.-]*$/
 
 /**
@@ -65,6 +68,8 @@ export interface ChatHubDeps {
   setWorking(tabId: string, working: boolean): void
   status(tabId: string, s: ReturnType<ChatModel['status']>): void
   recordSession(sessionId: string): void
+  /** the session works in another folder now (it entered or left a worktree): an absolute path Claude Code named, not yet checked to exist */
+  folder(tabId: string, path: string): void
   now(): number
   log: { warn(m: string): void }
 }
@@ -93,6 +98,10 @@ interface Live {
   ended: boolean
   /** Claude Code has answered initialize: the start is over, and an exit now is not a failed start */
   ready: boolean
+  /** the models Claude Code lists, from its answer to the start: whether the model the chat runs takes auto mode decides the modes */
+  models: ChatModelInfo[]
+  /** Claude Code refused the auto mode while the chat ran this model: Auto is not offered while it runs that model */
+  autoRefused: { model: string | null } | null
   /** messages sent before ready, waiting or handed to the engine: Claude Code may not have taken them if the start fails */
   unready: number
   /** the id a new session starts with, passed to the engine ('' when resuming: not used then) */
@@ -101,6 +110,10 @@ interface Live {
   firstStderr: string | null
   /** the 'Starting Claude…' notice, until init or the end; kept beside the model's items, so it is always drawn last */
   starting: ChatItem | null
+  /** a restart of a resumed session: the column the chat replaces, shown until the history of the session is in */
+  kept: { items: ChatItem[]; hasOlder: boolean } | null
+  /** the chat was started by a restart: when Claude Code is ready, the restart's line goes and the column says it restarted */
+  restarted: boolean
   /** while the history loads: what the process said meanwhile, run in order once the history is in */
   early: (() => void)[] | null
   /** asks that came while the history loads: their card opens once it is in; cancelled if the chat ends first */
@@ -124,6 +137,18 @@ interface Live {
   cards: Map<string, PendingCard>
 }
 
+/**
+ * The list's entry for the model the chat runs: the one whose value is the model, else the one whose resolved id is (of several
+ * that resolve to it, one that is not `default` wins). Before the first init names a model, the `default` entry stands for it.
+ */
+function modelEntry(list: ChatModelInfo[], model: string | null): ChatModelInfo | undefined {
+  if (model === null) return list.find(m => m.value === 'default') ?? list[0]
+  const byValue = list.find(m => m.value === model)
+  if (byValue !== undefined) return byValue
+  const byResolved = list.filter(m => m.resolved === model)
+  return byResolved.find(m => m.value !== 'default') ?? byResolved[0]
+}
+
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e)).slice(0, 500)
 const cancelled = (): SdkPermissionResult => ({ behavior: 'deny', message: CANCELLED })
@@ -140,17 +165,38 @@ export class ChatHub {
   private readonly carried = new Map<string, string[]>()
   /** the revision each tab's chat stood at when its chat ended: the next chat of the tab counts on from it, so the window and the members never see a revision go back */
   private readonly revs = new Map<string, number>()
+  /** the tabs whose Claude Code is being restarted: the next chat of each one is a restart's */
+  private readonly restarts = new Set<string>()
 
   constructor(private readonly d: ChatHubDeps) {}
+
+  /** a restart of the tab's Claude Code begins: the chat says so at once, and the chat that starts in its place carries it until Claude Code is ready */
+  restarting(tabId: string): void {
+    this.restarts.add(tabId)
+    const live = this.tabs.get(tabId)
+    if (live && !live.ended) this.publish(live, live.model.setState({ activity: { kind: 'restarting', since: this.d.now() } }))
+  }
+
+  /** the relaunch of a tab starts another conversation or folder, not a restart of its own: the restart said is none, and the chat starts new */
+  newConversation(tabId: string): void {
+    this.restarts.delete(tabId)
+    const live = this.tabs.get(tabId)
+    if (live && !live.ended && live.model.state().activity?.kind === 'restarting') this.publish(live, live.model.setState({ activity: undefined }))
+  }
 
   /** starts the chat process of a tab: its model at once, its history first when it resumes one */
   start(req: ChatStartRequest): ChatHandle {
     const tabId = req.tab.id
-    this.remove(tabId)
     const resume = req.claude.resumeSessionId
+    // a restart of the tab keeps the column of the chat it replaces while the history of its session loads
+    const restart = this.restarts.delete(tabId)
+    const replaced = this.tabs.get(tabId)
+    const kept = restart && resume !== null && replaced !== undefined ? replaced.model.page() : null
+    this.remove(tabId)
     const newSessionId = resume === null ? randomUUID() : ''
     const live: Live = {
-      tabId, req, engine: null, waiting: [], ended: false, ready: false, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
+      tabId, req, engine: null, waiting: [], ended: false, ready: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
+      kept: null, restarted: restart,
       queued: new Map(), stopping: false, exitDue: false, working: false,
       rev: this.revs.get(tabId) ?? 0, batch: [], batchFrom: 0, timer: null, remoteBatch: [], remoteFrom: 0, remoteTimer: null, cards: new Map(),
       model: new ChatModel({ now: () => this.d.now(), newId: () => randomUUID(), folder: () => req.tab.cwd }),
@@ -158,9 +204,16 @@ export class ChatHub {
     this.tabs.set(tabId, live)
     // the session is known at once: the resumed one, or the new one; a fork's comes with its SessionStart or its first init
     live.model.setState({ sessionId: req.claude.forkSession ? null : (resume ?? newSessionId) })
-    const starting: ChatItem = { kind: 'notice', id: randomUUID(), tone: 'info', text: STARTING, action: null }
-    live.starting = starting
-    this.emit(live, [{ op: 'reset', items: [starting], hasOlder: false }])
+    if (restart) live.model.setState({ activity: { kind: 'restarting', since: this.d.now() } })
+    if (kept !== null) {
+      live.kept = kept
+    } else {
+      const starting: ChatItem = { kind: 'notice', id: randomUUID(), tone: 'info', text: STARTING, action: null }
+      live.starting = starting
+      this.emit(live, [{ op: 'reset', items: [starting], hasOlder: false }])
+    }
+    // the restart's line reaches the window at once, with the state it starts from
+    if (restart) this.emit(live, [{ op: 'state', state: live.model.state() }])
 
     if (resume !== null) {
       live.early = []
@@ -194,7 +247,8 @@ export class ChatHub {
     const live = this.tabs.get(tabId)
     if (!live) return null
     // the snapshot holds the changes made so far; the batch waiting still goes, and the window skips what it already has
-    const page = live.model.page()
+    // a restart's column stays until the history of its session is in
+    const page = live.kept ?? live.model.page()
     return { tabId, rev: live.rev, items: this.withStarting(live, page.items), hasOlder: page.hasOlder, state: live.model.state() }
   }
 
@@ -273,8 +327,19 @@ export class ChatHub {
   async setMode(tabId: string, mode: ChatPermissionMode): Promise<void> {
     const run = this.running(tabId)
     if (!run) return
-    await run.engine.setPermissionMode(mode)
+    try {
+      await run.engine.setPermissionMode(mode)
+    } catch (e) {
+      if (mode === 'auto') this.refuseAuto(run.live, e)
+      throw e
+    }
     this.publish(run.live, run.live.model.setState({ mode }))
+  }
+
+  /** Claude Code refused the auto mode: its mode stays, the refusal is shown, and Auto is not offered while the chat runs this model */
+  private refuseAuto(live: Live, e: unknown): void {
+    live.autoRefused = { model: live.model.state().model }
+    this.publish(live, live.model.notice(`Claude Code did not switch to Auto mode: ${errorText(e)}`, 'error', null))
   }
 
   async setModel(tabId: string, model: string | null, effort: string | null): Promise<void> {
@@ -285,6 +350,8 @@ export class ChatHub {
     this.publish(run.live, run.live.model.setState({ model }))
     await run.engine.setEffort(effort)
     this.publish(run.live, run.live.model.setState({ effort }))
+    // the level Claude Code applies may differ from the one asked (a model without effort, an organization's limit)
+    this.readEffort(run.live)
   }
 
   /** whether the tab has a chat that runs now: its process is up and has not ended */
@@ -292,9 +359,17 @@ export class ChatHub {
     return this.running(tabId) !== null
   }
 
-  /** the permission modes the tab offers: Auto once its Claude Code reported it */
+  /** the permission modes the tab offers, in the order Claude Code cycles them: Auto once its Claude Code reported it, or the model the chat runs takes it */
   modes(tabId: string): ChatPermissionMode[] {
-    return this.autoTabs.has(tabId) ? [...MODES, 'auto'] : [...MODES]
+    return this.offersAuto(tabId) ? [...MODES, 'auto'] : [...MODES]
+  }
+
+  private offersAuto(tabId: string): boolean {
+    const live = this.tabs.get(tabId)
+    if (live === undefined) return this.autoTabs.has(tabId)
+    const model = live.model.state().model
+    if (live.autoRefused !== null && live.autoRefused.model === model) return false
+    return this.autoTabs.has(tabId) || modelEntry(live.models, model)?.autoMode === true
   }
 
   /** a notice for the tab's chat: shown now when the chat runs, else once its next start's history is in */
@@ -351,7 +426,8 @@ export class ChatHub {
     this.whenLoaded(live, () => {
       if (sessionId === live.model.state().sessionId) return
       // a clear or a compaction starts a new part of the chat; a startup or a resume only says which session it is
-      const text = source === 'clear' ? 'New conversation' : source === 'compact' ? 'Conversation compacted' : null
+      // a compaction's divider is its boundary's: the SessionStart that comes with it draws none
+      const text = source === 'clear' ? 'New conversation' : null
       const divider = text === null ? [] : live.model.divider(text)
       this.publish(live, [...divider, ...live.model.setState({ sessionId })])
     })
@@ -370,6 +446,7 @@ export class ChatHub {
     this.revs.delete(tabId)
     this.attached.forget(tabId)
     this.autoTabs.delete(tabId)
+    this.restarts.delete(tabId)
     this.carried.delete(tabId)
   }
 
@@ -434,20 +511,49 @@ export class ChatHub {
   }
 
   /** Claude Code has answered initialize: the start is over, and the mode it reports is the chat's */
-  private becomeReady(live: Live, info: { permissionMode: string | null }): void {
+  private becomeReady(live: Live, info: { permissionMode: string | null; models?: ChatModelInfo[] }): void {
     if (live.ended || live.ready) return
     live.ready = true
     live.unready = 0
+    live.models = info.models ?? []
     this.dropStarting(live)
     if (info.permissionMode === 'auto') this.autoTabs.add(live.tabId)
     const mode = isPermissionMode(info.permissionMode) ? live.model.setState({ mode: info.permissionMode }) : []
-    this.publish(live, mode)
+    // the state goes out even when nothing in it changed: the window asks for the modes again, now that the models are known
+    this.publish(live, [...mode, ...this.restartEnded(live), { op: 'state', state: live.model.state() }])
+    this.readEffort(live)
+  }
+
+  /** the effort Claude Code applies, as the settings report it: a known level or null goes to the state, anything else keeps the last */
+  private readEffort(live: Live): void {
+    const engine = live.engine
+    if (!engine) return
+    engine.effort().then(
+      level => {
+        if (live.ended || this.tabs.get(live.tabId) !== live) return
+        if (level !== null && !(typeof level === 'string' && EFFORT_LEVELS.includes(level))) return
+        if (live.model.state().effort === level) return
+        this.publish(live, live.model.setState({ effort: level }))
+        this.report(live)
+      },
+      (e: unknown) => this.d.log.warn(`cannot read the effort: ${errorText(e)}`),
+    )
+  }
+
+  /** the restart is over: its line goes, and the column says the session restarted */
+  private restartEnded(live: Live): ChatPatch[] {
+    if (!live.restarted) return []
+    live.restarted = false
+    return [...live.model.setState({ activity: undefined }), ...live.model.divider('Session restarted')]
   }
 
   /** the process has ended before it ran, or its start was cancelled: the tab gets its exit now */
   private finish(live: Live, code: number | null, fallback: string | null): void {
     live.ended = true
+    live.restarted = false
     this.dropStarting(live)
+    // a compaction or a restart that never ends is over with the process
+    this.publish(live, live.model.setState({ activity: undefined }))
     // the messages that were shown but never reached a started process say so: those still waiting, and those handed to the engine
     if (live.unready > 0) {
       live.waiting = []
@@ -484,6 +590,7 @@ export class ChatHub {
     // the images of the history take the cards the panel holds; their change is in the reset below
     live.model.attachCards(this.d.cards(live.tabId))
     const page = live.model.page()
+    live.kept = null
     this.emit(live, [{ op: 'reset', items: this.withStarting(live, page.items), hasOlder: page.hasOlder }])
     this.syncWorking(live)
     const early = live.early ?? []
@@ -498,7 +605,10 @@ export class ChatHub {
     // an image the chat shows may have its card already: the panel does not change again to bring it
     if (patches.some(p => (p.op === 'add' || p.op === 'set') && p.item.kind === 'images')) this.publish(live, live.model.attachCards(this.d.cards(live.tabId)))
     if (!isObj(msg)) return
-    if (msg.type === 'system' && msg.subtype === 'status' && msg.permissionMode === 'auto') this.autoTabs.add(live.tabId)
+    const moved = sessionFolderOf(msg)
+    if (moved !== null) this.d.folder(live.tabId, moved)
+    // Claude Code names its mode in a status and in an init: auto in either one adds Auto to the modes of the tab
+    if (msg.type === 'system' && (msg.subtype === 'status' || msg.subtype === 'init') && msg.permissionMode === 'auto') this.autoTabs.add(live.tabId)
     if (msg.type === 'system' && msg.subtype === 'init') {
       const sessionId = msg.session_id
       if (isUuid(sessionId)) {
@@ -516,6 +626,7 @@ export class ChatHub {
   private readContext(live: Live): void {
     const engine = live.engine
     if (!engine) return
+    this.readEffort(live)
     engine.context().then(
       c => {
         if (live.ended || this.tabs.get(live.tabId) !== live) return
@@ -620,7 +731,8 @@ export class ChatHub {
 
   /** the end of the process in the chat: its state, and the notice unless the tab asked for the stop */
   private drawEnd(live: Live): void {
-    this.publish(live, live.model.setState({ turn: 'idle', turnStartedAt: null, exited: true }))
+    this.publish(live, live.model.processEnded())
+    this.publish(live, live.model.setState({ turn: 'idle', turnStartedAt: null, exited: true, activity: undefined }))
     if (!live.stopping) this.publish(live, live.model.notice('Claude Code stopped', 'error', 'restart'))
   }
 

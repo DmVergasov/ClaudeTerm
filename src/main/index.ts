@@ -592,6 +592,12 @@ function bootstrap(): void {
     onTabRestarting: (tabId) => {
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
+      // the chat says at once that its Claude Code restarts, and keeps its conversation until the new one is ready
+      chatHub.restarting(tabId)
+    },
+    // another conversation or folder is no restart: the chat says none, and starts new as it did before
+    onTabNewConversation: (tabId) => {
+      chatHub.newConversation(tabId)
     },
     onTabClosed: (tabId) => {
       stopTabImages(tabId)
@@ -815,6 +821,10 @@ function bootstrap(): void {
       })
     },
     recordSession: (sessionId) => chatSessions.add(sessionId),
+    // the session entered or left a worktree (no statusLine runs for a chat): the tab follows it, when the folder is there
+    folder: (tabId, path) => {
+      if (isDirectory(path)) tabs.setFolder(tabId, path)
+    },
     now: () => Date.now(),
     log
   })

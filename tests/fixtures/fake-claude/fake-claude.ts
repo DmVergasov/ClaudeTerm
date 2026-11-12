@@ -3,12 +3,12 @@
 // protocol fixtures in tests/fixtures/chat (README.md there).
 
 import { spawn } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import type { FakeScript, FakeStep, RateLimitWindows } from './install'
+import type { FakeCompact, FakeScript, FakeStep, RateLimitWindows } from './install'
 
 type Msg = Record<string, any>
 
@@ -116,13 +116,15 @@ function fail(error: unknown): void {
 
 // ---- stream-json mode ----
 
-const projectDir = join(configDir, 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'))
+const projectDir = join(configDir, 'projects', realpathSync.native(process.cwd()).replace(/[^a-zA-Z0-9]/g, '-'))
 const waiting = new Set<(value?: Msg) => void>() // steps paused on a timer, a dialog or a permission answer
 const answers = new Map<string, (value?: Msg) => void>() // request id -> the step waiting for its answer
 const queue: string[] = []
 // the uuid of each user message read, in order; a fold step names them on the next assistant message
 const readUuids: string[] = []
 let foldNext: string[] | null = null
+// the sends a 'result' fold took into the turn: named on the turn's result only
+let foldResult: string[] | null = null
 const recorded = new Map<string, Msg>() // the recorded control responses by request subtype
 let initTemplate: Msg = {}
 let templates: Record<'result' | 'interruptedResult' | 'localResult', Msg> = { result: {}, interruptedResult: {}, localResult: {} }
@@ -262,7 +264,9 @@ function emitRateLimit(limit: { type: 'five_hour' | 'seven_day'; utilization: nu
 
 function emitInit(): void {
   const terminal = script.terminalCommands === undefined ? {} : { terminal_slash_commands: script.terminalCommands }
-  emit({ ...initTemplate, ...terminal, model: currentModel(), session_id: session, cwd: process.cwd(), claude_code_version: script.version ?? VERSION, uuid: randomUUID() })
+  const effort = script.effort === undefined ? {} : { effort: script.effort }
+  const mode = script.initPermissionMode === undefined ? {} : { permissionMode: script.initPermissionMode }
+  emit({ ...initTemplate, ...terminal, ...effort, ...mode, model: currentModel(), session_id: session, cwd: process.cwd(), claude_code_version: script.version ?? VERSION, uuid: randomUUID() })
   needInit = false
 }
 
@@ -280,15 +284,22 @@ function initializeReply(): Msg {
       displayName: m.displayName,
       description: m.description,
       supportsEffort: (m.supportedEffortLevels ?? []).length > 0,
-      supportedEffortLevels: m.supportedEffortLevels ?? []
+      supportedEffortLevels: m.supportedEffortLevels ?? [],
+      ...(script.autoMode === true && m.supportsAutoMode === true ? { supportsAutoMode: true } : {})
     }))
+  } else if (script.autoMode !== true && Array.isArray(body.models)) {
+    // the recorded list marks every model as running auto mode: without the option no model does
+    body.models = (body.models as Msg[]).map(({ supportsAutoMode: _, ...m }) => m)
   }
+  if (script.permissionMode !== undefined) body.current_permission_mode = script.permissionMode
   return body
 }
 
 // a result message: the recorded result's fields, with this turn's values
 function resultMessage(template: Msg, fields: Msg): Msg {
-  return { ...template, session_id: session, uuid: randomUUID(), num_turns: 1, total_cost_usd: 0, result_index: resultCount++, queued_turn_count: queue.length, ...fields }
+  const folded = foldResult === null ? {} : { user_message_uuids: foldResult }
+  foldResult = null
+  return { ...template, session_id: session, uuid: randomUUID(), num_turns: 1, total_cost_usd: 0, result_index: resultCount++, queued_turn_count: queue.length, ...folded, ...fields }
 }
 
 // a pause that ends after ms, when its request is answered, or when an interrupt arrives (it resolves undefined)
@@ -377,7 +388,7 @@ function emitToolUse(name: string, input: Record<string, unknown>): string {
   return toolId
 }
 
-function emitToolResult(toolUseId: string, content: string, isError: boolean, decision?: 'accept' | 'deny'): void {
+function emitToolResult(toolUseId: string, content: string, isError: boolean, decision?: 'accept' | 'deny', output?: unknown): void {
   const message = { role: 'user', content: [{ tool_use_id: toolUseId, type: 'tool_result', content, is_error: isError }] }
   emit({
     type: 'user',
@@ -386,17 +397,17 @@ function emitToolResult(toolUseId: string, content: string, isError: boolean, de
     session_id: session,
     uuid: randomUUID(),
     timestamp: stamp(),
-    tool_use_result: isError ? content : { type: 'text', content },
+    tool_use_result: isError ? content : output ?? { type: 'text', content },
     tool_result_meta: decision === undefined ? [] : [{ id: toolUseId, permission_decision: { decision, source: 'user_temporary' } }]
   })
   record('user', message)
 }
 
-async function toolStep(tool: { name: string; input: Record<string, unknown>; result: string; isError?: boolean; ms?: number }): Promise<Outcome> {
+async function toolStep(tool: { name: string; input: Record<string, unknown>; result: string; isError?: boolean; ms?: number; output?: unknown }): Promise<Outcome> {
   const toolId = emitToolUse(tool.name, tool.input)
   await waitFor(tool.ms ?? 0)
   if (aborted) return 'interrupted'
-  emitToolResult(toolId, tool.result, tool.isError ?? false)
+  emitToolResult(toolId, tool.result, tool.isError ?? false, undefined, tool.output)
   return 'done'
 }
 
@@ -502,7 +513,7 @@ function emitToolUses(calls: { name: string; input: Record<string, unknown> }[])
 // reported as the SDK reports it (SDKTaskStartedMessage, sdk.d.ts 6505; SDKTaskNotificationMessage, sdk.d.ts 6436): its
 // task_started names its call in tool_use_id, and its task_notification comes at its ms. A call's result follows its end.
 // The input is the SDK's AgentInput (sdk-tools.d.ts 763): description and prompt are required.
-async function taskStep(step: { description: string; result: string; agents: { type: string; description: string; ms: number; failed?: boolean }[] }): Promise<Outcome> {
+async function taskStep(step: { description: string; result: string; background?: true; agents: { type: string; description: string; ms: number; failed?: boolean }[] }): Promise<Outcome> {
   const toolIds = emitToolUses(step.agents.map((agent) => ({
     name: 'Agent',
     input: { description: agent.description, prompt: agent.description, subagent_type: agent.type }
@@ -510,6 +521,14 @@ async function taskStep(step: { description: string; result: string; agents: { t
   const agents = step.agents.map((agent, i) => ({ agent, toolId: toolIds[i], taskId: `task_fake_${++seq}` }))
   for (const { agent, toolId, taskId } of agents) {
     emit(sys('task_started', { task_id: taskId, tool_use_id: toolId, description: agent.description, subagent_type: agent.type, task_type: 'local_agent' }))
+  }
+  // a background agent: its call ends at once with the launch notice, and the agent ends at its ms, after the turn's result has gone
+  if (step.background === true) {
+    for (const { agent, toolId, taskId } of agents) {
+      emitToolResult(toolId, 'Async agent launched successfully.', false)
+      setTimeout(() => emit(sys('task_notification', { task_id: taskId, tool_use_id: toolId, status: 'completed', output_file: '', summary: agent.description, usage: { total_tokens: 0, tool_uses: 0, duration_ms: agent.ms } })), agent.ms)
+    }
+    return 'done'
   }
   let at = 0
   for (const entry of [...agents].sort((a, b) => a.agent.ms - b.agent.ms)) {
@@ -546,9 +565,22 @@ async function runStep(step: FakeStep, turn: Turn): Promise<Outcome> {
     return 'error'
   }
   if ('compact' in step) {
+    const options: FakeCompact = typeof step.compact === 'object' ? step.compact : {}
     emit(sys('status', { status: 'compacting' }))
+    // a gate holds the compaction until the test writes its file: the chat shows the compaction meanwhile
+    while (options.gate !== undefined && !existsSync(join(configDir, options.gate)) && !aborted) await waitFor(20)
+    if (aborted) return 'interrupted'
+    if (options.fail !== undefined) {
+      emit(sys('status', { status: null, compact_result: 'failed', compact_error: options.fail }))
+      return 'done'
+    }
     emit(sys('status', { status: null, compact_result: 'success' }))
-    emit(sys('compact_boundary', { compact_metadata: { trigger: 'manual', pre_tokens: 0 } }))
+    const metadata = {
+      trigger: options.trigger ?? 'manual', pre_tokens: options.preTokens ?? 0,
+      ...(options.postTokens === undefined ? {} : { post_tokens: options.postTokens }),
+      ...(options.durationMs === undefined ? {} : { duration_ms: options.durationMs }),
+    }
+    emit(sys('compact_boundary', { compact_metadata: metadata }))
     return 'done'
   }
   if ('rateLimit' in step) {
@@ -558,7 +590,13 @@ async function runStep(step: FakeStep, turn: Turn): Promise<Outcome> {
   if ('thinking' in step) return thinkingStep(step)
   if ('task' in step) return taskStep(step.task)
   if ('fold' in step) {
-    foldNext = [...readUuids]
+    if (step.fold === 'result') {
+      // the sends still waiting are taken into this turn: the turn's result names them, and no turn of their own runs them
+      foldResult = readUuids.slice(readUuids.length - queue.length)
+      queue.splice(0)
+    } else {
+      foldNext = [...readUuids]
+    }
     return 'done'
   }
   if ('wait' in step) {
@@ -573,6 +611,11 @@ async function runStep(step: FakeStep, turn: Turn): Promise<Outcome> {
     }
     exit(step.crash)
     return new Promise<never>(() => undefined) // the process ends in exit()
+  }
+  if ('inject' in step) {
+    // a user-role message Claude Code writes into the stream itself: its origin is the SDK's, none when the step gives none
+    emit({ type: 'user', message: { role: 'user', content: step.inject.text }, parent_tool_use_id: null, session_id: session, uuid: randomUUID(), timestamp: stamp(), ...(step.inject.origin === undefined ? {} : { origin: step.inject.origin }) })
+    return 'done'
   }
   if ('noise' in step) {
     process.stdout.write(`${step.noise}\n`)
@@ -750,6 +793,10 @@ function onControl(msg: Msg): void {
     case 'mcp_status':
     case 'stop_task':
       reply(requestId, {})
+      return
+    case 'get_settings':
+      // the effort Claude Code applies (appliedEffort): the one a host that the init does not tell reads from here
+      reply(requestId, { effective: {}, sources: [], applied: script.appliedEffort === undefined ? {} : { effort: script.appliedEffort } })
       return
     case 'get_context_usage':
       // the fill the script gives (contextPct), in the recorded answer's shape

@@ -157,6 +157,13 @@ export function accountSegment(label: string): Segment {
   return { key: 'account', text: label, title: 'The account this tab runs on — click to switch', level: 'normal' }
 }
 
+const ZONES = ['start', 'middle', 'end'] as const
+
+/** where a segment sits on the bar: the account at its start, the changes at its end, the session in its middle */
+function zoneOf(key: Segment['key']): (typeof ZONES)[number] {
+  return key === 'account' ? 'start' : key === 'changes' ? 'end' : 'middle'
+}
+
 /** a chat tab's side of the status bar: its Stop for a background task, and the tab those tasks belong to */
 export interface ChatStatus {
   tab: string
@@ -220,15 +227,23 @@ export class StatusBar {
     // under the mouse would close its tooltip (the subagent list)
     const spans = [...this.el.querySelectorAll<HTMLElement>('.status-seg')]
     if (spans.length !== segments.length || segments.some((s, i) => spans[i].dataset.key !== s.key)) {
+      // three zones: the account at the start, the session in the middle of the bar, the changes at the end
       this.el.replaceChildren(
-        ...segments.flatMap((s, i) => {
-          const span = document.createElement('span')
-          span.dataset.key = s.key
-          fill(span, s)
-          if (i === 0) return [span]
-          const sep = document.createElement('span')
-          sep.className = 'status-sep'
-          return [sep, span]
+        ...ZONES.map((name) => {
+          const zone = document.createElement('div')
+          zone.className = `status-zone status-zone-${name}`
+          zone.append(
+            ...segments.filter((s) => zoneOf(s.key) === name).flatMap((s, i) => {
+              const span = document.createElement('span')
+              span.dataset.key = s.key
+              fill(span, s)
+              if (i === 0) return [span]
+              const sep = document.createElement('span')
+              sep.className = 'status-sep'
+              return [sep, span]
+            })
+          )
+          return zone
         })
       )
     } else segments.forEach((s, i) => fill(spans[i], s))

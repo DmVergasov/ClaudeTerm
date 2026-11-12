@@ -45,6 +45,8 @@ class FakeEngine implements ChatEngine {
   modelsSet: (string | null)[] = []
   efforts: (string | null)[] = []
   effortFails = false
+  /** Claude Code refuses the auto mode (not available to the account, or disabled by settings) */
+  refuseAuto = false
   cmds: ChatCommandInfo[] = []
   closes = 0
   kills = 0
@@ -62,6 +64,7 @@ class FakeEngine implements ChatEngine {
   }
 
   async setPermissionMode(mode: ChatPermissionMode): Promise<void> {
+    if (mode === 'auto' && this.refuseAuto) throw new Error('auto mode is not available for this account')
     this.modes.push(mode)
   }
 
@@ -86,6 +89,13 @@ class FakeEngine implements ChatEngine {
 
   async context(): Promise<{ pct: number | null; used: number | null; size: number | null }> {
     return { pct: this.pct, used: null, size: null }
+  }
+
+  /** the effort the settings report; undefined: Claude Code does not say */
+  applied: string | null | undefined
+
+  async effort(): Promise<string | null | undefined> {
+    return this.applied
   }
 
   close(): void {
@@ -122,6 +132,7 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history'>> & { att
     setWorking: [] as [string, boolean][],
     status: [] as [string, ChatStatus][],
     recorded: [] as string[],
+    folder: [] as [string, string][],
     warn: [] as string[],
   }
   const env = { active: TAB as string | null }
@@ -151,6 +162,7 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history'>> & { att
     setWorking: (tabId, working) => calls.setWorking.push([tabId, working]),
     status: (tabId, s) => calls.status.push([tabId, s]),
     recordSession: sessionId => calls.recorded.push(sessionId),
+    folder: (tabId, path) => calls.folder.push([tabId, path]),
     attach: over.attach ? over.attach(files) : fakeAttach(files),
     now: () => clock.t,
     log: { warn: m => calls.warn.push(m) },
@@ -219,6 +231,31 @@ describe('ChatHub', () => {
     expect(kinds).toContain('user')
     expect(kinds).toContain('text')
     expect(last(snap!.items)).toMatchObject({ kind: 'notice', text: 'Starting Claude…' })
+  })
+
+  it('a session that enters a worktree moves its tab to the worktree, and back when it leaves', async () => {
+    const { hub, engines, calls } = harness()
+    const { req } = startReq()
+    hub.start(req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    const abs = (p: string): string => (process.platform === 'win32' ? `C:${p.replace(/\//g, '\\')}` : p)
+    const entered = (id: string, out: unknown, isError = false): Record<string, unknown> => ({
+      type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok', ...(isError ? { is_error: true } : {}) }] }, tool_use_result: out,
+    })
+
+    engines[0].h.message(entered('e1', { worktreePath: abs('/work/acme-wt'), worktreeBranch: 'dev', message: 'switched' }))
+    expect(calls.folder).toEqual([[TAB, abs('/work/acme-wt')]])
+
+    // a failed call, a relative path, another tool's result: no move
+    engines[0].h.message(entered('e2', { worktreePath: abs('/work/other') }, true))
+    engines[0].h.message(entered('e3', { worktreePath: 'relative/wt' }))
+    engines[0].h.message(entered('e4', { stdout: 'x' }))
+    expect(calls.folder).toHaveLength(1)
+
+    engines[0].h.message(entered('x1', { action: 'keep', originalCwd: abs('/work/acme'), worktreePath: abs('/work/acme-wt'), message: 'back' }))
+    expect(last(calls.folder)).toEqual([TAB, abs('/work/acme')])
   })
 
   it('support failing falls back with its reason', async () => {
@@ -382,6 +419,21 @@ describe('ChatHub', () => {
     expect(hub.snapshot(TAB)!.state).toMatchObject({ exited: true, turn: 'idle' })
   })
 
+  it('an exit ends a running Agent call and its agent, so none is left animating', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    engines[0].h.message({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find it', prompt: 'look' } }] } })
+    engines[0].h.message({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find it', task_type: 'local_agent' })
+
+    engines[0].h.exit(1)
+
+    const tools = hub.snapshot(TAB)!.items.filter(item => item.kind === 'tools')
+    expect(tools).toEqual([expect.objectContaining({ calls: [expect.objectContaining({ state: 'failed', agents: [expect.objectContaining({ id: 'a1', state: 'failed' })] })] })])
+  })
+
   it('sessionChanged with clear draws New conversation', async () => {
     const { hub, engines } = harness()
     hub.start(startReq().req)
@@ -392,6 +444,81 @@ describe('ChatHub', () => {
     hub.sessionChanged(TAB, OTHER, 'clear')
     expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'divider', text: 'New conversation' })
     expect(hub.snapshot(TAB)!.state.sessionId).toBe(OTHER)
+  })
+
+  it('a restart shows its activity at once, keeps the conversation while the new process starts, and says it restarted when ready', async () => {
+    const { hub, engines } = harness({ history: async () => fixtureHistory().slice(0, 3) })
+    hub.start(startReq(SID).req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    await settle()
+    const shown = hub.snapshot(TAB)!.items.map(item => item.kind)
+    expect(shown).toContain('user')
+
+    hub.restarting(TAB)
+    expect(hub.snapshot(TAB)!.state.activity).toEqual({ kind: 'restarting', since: expect.any(Number) })
+
+    hub.start(startReq(SID).req)
+    // the conversation stays in the column while the new process starts: no lone Starting notice
+    const during = hub.snapshot(TAB)!
+    expect(during.items.map(item => item.kind)).toContain('user')
+    expect(during.items.some(item => item.kind === 'notice' && item.text === 'Starting Claude…')).toBe(false)
+    expect(during.state.activity).toEqual({ kind: 'restarting', since: expect.any(Number) })
+    await settle()
+    expect(hub.snapshot(TAB)!.items.map(item => item.kind)).toContain('user')
+
+    engines[1].h.ready({ permissionMode: 'default' })
+    expect(hub.snapshot(TAB)!.state.activity).toBeUndefined()
+    expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'divider', text: 'Session restarted' })
+  })
+
+  it('a restart of a tab that starts fresh keeps the Starting notice, and a start that fails clears the restart activity', async () => {
+    const { hub } = harness({ support: async () => ({ reason: 'Claude Code is too old' }) })
+    hub.restarting(TAB)
+    const { req, exit } = startReq()
+    hub.start(req)
+    expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'notice', text: 'Starting Claude…' })
+    expect(hub.snapshot(TAB)!.state.activity).toEqual({ kind: 'restarting', since: expect.any(Number) })
+    await settle()
+    expect(exit).toHaveBeenCalledWith(null, 'Claude Code is too old')
+    expect(hub.snapshot(TAB)!.state.activity).toBeUndefined()
+  })
+
+  it('a resume of another session starts its chat as a new one: no restart is shown over the previous conversation', async () => {
+    const { hub, engines } = harness({ history: async () => fixtureHistory().slice(0, 3) })
+    hub.start(startReq(SID).req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    await settle()
+    expect(hub.snapshot(TAB)!.items.map(item => item.kind)).toContain('user')
+
+    // the tab manager announces the relaunch as a restart, then as a new conversation: only the second one is the resume's
+    hub.restarting(TAB)
+    hub.newConversation(TAB)
+    expect(hub.snapshot(TAB)!.state.activity).toBeUndefined()
+    hub.start(startReq(OTHER).req)
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'user')).toBe(false)
+    expect(hub.snapshot(TAB)!.state.activity).toBeUndefined()
+    await settle()
+    engines[1].h.ready({ permissionMode: 'default' })
+    engines[1].h.message(init())
+    await settle()
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'divider')).toBe(false)
+  })
+
+  it('a compaction draws one divider: its boundary, not the SessionStart compact that comes with it', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+
+    hub.sessionChanged(TAB, OTHER, 'compact')
+    engines[0].h.message({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 27050, post_tokens: 3874, duration_ms: 9992 } })
+    const dividers = hub.snapshot(TAB)!.items.filter(item => item.kind === 'divider')
+    expect(dividers).toEqual([expect.objectContaining({ text: 'Conversation compacted · 27k → 3.9k tokens · 10 s' })])
   })
 
   it('send to a tab with no chat is refused', async () => {
@@ -616,6 +743,29 @@ describe('ChatHub', () => {
     const items = hub.snapshot(TAB)!.items
     expect(items.some(item => item.kind === 'notice' && item.text === 'Interrupted')).toBe(true)
     expect(items.some(item => item.kind === 'notice' && item.tone === 'error')).toBe(false)
+  })
+
+  it('the effort Claude Code applies is read when ready, after a result and after a model change; an unknown value keeps the last', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].applied = 'xhigh'
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    await settle()
+    expect(hub.snapshot(TAB)!.state).toMatchObject({ effort: 'xhigh' })
+    engines[0].applied = 'turbo'
+    engines[0].h.message(result())
+    await settle()
+    expect(hub.snapshot(TAB)!.state).toMatchObject({ effort: 'xhigh' })
+    engines[0].applied = 'low'
+    engines[0].h.message(result())
+    await settle()
+    expect(hub.snapshot(TAB)!.state).toMatchObject({ effort: 'low' })
+    engines[0].applied = null
+    await hub.setModel(TAB, 'claude-haiku-5-5', null)
+    await settle()
+    expect(hub.snapshot(TAB)!.state).toMatchObject({ effort: null })
   })
 
   it('context is read after each result and reported', async () => {
@@ -1086,6 +1236,63 @@ describe('ChatHub', () => {
     expect(hub.modes(TAB)).not.toContain('auto')
     engines[0].h.message({ type: 'system', subtype: 'status', permissionMode: 'auto' })
     expect(hub.modes(TAB)).toEqual(['default', 'acceptEdits', 'plan', 'auto'])
+  })
+
+  it('a model that runs auto mode offers auto before any init: the default entry stands for the chat until Claude Code names its model', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    const models: ChatModelInfo[] = [
+      { value: 'haiku', displayName: 'Haiku', description: '', efforts: [], autoMode: false },
+      { value: 'default', displayName: 'Default', description: '', efforts: [], resolved: 'claude-opus-5-5', autoMode: true },
+    ]
+    engines[0].h.ready({ permissionMode: 'default', models })
+    expect(hub.modes(TAB)).toEqual(['default', 'acceptEdits', 'plan', 'auto'])
+  })
+
+  it('the model the chat runs decides: a model without auto mode does not offer it, the model the init names does, by value or by the id it resolves to', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    const models: ChatModelInfo[] = [
+      { value: 'default', displayName: 'Default', description: '', efforts: [], resolved: 'claude-opus-5-5', autoMode: false },
+      { value: 'haiku', displayName: 'Haiku', description: '', efforts: [], autoMode: true },
+    ]
+    engines[0].h.ready({ permissionMode: 'default', models })
+    expect(hub.modes(TAB)).toEqual(['default', 'acceptEdits', 'plan'])
+    engines[0].h.message({ type: 'system', subtype: 'init', session_id: SID, model: 'haiku', permissionMode: 'default' })
+    expect(hub.modes(TAB)).toEqual(['default', 'acceptEdits', 'plan', 'auto'])
+    engines[0].h.message({ type: 'system', subtype: 'init', session_id: SID, model: 'claude-opus-5-5', permissionMode: 'default' })
+    expect(hub.modes(TAB)).toEqual(['default', 'acceptEdits', 'plan'])
+  })
+
+  it('an init that reports mode auto adds auto to the modes, as a status does', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    expect(hub.modes(TAB)).not.toContain('auto')
+    engines[0].h.message({ type: 'system', subtype: 'init', session_id: SID, model: 'claude-opus-5-5', permissionMode: 'auto' })
+    expect(hub.modes(TAB)).toContain('auto')
+  })
+
+  it('Claude Code refusing auto leaves the mode, shows the refusal and drops auto until the model changes', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    const models: ChatModelInfo[] = [
+      { value: 'default', displayName: 'Default', description: '', efforts: [], autoMode: true },
+      { value: 'haiku', displayName: 'Haiku', description: '', efforts: [], autoMode: true },
+    ]
+    engines[0].h.ready({ permissionMode: 'default', models })
+    engines[0].refuseAuto = true
+    await expect(hub.setMode(TAB, 'auto')).rejects.toThrow('not available')
+    expect(hub.snapshot(TAB)!.state.mode).toBe('default')
+    expect(hub.snapshot(TAB)!.items).toContainEqual(expect.objectContaining({ kind: 'notice', tone: 'error', text: expect.stringContaining('Auto') }))
+    expect(hub.modes(TAB)).not.toContain('auto')
+    // the model changes: the model may run auto, and the refusal is about the model before it
+    await hub.setModel(TAB, 'haiku', null)
+    expect(hub.modes(TAB)).toContain('auto')
   })
 
   it('a command the tab folder defines as .claude/commands/<name>.md or .claude/skills/<name>/ is project; the others keep their group', async () => {

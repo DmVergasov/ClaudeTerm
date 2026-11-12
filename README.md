@@ -221,6 +221,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Paste text, or hand a clipboard image to Claude | `Ctrl+V` | `⌘V` |
 | New line in the Claude prompt | `Shift+Enter` | `Shift+Enter` |
 | Find in scrollback | `Ctrl+Shift+F` | `⌘F` |
+| Find in a chat | `Ctrl+F` or `Ctrl+Shift+F` | `⌘F` |
 | Show / hide the Media panel | `Ctrl+Shift+I` | `⌘I` |
 | Show / hide the Changes panel | `Ctrl+Shift+D` | `⌘D` |
 | Show / hide the Docs panel | `Ctrl+Shift+O` | `⌘O` |

@@ -54,6 +54,24 @@ describe('parseSettings', () => {
     expect(r.errors.join('\n')).toContain('"claude.autoContinue"')
   })
 
+  it('chat.copyOnSelect is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.chat.copyOnSelect).toBe(true)
+    expect(parseSettings(JSON.stringify({ chat: { copyOnSelect: false } })).settings.chat.copyOnSelect).toBe(false)
+    expect(parseSettings(JSON.stringify({ chat: {} })).settings.chat.copyOnSelect).toBe(true)
+    const r = parseSettings(JSON.stringify({ chat: { copyOnSelect: 'yes' } }))
+    expect(r.settings.chat.copyOnSelect).toBe(true)
+    expect(r.errors).toEqual(['settings.json: invalid value for "chat.copyOnSelect", using default'])
+  })
+
+  it('chat.fullWidth is off unless turned on, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.chat.fullWidth).toBe(false)
+    expect(parseSettings(JSON.stringify({ chat: { fullWidth: true } })).settings.chat.fullWidth).toBe(true)
+    expect(parseSettings(JSON.stringify({ chat: {} })).settings.chat.fullWidth).toBe(false)
+    const r = parseSettings(JSON.stringify({ chat: { fullWidth: 'yes' } }))
+    expect(r.settings.chat.fullWidth).toBe(false)
+    expect(r.errors).toEqual(['settings.json: invalid value for "chat.fullWidth", using default'])
+  })
+
   it('notifications: Even in front is off for every case unless turned on for one', () => {
     const n = parseSettings(JSON.stringify({ notifications: { done: { front: true } } })).settings.notifications
     expect([n.permission.front, n.question.front, n.done.front, n.bell.front]).toEqual([false, false, true, false])

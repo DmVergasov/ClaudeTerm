@@ -446,7 +446,7 @@ test('dragging the panel edge over a PDF frame keeps resizing; the release over 
   await show(pipeName, tabId, pdf)
   await expect(page.locator('iframe.doc-frame')).toHaveAttribute('src', /^ctdoc:\/\//)
   // a panel that is still sliding in has its handle a few pixels off from where it comes to rest
-  await panelSettled(page)
+  await panelSettled(page, true)
   const panelEl = page.locator('#image-panel')
   const start = (await panelEl.boundingBox())!.width
   const box = (await panelEl.boundingBox())!
@@ -477,7 +477,7 @@ test('comment actions keep the scroll position of a long Markdown document: add,
   await show(pipeName, tabId, spec)
   await expect(heading(page, 'Long')).toBeVisible()
   // the panel is still sliding in: Playwright's own scroll-and-retry during the first actions moves the document, which is not what this test checks
-  await panelSettled(page)
+  await panelSettled(page, true)
   const content = page.locator('.panel-docs .doc-content')
   const row = page.locator('.doc-md .md-seg', { hasText: 'Paragraph 100.' })
   await row.evaluate((r) => r.scrollIntoView({ block: 'center' }))

@@ -14,7 +14,8 @@ export interface ChatEngineStart {
 
 export interface ChatEngineHandlers {
   /** called once, when Claude Code has answered initialize: before any turn, so before any init */
-  ready(info: { permissionMode: string | null }): void
+  /** models: the list Claude Code gives in its answer (none when not given) */
+  ready(info: { permissionMode: string | null; models?: ChatModelInfo[] }): void
   message(m: unknown): void
   ask(ask: Omit<PermissionAsk, 'folder'>, signal: AbortSignal): Promise<SdkPermissionResult>
   dialog(kind: string, payload: unknown): void      // answered 'cancelled' by the engine
@@ -37,6 +38,8 @@ export interface ChatEngine {
   commands(): Promise<ChatCommandInfo[]>
   models(): Promise<ChatModelInfo[]>
   context(): Promise<ChatContext>
+  /** the effort Claude Code applies to the next message (get_settings, applied.effort): a level, null for none, undefined when it cannot be read */
+  effort(): Promise<string | null | undefined>
   /** ends the input: Claude Code exits by itself; after `graceMs` (default 2500) the process is killed */
   close(graceMs?: number): void
   kill(): void

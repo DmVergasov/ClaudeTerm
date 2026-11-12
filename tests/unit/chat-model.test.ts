@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ChatModel, toolSubject } from '../../src/main/chat/chat-model'
-import type { ChatItem, ChatPatch, ChatToolCall } from '../../src/shared/chat'
+import { typedMessages, type ChatItem, type ChatPatch, type ChatToolCall } from '../../src/shared/chat'
 import { fixtureHistory, fixtureLines } from '../fixtures/chat-fixtures'
 
 const MIB = 1024 * 1024
@@ -17,6 +17,8 @@ function model(): { m: ChatModel; clock: { t: number } } {
 function run(m: ChatModel, messages: unknown[]): ChatPatch[] {
   return messages.flatMap(msg => m.apply(msg))
 }
+
+const isObjLine = (line: unknown): line is Record<string, unknown> => typeof line === 'object' && line !== null
 
 /** the calls of the one tools item of a model */
 function callsOf(m: ChatModel): ChatToolCall[] {
@@ -473,10 +475,67 @@ describe('ChatModel', () => {
     expect(m.state()).toMatchObject({ turn: 'idle', turnStartedAt: null })
   })
 
-  it('/compact draws a divider', () => {
+  it('the init says the effort in effect: a level sets it, null clears it, an absent or bad value keeps it', () => {
+    const { m } = model()
+    m.apply({ type: 'system', subtype: 'init', model: 'claude-opus-5-5', effort: 'high' })
+    expect(m.state()).toMatchObject({ effort: 'high' })
+    m.apply({ type: 'system', subtype: 'init', model: 'claude-opus-5-5', effort: null })
+    expect(m.state()).toMatchObject({ effort: null })
+    m.apply({ type: 'system', subtype: 'init', model: 'claude-opus-5-5', effort: 'max' })
+    m.apply({ type: 'system', subtype: 'init', model: 'claude-opus-5-5' })
+    expect(m.state()).toMatchObject({ effort: 'max' })
+    m.apply({ type: 'system', subtype: 'init', model: 'claude-opus-5-5', effort: 'turbo' })
+    m.apply({ type: 'system', subtype: 'init', model: 'claude-opus-5-5', effort: 3 })
+    expect(m.state()).toMatchObject({ effort: 'max' })
+  })
+
+  it('/compact draws a divider that says what it did', () => {
     const { m } = model()
     run(m, fixtureLines('compact', 'out'))
-    expect(m.items().filter(item => item.kind === 'divider')).toEqual([expect.objectContaining({ kind: 'divider', text: 'Conversation compacted' })])
+    expect(m.items().filter(item => item.kind === 'divider')).toEqual([
+      expect.objectContaining({ kind: 'divider', text: 'Conversation compacted · 27k → 3.9k tokens · 10 s' }),
+    ])
+  })
+
+  it('an automatic compaction says so, and a boundary without numbers says only that it compacted', () => {
+    const { m } = model()
+    const boundary = fixtureLines('compact', 'out').find(l => isObjLine(l) && l.subtype === 'compact_boundary') as Record<string, unknown>
+    run(m, [{ ...boundary, compact_metadata: { trigger: 'auto', pre_tokens: 27050, post_tokens: 3874, duration_ms: 9992 } }])
+    run(m, [{ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual' } }])
+    expect(m.items().filter(item => item.kind === 'divider').map(item => item.kind === 'divider' && item.text)).toEqual([
+      'Conversation compacted automatically · 27k → 3.9k tokens · 10 s',
+      'Conversation compacted',
+    ])
+  })
+
+  it('the compaction is the activity of the chat from its start to its boundary, and its divider replaces it', () => {
+    const { m, clock } = model()
+    const lines = fixtureLines('compact', 'out')
+    const compacting = lines.findIndex(l => isObjLine(l) && l.subtype === 'status' && l.status === 'compacting')
+    const boundary = lines.findIndex(l => isObjLine(l) && l.subtype === 'compact_boundary')
+    clock.t = 500
+    run(m, lines.slice(0, compacting + 1))
+    expect(m.state()).toMatchObject({ activity: { kind: 'compacting', since: 500 } })
+    clock.t = 900
+    run(m, lines.slice(compacting + 1, boundary + 1))
+    expect(m.state().activity).toBeUndefined()
+  })
+
+  it('a failed compaction says why once, and its activity goes', () => {
+    const { m } = model()
+    run(m, [{ type: 'system', subtype: 'status', status: 'compacting' }])
+    run(m, [{ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'Prompt is too long' }])
+    expect(m.state().activity).toBeUndefined()
+    expect(m.items().filter(item => item.kind === 'notice')).toEqual([
+      expect.objectContaining({ kind: 'notice', tone: 'error', text: 'Compaction failed: Prompt is too long' }),
+    ])
+  })
+
+  it('a result clears a compaction that got stuck', () => {
+    const { m } = model()
+    run(m, [{ type: 'system', subtype: 'status', status: 'compacting' }])
+    run(m, [{ type: 'result', subtype: 'success', is_error: false, result: '' }])
+    expect(m.state().activity).toBeUndefined()
   })
 
   it('/context output is a command item', () => {
@@ -519,6 +578,16 @@ describe('ChatModel', () => {
     const notices = m.items().filter(item => item.kind === 'notice')
     expect(notices).toEqual([expect.objectContaining({ kind: 'notice', text: 'Interrupted', tone: 'info' })])
     expect(callsOf(m)[0]).toMatchObject({ state: 'failed', error: 'Interrupted' })
+  })
+
+  it('an Agent call cut off by an interrupt ends its running agent too, so none is left animating', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find it', prompt: 'look' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find it', task_type: 'local_agent' })
+    m.markInterrupted()
+    m.apply({ type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools' })
+    expect(callsOf(m)[0]).toMatchObject({ state: 'failed', error: 'Interrupted' })
+    expect(callsOf(m)[0].agents).toEqual([expect.objectContaining({ id: 'a1', state: 'failed' })])
   })
 
   it('a mark taken while idle does not make the next error result an interruption', () => {
@@ -644,6 +713,21 @@ describe('ChatModel', () => {
     expect(callsOf(m)[0].agents[1]).toMatchObject({ id: 'a2', type: 'Explore', state: 'running' })
   })
 
+  it('a finished subagent resumed by a SendMessage call is listed on that call, and ends there', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find the config', prompt: 'look' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find the config', task_type: 'local_agent' })
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'a1', tool_use_id: 't1', status: 'completed', usage: { duration_ms: 1500 } })
+
+    // the person sends the finished agent a message: Claude Code resumes it under the same task id, and names the SendMessage call that did it
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't9', name: 'SendMessage', input: { to: 'a1', message: 'and the tests' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't9', task_id: 'a1', description: 'Find the config', task_type: 'local_agent', is_backgrounded: true })
+    expect(callsOf(m).find(c => c.id === 't9')?.agents).toEqual([expect.objectContaining({ id: 'a1', state: 'running' })])
+
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'a1', tool_use_id: 't9', status: 'completed', usage: { duration_ms: 900 } })
+    expect(callsOf(m).find(c => c.id === 't9')?.agents).toEqual([expect.objectContaining({ id: 'a1', state: 'done', ms: 900 })])
+  })
+
   it('a Read of a png adds an images item', () => {
     const { m } = model()
     m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/work/acme/shot.PNG' } }] } })
@@ -671,6 +755,8 @@ describe('ChatModel', () => {
   it('answering one of two open cards keeps the turn waiting; answering the last one runs it', () => {
     const { m } = model()
     const card = { type: 'question' as const, questions: [] }
+    // the cards open in a turn: the prompt starts it
+    m.userSent({ text: 'ask me two things', attachments: [] })
     m.cardOpened('card1', card)
     m.cardOpened('card2', card)
     expect(m.state().turn).toBe('waiting')
@@ -749,5 +835,135 @@ describe('ChatModel', () => {
     expect(toolSubject('Read', { file_path: '/work/acme/src/a.ts' }, '/work/acme')).toBe('src/a.ts')
     expect(toolSubject('Grep', { pattern: 'TODO' }, '/w')).toBe('TODO')
     expect(toolSubject('Nope', {}, '/w')).toBe('')
+  })
+})
+
+/** a user-role message as Claude Code sends it: the text, and the origin the SDK names when it names one */
+function userMessage(text: string, origin?: unknown): unknown {
+  return { type: 'user', message: { role: 'user', content: text }, session_id: 's1', uuid: 'u1', ...(origin === undefined ? {} : { origin }) }
+}
+
+const TASK_NOTICE = [
+  '<task-notification>',
+  '<task-id>a1</task-id>',
+  '<tool-use-id>t1</tool-use-id>',
+  '<status>completed</status>',
+  '<summary>Agent "Re-review Task 11 fix round" finished</summary>',
+  '<result>Two findings, both fixed.</result>',
+  '</task-notification>'
+].join('\n')
+
+describe('messages Claude Code puts in the conversation', () => {
+  it('a background task notice is a system row with its summary and result, not the person\'s bubble', () => {
+    const { m } = model()
+    m.apply(userMessage(TASK_NOTICE, { kind: 'task-notification' }))
+    expect(m.items().filter(item => item.kind === 'user')).toEqual([])
+    expect(m.items()).toEqual([expect.objectContaining({
+      kind: 'event', source: 'task', title: 'Agent "Re-review Task 11 fix round" finished', status: null, body: 'Two findings, both fixed.'
+    })])
+  })
+
+  it('a task notice whose end the chat already drew from the system message adds no row', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Task', input: { description: 'Re-review', prompt: 'look' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Re-review', task_type: 'local_agent' })
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'a1', tool_use_id: 't1', status: 'completed', output_file: '', summary: 'Re-review' })
+    m.apply(userMessage(TASK_NOTICE, { kind: 'task-notification' }))
+    expect(m.items().filter(item => item.kind === 'user' || item.kind === 'event')).toEqual([])
+  })
+
+  it('the end of a background shell task, from its system message and its notice, is one event row with its summary', () => {
+    const { m } = model()
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'a1', tool_use_id: 'toolu_b', status: 'completed', output_file: '', summary: 'Run tests' })
+    m.apply(userMessage(TASK_NOTICE, { kind: 'task-notification' }))
+    expect(m.items()).toEqual([expect.objectContaining({
+      kind: 'event', source: 'task', title: 'Agent "Re-review Task 11 fix round" finished', status: null, body: 'Two findings, both fixed.'
+    })])
+  })
+
+  it('a task notice that failed or was stopped says so in its status', () => {
+    const { m } = model()
+    m.apply(userMessage(TASK_NOTICE.replace('<status>completed</status>', '<status>failed</status>'), { kind: 'task-notification' }))
+    expect(m.items()).toEqual([expect.objectContaining({ kind: 'event', status: 'failed' })])
+  })
+
+  it('a message from another session is a row with the sender\'s name and the body, not a bubble', () => {
+    const { m } = model()
+    m.apply(userMessage('<cross-session-message from="s-2" name="Reviewer">Ready for review</cross-session-message>',
+      { kind: 'peer', from: 's-2', name: 'Reviewer', body: 'Ready for review' }))
+    expect(m.items()).toEqual([expect.objectContaining({ kind: 'event', source: 'peer', title: 'Message from Reviewer', body: 'Ready for review' })])
+  })
+
+  it('a channel or coordinator message is a row with its first line, and its whole text folded under it', () => {
+    const { m } = model()
+    m.apply(userMessage('Deploy finished\nlog line 2', { kind: 'channel', server: 'ci' }))
+    m.apply(userMessage('Plan updated', { kind: 'coordinator' }))
+    expect(m.items()).toEqual([
+      expect.objectContaining({ kind: 'event', source: 'message', title: 'Deploy finished', body: 'Deploy finished\nlog line 2' }),
+      expect.objectContaining({ kind: 'event', source: 'message', title: 'Plan updated', body: 'Plan updated' })
+    ])
+  })
+
+  it('the person\'s message is a bubble, and so is one with no origin', () => {
+    const { m } = model()
+    m.apply(userMessage('hello', { kind: 'human' }))
+    m.apply(userMessage('plain'))
+    expect(m.items()).toEqual([expect.objectContaining({ kind: 'user', text: 'hello' }), expect.objectContaining({ kind: 'user', text: 'plain' })])
+  })
+
+  it('a history line with the task envelope and no origin is the same row', () => {
+    const { m } = model()
+    m.apply(userMessage(TASK_NOTICE))
+    expect(m.items()).toEqual([expect.objectContaining({
+      kind: 'event', source: 'task', title: 'Agent "Re-review Task 11 fix round" finished', body: 'Two findings, both fixed.'
+    })])
+  })
+
+  it('an origin-less message is a row only when it starts with a known envelope tag', () => {
+    const { m } = model()
+    m.apply(userMessage('Why did <task-notification> fail?'))
+    m.apply(userMessage('<agent-message from="s-3">Hi</agent-message>'))
+    expect(m.items()).toEqual([
+      expect.objectContaining({ kind: 'user', text: 'Why did <task-notification> fail?' }),
+      expect.objectContaining({ kind: 'event', source: 'peer', title: 'Message from s-3', body: 'Hi' })
+    ])
+  })
+
+  it('a scheduled trigger, a task-notification origin whose text is no envelope, is a row with its first line as the title', () => {
+    const { m } = model()
+    m.apply(userMessage('Nightly check\nall three suites passed', { kind: 'task-notification', subkind: 'scheduled-trigger' }))
+    expect(m.items()).toEqual([expect.objectContaining({ kind: 'event', source: 'message', title: 'Nightly check', body: 'Nightly check\nall three suites passed' })])
+  })
+
+  it('a channel envelope is titled by its stripped body, never by its opening tag', () => {
+    const { m } = model()
+    m.apply(userMessage('<channel source="ci">Deploy finished\nlog line 2</channel>'))
+    expect(m.items()).toEqual([expect.objectContaining({ kind: 'event', source: 'message', title: 'Deploy finished', body: 'Deploy finished\nlog line 2' })])
+  })
+
+  it('an envelope with a megabyte of spaces in it parses in linear time, to the same body', () => {
+    const { m } = model()
+    const text = `<agent-message from="s-1">${' '.repeat(MIB - 64)}Hi</agent-message>`
+    const started = performance.now()
+    m.apply(userMessage(text))
+    expect(performance.now() - started).toBeLessThan(200)
+    expect(m.items()).toEqual([expect.objectContaining({ kind: 'event', source: 'peer', title: 'Message from s-1', body: 'Hi' })])
+  })
+
+  it('a task envelope with a megabyte of repeated opening tags parses in linear time, and finds no field in them', () => {
+    const { m } = model()
+    const text = `<task-notification>\n${'<summary>'.repeat(Math.floor(MIB / 9))}`
+    const started = performance.now()
+    m.apply(userMessage(text, { kind: 'task-notification' }))
+    expect(performance.now() - started).toBeLessThan(200)
+    expect(m.items()).toEqual([expect.objectContaining({ kind: 'event', source: 'task', title: 'A background task ended', body: '' })])
+  })
+
+  it('↑ recall gives only what the person typed', () => {
+    const { m } = model()
+    m.apply(userMessage('first'))
+    m.apply(userMessage(TASK_NOTICE, { kind: 'task-notification' }))
+    m.apply(userMessage('peer text', { kind: 'peer', from: 's-2', body: 'peer text' }))
+    expect(typedMessages(m.items())).toEqual(['first'])
   })
 })

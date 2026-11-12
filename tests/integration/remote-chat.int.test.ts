@@ -84,6 +84,10 @@ class FakeEngine implements ChatEngine {
     return { pct: null, used: null, size: null }
   }
 
+  async effort(): Promise<string | null | undefined> {
+    return undefined
+  }
+
   close(): void {}
 
   kill(): void {}
@@ -186,6 +190,7 @@ async function setUp(): Promise<void> {
     setWorking: () => {},
     status: () => {},
     recordSession: () => {},
+    folder: () => {},
     now: () => Date.now(),
     log: { warn: () => {} },
   })

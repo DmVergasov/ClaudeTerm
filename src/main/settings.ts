@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   defaultFolder: null,
   claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true, view: 'chat' },
+  chat: { copyOnSelect: true, fullWidth: false },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
   theme: 'Graphite',
@@ -99,6 +100,7 @@ export function parseSettings(text: string | null): ParsedSettings {
   const sp = obj(raw.sidePanel)
   const dv = obj(raw.devices)
   const am = obj(raw.agentMessages)
+  const ch = obj(raw.chat)
 
   const profiles: ProfileDef[] = take('profiles', raw.profiles, isProfiles, []).map((p) => ({ name: p.name, command: p.command, args: p.args ?? [] }))
 
@@ -135,6 +137,10 @@ export function parseSettings(text: string | null): ParsedSettings {
       continueAfterRestore: take('claude.continueAfterRestore', claude.continueAfterRestore, isBool, d.claude.continueAfterRestore),
       limitPace: take('claude.limitPace', claude.limitPace, isBool, d.claude.limitPace),
       view: take('claude.view', claude.view, isTabView, d.claude.view)
+    },
+    chat: {
+      copyOnSelect: take('chat.copyOnSelect', ch.copyOnSelect, isBool, d.chat.copyOnSelect),
+      fullWidth: take('chat.fullWidth', ch.fullWidth, isBool, d.chat.fullWidth)
     },
     profiles,
     font: {

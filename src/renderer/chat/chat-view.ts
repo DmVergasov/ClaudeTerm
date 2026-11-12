@@ -1,11 +1,14 @@
-import { acceptPatches, commandWord, typedMessages, type ChatAnswer, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type ChatState } from '../../shared/chat'
+import { acceptPatches, commandWord, typedMessages, type ChatAnswer, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type ChatState, type ChatSubagent } from '../../shared/chat'
 import type { ImageCard } from '../../shared/types'
 import { spinner } from '../tab-row'
 import { ChatComposer } from './chat-composer'
+import { QuoteButton, splitQuotes } from './chat-quote'
 import { renderItem, streamText, type ItemCallbacks } from './chat-items'
 import { focusCard, renderCard, waitingCard } from './chat-cards'
-import { elapsedText, setSettled, stepKeep, updateSteps, type StepKeep } from './chat-steps'
+import { elapsedText, fillAgentsCard, setSettled, stepKeep, updateSteps, type StepKeep } from './chat-steps'
+import { chatPalette } from '../themes'
 import './chat.css'
+import type { ITheme } from '@xterm/xterm'
 
 export interface ChatViewOptions {
   tabId: string
@@ -45,6 +48,9 @@ const NO_STATE: ChatState = { turn: 'idle', turnStartedAt: null, mode: 'default'
 /** the id of a list's last item, null for an empty list */
 const lastId = (items: readonly ChatItem[]): string | null => (items.length === 0 ? null : items[items.length - 1]!.id)
 
+/** the dock keeps its rows this long after its last running agent ends, then closes */
+const DOCK_LINGER_MS = 4000
+
 type CardItem = Extract<ChatItem, { kind: 'card' }>
 
 /** a pixel of slack when deciding the column is at its bottom */
@@ -78,9 +84,21 @@ export class ChatView {
   private readonly elapsed = document.createElement('span')
   private readonly hintSep = document.createElement('span')
   private readonly hint = document.createElement('span')
+  /** the thin bar under the line while the chat compacts or restarts: a segment sweeps along it */
+  private readonly activityBar = document.createElement('div')
+  private readonly activitySweep = document.createElement('span')
   private readonly composer: ChatComposer
+  /** the Quote button over a selection in the column: its quote goes into the composer */
+  private readonly quote: QuoteButton
   private readonly cb: ItemCallbacks
   private items: ChatItem[] = []
+  /** the dock above the composer: the subagents of the Agent calls that run, outside the scrolling column */
+  private readonly dock = document.createElement('div')
+  /** the dock is open: a running agent opened it, and it stays open until its linger ends */
+  private dockOpen = false
+  /** the rows the dock draws while it is open: an agent that ends keeps its row through the linger, even when it began in an earlier turn */
+  private dockRows: ChatSubagent[] = []
+  private dockTimer: ReturnType<typeof setTimeout> | null = null
   /** the window: items[from] to items[to - 1] are drawn, the others are held only */
   private from = 0
   private to = 0
@@ -145,7 +163,11 @@ export class ChatView {
     this.hintSep.textContent = '·'
     this.hint.className = 'chat-hint'
     this.hint.textContent = 'Esc to interrupt'
-    this.working.append(this.glyph, this.verb, this.elapsedSep, this.elapsed, this.hintSep, this.hint)
+    this.activityBar.className = 'chat-activity-bar'
+    this.activityBar.hidden = true
+    this.activitySweep.className = 'chat-activity-sweep'
+    this.activityBar.append(this.activitySweep)
+    this.working.append(this.glyph, this.verb, this.elapsedSep, this.elapsed, this.hintSep, this.hint, this.activityBar)
     this.column.append(this.working)
     this.scroll.append(this.column)
     this.scroll.addEventListener('scroll', () => this.onScroll())
@@ -179,9 +201,17 @@ export class ChatView {
       resume: (refused) => o.resume(refused),
       openInTerminal: (line) => o.openInTerminal(line),
       askSwitch: (go, cancel) => o.askSwitch(go, cancel),
-      history: () => typedMessages(this.items),
+      // ↑ recalls the typed text of a message; its quotes stay out of the field, as they are shown in their bars, and a message of quotes alone has none
+      history: () => typedMessages(this.items).map((text) => splitQuotes(text).rest).filter((text) => text !== ''),
       unavailable: () => this.unavailableCommands(),
       imageCard: (cardId) => o.imageCard(cardId)
+    })
+    this.quote = new QuoteButton({
+      host: this.element,
+      column: this.column,
+      scroll: this.scroll,
+      canQuote: () => this.composer.canQuote(),
+      quote: (text) => this.composer.addQuote(text)
     })
     // Tab in the composer's text moves the focus to the card that waits, when there is one; the other controls keep their Tab order
     this.composer.element.addEventListener('keydown', (e) => {
@@ -202,6 +232,10 @@ export class ChatView {
       this.dropFiles(Array.from(e.dataTransfer?.files ?? []))
     })
     this.body.append(this.scroll, this.fade, this.pill)
+    // the dock is the conversation's last element, after the column: it takes its own room, and sticks to the bottom of the scroll area
+    this.dock.className = 'chat-agents-dock'
+    this.scroll.append(this.dock)
+    this.resize.observe(this.dock)
     this.element.append(this.body, this.composer.element)
     o.container.append(this.element)
     this.show(false)
@@ -211,6 +245,7 @@ export class ChatView {
     const was = this.visible
     if (!visible && was) this.top = this.scroll.scrollTop
     this.visible = visible
+    this.quote.setActive(visible)
     this.element.style.display = visible ? 'flex' : 'none'
     this.syncClock()
     if (!visible) {
@@ -254,6 +289,7 @@ export class ChatView {
     const anchor = this.stick || !this.visible ? null : this.topItem()
     const lastChanged = lastId(this.items) !== lastId(s.items)
     this.items = [...this.items.slice(0, at), ...s.items]
+    this.syncDock()
     // the older pages held stay, and their hasOlder with them; a snapshot that starts the chat tells whether there are more
     if (at === 0) this.hasOlder = s.hasOlder
     this.rev = s.rev
@@ -284,6 +320,10 @@ export class ChatView {
     this.rev = s.rev
     this.hasOlder = s.hasOlder
     this.items = [...s.items]
+    // a chat drawn again from its snapshot starts with the dock as its agents run now, and a dock that was open is closed first
+    this.stopDockTimer()
+    this.closeDock()
+    this.syncDock()
     this.pruneFolds()
     this.state = s.state
     this.composer.setState(s.state)
@@ -401,6 +441,16 @@ export class ChatView {
     return true
   }
 
+  /** the chat's colours follow the terminal theme: the host takes the theme's chat tokens, and the window's own stay as they are */
+  setTheme(theme: ITheme): void {
+    for (const [name, value] of Object.entries(chatPalette(theme))) this.element.style.setProperty(name, value)
+  }
+
+  /** the setting: the conversation and the message box take the chat's whole width, not a reading column */
+  setFullWidth(on: boolean): void {
+    this.element.classList.toggle('chat-wide', on)
+  }
+
   focus(): void {
     this.composer.focus()
   }
@@ -425,8 +475,10 @@ export class ChatView {
     this.visible = false
     this.resize.disconnect()
     this.composer.dispose()
+    this.quote.dispose()
     this.dropQueued()
     this.stopClock()
+    this.stopDockTimer()
     this.element.remove()
   }
 
@@ -493,6 +545,68 @@ export class ChatView {
         this.replaceAll({ tabId: this.o.tabId, rev: this.rev, items: p.items, hasOlder: p.hasOlder, state: this.state })
         break
     }
+    // a streamed text does not change an agent: the dock is looked at for the other patches
+    if (p.op !== 'append') this.syncDock()
+  }
+
+  /**
+   * The dock draws the subagents of the conversation's Agent calls, in the order they started: it opens when one runs, keeps the
+   * rows of the done ones while others run, and closes DOCK_LINGER_MS after the last one ends. A chat drawn again starts closed
+   * unless an agent runs. The dock shows the agents of the current turn only: those of the Agent calls since the person's last message.
+   */
+  private syncDock(): void {
+    const agents = this.turnAgents()
+    if (agents.some((agent) => agent.state === 'running')) {
+      this.stopDockTimer()
+      this.dockOpen = true
+      this.dockRows = agents
+      fillAgentsCard(this.dock, agents)
+      this.dock.classList.add('shown')
+      return
+    }
+    if (!this.dockOpen) return
+    this.dockRows = this.dockRows.map((row) => this.agentNow(row.id) ?? row)
+    fillAgentsCard(this.dock, this.dockRows)
+    if (this.dockTimer === null) this.dockTimer = setTimeout(() => this.closeDock(), DOCK_LINGER_MS)
+  }
+
+  /** the subagents of the Agent calls from the person's last message on, in the order they started; an agent of an earlier turn stays while it runs, as a background one outlives its turn */
+  private turnAgents(): ChatSubagent[] {
+    let from = 0
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const item = this.items[i]!
+      if (item.kind === 'user' && item.from === undefined) {
+        from = i + 1
+        break
+      }
+    }
+    const agentsOf = (items: ChatItem[]): ChatSubagent[] => items.flatMap((item) => (item.kind === 'tools' ? item.calls.flatMap((call) => call.agents) : []))
+    const running = agentsOf(this.items.slice(0, from)).filter((agent) => agent.state === 'running')
+    return [...running, ...agentsOf(this.items.slice(from))]
+  }
+
+  /** the latest state of an agent, whichever turn its Agent call is in */
+  private agentNow(id: string): ChatSubagent | undefined {
+    for (const item of this.items) {
+      if (item.kind !== 'tools') continue
+      for (const call of item.calls) {
+        const agent = call.agents.find((a) => a.id === id)
+        if (agent !== undefined) return agent
+      }
+    }
+    return undefined
+  }
+
+  private closeDock(): void {
+    this.dockTimer = null
+    this.dockOpen = false
+    this.dockRows = []
+    this.dock.classList.remove('shown')
+  }
+
+  private stopDockTimer(): void {
+    if (this.dockTimer !== null) clearTimeout(this.dockTimer)
+    this.dockTimer = null
   }
 
   /** the newest items are the ones that change, so the scan starts from the end */
@@ -625,7 +739,8 @@ export class ChatView {
   /** a tool step's choices, or a thinking block's unfolding, as its node shows them, are kept by the item's id when the node goes */
   private keepFold(id: string, node: HTMLElement): void {
     if (node.classList.contains('chat-thinking')) {
-      if (node.querySelector('.chat-thinking-body') !== null) this.folds.set(id, { open: true, wells: [] })
+      // open is a thinking block's default: only the user's fold is kept
+      if (node.querySelector('.chat-thinking-head[aria-expanded="false"]') !== null) this.folds.set(id, { open: false, wells: [] })
       else this.folds.delete(id)
       return
     }
@@ -852,24 +967,29 @@ export class ChatView {
     return asked
   }
 
-  /** the composer and the working line show the turn as the state has it */
+  /** the composer and the working line show the turn as the state has it, and what the chat does between its turns */
   private showState(): void {
     if (!this.visible) return
     const turn = this.state.turn
-    this.working.hidden = turn === 'idle'
-    this.verb.textContent = turn === 'waiting' ? 'Waiting for you' : 'Working'
-    // Claude waits for the user: no Esc to interrupt
-    this.hintSep.hidden = turn === 'waiting'
-    this.hint.hidden = turn === 'waiting'
+    const activity = this.state.activity
+    this.working.hidden = turn === 'idle' && activity === undefined
+    this.verb.textContent = activity?.kind === 'compacting' ? 'Compacting conversation'
+      : activity?.kind === 'restarting' ? 'Restarting Claude Code'
+        : turn === 'waiting' ? 'Waiting for you' : 'Working'
+    this.verb.classList.toggle('chat-shimmer', activity !== undefined)
+    this.activityBar.hidden = activity === undefined
+    // Esc interrupts a running turn only: not while Claude waits for the user, nor during an idle compaction
+    this.hintSep.hidden = turn !== 'working'
+    this.hint.hidden = turn !== 'working'
     this.tickElapsed()
     this.syncClock()
     this.settle()
   }
 
-  /** the elapsed time of the turn, from its start; shown only while there is a turn that started */
+  /** the elapsed time of the line: from the start of its activity, else of the turn; shown only while there is one that started */
   private tickElapsed(): void {
-    const started = this.state.turnStartedAt
-    const shown = started !== null && this.state.turn !== 'idle'
+    const started = this.state.activity?.since ?? (this.state.turn === 'idle' ? null : this.state.turnStartedAt)
+    const shown = started !== null
     this.elapsedSep.hidden = !shown
     this.elapsed.hidden = !shown
     if (shown) this.elapsed.textContent = elapsedText(Date.now() - started)
@@ -877,7 +997,7 @@ export class ChatView {
 
   /** the elapsed time ticks once a second while the chat is shown and a turn runs */
   private syncClock(): void {
-    const run = this.visible && this.state.turn !== 'idle'
+    const run = this.visible && (this.state.turn !== 'idle' || this.state.activity !== undefined)
     if (run && this.clock === null) this.clock = setInterval(() => this.tickElapsed(), 1000)
     if (!run) this.stopClock()
   }

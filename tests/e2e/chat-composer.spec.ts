@@ -169,6 +169,27 @@ test('a queued message leaves the queue when Claude Code folds it into the runni
   }
 })
 
+test('a send folded into the turn on its result leaves the queue, and the working line hides when the turn ends', async () => {
+  // the send waits while the turn runs; the turn's result names it as taken into the turn, so no turn of its own runs it
+  const { app, page, tabId } = await launchChatTab({
+    turns: { slow: [{ wait: 2500 }, { fold: 'result' }, { text: 'noted' }], next: [{ text: 'next answer' }] }
+  })
+  try {
+    await send(page, 'slow')
+    await waitForTurn(page, tabId, 'working')
+    await page.locator(INPUT).click()
+    await page.keyboard.type('next')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.chat-user-row.queued')).toContainText('Queued')
+    await waitForTurn(page, tabId, 'idle')
+    await expect(page.locator('.chat-user-row.queued')).toHaveCount(0)
+    await expect(page.locator('.chat-working')).toBeHidden()
+    await expect(page.locator(COLUMN)).not.toContainText('next answer')
+  } finally {
+    await app.close()
+  }
+})
+
 test('after Esc, the message waiting behind the interrupted turn is no longer queued at once, and its turn goes on', async () => {
   // the next turn's first frame comes 3 s after its start: the bubble must leave the queue before it, as Claude Code takes the message at once
   const { app, page, tabId } = await launchChatTab({
@@ -207,6 +228,30 @@ test('a held Esc sends one interrupt: the repeated keydowns of a held key do not
     await expect.poll(interrupts).toBe(1)
     await waitForTurn(page, tabId, 'idle')
     expect(interrupts()).toBe(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('the model chip shows the effort Claude Code runs the chat at, without a pick in /model', async () => {
+  // the init, which names the effort in effect, comes with the first turn: the chip shows it with the model, though nothing was picked
+  const { app, page, tabId } = await launchChatTab({ model: 'claude-opus-5-5', effort: 'high', turns: { hi: [{ text: 'hello' }] } })
+  try {
+    await ready(page)
+    await send(page, 'hi')
+    await waitForTurn(page, tabId, 'idle')
+    await expect(page.locator(MODEL_CHIP)).toContainText('· high')
+  } finally {
+    await app.close()
+  }
+})
+
+test('the model chip shows the effort that get_settings reports when the init names none', async () => {
+  // a Claude Code that is not a Remote Control host leaves the effort out of the init: the chat reads it from the settings it applies
+  const { app, page } = await launchChatTab({ model: 'claude-opus-5-5', appliedEffort: 'xhigh', turns: { hi: [{ text: 'hello' }] } })
+  try {
+    await ready(page)
+    await expect(page.locator(MODEL_CHIP)).toContainText('· xhigh')
   } finally {
     await app.close()
   }
@@ -338,6 +383,64 @@ test('Shift+Tab cycles the mode and Claude Code hears it', async () => {
   }
 })
 
+test('a chat that starts in Auto keeps Auto among its modes: Shift+Tab comes back round to it', async () => {
+  // Claude Code says it runs in auto mode only in its answer to the start, after the composer asked for the modes
+  const { app, page, log } = await launchChatTab({ permissionMode: 'auto', turns: {} })
+  try {
+    await ready(page)
+    await expect(page.locator(MODE_CHIP)).toContainText('Auto')
+    await page.locator(INPUT).click()
+    for (const label of ['Ask before edits', 'Accept edits', 'Plan', 'Auto']) {
+      await page.keyboard.press('Shift+Tab')
+      await expect(page.locator(MODE_CHIP)).toContainText(label)
+    }
+    await expect.poll(() => modeRequests(log)).toEqual(['default', 'acceptEdits', 'plan', 'auto'])
+  } finally {
+    await app.close()
+  }
+})
+
+test('a model that runs auto mode lets Shift+Tab reach Auto before any message, and Claude Code hears it', async () => {
+  // the models Claude Code lists say which run auto mode: the chat runs the default one, which does
+  const { app, page, log } = await launchChatTab({
+    autoMode: true,
+    models: [
+      { value: 'default', displayName: 'Default (recommended)', description: 'Opus 5.5', supportedEffortLevels: [], supportsAutoMode: true },
+      { value: 'haiku', displayName: 'Haiku 5.5', description: 'Fastest for quick answers', supportedEffortLevels: [] },
+    ],
+    turns: {},
+  })
+  try {
+    await ready(page)
+    await page.locator(INPUT).click()
+    for (const label of ['Accept edits', 'Plan', 'Auto']) {
+      await page.keyboard.press('Shift+Tab')
+      await expect(page.locator(MODE_CHIP)).toContainText(label)
+    }
+    await expect.poll(() => modeRequests(log)).toEqual(['acceptEdits', 'plan', 'auto'])
+  } finally {
+    await app.close()
+  }
+})
+
+test('a chat whose first init reports Auto, with a models list that does not mark its model: after an answer, cycling away from Auto and back reaches Auto', async () => {
+  // the initialize reply says the chat starts in default; the first turn's init says auto, and the models do not say auto mode
+  const { app, page, log, tabId } = await launchChatTab({ initPermissionMode: 'auto', turns: { hi: [{ text: 'hello' }] } })
+  try {
+    await send(page, 'hi')
+    await waitForTurn(page, tabId, 'idle')
+    await expect(page.locator(MODE_CHIP)).toContainText('Auto')
+    await page.locator(INPUT).click()
+    for (const label of ['Ask before edits', 'Accept edits', 'Plan', 'Auto']) {
+      await page.keyboard.press('Shift+Tab')
+      await expect(page.locator(MODE_CHIP)).toContainText(label)
+    }
+    await expect.poll(() => modeRequests(log)).toEqual(['default', 'acceptEdits', 'plan', 'auto'])
+  } finally {
+    await app.close()
+  }
+})
+
 test('two quick Shift+Tab presses advance twice, before the first answer comes back', async () => {
   const { app, page, log } = await launchChatTab({ turns: {} })
   try {
@@ -365,19 +468,37 @@ test('two Shift+Tab presses made before the modes have loaded both apply, in ord
   }
 })
 
-test('a model change reloads the models, not the modes', async () => {
-  // the list of models is empty, so the model the first turn names is not in it: its change asks for the models again
-  const { app, page, tabId } = await launchChatTab({ turns: { hi: [{ text: 'hello' }] } })
+test('the model the person picks decides whether Auto is offered: a model that runs auto mode brings Auto into the modes', async () => {
+  // the chat starts on the first model, which does not run auto mode; the person picks the second one, which does
+  const { app, page } = await launchChatTab({
+    autoMode: true,
+    models: [
+      { value: 'opus', displayName: 'Opus 5.5', description: 'For complex work', supportedEffortLevels: [] },
+      { value: 'haiku', displayName: 'Haiku 5.5', description: 'Fastest for quick answers', supportedEffortLevels: [], supportsAutoMode: true },
+    ],
+    turns: {},
+  })
   try {
     await ready(page)
-    await stubIpc(app, 'chat:models', { answer: [], count: 'modelsCalls' })
-    await stubIpc(app, 'chat:modes', { count: 'modesCalls' })
-    await send(page, 'hi')
-    await waitForTurn(page, tabId, 'idle')
-    // the model is not in the list, so its change asks for the models again (and an empty list is asked for again on each state)
-    await expect.poll(() => callsOf(app, 'modelsCalls')).toBeGreaterThan(0)
-    // the modes are not asked for again: they do not depend on the model
-    expect(await callsOf(app, 'modesCalls')).toBe(0)
+    await page.locator(INPUT).click()
+    // Shift+Tab cycles the three modes this model offers: Auto is not among them
+    for (const label of ['Accept edits', 'Plan', 'Ask before edits']) {
+      await page.keyboard.press('Shift+Tab')
+      await expect(page.locator(MODE_CHIP)).toContainText(label)
+    }
+    // the person picks the model that runs auto mode in the model picker
+    await page.locator(MODEL_CHIP).click()
+    const picker = page.locator('.chat-host:visible .chat-model-picker')
+    await picker.locator('.chat-model-option', { hasText: 'Haiku 5.5' }).click()
+    await picker.locator('button', { hasText: 'Apply' }).click()
+    await expect(picker).toBeHidden()
+    await expect(page.locator(MODEL_CHIP)).toContainText('Haiku 5.5')
+    // Auto is among the modes now: Shift+Tab reaches it
+    await page.locator(INPUT).click()
+    for (const label of ['Accept edits', 'Plan', 'Auto']) {
+      await page.keyboard.press('Shift+Tab')
+      await expect(page.locator(MODE_CHIP)).toContainText(label)
+    }
   } finally {
     await app.close()
   }

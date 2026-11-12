@@ -215,6 +215,32 @@ test('the checkbox for going on after a restore is checked by default and saves 
   await app.close()
 })
 
+test('the copy-on-select switch is on by default in the Claude page and saves chat.copyOnSelect', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page, 'claude')
+  const box = win.locator('[data-key="chat.copyOnSelect"]')
+  await expect(box).toBeChecked()
+  await box.uncheck()
+  await expect.poll(() => readSettings(dataDir).chat?.copyOnSelect).toBe(false)
+  await app.close()
+})
+
+test('the full-width switch is on the Claude page, off by default, and saves chat.fullWidth', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: QUIET })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const win = await openSettings(app, page, 'claude')
+  await expect(win.getByText('Full-width chat', { exact: true })).toBeVisible()
+  await expect(win.getByText('The conversation and the message box use the whole width of the window instead of a reading column.')).toBeVisible()
+  const box = win.locator('[data-key="chat.fullWidth"]')
+  await expect(box).not.toBeChecked()
+  await box.check()
+  await expect.poll(() => readSettings(dataDir).chat?.fullWidth).toBe(true)
+  await box.uncheck()
+  await expect.poll(() => readSettings(dataDir).chat?.fullWidth).toBe(false)
+  await app.close()
+})
+
 test('the limit pace checkbox is checked by default; cleared, the limits in the status bar lose their bar and their color by pace', async () => {
   const { app, page, tabId, pipeName, dataDir } = await launchClaudeTab(QUIET)
   const now = Math.floor(Date.now() / 1000)
@@ -692,7 +718,7 @@ test('every setting lives in its tab', async () => {
     [p.dataset.page, [...new Set([...p.querySelectorAll<HTMLElement>('[data-key]')].map((e) => e.dataset.key!))].sort()])))).toEqual({
     general: ['autoUpdate', ...(WIN ? ['conpty'] : []), 'defaultFolder', 'defaultProfile'],
     appearance: ['font.family', 'font.size', 'scrollback', 'sidePanel.noRoom', 'tabs.position', 'theme'],
-    claude: ['claude.autoContinue', 'claude.command', 'claude.continueAfterRestore', 'claude.limitPace', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.view'],
+    claude: ['chat.copyOnSelect', 'chat.fullWidth', 'claude.autoContinue', 'claude.command', 'claude.continueAfterRestore', 'claude.limitPace', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.view'],
     notifications,
     panels: ['agentMessages.enabled', 'agentMessages.marks', 'imagePanel.autoOpen', 'imageWatch.enabled', 'review.editor', 'review.hideIgnored', 'review.hideTests', 'review.renderMarkdown', 'review.statusBar', 'review.testPatterns'],
     accounts: [],

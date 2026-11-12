@@ -5,6 +5,7 @@ import { imageUrl } from '../image-url'
 import { FilePicker } from './file-picker'
 import { findModel, ModelPicker } from './model-picker'
 import { routeSlash, SlashMenu } from './slash-menu'
+import { MAX_QUOTES, quoteMarkdown } from './chat-quote'
 
 const IDLE_PLACEHOLDER = 'Message Claude…'
 const QUEUE_PLACEHOLDER = 'Queue a follow-up…'
@@ -96,6 +97,8 @@ export class ChatComposer {
   private readonly menu: HTMLDivElement
   private readonly attachButton: HTMLButtonElement
   private readonly chips: HTMLDivElement
+  /** the quote bars above the field: one per quote the draft carries */
+  private readonly quoteList: HTMLDivElement
   private readonly input: HTMLTextAreaElement
   private readonly modeChip: HTMLButtonElement
   private readonly modeDot: HTMLSpanElement
@@ -137,10 +140,14 @@ export class ChatComposer {
   /** the modes list is asked for once at a time; Shift+Tab presses made before it came are applied when it does */
   private modesLoading = false
   private modePresses = 0
+  /** a mode came that the list lacks while the list was being asked for: that answer may predate it, so it is asked for again */
+  private modesStale = false
   /** while ↑ recalls earlier messages: the index of the one in the field; null while the draft is in it */
   private recall: number | null = null
   /** the draft a recall put aside, back in the field when ↓ passes the newest message */
   private draft = ''
+  /** the quotes of the conversation the draft carries, in the order added: sent above the typed text as blockquotes */
+  private quotes: string[] = []
 
   constructor(private readonly o: ComposerOptions) {
     this.element = make('div', 'chat-composer')
@@ -152,6 +159,8 @@ export class ChatComposer {
     this.menu.hidden = true
     this.chips = make('div', 'chat-attached-list')
     this.chips.hidden = true
+    this.quoteList = make('div', 'chat-quotes')
+    this.quoteList.hidden = true
     this.input = make('textarea', 'chat-input')
     this.input.rows = 1
     this.input.placeholder = IDLE_PLACEHOLDER
@@ -207,7 +216,7 @@ export class ChatComposer {
     this.note.hidden = true
     this.note.setAttribute('role', 'status')
 
-    this.field.append(this.menu, this.chips, this.input, row)
+    this.field.append(this.menu, this.chips, this.quoteList, this.input, row)
     this.element.append(this.waiting, this.field, this.note, this.refusal)
 
     // the menu and the routing of a submit share one list: the composer's, fetched when the menu opens
@@ -333,6 +342,10 @@ export class ChatComposer {
       // the commands are asked for while there are none, and again when a turn ends: the terminal's come with the session's init,
       // which a first turn brings. One ask per state, whatever the models did
       if (this.commands.length === 0 || (was.turn !== 'idle' && s.turn === 'idle')) this.loadCommands()
+      // Auto depends on what Claude Code reports and on the model the chat runs, and both come after the modes were first asked for:
+      // the list is asked for again when the model changes, when a mode is not in it, and on each state while it lacks Auto (the
+      // state that comes with the chat's start is the first one after the models are known)
+      if (s.model !== was.model || !this.modeList.includes('auto') || (s.mode !== was.mode && !this.modeList.includes(s.mode))) this.loadModes()
     }
     // a terminal command waiting for the turn runs once the turn is over
     if (s.turn === 'idle') this.runPending()
@@ -344,7 +357,7 @@ export class ChatComposer {
 
   /** whether the composer holds a draft, focused or not: text or attachments */
   hasDraft(): boolean {
-    return this.input.value !== '' || this.attached.length > 0
+    return this.input.value !== '' || this.attached.length > 0 || this.quotes.length > 0
   }
 
   /** inserts text at the caret, as the pickers do */
@@ -354,6 +367,41 @@ export class ChatComposer {
     this.autosize()
     this.refreshSend()
     this.focus()
+  }
+
+  /** a quote from the chat's Quote button: a bar above the field, and the caret goes to the end of the text */
+  addQuote(text: string): void {
+    if (this.quotes.length >= MAX_QUOTES) return
+    this.quotes = [...this.quotes, text]
+    this.renderQuotes()
+    this.input.focus()
+    this.input.setSelectionRange(this.input.value.length, this.input.value.length)
+  }
+
+  /** whether the chat's Quote button may quote one more: a message carries at most MAX_QUOTES */
+  canQuote(): boolean {
+    return this.quotes.length < MAX_QUOTES
+  }
+
+  /** the quote bars are drawn from the quotes, each in its order, with its ✕ */
+  private renderQuotes(): void {
+    this.quoteList.replaceChildren(...this.quotes.map((quote, index) => this.quoteBar(quote, index)))
+    this.quoteList.hidden = this.quotes.length === 0
+    this.autosize()
+  }
+
+  private quoteBar(text: string, index: number): HTMLDivElement {
+    const bar = make('div', 'chat-quote')
+    bar.title = text
+    bar.append(make('span', 'chat-quote-text', text))
+    const remove = iconButton('chat-quote-remove', 'Remove quote', icon('x', 12))
+    remove.addEventListener('click', () => {
+      this.quotes = this.quotes.filter((_, i) => i !== index)
+      this.renderQuotes()
+      this.input.focus()
+    })
+    bar.append(remove)
+    return bar
   }
 
   addAttachments(list: ChatAttachment[]): void {
@@ -613,7 +661,11 @@ export class ChatComposer {
   /** the pending press lasts while its answer may come: each press starts the time again */
   private armPending(): void {
     if (this.pendingTimer !== null) clearTimeout(this.pendingTimer)
-    this.pendingTimer = setTimeout(() => this.clearPending(), PENDING_MODE_MS)
+    // a press no answer came for is over, and a refused mode (no answer comes for it either) drops out of the list: the list is asked for again
+    this.pendingTimer = setTimeout(() => {
+      this.clearPending()
+      this.loadModes()
+    }, PENDING_MODE_MS)
   }
 
   private clearPending(): void {
@@ -635,7 +687,8 @@ export class ChatComposer {
     if (text === '' && this.attached.length === 0) return
     // a command the app answers, or the terminal runs; with files attached the text is a message, a command included: the
     // files go with it, and a command the app would answer is then sent to Claude Code as the text it is
-    if (this.attached.length === 0 && (text.startsWith('/') || text.startsWith('!'))) {
+    // a message with quotes is text, not a command: the quotes come first in it
+    if (this.attached.length === 0 && this.quotes.length === 0 && (text.startsWith('/') || text.startsWith('!'))) {
       // a notice's line waits for the turn: a second command would take its place, so it waits for that line's Esc first
       if (this.pendingRun?.notice === true) {
         this.showRefusal('A command waits for Claude to finish: Esc drops it first')
@@ -659,18 +712,22 @@ export class ChatComposer {
         return
       }
     }
-    const sent: ChatSend = { text, attachments: this.attached }
+    const quotes = this.quotes
+    const sent: ChatSend = { text: quoteMarkdown(quotes, text), attachments: this.attached }
     this.reset()
     void this.o.send(sent).then(
-      (refusal) => { if (refusal !== null) this.giveBack(sent, refusal) },
-      (e: unknown) => this.giveBack(sent, `Could not send: ${errorText(e)}`)
+      (refusal) => { if (refusal !== null) this.giveBack(sent, text, quotes, refusal) },
+      (e: unknown) => this.giveBack(sent, text, quotes, `Could not send: ${errorText(e)}`)
     )
   }
 
   /** the draft comes back unless the person has typed something new meanwhile: then the refused text goes in front of it */
-  private giveBack(sent: ChatSend, reason: string): void {
-    if (this.input.value === '') this.input.value = sent.text
-    else if (sent.text !== '') this.input.value = `${sent.text}\n${this.input.value}`
+  private giveBack(sent: ChatSend, typed: string, quotes: string[], reason: string): void {
+    if (this.input.value === '') this.input.value = typed
+    else if (typed !== '') this.input.value = `${typed}\n${this.input.value}`
+    // the quotes go back in front of any added meanwhile, as many as a message carries
+    this.quotes = [...quotes, ...this.quotes].slice(0, MAX_QUOTES)
+    this.renderQuotes()
     // a file attached again meanwhile is one chip, as addAttachments keeps it
     this.attached = uniqueByPath([...sent.attachments, ...this.attached])
     this.renderChips()
@@ -684,6 +741,8 @@ export class ChatComposer {
     this.files.close()
     this.input.value = ''
     this.attached = []
+    this.quotes = []
+    this.renderQuotes()
     this.recall = null
     this.draftGen++
     this.sendAfterAttach = false
@@ -817,7 +876,10 @@ export class ChatComposer {
 
   /** the modes the chat offers; the Shift+Tab presses that came before the list are applied once it is in */
   private loadModes(): void {
-    if (this.modesLoading) return
+    if (this.modesLoading) {
+      this.modesStale = true
+      return
+    }
     this.modesLoading = true
     void this.o.modes().then((list) => {
       this.modeList = list
@@ -827,7 +889,12 @@ export class ChatComposer {
     }, () => {
       // a list that does not come takes its presses with it: they are not applied by a later load
       this.modePresses = 0
-    }).finally(() => { this.modesLoading = false })
+    }).finally(() => {
+      this.modesLoading = false
+      if (!this.modesStale) return
+      this.modesStale = false
+      this.loadModes()
+    })
   }
 
   private renderMode(): void {

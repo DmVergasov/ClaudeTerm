@@ -40,6 +40,11 @@ export type ChatItem =
   | { kind: 'notice'; id: string; tone: 'info' | 'error'; text: string; action: ChatNoticeAction | null; line?: string | null }
   | { kind: 'divider'; id: string; text: string }
   | { kind: 'card'; id: string; card: ChatCard; answered: string | null }
+  // a message Claude Code puts in the conversation that is not the person's: a background task's end, another session's message, a channel's
+  | { kind: 'event'; id: string; source: ChatEventSource; title: string; status: string | null; body: string }
+
+/** what an event row is about: a background task (task), another Claude session (peer), any other message (message) */
+export type ChatEventSource = 'task' | 'peer' | 'message'
 
 export interface ChatSuggestion { index: number; label: string }
 export interface ChatQuestion { question: string; header: string; multiSelect: boolean; options: { label: string; description: string }[] }
@@ -56,9 +61,14 @@ export type ChatAnswer =
   | { type: 'plan'; choice: 'accept-edits' | 'ask-edits' | 'keep-planning'; message: string | null }
   | { type: 'dialog'; choice: string | null }
 
+/** what the chat does between its turns: Claude Code compacts the conversation, or the chat restarts it; since: when it began */
+export interface ChatActivity { kind: 'compacting' | 'restarting'; since: number }
+
 export interface ChatState {
   turn: ChatTurn; turnStartedAt: number | null; mode: ChatPermissionMode
   model: string | null; effort: string | null; sessionId: string | null; exited: boolean
+  /** optional: absent when nothing is going on outside the turns */
+  activity?: ChatActivity
 }
 export interface ChatSnapshot { tabId: string; rev: number; items: ChatItem[]; hasOlder: boolean; state: ChatState }
 export type ChatPatch =
@@ -86,4 +96,12 @@ export function acceptPatches(rev: number, fromRev: number, toRev: number, count
 }
 export interface ChatCommandInfo { name: string; description: string; argumentHint: string; group: 'builtin' | 'project' | 'plugin'; source: string | null; terminal: boolean }
 /** `resolved`: the full model id the SDK resolves the entry to (an alias such as `opus` resolves to it); absent when the SDK sends none */
-export interface ChatModelInfo { value: string; displayName: string; description: string; efforts: string[]; resolved?: string }
+export interface ChatModelInfo {
+  value: string
+  displayName: string
+  description: string
+  efforts: string[]
+  resolved?: string
+  /** the model runs auto mode: an older device's list has no flag (absent) */
+  autoMode?: boolean
+}

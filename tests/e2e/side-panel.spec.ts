@@ -231,9 +231,17 @@ test('a panel closed while the window was maximized gives its width back when th
 test('the panel slides in when it opens, and does not when the user asks for reduced motion', async () => {
   const { app, page } = await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false } } })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
-  const slides = () => page.evaluate(() => {
-    const p = document.getElementById('image-panel')!
-    return document.getAnimations().filter((a) => (a as CSSAnimation).animationName === 'panel-in' && (a.effect as KeyframeEffect | null)?.target === p).length
+  // the panel-in animations that start, counted as they start: a slide that waits for the window may be over by the time it is looked at
+  await page.evaluate(() => {
+    const w = window as unknown as { slides: number }
+    w.slides = 0
+    document.getElementById('image-panel')!.addEventListener('animationstart', (e) => { if (e.animationName === 'panel-in') w.slides++ })
+  })
+  const slides = (): Promise<number> => page.evaluate(() => {
+    const w = window as unknown as { slides: number }
+    const n = w.slides
+    w.slides = 0
+    return n
   })
 
   await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -256,7 +264,7 @@ test('three quick clicks on the Media toggle, open, close, open, leave the panel
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)!.maximize())
   await expect.poll(async () => (await place(app)).maximized).toBe(true)
-  await layout(page)
+  const full = (await layout(page)).termWidth
   const before = await ptySizes(page)
 
   // the three clicks land within one task, far inside 100 ms; the count of sizes is then sampled on every frame for 400 ms
@@ -276,6 +284,8 @@ test('three quick clicks on the Media toggle, open, close, open, leave the panel
   }))
   // a refit per frame would add a size every frame; one resize for the final state is allowed
   expect(Math.max(...samples) - samples[0]!).toBeLessThanOrEqual(1)
+  // the changes run one after another: the last open ends its slide, and then the terminal takes its narrow width once
+  await expect.poll(async () => (await layout(page)).termWidth).toBe(full - 300)
   await expect(panel(page)).not.toHaveClass(/collapsed/)
   const settled = await ptySizes(page)
   expect(settled.length - before.length).toBeLessThanOrEqual(1)
@@ -324,5 +334,122 @@ test('the Find shortcut does nothing while an expanded panel covers the terminal
   await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
   await page.keyboard.press(findKey)
   await expect(page.locator('#search')).toBeVisible()
+  await app.close()
+})
+
+interface Frame { at: number; term: number; panel: number; sizes: number }
+
+/** the main area's width, the panel's and the count of terminal sizes on every frame for `ms` after the element at `sel` is clicked */
+function framesAfterClick(page: Page, sel: string, ms: number): Promise<Frame[]> {
+  return page.evaluate(({ sel, ms }) => new Promise<Frame[]>((resolve) => {
+    const out: Frame[] = []
+    const t0 = performance.now()
+    document.querySelector<HTMLElement>(sel)!.click()
+    const frame = (): void => {
+      const at = performance.now() - t0
+      out.push({
+        at,
+        term: document.getElementById('terminals')!.getBoundingClientRect().width,
+        panel: document.getElementById('image-panel')!.getBoundingClientRect().width,
+        sizes: window.__ct!.ptySizes!().length
+      })
+      if (at < ms) requestAnimationFrame(frame)
+      else resolve(out)
+    }
+    requestAnimationFrame(frame)
+  }), { sel, ms })
+}
+
+/** the frames as a short text for a failure message: time, main area, panel and sizes */
+const timeline = (frames: Frame[]): string => frames.map((f) => `${Math.round(f.at)}ms term=${Math.round(f.term)} panel=${Math.round(f.panel)} sizes=${f.sizes}`).join('\n')
+
+test('a panel closed beside the terminal slides away while the terminal keeps its width, and the window gives the width back after the slide', async () => {
+  const { app, page } = await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false } } })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await setWidth(app, page, roomyWidth(await place(app), 300))
+  const start = (await place(app)).bounds
+  await page.keyboard.press(KEYS.images)
+  await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
+  await expect.poll(async () => (await layout(page)).panelWidth).toBe(300)
+  const before = await layout(page)
+  const sizes = (await ptySizes(page)).length
+
+  const frames = await framesAfterClick(page, '#sheet-header .tab-images-toggle', 400)
+  const log = timeline(frames)
+  // the panel passes through the widths between its own and 0: it slides, it does not vanish
+  expect(frames.some((f) => f.panel > 0 && f.panel < 300), log).toBe(true)
+  // the terminal keeps its width through the slide, and the window takes its width back after it
+  expect(frames.every((f) => Math.abs(f.term - before.termWidth) <= 1), log).toBe(true)
+  await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width)
+  await expect(panel(page)).toHaveClass(/collapsed/)
+  expect(Math.max(...frames.map((f) => f.sizes)) - sizes, log).toBe(0)
+  await app.close()
+})
+
+test('a panel closed in a window that cannot widen slides away while the terminal widens with it, and the terminal refits once at the end', async () => {
+  test.skip(!WIN && !process.env.XDG_CURRENT_DESKTOP, 'no desktop (xvfb): there is no window manager to maximize the window')
+  const { app, page } = await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false }, sidePanel: { noRoom: 'narrow' } } })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)!.maximize())
+  await expect.poll(async () => (await place(app)).maximized).toBe(true)
+  const full = (await layout(page)).termWidth
+  await page.keyboard.press(KEYS.images)
+  await expect.poll(async () => (await layout(page)).termWidth).toBe(full - 300)
+  const sizes = (await ptySizes(page)).length
+
+  const frames = await framesAfterClick(page, '#sheet-header .tab-images-toggle', 400)
+  const log = timeline(frames)
+  // the panel passes through its widths, and the terminal through the widths between the narrow one and the full one
+  expect(frames.some((f) => f.panel > 0 && f.panel < 300), log).toBe(true)
+  expect(frames.some((f) => f.term > full - 300 + 1 && f.term < full - 1), log).toBe(true)
+  // the full width is back within 250 ms of the close: the terminal does not wait for a window that cannot widen
+  const back = frames.find((f) => f.term >= full - 1)
+  expect(back && back.at <= 250, log).toBe(true)
+  // one refit, for the final size, and no size on the way
+  expect(Math.max(...frames.map((f) => f.sizes)) - sizes, log).toBeLessThanOrEqual(1)
+  await expect(panel(page)).toHaveClass(/collapsed/)
+  await app.close()
+})
+
+test('under reduced motion a panel closed in a window that cannot widen is gone and the terminal full at once', async () => {
+  test.skip(!WIN && !process.env.XDG_CURRENT_DESKTOP, 'no desktop (xvfb): there is no window manager to maximize the window')
+  const { app, page } = await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false }, sidePanel: { noRoom: 'narrow' } } })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)!.maximize())
+  await expect.poll(async () => (await place(app)).maximized).toBe(true)
+  const full = (await layout(page)).termWidth
+  await page.keyboard.press(KEYS.images)
+  await expect.poll(async () => (await layout(page)).termWidth).toBe(full - 300)
+
+  const frames = await framesAfterClick(page, '#sheet-header .tab-images-toggle', 400)
+  const log = timeline(frames)
+  // no slide: the panel is never part of a frame between its width and 0
+  expect(frames.every((f) => f.panel === 0 || f.panel === 300), log).toBe(true)
+  const back = frames.find((f) => f.term >= full - 1)
+  expect(back && back.at <= 250, log).toBe(true)
+  await expect(panel(page)).toHaveClass(/collapsed/)
+  await app.close()
+})
+
+test('switching from Media to Changes keeps the terminal at its width through the change', async () => {
+  const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { width: 300, autoOpen: false }, review: { width: 400 } })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await setWidth(app, page, roomyWidth(await place(app), 400))
+  const start = (await place(app)).bounds
+  await page.keyboard.press(KEYS.images)
+  await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
+  await expect.poll(async () => (await layout(page)).panelWidth).toBe(300)
+  const before = await layout(page)
+  const sizes = (await ptySizes(page)).length
+
+  const frames = await framesAfterClick(page, '#sheet-header .tab-changes-toggle', 400)
+  const log = timeline(frames)
+  expect(frames.every((f) => Math.abs(f.term - before.termWidth) <= 1), log).toBe(true)
+  await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 400)
+  await expect(page.locator('.panel-title')).toHaveText('Changes')
+  expect(Math.max(...frames.map((f) => f.sizes)) - sizes, log).toBe(0)
   await app.close()
 })

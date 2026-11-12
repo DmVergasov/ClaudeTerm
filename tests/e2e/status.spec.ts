@@ -60,6 +60,27 @@ test('a claude tab shows model, context, the 5h and weekly limits and running su
   await app.close()
 })
 
+test('the session segments sit in the middle of the status bar, not at its left', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  try {
+    expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+    const bar = page.locator('#statusbar')
+    await expect(bar.locator('.status-context .status-text')).toHaveText('ctx 41% · 82k/200k')
+    // the model and the context are the middle group: its centre is the bar's centre, whatever the window's width
+    const centres = await bar.evaluate((el) => {
+      const box = el.getBoundingClientRect()
+      const segs = [...el.querySelectorAll('.status-model, .status-context')].map((s) => s.getBoundingClientRect())
+      const left = Math.min(...segs.map((r) => r.left))
+      const right = Math.max(...segs.map((r) => r.right))
+      return { bar: box.left + box.width / 2, group: (left + right) / 2, start: left - box.left }
+    })
+    expect(Math.abs(centres.group - centres.bar)).toBeLessThan(4)
+    expect(centres.start).toBeGreaterThan(100)
+  } finally {
+    await app.close()
+  }
+})
+
 test('the 5h limit takes its color from the pace it is spent at, says the forecast in its tooltip, and shows the time gone by on its bar', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   const now = Math.floor(Date.now() / 1000)

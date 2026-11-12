@@ -62,6 +62,8 @@ export interface TabManagerDeps {
   onTabStarted?(tab: TabInfo): void
   /** the tab gets a new process (Restart session, another account): what waited on the old one must not reach the new one */
   onTabRestarting?(tabId: string): void
+  /** the new process starts another conversation or folder, not a restart of this one: after onTabRestarting, it says so */
+  onTabNewConversation?(tabId: string): void
   onTabClosed?(tabId: string): void
   /** the folder the tab works in changed: Claude Code moved, or a restart went back to the tab's cwd */
   onFolderChanged?(tabId: string, folder: string): void
@@ -287,9 +289,9 @@ export class TabManager {
   /**
    * Starts the tab's process again in the same tab. With `live`, a running process is stopped first (e.g. so
    * Claude Code picks up a newly added MCP server); otherwise only an exited tab restarts. A Claude tab resumes
-   * its current conversation, on its account.
+   * its current conversation, on its account. `newConversation` marks a restart that starts another one (a folder change).
    */
-  async restart(tabId: string, opts: { live?: boolean } = {}): Promise<void> {
+  async restart(tabId: string, opts: { live?: boolean; newConversation?: boolean } = {}): Promise<void> {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.restarting || rec.preparing || (!rec.info.exited && !opts.live)) return
     if (rec.info.kind === 'claude') {
@@ -307,7 +309,7 @@ export class TabManager {
       if (this.tabs.get(tabId) !== rec || rec.restarting || (!rec.info.exited && !opts.live)) return
       if (launch) this.setLaunch(rec, launch)
     }
-    await this.relaunch(rec)
+    await this.relaunch(rec, opts.newConversation === true)
   }
 
   /**
@@ -339,7 +341,7 @@ export class TabManager {
     else this.deps.events.updated({ ...info })
     this.deps.onTabFolderChanged?.({ ...info })
     this.changed()
-    await this.restart(tabId, { live: true })
+    await this.restart(tabId, { live: true, newConversation: true })
     return true
   }
 
@@ -427,12 +429,14 @@ export class TabManager {
     } catch {
       return false
     }
+    const another = info.claudeSessionId !== sessionId
     info.claudeSessionId = sessionId
     info.fork = fork
     this.setLaunch(rec, launch)
     this.deps.events.updated({ ...info })
     this.changed()
-    await this.relaunch(rec)
+    // a fork is a conversation of its own even on the session it shows: it is no restart over the old one
+    await this.relaunch(rec, another || fork !== null)
     return this.isLive(rec) && !info.exited
   }
 
@@ -574,9 +578,10 @@ export class TabManager {
     this.changed()
   }
 
-  /** an exited tab starts again; a running one is ended first, and the new process starts only once the old one has exited */
-  private async relaunch(rec: TabRecord): Promise<void> {
+  /** an exited tab starts again; a running one is ended first, and the new process starts only once the old one has exited; `newConversation`: it starts another conversation or folder */
+  private async relaunch(rec: TabRecord, newConversation = false): Promise<void> {
     this.deps.onTabRestarting?.(rec.info.id)
+    if (newConversation) this.deps.onTabNewConversation?.(rec.info.id)
     if (!rec.proc.exited) {
       rec.restarting = true
       const gone = await this.endProcess(rec, this.deps.restartWaitMs ?? 3000, true)

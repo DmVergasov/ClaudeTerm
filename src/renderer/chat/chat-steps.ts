@@ -120,9 +120,7 @@ export function updateSteps(root: HTMLElement, item: Step, cb: StepCallbacks, ch
   for (const child of Array.from(list.children)) {
     if (child instanceof HTMLElement && !ids.has(child.dataset.call ?? '')) child.remove()
   }
-  // the subagents of every Agent call of the step are on one card, after its rows
-  const only = changed === null ? null : new Set(item.calls.find((call) => call.id === changed)?.agents.map((agent) => agent.id) ?? [])
-  fillAgents(root, item.calls.flatMap((call) => call.agents), only)
+  // the subagents of the Agent calls are not drawn in the step: the chat's dock above the composer draws them
   fold(root)
 }
 
@@ -383,25 +381,23 @@ function fillError(entry: HTMLElement, error: string | null): void {
   setText(node, error)
 }
 
-/** the subagents of the step's Agent calls: a card with its count, one row each; `only` is the agents whose rows are filled, null for all */
-function fillAgents(root: HTMLElement, agents: ChatSubagent[], only: Set<string> | null): void {
-  let box = root.querySelector<HTMLElement>(':scope > .chat-agents')
-  if (agents.length === 0) {
-    box?.remove()
-    return
-  }
-  if (box === null) {
-    box = el('div', 'chat-agents')
-    box.append(el('div', 'chat-agents-head'), el('div', 'chat-agents-list'))
-    root.append(box)
+/**
+ * The subagents' card, drawn into `box` (the chat's dock): a head with its count, one row per agent, in the order given. A row is
+ * kept by its agent's id, so its ring and bar carry on when the card is drawn again.
+ */
+export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[]): void {
+  let card = box.querySelector<HTMLElement>(':scope > .chat-agents')
+  if (card === null) {
+    card = el('div', 'chat-agents')
+    card.append(el('div', 'chat-agents-head'), el('div', 'chat-agents-list'))
+    box.append(card)
   }
   const n = agents.length
   const done = agents.filter((agent) => agent.state === 'done').length
-  box.querySelector<HTMLElement>('.chat-agents-head')!.innerHTML = `${icon('users', 13)}<span>${n} agent${n === 1 ? '' : 's'} · ${done} done</span>`
-  const list = box.querySelector<HTMLElement>('.chat-agents-list')!
+  card.querySelector<HTMLElement>('.chat-agents-head')!.innerHTML = `${icon('users', 13)}<span>${n} agent${n === 1 ? '' : 's'} · ${done} done</span>`
+  const list = card.querySelector<HTMLElement>('.chat-agents-list')!
   agents.forEach((agent, index) => {
     let row = childWith(list, 'agent', agent.id)
-    const created = row === null
     if (row === null) {
       row = el('div', 'chat-agent')
       row.dataset.agent = agent.id
@@ -411,7 +407,7 @@ function fillAgents(root: HTMLElement, agents: ChatSubagent[], only: Set<string>
     // a row keeps its colour and its bar's delay by its place in the card, which does not change when another row ends
     row.style.setProperty('--agent', AGENT_COLORS[index % AGENT_COLORS.length]!)
     row.style.setProperty('--bar-delay', `${(index * 0.5).toFixed(1)}s`)
-    if (created || only === null || only.has(agent.id)) fillAgent(row, agent)
+    fillAgent(row, agent)
   })
   const ids = new Set(agents.map((agent) => agent.id))
   for (const child of Array.from(list.children)) {

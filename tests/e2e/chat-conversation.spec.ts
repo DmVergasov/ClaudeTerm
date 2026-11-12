@@ -90,7 +90,7 @@ test('a link opens in the browser, a file link does not', async () => {
   }
 })
 
-test('thinking is folded and unfolds to its summary', async () => {
+test('thinking shows its summary from the start, and folds to its row', async () => {
   const { app, page } = await launchChatTab({
     turns: {
       think: [{ thinking: 'Checking the build first.', ms: 2000 }, { text: 'Done.' }],
@@ -101,9 +101,12 @@ test('thinking is folded and unfolds to its summary', async () => {
     await send(page, 'think')
     const block = page.locator('.chat-thinking').first()
     await expect(block).toContainText('Thought for 2s')
-    await expect(block).not.toContainText('Checking the build first.')
-    await block.locator('.chat-thinking-head').click()
+    // the summary is there without a click
     await expect(block).toContainText('Checking the build first.')
+    await expect(block.locator('.chat-thinking-head')).toHaveAttribute('aria-expanded', 'true')
+    await block.locator('.chat-thinking-head').click()
+    await expect(block).not.toContainText('Checking the build first.')
+    await expect(block.locator('.chat-thinking-head')).toHaveAttribute('aria-expanded', 'false')
     // a thinking block with no summary draws no row: the turn's answer is all the column shows
     await send(page, 'think again')
     await expect(page.locator('.chat-column')).toContainText('Done again.')
@@ -489,12 +492,12 @@ test('a running subagent keeps its bar delay when an earlier agent ends', async 
   })
   try {
     await send(page, 'team')
-    const second = page.locator('.chat-steps .chat-agent').nth(1)
+    const second = page.locator('.chat-agents-dock .chat-agent').nth(1)
     await expect(second.locator('.chat-agent-bar')).toHaveCount(1)
     const delay = (): Promise<string> => second.evaluate((el) => (el as HTMLElement).style.getPropertyValue('--bar-delay'))
     const before = await delay()
     // the first agent ends while the second still runs: the second bar keeps its delay, so it does not jump
-    await expect(page.locator('.chat-steps .chat-agent').first()).toContainText('done', { timeout: 15_000 })
+    await expect(page.locator('.chat-agents-dock .chat-agent').first()).toContainText('done', { timeout: 15_000 })
     await expect(second.locator('.chat-agent-bar')).toHaveCount(1)
     expect(await delay()).toBe(before)
   } finally {
@@ -604,8 +607,9 @@ test('subagents of a Task call are listed with their state', async () => {
     await send(page, 'team')
     // two Agent calls in one step, run in parallel: one agents card for the step, with a row per subagent
     await expect(page.locator('.chat-tool-name', { hasText: 'Agent' })).toHaveCount(2)
-    await expect(page.locator('.chat-steps .chat-agents')).toHaveCount(1)
-    const agents = page.locator('.chat-steps .chat-agents')
+    // the dock is shown while the agents run: its class says so (the element is in the page all the time)
+    await expect(page.locator('.chat-host:visible .chat-agents-dock')).toHaveClass(/shown/)
+    const agents = page.locator('.chat-agents-dock')
     await expect(agents.locator('.chat-agent')).toHaveCount(2)
     await expect(agents.locator('.chat-agents-head')).toHaveText('2 agents · 0 done')
     // while the agents run the step is open, and its card shows
@@ -618,9 +622,294 @@ test('subagents of a Task call are listed with their state', async () => {
     // once every call is done the step is its pill, and the card goes with the rows
     await expect(page.locator('.chat-steps.folded')).toHaveCount(1, { timeout: 15_000 })
     await expect(agents).toBeHidden()
-    // a click on the pill opens the step, and the card shows again
+    // a click on the pill opens the step: its rows of the Agent calls show, and no card is drawn inside the step
     await page.locator('.chat-steps.folded .chat-step-head').click()
-    await expect(agents).toBeVisible()
+    await expect(page.locator('.chat-steps .chat-step-row', { hasText: 'Agent' }).first()).toBeVisible()
+    await expect(page.locator('.chat-steps .chat-agents-dock')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('running agents show in a dock above the composer, outside the conversation, and no card is in the tool step', async () => {
+  const { app, page } = await launchChatTab({
+    turns: {
+      team: [{
+        task: {
+          description: 'Check the totals',
+          result: 'Checked.',
+          agents: [
+            { type: 'Explore', description: 'Search the sales folder', ms: 6000 },
+            { type: 'general-purpose', description: 'Check the totals', ms: 6000 }
+          ]
+        }
+      }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await send(page, 'team')
+    const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    await expect(dock).toBeVisible()
+    await expect(dock.locator('.chat-agent')).toHaveCount(2)
+    await expect(page.locator('.chat-steps .chat-agents')).toHaveCount(0)
+    // the dock is not among the conversation's items, and ends above the composer's field
+    await expect(page.locator('.chat-host:visible .chat-column .chat-agents-dock')).toHaveCount(0)
+    const box = await dock.boundingBox()
+    const field = await page.locator('.chat-host:visible .chat-input').boundingBox()
+    expect(box!.y + box!.height).toBeLessThanOrEqual(field!.y)
+  } finally {
+    await app.close()
+  }
+})
+
+test('the dock is as wide as the composer, and lines up with it in a wide window', async () => {
+  const { app, page } = await launchChatTab({
+    turns: {
+      team: [{
+        task: {
+          description: 'Check the totals',
+          result: 'Checked.',
+          agents: [
+            { type: 'Explore', description: 'Search the sales folder', ms: 20000 },
+            { type: 'general-purpose', description: 'Check the totals', ms: 20000 }
+          ]
+        }
+      }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1400, 900))
+    await send(page, 'team')
+    const card = page.locator('.chat-host:visible .chat-agents-dock .chat-agents')
+    await expect(card).toBeVisible()
+    const box = await card.boundingBox()
+    const field = await page.locator('.chat-host:visible .chat-field').boundingBox()
+    expect(Math.abs(box!.x - field!.x)).toBeLessThanOrEqual(1)
+    expect(Math.abs(box!.x + box!.width - (field!.x + field!.width))).toBeLessThanOrEqual(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('the dock keeps its place while the column scrolls and while items arrive', async () => {
+  const { app, page, tabId, pipeName } = await launchChatTab({
+    turns: {
+      team: [{
+        task: {
+          description: 'Check the totals',
+          result: 'Checked.',
+          agents: [{ type: 'general-purpose', description: 'Check the totals', ms: 9000 }]
+        }
+      }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await send(page, 'team')
+    const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    await expect(dock).toBeVisible()
+    // a long conversation: the column scrolls
+    await sendDividers(pipeName, tabId, 60)
+    const top = async (): Promise<number> => (await dock.boundingBox())!.y
+    const before = await top()
+    await page.locator('.chat-host:visible .chat-scroll').evaluate((el) => { el.scrollTop = 0 })
+    expect(Math.abs((await top()) - before)).toBeLessThanOrEqual(1)
+    // new items below the step, while the agent runs
+    await sendDividers(pipeName, tabId, 10)
+    expect(Math.abs((await top()) - before)).toBeLessThanOrEqual(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('the dock closes about 4 s after its last agent ends', async () => {
+  const { app, page } = await launchChatTab({
+    turns: {
+      team: [{
+        task: {
+          description: 'Check the totals',
+          result: 'Checked.',
+          agents: [{ type: 'general-purpose', description: 'Check the totals', ms: 2500 }]
+        }
+      }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await send(page, 'team')
+    const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    await expect(dock).toBeVisible()
+    await expect(dock.locator('.chat-agent')).toContainText('done', { timeout: 15_000 })
+    const ended = Date.now()
+    // the last agent is done: the dock keeps its rows for about 4 s, then closes
+    await expect(dock).toBeHidden({ timeout: 10_000 })
+    const after = Date.now() - ended
+    expect(after).toBeGreaterThanOrEqual(3500)
+    expect(after).toBeLessThanOrEqual(7000)
+  } finally {
+    await app.close()
+  }
+})
+
+test('under reduced motion the dock shows and hides at once', async () => {
+  const { app, page } = await launchChatTab({
+    turns: {
+      team: [{
+        task: {
+          description: 'Check the totals',
+          result: 'Checked.',
+          agents: [{ type: 'general-purpose', description: 'Check the totals', ms: 2500 }]
+        }
+      }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await send(page, 'team')
+    const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    await expect(dock).toBeVisible()
+    expect(await dock.evaluate((el) => getComputedStyle(el).transitionDuration)).toBe('0s')
+    // the last agent ends: after the 4 s linger the dock closes with no easing
+    await expect(dock.locator('.chat-agent')).toContainText('done', { timeout: 15_000 })
+    const ended = Date.now()
+    await expect(dock).toBeHidden({ timeout: 10_000 })
+    expect(Date.now() - ended).toBeGreaterThanOrEqual(3500)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a restart closes the dock that showed running agents', async () => {
+  const { app, page } = await launchChatTab({
+    turns: {
+      team: [{
+        task: {
+          description: 'Check the totals',
+          result: 'Checked.',
+          agents: [{ type: 'general-purpose', description: 'Check the totals', ms: 60000 }]
+        }
+      }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await send(page, 'team')
+    const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    await expect(dock).toHaveClass(/shown/)
+    await expect(dock.locator('.chat-agent')).toHaveCount(1)
+    await ready(page)
+    await page.locator('.tab').first().click({ button: 'right' })
+    await page.locator('.menu-item', { hasText: 'Restart session' }).click()
+    // the chat is drawn again from its snapshot: the dock is not shown, not even with its element and card still in place
+    await expect(page.locator('.chat-host:visible .chat-column')).toContainText('Session restarted')
+    await expect(dock).not.toHaveClass(/shown/)
+    await expect(dock).toBeHidden()
+  } finally {
+    await app.close()
+  }
+})
+
+test('the dock shows the agents of the current turn only, so a new Agent run starts a card of its own', async () => {
+  const { app, page, tabId } = await launchChatTab({
+    turns: {
+      first: [{
+        task: {
+          description: 'First job',
+          result: 'First done.',
+          agents: [{ type: 'Explore', description: 'First agent', ms: 500 }]
+        }
+      }, { text: 'Done.' }],
+      second: [{
+        task: {
+          description: 'Second job',
+          result: 'Second done.',
+          agents: [{ type: 'general-purpose', description: 'Second agent', ms: 6000 }]
+        }
+      }, { text: 'Done again.' }]
+    }
+  })
+  try {
+    await send(page, 'first')
+    await waitForTurn(page, tabId, 'idle')
+    await send(page, 'second')
+    const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    await expect(dock).toBeVisible()
+    // one agent in this turn, and it is the second run's: the first turn's agent is not counted or listed
+    await expect(dock.locator('.chat-agents-head')).toHaveText('1 agent · 0 done')
+    await expect(dock.locator('.chat-agent')).toHaveCount(1)
+    await expect(dock.locator('.chat-agent')).toContainText('Second agent')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a background agent that outlives its turn stays in the dock while the next turn runs, and the dock closes after it ends', async () => {
+  const { app, page, tabId } = await launchChatTab({
+    turns: {
+      launch: [{
+        task: {
+          description: 'Background audit',
+          result: 'unused',
+          background: true,
+          agents: [{ type: 'general-purpose', description: 'Background audit', ms: 9000 }]
+        }
+      }, { text: 'Started.' }],
+      follow: [{ text: 'Short answer.' }]
+    }
+  })
+  try {
+    await send(page, 'launch')
+    const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    await expect(dock).toBeVisible()
+    // the turn ends while the agent runs on; the person sends another message, which is a turn of its own
+    await waitForTurn(page, tabId, 'idle')
+    await send(page, 'follow')
+    await waitForTurn(page, tabId, 'idle')
+    // past the 4 s linger after the second turn's end: the agent still runs, so the dock stays shown and lists it
+    await page.waitForTimeout(5500)
+    await expect(dock).toHaveClass(/shown/)
+    await expect(dock.locator('.chat-agent')).toHaveCount(1)
+    await expect(dock.locator('.chat-agent')).toContainText('Background audit')
+    await expect(dock.locator('.chat-agent')).not.toContainText('done')
+    // the agent ends: the dock keeps its row for about 4 s, then closes
+    await expect(dock.locator('.chat-agent')).toContainText('done', { timeout: 15_000 })
+    const ended = Date.now()
+    await expect(dock).toBeHidden({ timeout: 10_000 })
+    expect(Date.now() - ended).toBeGreaterThanOrEqual(3500)
+  } finally {
+    await app.close()
+  }
+})
+
+test('the agents dock is the conversation\'s last element: it never covers the last line of an answer, and it stays at the bottom when scrolled up', async () => {
+  const paragraphs = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1} of the answer.`)
+  const { app, page, tabId } = await launchChatTab({
+    turns: {
+      long: [{
+        task: {
+          description: 'Background audit',
+          result: 'unused',
+          background: true,
+          agents: [{ type: 'general-purpose', description: 'Background audit', ms: 60000 }]
+        }
+      }, { text: [...paragraphs, 'The last line of the answer.'].join('\n\n') }]
+    }
+  })
+  try {
+    await send(page, 'long')
+    const dock = page.locator('.chat-host:visible .chat-agents-dock')
+    const scroll = page.locator('.chat-host:visible .chat-scroll')
+    await waitForTurn(page, tabId, 'idle')
+    await expect(dock).toHaveClass(/shown/)
+    // at the bottom: the answer's last line is fully above the dock
+    const last = scroll.getByText('The last line of the answer.')
+    await expect(last).toBeVisible()
+    const lastBox = (await last.boundingBox())!
+    const dockBox = (await dock.boundingBox())!
+    expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(dockBox.y + 1)
+    // scrolled up to the top: the dock stays at the bottom of the visible column
+    await scroll.evaluate((el) => { el.scrollTop = 0 })
+    const frame = (await scroll.boundingBox())!
+    const docked = (await dock.boundingBox())!
+    expect(docked.y).toBeGreaterThanOrEqual(frame.y - 1)
+    expect(docked.y + docked.height).toBeLessThanOrEqual(frame.y + frame.height + 1)
   } finally {
     await app.close()
   }
@@ -1079,8 +1368,10 @@ test('a step and a thinking block that leave the window come back with their sta
   try {
     await send(page, 'keep')
     await expect(page.locator('.chat-thinking-head')).toHaveCount(1, { timeout: 15_000 })
-    await page.locator('.chat-thinking-head').click()
+    // the thinking block shows its summary by itself; the user folds it, and that choice is kept
     await expect(page.locator('.chat-thinking-body')).toContainText('Checking the build first.')
+    await page.locator('.chat-thinking-head').click()
+    await expect(page.locator('.chat-thinking-body')).toHaveCount(0)
     await expect(page.locator('.chat-steps .chat-ring')).toHaveCount(1, { timeout: 15_000 })
     // a call that runs over 2 s opens its step by itself; the user then folds it: that choice is kept too
     await expect(page.locator('.chat-steps')).toHaveClass(/open/)
@@ -1093,10 +1384,12 @@ test('a step and a thinking block that leave the window come back with their sta
     // the call ends while the step is out of the window
     await expect.poll(async () => (await snapshot(page, tabId))?.items.some((item) => item.kind === 'tools' && item.calls[0]?.state === 'done') ?? false, { timeout: 30_000 }).toBe(true)
     await walkUp(page, { selector: '.chat-steps' })
-    // the step comes back with its call's result, and the thinking block comes back open (the step's folded choice is not
+    // the step comes back with its call's result, and the thinking block comes back folded (the step's folded choice is not
     // proven here: a settled step is folded by default, so a lost choice would look the same)
     await expect(page.locator('.chat-steps .chat-step-state.done')).toHaveCount(1)
-    await expect(page.locator('.chat-thinking-body')).toContainText('Checking the build first.')
+    await expect(page.locator('.chat-thinking-head')).toHaveCount(1)
+    await expect(page.locator('.chat-thinking-head')).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('.chat-thinking-body')).toHaveCount(0)
   } finally {
     await app.close()
   }
@@ -1535,14 +1828,14 @@ test('a running subagent shows a sliding bar in its colour, and two running agen
     // the bar moves only with motion allowed: this machine can report reduced motion
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await send(page, 'team')
-    const rows = page.locator('.chat-steps .chat-agent')
+    const rows = page.locator('.chat-agents-dock .chat-agent')
     await expect(rows).toHaveCount(2)
-    const bars = page.locator('.chat-steps .chat-agent-bar')
+    const bars = page.locator('.chat-agents-dock .chat-agent-bar')
     await expect(bars).toHaveCount(2)
     // the bar moves only in a step that is open: the running step opens itself once its calls have run 2 s
     await expect(page.locator('.chat-steps')).toHaveClass(/open/)
     // the card has no running time: the bar says the agent runs
-    await expect(page.locator('.chat-steps .chat-agents')).not.toContainText('running')
+    await expect(page.locator('.chat-agents-dock')).not.toContainText('running')
     // each bar is in its row's colour, which is the top colour of the row's ring
     const colours = await rows.evaluateAll((els) => els.map((row) => {
       const ring = row.querySelector<HTMLElement>('.chat-ring')!
@@ -1581,10 +1874,10 @@ test('under reduced motion the subagent ring and bar stand still, and the bar sh
   try {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await send(page, 'team')
-    const bar = page.locator('.chat-steps .chat-agent-bar')
+    const bar = page.locator('.chat-agents-dock .chat-agent-bar')
     await expect(bar).toHaveCount(1)
     expect(await bar.evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
-    expect(await page.locator('.chat-steps .chat-agent .chat-ring').evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
+    expect(await page.locator('.chat-agents-dock .chat-agent .chat-ring').evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
     const widths = await bar.evaluate((el) => [el.getBoundingClientRect().width, el.parentElement!.getBoundingClientRect().width])
     expect(widths[0]).toBeGreaterThanOrEqual(widths[1]! - 1)
   } finally {
@@ -1606,8 +1899,8 @@ test("a running subagent's bar is drawn again on a tab switch, in its colour", a
   })
   try {
     await send(page, 'team')
-    const colour = (): Promise<string | undefined> => page.locator('.chat-steps .chat-agent-bar').first().evaluate((el) => getComputedStyle(el).backgroundColor).catch(() => undefined)
-    await expect(page.locator('.chat-steps .chat-agent-bar')).toHaveCount(1)
+    const colour = (): Promise<string | undefined> => page.locator('.chat-agents-dock .chat-agent-bar').first().evaluate((el) => getComputedStyle(el).backgroundColor).catch(() => undefined)
+    await expect(page.locator('.chat-agents-dock .chat-agent-bar')).toHaveCount(1)
     const before = await colour()
     await openTabInFront(page, 'shell', work)
     await page.evaluate((id) => window.ct.activateTab(id), tabId)
@@ -1700,6 +1993,84 @@ test('Find reaches an item outside the DOM window', async () => {
     await page.keyboard.press('Enter')
     await expect(page.locator('.chat-user', { hasText: /^pair 0$/ })).toBeInViewport({ timeout: 30_000 })
     expect(await highlightCount(page, 'chat-find-current')).toBe(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Find finds the summary of an open thinking block that is out of the window', async () => {
+  const { app, page, tabId, pipeName } = await launchChatTab({
+    turns: { think: [{ thinking: 'Pondering the marker-thought', ms: 1000 }, { text: 'Done.' }] }
+  })
+  try {
+    await send(page, 'think')
+    await waitForTurn(page, tabId, 'idle')
+    await expect(page.locator('.chat-thinking')).toHaveCount(1)
+    await sendDividers(pipeName, tabId, 130)
+    await expect(page.locator('.chat-thinking')).toHaveCount(0)
+    await page.keyboard.press(KEYS.find)
+    await page.keyboard.type('marker-thought')
+    await expect.poll(() => highlightCount(page, 'chat-find-current')).toBe(1)
+    await expect(page.locator('.chat-thinking')).toContainText('Pondering the marker-thought')
+  } finally {
+    await app.close()
+  }
+})
+
+test('Find does not bring a message in for the > of its quote, which the bubble does not draw', async () => {
+  const { app, page, tabId, pipeName } = await launchChatTab({
+    turns: { '> quoted-marker': [{ text: 'Noted.' }] }
+  })
+  try {
+    await send(page, '> quoted-marker')
+    await waitForTurn(page, tabId, 'idle')
+    await expect(page.locator('.chat-user .chat-quote-block', { hasText: 'quoted-marker' })).toHaveCount(1)
+    await sendDividers(pipeName, tabId, 130)
+    await expect(page.locator('.chat-user')).toHaveCount(0)
+    await page.keyboard.press(KEYS.find)
+    await page.keyboard.type('> quoted-marker')
+    await page.waitForTimeout(600)
+    // the bubble draws the quote without its >, so the text with the > is no match: the message is not brought in to look
+    expect(await highlightCount(page, 'chat-find')).toBe(0)
+    await expect(page.locator('.chat-user')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Ctrl+F opens Find in a chat that holds a quote, a thinking block and a tool step, and counts a match', async () => {
+  // a chat has no terminal to pass Ctrl+F to: the plain key opens Find, as ⌘F does on macOS
+  const { app, page, tabId } = await launchChatTab({
+    turns: { '> shared-marker': [{ thinking: 'Pondering the shared-marker', ms: 500 }, { tool: { name: 'Read', input: { file_path: 'shared-marker.txt' }, result: 'x' } }, { text: 'Done.' }] }
+  })
+  try {
+    await send(page, '> shared-marker')
+    await waitForTurn(page, tabId, 'idle')
+    await expect(page.locator('.chat-user .chat-quote-block', { hasText: 'shared-marker' })).toHaveCount(1)
+    await page.keyboard.press(KEYS.panelFind)
+    await expect(page.locator('#search')).toBeVisible()
+    await expect(page.locator('#search input')).toBeFocused()
+    await page.keyboard.type('shared-marker')
+    await expect.poll(() => highlightCount(page, 'chat-find')).toBeGreaterThan(0)
+    expect(await highlightCount(page, 'chat-find-current')).toBe(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('↑ recalls a message that starts with >>>, and skips a message of quotes alone', async () => {
+  const { app, page, tabId } = await launchChatTab({
+    turns: { '>>> import x': [{ text: 'Noted.' }], '> only quote': [{ text: 'Noted.' }] }
+  })
+  try {
+    await send(page, '>>> import x')
+    await waitForTurn(page, tabId, 'idle')
+    await send(page, '> only quote')
+    await waitForTurn(page, tabId, 'idle')
+    // the newest message is a quote alone, which has no typed text to recall: ↑ goes on to the one before it
+    await page.locator(INPUT).click()
+    await page.keyboard.press('ArrowUp')
+    await expect(page.locator(INPUT)).toHaveValue('>>> import x')
   } finally {
     await app.close()
   }

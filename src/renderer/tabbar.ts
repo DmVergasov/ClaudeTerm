@@ -159,6 +159,8 @@ export class TabBar {
     // a re-render keeps the scroll; a tab that became the active one is brought into view, and so is the active tab when it
     // moved (its project became known, or the order changed)
     const scrolled = this.list.scrollLeft
+    // the active tab was in view: it stays so when its pill grows (a title that arrives late widens it past the edge)
+    const wasInView = this.activeInView()
     this.list.replaceWith(list)
     this.list = list
     list.scrollLeft = scrolled
@@ -166,7 +168,18 @@ export class TabBar {
     if (activeId !== null && at >= 0 && (this.revealed?.id !== activeId || this.revealed.at !== at)) {
       this.revealed = { id: activeId, at }
       this.revealActive()
+    } else if (wasInView && !this.activeInView()) {
+      this.revealActive()
     }
+  }
+
+  /** the active pill lies within the list's visible width (a bar not in the page, or without an active pill, counts as in view) */
+  private activeInView(): boolean {
+    const pill = this.list.querySelector<HTMLElement>('.tab.active')
+    if (!pill || !this.list.isConnected) return true
+    const box = pill.getBoundingClientRect()
+    const view = this.list.getBoundingClientRect()
+    return box.left >= view.left - 1 && box.right <= view.right + 1
   }
 
   private revealActive(): void {

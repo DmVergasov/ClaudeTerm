@@ -2,6 +2,7 @@ import { basename, extname, isAbsolute, relative, sep } from 'node:path'
 import type { ChatAttachment, ChatSend } from '../../shared/chat'
 import type { ImageSource } from '../../shared/types'
 import { isWithin, pathKey } from '../path-key'
+import { canonicalFolder } from './chat-files'
 
 // The files a chat message carries: images go to Claude as image blocks, other files as @mentions of their paths
 
@@ -173,6 +174,8 @@ export async function prepareMessage(
   const images: { mediaType: string; data: string }[] = []
   const attachments: ChatAttachment[] = []
   const mentions: string[] = []
+  // the picked files have their real paths: the tab's folder may be an alias (8.3 name, symlink, junction)
+  const root = await canonicalFolder(folder)
   let imageBytes = 0
   for (const a of s.attachments) {
     const name = basename(a.path)
@@ -184,7 +187,7 @@ export async function prepareMessage(
     const mediaType = mediaTypeOf(a.path)
     if (mediaType === null) {
       attachments.push({ ...attachmentOf(a.path, info.size), cardId: known.cardId })
-      mentions.push(mention(a.path, folder))
+      mentions.push(mention(a.path, root))
       continue
     }
     let data: Buffer
@@ -197,7 +200,7 @@ export async function prepareMessage(
     const big = goesAsPath(data)
     attachments.push({ ...attachmentOf(a.path, info.size), cardId: known.cardId, ...(big ? { oversize: true } : {}) })
     if (big) {
-      mentions.push(mention(a.path, folder))
+      mentions.push(mention(a.path, root))
       continue
     }
     try {

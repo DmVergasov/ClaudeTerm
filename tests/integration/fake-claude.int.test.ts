@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
@@ -250,7 +250,7 @@ describe('the stand-in Claude Code', () => {
     send(run, user('Say hi'))
     await until(() => run.out.some(m => m.type === 'result'), 'the result')
     await finish(run)
-    const file = join(config, 'projects', work.replace(/[^a-zA-Z0-9]/g, '-'), `${session}.jsonl`)
+    const file = join(config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'), `${session}.jsonl`)
     const lines = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Msg)
     expect(lines[0]).toMatchObject({ type: 'user', sessionId: session, entrypoint: 'sdk-ts', message: { content: 'Say hi' } })
     expect(lines[1]).toMatchObject({ type: 'assistant', sessionId: session, entrypoint: 'sdk-ts' })

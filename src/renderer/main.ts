@@ -17,7 +17,7 @@ import { SheetHeader } from './sheet-header'
 import { Lightbox } from './lightbox'
 import { PlanList } from './plan-list'
 import { RecentSessionsWindow } from './recent-sessions'
-import { imagePasteInput, imagePasteRoute, isImagePasteKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
+import { imagePasteInput, imagePasteRoute, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar, type FindTarget } from './search'
 import { loadInter } from './dom'
 import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
@@ -741,7 +741,7 @@ function makeTerminal(info: TabInfo): TerminalView {
 
 /** a Claude tab's chat: its conversation and composer, hidden until the tab is in its chat view and in front */
 function makeChat(tabId: string): ChatView {
-  return new ChatView({
+  const chat = new ChatView({
     tabId,
     container: document.getElementById('terminals')!,
     platform: ct.platform,
@@ -778,6 +778,9 @@ function makeChat(tabId: string): ChatView {
     openExternal: (url) => ct.openExternal(url),
     copy: (text) => ct.writeClipboardText(text)
   })
+  chat.setTheme(resolveTheme(settings.theme))
+  chat.setFullWidth(settings.chat.fullWidth)
+  return chat
 }
 
 function addTab(info: TabInfo): void {
@@ -1125,9 +1128,12 @@ function applySettings(s: Settings): void {
     for (const t of tabs.values()) t.view?.setFont(s.font.family, fontSize)
   }
   if (s.font.family !== prev.font.family) setCodeFont(s.font.family)
+  // the conversation's width follows the setting in every open chat, at once
+  if (s.chat.fullWidth !== prev.chat.fullWidth) for (const t of tabs.values()) t.chat?.setFullWidth(s.chat.fullWidth)
   if (JSON.stringify(s.theme) !== JSON.stringify(prev.theme)) {
     const theme = resolveTheme(s.theme)
     for (const t of tabs.values()) t.view?.setTheme(theme)
+    for (const t of tabs.values()) t.chat?.setTheme(theme)
     // the sheet's surround in the terminal's own background: the gutter reads as part of the terminal in every theme
     document.documentElement.style.setProperty('--term-bg', resolveTheme(s.theme).background ?? '')
   }
@@ -1273,7 +1279,10 @@ async function boot(): Promise<void> {
     // and paste are left to the textarea by the checks below
     const composer = onComposer && (e.ctrlKey || e.metaKey || e.altKey)
     if (!composer && (target?.closest('.xterm') || (target?.tagName === 'INPUT' && !target.classList.contains('review-find-input')) || target?.tagName === 'TEXTAREA')) return
-    const a = mapKey(e, ct.platform)
+    // a chat has no terminal to pass Ctrl+F to: the plain key finds in it, as ⌘F does on macOS (a shell tab keeps Ctrl+Shift+F)
+    const front = activeId ? tabs.get(activeId) : undefined
+    const chatFind = isPrimaryKey(e, ct.platform) && e.code === 'KeyF' && front !== undefined && isChatView(front)
+    const a: KeyAction | null = chatFind ? { type: 'find' } : mapKey(e, ct.platform)
     // a chat's selected text is copied from the page; the terminal copies its own selection in its key handler
     if (a?.type === 'copy' && copyChatSelection()) {
       e.preventDefault()
@@ -1303,6 +1312,8 @@ async function boot(): Promise<void> {
     // the conversation, not the whole chat: the composer is in the chat's element too, and a drag can end in it
     const body = (activeId ? tabs.get(activeId) : undefined)?.chat?.element.querySelector(':scope > .chat-body')
     if (!body || !body.contains(now.anchor) || !body.contains(now.focus)) return
+    // the setting is read here, so a change applies to the next selection with no restart
+    if (!settings.chat.copyOnSelect) return
     copyChatSelection()
   })
   // a file dropped outside a terminal must not navigate the window

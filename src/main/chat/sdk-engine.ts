@@ -89,7 +89,9 @@ function modelInfo(m: ModelInfo): ChatModelInfo {
     description: text(m.description),
     efforts: Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels.filter(e => typeof e === 'string') : [],
     // the full id the alias resolves to: the chat's model is named by it, so the composer finds the entry by it
-    ...(resolved === '' ? {} : { resolved })
+    ...(resolved === '' ? {} : { resolved }),
+    // whether the model runs auto mode: the modes a chat offers depend on the model it runs
+    autoMode: m.supportsAutoMode === true
   }
 }
 
@@ -259,12 +261,13 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
     })
   )
 
-  // Claude Code answers initialize before any turn: the engine is ready then, with the mode it reports
+  // Claude Code answers initialize before any turn: the engine is ready then, with the mode it reports and the models it lists
   void query.then(q => q.initializationResult()).then(
     result => {
       // the SDK's type does not name this field: it is read as Claude Code sends it
       const mode = (result as { current_permission_mode?: unknown }).current_permission_mode
-      h.ready({ permissionMode: typeof mode === 'string' ? mode : null })
+      const models = Array.isArray(result.models) ? result.models.filter(m => isObj(m) && text(m.value) !== '').map(modelInfo) : []
+      h.ready({ permissionMode: typeof mode === 'string' ? mode : null, models })
     },
     () => undefined // a start that fails ends through the exit
   )
@@ -347,6 +350,17 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
         return { pct: typeof pct === 'number' && Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) : null, used: count(usage.totalTokens), size: count(usage.maxTokens) }
       } catch {
         return { pct: null, used: null, size: null }
+      }
+    },
+
+    // the init names the effort only on a Remote Control host: this session reads it from the settings Claude Code applies
+    async effort() {
+      try {
+        const settings = (await (await query as unknown as { getSettings(): Promise<unknown> }).getSettings()) as { applied?: { effort?: unknown } } | null
+        const applied = isObj(settings) && isObj(settings.applied) ? settings.applied.effort : undefined
+        return applied === null || typeof applied === 'string' ? applied : undefined
+      } catch {
+        return undefined
       }
     },
 

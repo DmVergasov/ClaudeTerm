@@ -48,7 +48,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 #tabpanel:not([hidden]) + #sheet { margin-left: 0; }
 #sheet-header { position: relative; flex: none; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 8px 0 14px; min-width: 0; border-bottom: 1px solid var(--line); overflow: hidden; user-select: none; }
 .sh-icon { flex: none; display: flex; align-items: center; }
-.sh-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 13px; font-weight: 600; }
+.sh-title { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 13px; font-weight: 600; }
 .sh-device { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: 6px; border: 1px solid var(--group-color); color: var(--group-color); font-size: 12px; }
 .sh-device.dim { opacity: 0.5; }
 .sh-branch { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 0 1 auto; overflow: hidden; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -264,11 +264,17 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
    Its containing block is the sheet, so it spans the sheet's width and the status bar below the workspace. */
 #workspace:has(> #image-panel.expanded) { position: static; }
 #image-panel.expanded { top: 52px; left: 0; bottom: 0; width: auto; z-index: 20; }
-/* the panel slides in when it is shown: it moves 16 px and fades in, and the terminal is refitted once by the layout, never per frame */
+/* a panel sliding in (side-panel.ts): its width grows, and its content fades in over the same 180 ms; no motion under reduced motion */
 @media (prefers-reduced-motion: no-preference) {
-  #image-panel:not(.collapsed) { animation: panel-in 200ms ease-out; }
+  #image-panel:not(.collapsed) { animation: panel-in 180ms ease-out; }
 }
-@keyframes panel-in { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes panel-in { from { opacity: 0; } to { opacity: 1; } }
+/* a panel sliding in or out (side-panel.ts): its width grows or shrinks and it may be narrower than its minimum meanwhile */
+#image-panel.sliding { min-width: 0; overflow: hidden; }
+#image-panel.sliding > .panel-header, #image-panel.sliding > .panel-body { width: var(--slide-w); align-self: flex-end; }
+/* the main area's margin moves while the terminal keeps its size, clipped by the main area until the slide ends and it refits once */
+#terminals.holding { overflow: hidden; }
+#terminals.holding > .terminal-host { right: auto; width: var(--held-host); }
 .panel-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 5; }
 /* the header is 44 px: the title semibold, the tools and the hide button 28 px squares with radius 6 */
 .panel-header { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--line); color: var(--text-3); }
@@ -337,7 +343,11 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 #lightbox { position: fixed; inset: 0; z-index: 70; background: #000d; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #lightbox img { max-width: 92vw; max-height: 88vh; cursor: grab; transform-origin: center; }
 .lightbox-caption { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: var(--text-2); }
-#statusbar { display: flex; align-items: center; gap: 18px; flex-shrink: 0; box-sizing: border-box; height: 32px; padding: 0 14px; background: transparent; border-top: 1px solid var(--line); color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; user-select: none; }
+#statusbar { display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); align-items: center; column-gap: 18px; flex-shrink: 0; box-sizing: border-box; height: 32px; padding: 0 14px; background: transparent; border-top: 1px solid var(--line); color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; user-select: none; }
+/* the account at the start, the session in the middle of the bar whatever the sides hold, the changes at the end; the middle gives way first */
+#statusbar .status-zone { display: flex; align-items: center; gap: 18px; min-width: 0; overflow: hidden; }
+#statusbar .status-zone-middle { justify-content: center; }
+#statusbar .status-zone-end { justify-content: flex-end; }
 #statusbar .status-seg { display: inline-flex; align-items: center; min-width: 0; color: var(--text-2); }
 /* the text is the only part that gives way: the pill and the bar keep their size, and the cut shows as an ellipsis */
 #statusbar .status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -530,8 +540,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .review-send:disabled { opacity: 0.45; cursor: default; }
 /* the Changes counter stands at the bar's right end, as the mockups draw it: a file icon, the files, the added lines in green
    and the removed in red; the separator before it goes, the space says it */
-#statusbar .status-changes { cursor: pointer; margin-left: auto; gap: 6px; }
-#statusbar .status-sep:has(+ .status-changes) { display: none; }
+#statusbar .status-changes { cursor: pointer; gap: 6px; }
 #statusbar .status-icon { flex: none; display: inline-flex; color: var(--text-3); }
 #statusbar .status-files { color: var(--text-2); }
 #statusbar .status-added { color: var(--green); }

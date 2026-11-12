@@ -292,7 +292,9 @@ describe('the SDK engine', () => {
     const log = join(dir, 'fake-claude.log')
     const engine = start(h, { log, script: { turns: { 'Say hi': [{ text: 'Hello.' }] } } })
     await until(() => h.readies.length === 1, 'the ready')
-    expect(h.readies).toEqual([{ permissionMode: 'default' }])
+    // the models the initialize reply lists come with the ready: whether a model runs auto mode decides the modes
+    expect(h.readies).toEqual([{ permissionMode: 'default', models: expect.any(Array) }])
+    expect(((h.readies[0] as unknown) as { models: unknown[] }).models.length).toBeGreaterThan(0)
     // Claude Code sends no init until a turn starts
     expect(h.messages.some(m => m.type === 'system' && m.subtype === 'init')).toBe(false)
     expect(controlRequests(log, 'initialize')).toHaveLength(1)
@@ -345,6 +347,17 @@ describe('the SDK engine', () => {
       expect(Array.isArray(model.efforts)).toBe(true)
     }
     await stop(engine, h)
+  })
+
+  it('effort reads the applied effort of the get_settings answer, and undefined when it names none', async () => {
+    const h = harness()
+    const engine = start(h, { script: { turns: {}, appliedEffort: 'xhigh' } })
+    expect(await engine.effort()).toBe('xhigh')
+    await stop(engine, h)
+    const h2 = harness()
+    const none = start(h2, { script: { turns: {} } })
+    expect(await none.effort()).toBeUndefined()
+    await stop(none, h2)
   })
 
   it('a percentage-only context answer gives the fill and no counts', async () => {

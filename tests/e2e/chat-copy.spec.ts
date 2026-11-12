@@ -96,6 +96,39 @@ test('text selected with the mouse in the composer does not go to the clipboard'
   }
 })
 
+/** a drag over `word` in the answer that holds `text`: from its left edge to its last letter */
+async function dragWord(page: Page, text: string, word: string): Promise<void> {
+  const box = await wordBox(page, '.chat-text', text, word)
+  await page.mouse.move(box.left - 1, box.y)
+  await page.mouse.down()
+  await page.mouse.move(box.right, box.y, { steps: 5 })
+  await page.mouse.up()
+}
+
+test('chat.copyOnSelect off: a selection copies nothing, and on again the next selection copies at once', async () => {
+  const { app, page, tabId } = await launchChatTab({ turns: { 'setting': [{ text: 'Setting text from Claude.' }] } })
+  try {
+    await recordClipboard(app)
+    await sendMessage(page, 'setting')
+    await expect.poll(async () => (await page.evaluate((id) => window.ct.chatSnapshot(id), tabId))?.state.turn ?? null, { timeout: 30_000 }).toBe('idle')
+    await expect(page.locator('.chat-host:visible .chat-text', { hasText: 'Setting text' })).toBeVisible()
+    // the setting is saved and applied before the call returns: the next drag runs with it
+    expect(await page.evaluate(() => window.ct.setSetting('chat.copyOnSelect', false))).toEqual({ ok: true })
+    await dragWord(page, 'Setting text', 'Setting')
+    // the setting is on again. The first drag's copy, had it happened, was sent before this call, so main handled it before
+    // the call's answer: the record is empty only if the setting kept the first selection from copying
+    expect(await page.evaluate(() => window.ct.setSetting('chat.copyOnSelect', true))).toEqual({ ok: true })
+    expect(await clipboardWrites(app)).toEqual([])
+    // the first drag left the word selected: clear it, so the next drag over the same word changes the selection
+    await page.evaluate(() => window.getSelection()?.removeAllRanges())
+    await dragWord(page, 'Setting text', 'Setting')
+    // exactly one write, the second selection's text
+    await expect.poll(() => clipboardWrites(app)).toEqual(['Setting'])
+  } finally {
+    await app.close()
+  }
+})
+
 test('a selection that stays while another control is clicked is not copied again', async () => {
   const { app, page, tabId } = await launchChatTab({ turns: { 'stay here': [{ text: 'Kept text from Claude.' }] } })
   try {

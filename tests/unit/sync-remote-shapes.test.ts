@@ -241,6 +241,10 @@ describe('chat call replies', () => {
     expect(CALL_REPLIES['chat-models']([resolved])).toEqual([resolved])
     expect(CALL_REPLIES['chat-models']([{ ...model, resolved: 'x'.repeat(501) }])).toBeNull()
     expect(CALL_REPLIES['chat-models']([{ ...model, resolved: 5 }])).toBeNull()
+    // whether the model runs auto mode: optional (an older device sends none), a boolean when it comes
+    expect(CALL_REPLIES['chat-models']([{ ...model, autoMode: true }])).toEqual([{ ...model, autoMode: true }])
+    expect(CALL_REPLIES['chat-models']([{ ...model, autoMode: false }])).toEqual([{ ...model, autoMode: false }])
+    expect(CALL_REPLIES['chat-models']([{ ...model, autoMode: 'yes' }])).toBeNull()
   })
 
   it('the chat calls that answer with nothing take an object, and a null reply is a failed call', () => {

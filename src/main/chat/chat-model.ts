@@ -1,4 +1,4 @@
-import { commandWord, isHandoffLine, type ChatCallState, type ChatCard, type ChatItem, type ChatNoticeAction, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatState, type ChatSubagent, type ChatToolCall } from '../../shared/chat'
+import { commandWord, isHandoffLine, type ChatCallState, type ChatCard, type ChatEventSource, type ChatItem, type ChatNoticeAction, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatState, type ChatSubagent, type ChatToolCall } from '../../shared/chat'
 import { DEFAULT_IMAGE_EXTENSIONS, hasImageExtension } from '../../shared/image-file'
 import { isUuid } from '../../shared/protocol'
 import type { ImageCard } from '../../shared/types'
@@ -9,7 +9,7 @@ import { isWithin, nativePath, pathKey } from '../path-key'
 
 const TEXT_CAP = 1024 * 1024
 const OUTPUT_CAP = 64 * 1024
-const SUBJECT_CAP = 500
+export const SUBJECT_CAP = 500
 /** names and ids Claude Code gives: tools, tasks, subagent types, typed commands */
 const NAME_CAP = 500
 const PATH_CAP = 4096
@@ -17,6 +17,10 @@ const MODEL_CAP = 200
 const MCP_INPUT_CAP = 80
 export const PAGE = 200
 const LIMIT_MS_FROM = 1e11
+/** the ends of background tasks the chat remembers, oldest dropped first */
+const MAX_ENDED_TASKS = 500
+/** the leading tag of a message Claude Code sends in the conversation for something other than the person's typing */
+const ENVELOPE = /^\s*<(task-notification|agent-message|cross-session-message|channel)(?=[\s>])/
 
 const FILE_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']
 const EDIT_TOOLS = ['Write', 'Edit', 'MultiEdit']
@@ -60,6 +64,16 @@ const pad = (n: number): string => String(n).padStart(2, '0')
 /** the time from a moment to a later one, in milliseconds: a clock that stepped back gives none, never a negative time */
 const elapsed = (from: number, to: number): number => Math.max(0, to - from)
 
+/** a token count as a compaction's divider shows it: 950, 3.9k, 27k */
+function tokenCount(n: number): string {
+  if (n < 1000) return String(Math.round(n))
+  if (n < 10_000) return `${Math.round(n / 100) / 10}k`
+  return `${Math.round(n / 1000)}k`
+}
+
+/** a duration as a compaction's divider shows it: 640 ms, 10 s */
+const durationText = (ms: number): string => (ms < 1000 ? `${Math.round(ms)} ms` : `${Math.round(ms / 1000)} s`)
+
 /** the text of a tool result: a string, or the text blocks joined with a line break */
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content
@@ -79,6 +93,75 @@ function plainText(content: unknown): string | null {
     parts.push(block.text)
   }
   return parts.join('\n')
+}
+
+/** a message Claude Code puts in the conversation that the person did not type, as the row it is drawn as */
+interface EventDraft { source: ChatEventSource; title: string; status: string | null; body: string; task: string | null }
+
+/** the text of a field of an envelope (`<summary>…</summary>`), trimmed; null when the envelope has no such field */
+function fieldOf(text: string, name: string): string | null {
+  const open = `<${name}>`
+  const from = text.indexOf(open)
+  if (from < 0) return null
+  const start = from + open.length
+  const end = text.indexOf(`</${name}>`, start)
+  return end < 0 ? null : text.slice(start, end).trim()
+}
+
+/** an attribute of an envelope's opening tag; null when it has none */
+function attrOf(text: string, name: string): string | null {
+  const m = new RegExp(`^\\s*<[^>]*?\\s${name}="([^"]*)"`).exec(text)
+  return m === null ? null : m[1]!
+}
+
+/** the body of a `<tag …>body</tag>` envelope (the closing tag may be missing); the text itself when it is no envelope */
+function envelopeBody(text: string): string {
+  // no backtracking: the opening tag is matched at the start, and the closing tag is looked for at the end only
+  const open = /^\s*<[a-z-][^>]*>/.exec(text)
+  if (open === null) return text.trim()
+  let body = text.slice(open[0].length).trimEnd()
+  const close = body.lastIndexOf('</')
+  if (close >= 0 && /^<\/[a-z-]+>$/.test(body.slice(close))) body = body.slice(0, close)
+  return body.trim()
+}
+
+/**
+ * The row a message the person did not type makes; null for a message that is the person's own (a bubble). With the SDK's
+ * origin: anything but `human`. Without one, only a message that starts with a known envelope tag makes a row.
+ */
+function eventOf(origin: unknown, text: string): EventDraft | null {
+  const kind = isObj(origin) ? str(origin.kind) : null
+  if (kind === 'human') return null
+  const tag = ENVELOPE.exec(text)?.[1] ?? null
+  if (kind === null && tag === null) return null
+  if (tag === 'task-notification') {
+    const status = fieldOf(text, 'status')
+    const id = fieldOf(text, 'task-id')
+    return {
+      source: 'task',
+      title: cap(fieldOf(text, 'summary') ?? 'A background task ended', SUBJECT_CAP),
+      status: status === null || status === 'completed' ? null : cap(status, NAME_CAP),
+      body: cap(fieldOf(text, 'result') ?? fieldOf(text, 'output') ?? '', TEXT_CAP),
+      task: id === null || id === '' ? null : cap(id, NAME_CAP)
+    }
+  }
+  if (kind === 'peer' || tag === 'agent-message' || tag === 'cross-session-message') {
+    const sender = isObj(origin) ? str(origin.name) ?? str(origin.from) : null
+    const name = sender ?? attrOf(text, 'name') ?? attrOf(text, 'from')
+    const body = (isObj(origin) ? str(origin.body) : null) ?? envelopeBody(text)
+    return {
+      source: 'peer',
+      title: cap(name === null || name === '' ? 'Message from another session' : `Message from ${name}`, SUBJECT_CAP),
+      status: null,
+      body: cap(body, TEXT_CAP),
+      task: null
+    }
+  }
+  // a channel, a scheduled trigger, a coordinator, an observer or any other message Claude Code sends: its first line, and the whole text
+  // folded under it; an envelope's title and body are those of its stripped body, never of its tag line
+  const body = tag === null ? text : envelopeBody(text)
+  const first = body.split('\n').map(l => l.trim()).find(l => l !== '') ?? ''
+  return { source: 'message', title: cap(first, SUBJECT_CAP), status: null, body: cap(body, TEXT_CAP), task: null }
 }
 
 /** a file path as a path inside the folder ('/'-separated, relative), or as it was given when outside it */
@@ -162,6 +245,8 @@ export class ChatModel {
   private readonly queue: string[] = []
   /** the subagents started by a Task call, by their task id */
   private readonly tasks = new Map<string, TaskLink>()
+  /** the background tasks whose end the chat has drawn from a system message: their notice in the conversation adds no row */
+  private readonly ended = new Set<string>()
   /** the images item of each step, by the step's tools item */
   private readonly stepImages = new Map<string, string>()
   /** the ids of all images items, so a change of the Media cards does not scan the whole chat */
@@ -169,6 +254,8 @@ export class ChatModel {
   private readonly st: ChatState = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
   /** a result came and no message has started the next turn yet */
   private afterResult = false
+  /** a main turn runs (its state is working, or it waits on a card): set and cleared with the turn's state */
+  private inTurn = false
   /** the user asked to stop the running turn: its result is an interruption */
   private interrupted = false
   /** the last command the user typed, until its output comes */
@@ -248,7 +335,10 @@ export class ChatModel {
     const item = this.get(id)
     const patches = item?.kind === 'card' ? this.set({ ...item, answered: line }) : []
     const stillWaiting = this.list.some(i => i.kind === 'card' && i.answered === null)
-    patches.push(...this.setState({ turn: stillWaiting ? 'waiting' : 'working' }))
+    // a card a background agent opens after the turn ended leaves the chat idle, not working with no turn to end it
+    if (stillWaiting) patches.push(...this.setState({ turn: 'waiting' }))
+    else if (this.inTurn) patches.push(...this.setState({ turn: 'working' }))
+    else patches.push(...this.setState({ turn: 'idle', turnStartedAt: null }))
     return patches
   }
 
@@ -262,6 +352,9 @@ export class ChatModel {
 
   /** changes the state the status bar and the chat header show; [] when nothing changed */
   setState(partial: Partial<ChatState>): ChatPatch[] {
+    // a turn runs from its start until its end: a card's wait keeps the turn it stops, so it does not change the flag
+    if (partial.turn === 'working') this.inTurn = true
+    else if (partial.turn === 'idle') this.inTurn = false
     const changed = (Object.keys(partial) as (keyof ChatState)[]).some(key => partial[key] !== this.st[key])
     if (!changed) return []
     Object.assign(this.st, partial)
@@ -313,7 +406,7 @@ export class ChatModel {
   }
 
   /** the sends Claude Code took into the turn, as a frame of the turn names them by their uuids: those stop being queued; named: the frame carries a valid uuid field */
-  private taken(msg: Obj): { patches: ChatPatch[]; named: boolean } {
+  private taken(msg: Obj): { patches: ChatPatch[]; named: boolean; ids: string[] } {
     const many = msg.user_message_uuids
     const named = Array.isArray(many)
       ? many.length <= 64 && many.every(id => typeof id === 'string')
@@ -329,7 +422,13 @@ export class ChatModel {
       const item = this.get(id)
       if (item?.kind === 'user') patches.push(...this.set({ ...item, queued: false }))
     }
-    return { patches, named }
+    return { patches, named, ids }
+  }
+
+  /** a send the turn took is no longer one to wait for: its prompt entry goes */
+  private dropSent(id: string): void {
+    const at = this.sent.findIndex(e => e.id === id)
+    if (at >= 0) this.sent.splice(at, 1)
   }
 
   /** the first message after a result starts the next turn: its queued prompt, if any, is no longer queued; a frame that names its sends (named) took them itself */
@@ -551,6 +650,15 @@ export class ChatModel {
     if (msg.isReplay === true || msg.isMeta === true || msg.isSynthetic === true) return []
     const text = plainText(content)
     if (text === null || text === '') return []
+    // a message Claude Code puts in the conversation that the person did not type: a row, not a bubble; a background task whose end
+    // the chat drew from its system message adds nothing
+    // the text is parsed capped, as it is drawn: a longer envelope is cut where its drawn text is
+    const event = eventOf(msg.origin, cap(text, TEXT_CAP))
+    if (event !== null) {
+      if (event.task !== null && this.ended.has(event.task)) return []
+      this.step = null
+      return this.add({ kind: 'event', id: this.o.newId(), source: event.source, title: event.title, status: event.status, body: event.body })
+    }
     // Claude Code's own messages: the interrupt notice, a command's output and its name, the compaction summary
     if (text.startsWith('[Request interrupted by user')) return []
     if (/^<command-(name|message|args)>/.test(text)) return []
@@ -603,15 +711,44 @@ export class ChatModel {
   private system(msg: Obj): ChatPatch[] {
     switch (msg.subtype) {
       case 'init': return this.init(msg)
-      case 'status': return isPermissionMode(msg.permissionMode) ? this.setState({ mode: msg.permissionMode }) : []
+      case 'status': return this.statusMessage(msg)
       case 'local_command_output': return typeof msg.content === 'string' ? this.commandItem(msg.content) : []
-      case 'compact_boundary': return this.divider('Conversation compacted')
+      case 'compact_boundary': return this.compacted(msg)
       case 'session_state_changed': return this.sessionState(msg.state)
       case 'api_retry': return this.retry(msg)
       case 'task_started': return this.taskStarted(msg)
       case 'task_notification': return this.taskNotification(msg)
       default: return []
     }
+  }
+
+  /** a status of Claude Code: its mode, and a compaction that runs (the chat's activity) or fails (a notice) */
+  private statusMessage(msg: Obj): ChatPatch[] {
+    const patches: ChatPatch[] = []
+    if (isPermissionMode(msg.permissionMode)) patches.push(...this.setState({ mode: msg.permissionMode }))
+    if (msg.status === 'compacting') {
+      if (this.st.activity?.kind !== 'compacting') patches.push(...this.setState({ activity: { kind: 'compacting', since: this.o.now() } }))
+    } else if (this.st.activity?.kind === 'compacting') {
+      patches.push(...this.setState({ activity: undefined }))
+    }
+    if (msg.compact_result === 'failed') {
+      const error = str(msg.compact_error)
+      patches.push(...this.notice(error === null || error === '' ? 'Compaction failed' : `Compaction failed: ${error}`, 'error', null))
+    }
+    return patches
+  }
+
+  /** the boundary of a compaction: its divider says what it did, with the numbers Claude Code gives; each part only when given */
+  private compacted(msg: Obj): ChatPatch[] {
+    const meta: Obj = isObj(msg.compact_metadata) ? msg.compact_metadata : {}
+    const parts = [meta.trigger === 'auto' ? 'Conversation compacted automatically' : 'Conversation compacted']
+    const before = num(meta.pre_tokens)
+    const after = num(meta.post_tokens)
+    const ms = num(meta.duration_ms)
+    if (before !== null && after !== null) parts.push(`${tokenCount(before)} → ${tokenCount(after)} tokens`)
+    if (ms !== null) parts.push(durationText(ms))
+    const ended = this.st.activity?.kind === 'compacting' ? this.setState({ activity: undefined }) : []
+    return [...ended, ...this.divider(parts.join(' · '))]
   }
 
   /** Claude Code's own account of the turn: running starts it, idle ends it unless a queued message waits, a card is left to the cards */
@@ -626,6 +763,10 @@ export class ChatModel {
     if (isPermissionMode(msg.permissionMode)) partial.mode = msg.permissionMode
     if (typeof msg.model === 'string' && msg.model !== '') partial.model = cap(msg.model, MODEL_CAP)
     if (isUuid(msg.session_id)) partial.sessionId = msg.session_id
+    // the effort in effect for the next message: a level, or null when none is sent; anything else, or no field, keeps the last
+    const efforts: string[] = ['low', 'medium', 'high', 'xhigh', 'max']
+    if (msg.effort === null) partial.effort = null
+    else if (typeof msg.effort === 'string' && efforts.includes(msg.effort)) partial.effort = msg.effort
     // Claude Code starts every turn with an init: after a result, the next turn runs from this one
     if (this.afterResult && this.st.turn === 'idle') Object.assign(partial, { turn: 'working', turnStartedAt: this.o.now() })
     return this.setState(partial)
@@ -639,7 +780,7 @@ export class ChatModel {
     return this.notice(`Retrying in ${Math.ceil(delay / 1000)}s · attempt ${attempt} of ${max}`, 'info', null)
   }
 
-  /** a subagent of a Task (or Agent) call: it is listed on that call */
+  /** a subagent of a Task (or Agent) call: it is listed on that call; a finished one that a SendMessage call resumes is listed on that call too */
   private taskStarted(msg: Obj): ChatPatch[] {
     const callId = typeof msg.tool_use_id === 'string' ? cap(msg.tool_use_id, NAME_CAP) : null
     const taskId = typeof msg.task_id === 'string' ? cap(msg.task_id, NAME_CAP) : null
@@ -648,7 +789,7 @@ export class ChatModel {
     const item = link ? this.get(link.itemId) : undefined
     if (item?.kind !== 'tools') return []
     const call = item.calls.find(c => c.id === callId)
-    if (!call || (call.name !== 'Task' && call.name !== 'Agent') || call.agents.some(a => a.id === taskId)) return []
+    if (!call || !['Task', 'Agent', 'SendMessage'].includes(call.name) || call.agents.some(a => a.id === taskId)) return []
     const agent: ChatSubagent = {
       id: taskId, description: cap(str(msg.description) ?? '', SUBJECT_CAP),
       type: cap(str(msg.subagent_type) ?? str(msg.task_type) ?? 'agent', NAME_CAP), state: 'running', ms: null,
@@ -674,6 +815,9 @@ export class ChatModel {
     const reported = isObj(msg.usage) ? num(msg.usage.duration_ms) : null
     const ms = reported !== null ? Math.max(0, reported) : elapsed(link.start, this.o.now())
     this.tasks.delete(taskId)
+    // the end of an agent the chat draws here: its notice in the conversation (a user message) adds no row of its own; any other task keeps its row
+    this.ended.add(taskId)
+    if (this.ended.size > MAX_ENDED_TASKS) this.ended.delete(this.ended.values().next().value as string)
     const next: ChatToolCall = { ...call, agents: call.agents.map(a => (a.id === taskId ? { ...a, state, ms } : a)) }
     return this.callPatch(item, item.calls.map(c => (c.id === next.id ? next : c)), next)
   }
@@ -683,14 +827,25 @@ export class ChatModel {
     const interrupted = this.interrupted || msg.terminal_reason === 'aborted_streaming' || msg.terminal_reason === 'aborted_tools'
     this.interrupted = false
     this.afterResult = true
-    const done = this.sent.findIndex(e => e.started)
-    if (done >= 0) this.sent.splice(done, 1)
+    // the sends the result names were folded into this turn: they leave the queue, and their prompts are no longer waiting
+    const folded = this.taken(msg)
+    const patches: ChatPatch[] = [...folded.patches]
+    if (folded.named) {
+      for (const id of folded.ids) this.dropSent(id)
+    } else {
+      const done = this.sent.findIndex(e => e.started)
+      if (done >= 0) this.sent.splice(done, 1)
+    }
     // a command's name belongs to its own output: a turn that ends without one leaves no name for the next
     this.command = null
+    // a result that names no queued turn after it ends the turn: the sends still waiting stay queued, each for the frames of its own turn,
+    // since Claude Code may still be on its way to run one of them
+    const noTurnAfter = msg.queued_turn_count === 0
     // the turn ends with its result, unless a queued prompt still waits: Claude Code takes that prompt into the next turn at once,
     // so the first waiting send leaves the queue here, and the turn goes on with it, on a new clock
-    const patches: ChatPatch[] = []
-    const next = this.queue.shift()
+    // a result ends a compaction that never reported its end
+    if (this.st.activity?.kind === 'compacting') patches.push(...this.setState({ activity: undefined }))
+    const next = noTurnAfter ? undefined : this.queue.shift()
     if (next === undefined) {
       patches.push(...this.setState({ turn: 'idle', turnStartedAt: null }))
     } else {
@@ -718,14 +873,22 @@ export class ChatModel {
     return 'Claude Code reported an error'
   }
 
-  /** every call still running fails with the reason */
+  /** the process ended: what it left running ends as interrupted, and so do its agents */
+  processEnded(): ChatPatch[] {
+    return this.failRunning('Interrupted')
+  }
+
+  /** every call still running fails with the reason, and so does every agent still running: none is left animating */
   private failRunning(reason: string): ChatPatch[] {
     const patches: ChatPatch[] = []
     for (const [callId, link] of this.calls) {
       const item = this.get(link.itemId)
       const call = item?.kind === 'tools' ? item.calls.find(c => c.id === callId) : undefined
-      if (item?.kind !== 'tools' || call?.state !== 'running') continue
-      const next: ChatToolCall = { ...call, state: 'failed', error: reason }
+      if (item?.kind !== 'tools' || call === undefined) continue
+      const agents = call.agents.map(a => (a.state === 'running' ? { ...a, state: 'failed' as const } : a))
+      const agentsChanged = agents.some((a, i) => a !== call.agents[i])
+      if (call.state !== 'running' && !agentsChanged) continue
+      const next: ChatToolCall = call.state === 'running' ? { ...call, state: 'failed', error: reason, agents } : { ...call, agents }
       patches.push(...this.callPatch(item, item.calls.map(c => (c.id === callId ? next : c)), next))
     }
     return patches

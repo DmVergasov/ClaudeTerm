@@ -1,6 +1,6 @@
-import { acceptPatches, type ChatCard, type ChatItem, type ChatPatch, type ChatSnapshot, type ChatState, type ChatToolCall } from '../../shared/chat'
+import { acceptPatches, type ChatActivity, type ChatCard, type ChatItem, type ChatPatch, type ChatSnapshot, type ChatState, type ChatToolCall } from '../../shared/chat'
 import { isChatOrigin, isPermissionMode } from './chat-guards'
-import { PAGE } from './chat-model'
+import { cap, PAGE, SUBJECT_CAP } from './chat-model'
 
 // A chat as a member holds it, from the host's pushes. The host's pushes are checked here, the way the host's own
 // model made them: a value that fails a check is dropped, never thrown.
@@ -10,7 +10,6 @@ import { PAGE } from './chat-model'
 // so a value the host produces always passes here
 const TEXT_CAP = 1024 * 1024
 const OUTPUT_CAP = 64 * 1024
-const SUBJECT_CAP = 500
 const NAME_CAP = 500
 const PATH_CAP = 4096
 const MODEL_CAP = 200
@@ -105,6 +104,10 @@ function isItem(v: unknown): v is ChatItem {
         && (v.line === undefined || opt(v.line, (s) => str(s, OUTPUT_CAP)))
     case 'divider':
       return str(v.text, SUBJECT_CAP)
+    case 'event':
+      // a row of a message Claude Code sent, not the person's: its source, its title, its status (or none) and the text folded under it
+      return oneOf(['task', 'peer', 'message'], v.source) && str(v.title, SUBJECT_CAP) && opt(v.status, (s) => str(s, NAME_CAP))
+        && str(v.body, TEXT_CAP)
     case 'card':
       return isCard(v.card) && opt(v.answered, (s) => str(s, CARD_CAP))
     default:
@@ -117,9 +120,15 @@ export function isItems(v: unknown): v is ChatItem[] {
   return Array.isArray(v) && v.length <= MAX_CHAT_ITEMS && v.every(isItem)
 }
 
+// a state from a device that predates the activity has none: the field is optional
 function isState(v: unknown): v is ChatState {
   return isObj(v) && oneOf(TURNS, v.turn) && opt(v.turnStartedAt, isMs) && isPermissionMode(v.mode)
     && opt(v.model, (s) => str(s, MODEL_CAP)) && opt(v.effort, (s) => str(s, MODEL_CAP)) && opt(v.sessionId, isId) && isBool(v.exited)
+    && (v.activity === undefined || isActivity(v.activity))
+}
+
+function isActivity(v: unknown): v is ChatActivity {
+  return isObj(v) && oneOf(['compacting', 'restarting'] as const, v.kind) && isMs(v.since)
 }
 
 function isSnapshot(v: unknown): v is ChatSnapshot {
@@ -207,6 +216,11 @@ function fitItem(item: ChatItem, budget: number): ChatItem {
       return { ...item, markdown: tailOf(item.markdown, budget - bytesOf({ ...item, markdown: '' })) }
     case 'user':
       return { ...item, text: tailOf(item.text, budget - bytesOf({ ...item, text: '' })) }
+    case 'event': {
+      // the title is capped as the host caps it, so a long one leaves the body its share; the body keeps the tail of what the title leaves
+      const title = tailOf(cap(item.title, SUBJECT_CAP), budget - bytesOf({ ...item, title: '', body: '' }))
+      return { ...item, title, body: tailOf(item.body, budget - bytesOf({ ...item, title, body: '' })) }
+    }
     case 'command':
       return { ...item, output: tailOf(item.output, budget - bytesOf({ ...item, output: '' })) }
     case 'thinking':

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 
 export type FakeStep =
   | { text: string; chunks?: number; pace?: number; rate?: number } // a streamed answer; pace: ms between its pieces, so a test can look at it while it streams; rate: words (tokens) per second, the words evenly spaced (chunks and pace do not apply)
-  | { tool: { name: string; input: Record<string, unknown>; result: string; isError?: boolean; ms?: number } }
+  | { tool: { name: string; input: Record<string, unknown>; result: string; isError?: boolean; ms?: number; output?: unknown } } // output: the structured tool_use_result of the call (default: the text)
   | { ask: { tool: string; input: Record<string, unknown>; suggestions?: unknown[]; defaultToNo?: boolean }; allowed: FakeStep[]; denied: FakeStep[] }
   | { gate: string } // waits until the file <config folder>/<gate> exists: a test releases the turn when it has done what it needs
   | { asks: { tool: string; input: Record<string, unknown>; suggestions?: unknown[]; defaultToNo?: boolean }[] } // every ask at once: all the requests go out, then the step waits for every answer, in any order
@@ -13,17 +13,21 @@ export type FakeStep =
   | { notAvailable: string } // "/<name> isn't available in this environment."
   | { retry: { attempt: number; max: number; delayMs: number } }
   | { error: string }
-  | { compact: true }
+  | { compact: true | FakeCompact }
   | { wait: number }
   | { thinking: string; ms: number } // a thinking block of the message: its summary ("" for none); Claude thinks for ms
-  | { task: { description: string; result: string; agents: { type: string; description: string; ms: number; failed?: boolean }[] } } // an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ms (failed: they end failed); the call ends with its result
+  | { task: { description: string; result: string; background?: true; agents: { type: string; description: string; ms: number; failed?: boolean }[] } } // an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ms (failed: they end failed); the call ends with its result; background: the call ends at once with the launch notice, and each agent ends at its ms after that, outliving the turn
   | { crash: number; once?: boolean } // exit with this code; once: only on the first run (a marker file beside the script)
   | { noise: string } // a raw stdout line that is not a message
   | { dialog: string } // a control_request { subtype: 'request_user_dialog', dialog_kind: <it>, payload: {} }; goes on when answered
   | { child: string } // starts a process as a command or a server Claude Code started: its command line carries the marker; logs { child: <pid> }
   | { lingerMs: number } // sets how long the process runs after its input ends (a slow exit); a step of a turn or of beforeInit
-  | { fold: true } // the next assistant message names the user messages read so far as taken into the turn (user_message_uuids)
+  | { fold: true | 'result' } // true: the next assistant message names the user messages read so far as taken into the turn (user_message_uuids); 'result': the messages still waiting are taken into the turn, named only on its result (user_message_uuids), and no turn of their own runs them
+  | { inject: { text: string; origin?: Record<string, unknown> } } // a user-role message Claude Code puts in the conversation itself (a background task's notice, another session's message); origin: the SDK's origin of it, none when not given
   | { rateLimit: { type: 'five_hour' | 'seven_day'; utilization: number; resetsAt: number; status?: 'allowed' | 'rejected'; windows?: RateLimitWindows } } // a rate_limit_event of the stream, shaped as the recorded one (utilization 0.42 is 42 %); windows: what unifiedWindows carries, both limits when given
+
+/** a compaction (compact: true is one with the defaults): gate holds it until the file <config folder>/<gate> exists; fail ends it as a failure with this error; the numbers go in its boundary */
+export interface FakeCompact { trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; gate?: string; fail?: string }
 
 /** the windows of a rate_limit_event's unifiedWindows: each limit's utilization (a fraction) and reset (seconds) */
 export type RateLimitWindows = { five_hour?: RateLimitWindow; seven_day?: RateLimitWindow }
@@ -36,9 +40,19 @@ export interface FakeScript {
   /** the commands init names as terminal_slash_commands; none when not given */
   terminalCommands?: string[]
   /** the models the initialize reply lists (supportedModels); the recorded list when not given */
-  models?: { value: string; resolvedModel?: string; displayName: string; description: string; supportedEffortLevels?: string[] }[] // resolvedModel: what the value resolves to (value when not given)
+  models?: { value: string; resolvedModel?: string; displayName: string; description: string; supportedEffortLevels?: string[]; supportsAutoMode?: boolean }[] // resolvedModel: what the value resolves to (value when not given); supportsAutoMode: the model runs auto mode (only with autoMode: true)
+  /** whether the models the initialize reply lists run auto mode: without it (or not true) no model does, as before; true keeps the recorded list's flags and a script's own */
+  autoMode?: boolean
   /** the model the stream names (init and assistant messages); the recorded one when not given */
   model?: string
+  /** the effort in effect the init names (null: none is sent); the init names no effort when not given */
+  effort?: string | null
+  /** the effort the get_settings answer reports as applied.effort (null: none); the answer names no effort when not given */
+  appliedEffort?: string | null
+  /** the mode Claude Code says it starts in, in its initialize reply (current_permission_mode); the recorded one when not given */
+  permissionMode?: string
+  /** the mode the init of the first turn names (its permissionMode); the recorded one when not given */
+  initPermissionMode?: string
   beforeInit?: FakeStep[]
   turns: Record<string, FakeStep[]>
   fallback?: FakeStep[]

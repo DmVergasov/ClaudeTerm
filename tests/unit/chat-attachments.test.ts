@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { attachFiles, attachmentOf, AttachedFiles, imageSizeOf, isChatPaths, isChatQuery, mention, prepareMessage, type AttachDeps } from '../../src/main/chat/chat-attachments'
@@ -93,6 +95,24 @@ describe('prepareMessage', () => {
     const out = await prepareMessage({ text: '', attachments: [att(a, 1), att(b, 1)] }, FOLDER, allowAll, deps)
 
     expect(out).toMatchObject({ text: '@a.txt\n@"my notes.txt"', images: [] })
+  })
+
+  it('a file picked by its real path is a short mention when the tab folder is an alias of the folder (junction or symlink)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ct-alias-'))
+    try {
+      const real = join(root, 'real')
+      const alias = join(root, 'alias')
+      mkdirSync(real)
+      writeFileSync(join(real, 'notes.txt'), 'x')
+      symlinkSync(real, alias, 'junction')
+      const path = join(realpathSync.native(real), 'notes.txt')
+      const { deps } = fakeDisk({ [path]: { size: 1, data: Buffer.from('x') } })
+      const out = await prepareMessage({ text: '', attachments: [att(path, 1)] }, alias, allowAll, deps)
+
+      expect(out).toMatchObject({ text: '@notes.txt' })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('the attachments are as main knows them: name and size from the disk, the card from the allowed list', async () => {

@@ -190,8 +190,12 @@ export async function openTabInFront(page: Page, kind: 'shell' | 'claude', cwd: 
 }
 
 /** the side panel's slide-in (panel-in) has ended: a test that acts on the panel right after it opens waits for this */
-export async function panelSettled(page: Page): Promise<void> {
-  await page.evaluate(() => Promise.all(document.getElementById('image-panel')!.getAnimations().map((a) => a.finished)))
+export async function panelSettled(page: Page, opening = false): Promise<void> {
+  // `opening`: the panel was just asked to open; its slide starts after main has made room, so it may still be collapsed: wait until it is drawn and at rest
+  await page.waitForFunction((opening) => {
+    const panel = document.getElementById('image-panel')!
+    return (!opening || !panel.classList.contains('collapsed')) && !panel.classList.contains('sliding') && panel.getAnimations().length === 0
+  }, opening)
 }
 
 /** the Settings window's tab: clicks it and waits for its page to be in front */

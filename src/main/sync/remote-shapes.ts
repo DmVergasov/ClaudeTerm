@@ -267,10 +267,12 @@ function chatModelOf(v: unknown): ChatModelInfo | null {
   if (!isString(value, 1, MAX_CHAT_ID) || !isString(displayName, 0, MAX_CHAT_ID) || !isString(description, 0, MAX_CHAT_TEXT)) return null
   const list = listOf(efforts, MAX_CHAT_LIST, (x) => (isString(x, 1, MAX_CHAT_ID) ? x : null))
   if (list === null) return null
-  // an older device sends no resolved id: the field is then absent, not null
-  if (v.resolved === undefined) return { value, displayName, description, efforts: list }
+  // an older device sends no resolved id, nor the auto-mode flag: the fields are then absent, not null
+  if (v.autoMode !== undefined && typeof v.autoMode !== 'boolean') return null
+  const auto = v.autoMode === undefined ? {} : { autoMode: v.autoMode }
+  if (v.resolved === undefined) return { value, displayName, description, efforts: list, ...auto }
   if (!isString(v.resolved, 1, MAX_CHAT_ID)) return null
-  return { value, displayName, description, efforts: list, resolved: v.resolved }
+  return { value, displayName, description, efforts: list, resolved: v.resolved, ...auto }
 }
 
 /** The arguments of each call method, or null when they do not fit. Returns a copy of the known fields only. */

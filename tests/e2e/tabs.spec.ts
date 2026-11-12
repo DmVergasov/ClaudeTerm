@@ -270,6 +270,26 @@ test('the tab bar scrolls: the active tab is in view whether it is the first or 
   await app.close()
 })
 
+test('the tab bar keeps the active tab in view when its title arrives late and widens it', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const folder = freshFolder()
+  let last = ''
+  for (let i = 0; i < 14; i++) last = await openShell(page, folder)
+  await expect(page.locator('#tabbar .tab')).toHaveCount(15)
+  const inView = (id: string): Promise<boolean> => page.evaluate((tabId) => {
+    const box = document.querySelector<HTMLElement>(`#tabbar .tab[data-tab-id="${tabId}"]`)!.getBoundingClientRect()
+    const list = document.querySelector<HTMLElement>('#tabbar .tabs')!.getBoundingClientRect()
+    return box.left >= list.left - 1 && box.right <= list.right + 1
+  }, id)
+  await expect.poll(() => inView(last)).toBe(true)
+  // the shell's own title replaces the short one: the tab grows to its widest, at the bar's end
+  await page.evaluate((id) => window.ct.renameTab(id, 'a long title that widens the tab to its widest'), last)
+  await expect(page.locator(`#tabbar .tab[data-tab-id="${last}"] .tab-title`)).toHaveText('a long title that widens the tab to its widest')
+  await expect.poll(() => inView(last)).toBe(true)
+  await app.close()
+})
+
 test('a linked worktree\'s tab on top has a line in its colour', async () => {
   const repo = gitRepo()
   const worktree = gitWorktree(repo, 'feat/y')

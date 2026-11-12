@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { capSnapshot, ChatMirror, MAX_CHAT_ITEMS, parseChatPush } from '../../src/main/chat/chat-mirror'
+import { capItems, capSnapshot, ChatMirror, MAX_CHAT_ITEMS, parseChatPush } from '../../src/main/chat/chat-mirror'
+import { SUBJECT_CAP } from '../../src/main/chat/chat-model'
 import type { ChatItem, ChatPatch, ChatSnapshot, ChatState, ChatToolCall } from '../../src/shared/chat'
+import { MAX_CHAT_PUSH_BYTES } from '../../src/shared/remote'
 
 const TAB = '0a1b2c3d-0000-4000-8000-000000000001'
 const STATE: ChatState = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
@@ -86,6 +88,31 @@ describe('a cut never leaves zero items', () => {
     expect(parseChatPush(out)).not.toBeNull()
   })
 
+  it('a newest event item of 6 MiB of escapes keeps its kind, its body cut to the tail, and the cut fits the push', () => {
+    // a body the host can make (under the 1 MiB text cap), heavy with control characters that take six bytes each as JSON
+    const body = '\u0001'.repeat(999_000) + 'END'
+    const event: ChatItem = { kind: 'event', id: 'e', source: 'task', title: 'Agent finished', status: null, body }
+    const out = capSnapshot(snapshot([notice('older'), event]), MAX_CHAT_PUSH_BYTES)
+    expect(Buffer.byteLength(JSON.stringify(out))).toBeLessThanOrEqual(MAX_CHAT_PUSH_BYTES)
+    expect(out.hasOlder).toBe(true)
+    const [kept] = out.items
+    if (kept.kind !== 'event') throw new Error('the newest item is the event')
+    expect(kept).toMatchObject({ source: 'task', title: 'Agent finished', status: null })
+    expect(body.endsWith(kept.body)).toBe(true)
+    expect(parseChatPush(out)).not.toBeNull()
+  })
+
+  it('an event whose title is past the title cap is cut to the cap, and its body keeps the rest of the budget', () => {
+    const body = 'b'.repeat(4000) + 'END'
+    const event: ChatItem = { kind: 'event', id: 'e', source: 'task', title: 'T'.repeat(SUBJECT_CAP * 3), status: null, body }
+    const [kept] = capItems([event], 1200).items
+    if (kept.kind !== 'event') throw new Error('the item is an event')
+    expect(kept.title).toBe('T'.repeat(SUBJECT_CAP))
+    expect(kept.body.length).toBeGreaterThan(0)
+    expect(body.endsWith(kept.body)).toBe(true)
+    expect(Buffer.byteLength(JSON.stringify(kept))).toBeLessThanOrEqual(1200)
+  })
+
   it('the walk stringifies the items it keeps and the one that does not fit, never the whole page', () => {
     const items = Array.from({ length: 2000 }, (_, i) => notice(`n${i}`, 'x'.repeat(10 * 1024)))
     const spy = vi.spyOn(JSON, 'stringify')
@@ -163,6 +190,15 @@ describe('parseChatPush', () => {
     expect(parseChatPush(withCall({ output: 'x'.repeat(64 * 1024) }))).not.toBeNull()
     expect(parseChatPush(withCall({ subject: 'x'.repeat(501) }))).toBeNull()
     expect(parseChatPush({ ...snapshot([]), state: { ...STATE, model: 'x'.repeat(201) } })).toBeNull()
+  })
+
+  it('a state with a compaction or restart activity passes; an unknown kind or no time is dropped; a state without the field passes', () => {
+    const withActivity = (activity: unknown): unknown => ({ ...snapshot([]), state: { ...STATE, activity } })
+    expect(parseChatPush(withActivity({ kind: 'compacting', since: 1000 }))).not.toBeNull()
+    expect(parseChatPush(withActivity({ kind: 'restarting', since: 1000 }))).not.toBeNull()
+    expect(parseChatPush(withActivity({ kind: 'napping', since: 1000 }))).toBeNull()
+    expect(parseChatPush(withActivity({ kind: 'compacting' }))).toBeNull()
+    expect(parseChatPush(snapshot([]))).not.toBeNull()
   })
 
   it('drops a card whose string is over 64 KiB', () => {
