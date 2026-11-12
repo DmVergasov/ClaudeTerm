@@ -2,6 +2,34 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.18.0
+
+### New
+
+- **Claude tabs as a chat.** A Claude tab can show a conversation instead of the terminal: Claude's answers as text with code, tables and images, each tool call as a step you can unfold, permission requests and questions as cards you answer with a click, and a message box with attachments, `@` files, `/` commands, the model and effort picker and the permission mode (Shift+Tab, Auto included when the model supports it). The terminal is one click away on the tab's header, and **Settings → Claude Code → Claude tabs open in** picks the view new tabs start in.
+- **A new look.** The Graphite theme, a title bar with your usage limits, tabs on a sheet, and restyled panels, dialogs and settings. The chat takes the colours of the terminal theme you choose, light themes included.
+- **A new settings window,** with a search box and a page for each part of the app.
+- **Quote Claude's words.** Select text in an answer and click **Quote**: it goes above the message box as a quote, up to five of them, and your message carries them.
+- **The agents Claude runs, above the message box.** A card lists them with their progress while they work, and stays at the bottom of the conversation when you scroll up. Agents that outlive their turn, and agents resumed with `SendMessage`, stay on it until they end.
+- **Compaction and restarts show what happens.** "Compacting conversation" while it runs, then how many tokens were left; "Restarting Claude Code" and "Session restarted" when you restart a session, with the conversation kept on screen.
+- **Messages Claude Code puts in the conversation look like what they are.** The end of a background task, a message from another session or a scheduled prompt is a short row you can unfold, not a message bubble of yours full of tags.
+- **Settings → Claude Code → Chat:** **Full-width chat** lets the conversation and the message box use the whole width of the window; **Copy selected chat text** (on by default) copies what you select with the mouse, as a terminal does.
+
+### Changes
+
+- **The model button shows the effort** Claude works at, for example "Opus · xhigh".
+- **Claude's thinking is open from the start.** Click its "Thought for…" row to fold it; a block you fold stays folded.
+- **The status bar keeps the session in the middle:** the account on the left, the context, agents, background tasks and plan in the centre, the changed files on the right.
+- **Side panels slide** in and out instead of jumping.
+- **`Ctrl+F` finds text in a chat** (as well as `Ctrl+Shift+F`).
+
+### Fixes
+
+- **"Working" no longer stays on after Claude has finished.** A message you sent while Claude worked, which Claude Code took into the running turn, left the chat waiting for a turn that never came (and marked your next message as queued). Answering a background agent's permission request after the turn had ended did the same.
+- **A chat tab follows its session into a worktree,** and back out, as a terminal tab does.
+- **A file you attach is mentioned by its short path** (`@notes.txt`) when the project folder is opened through a junction or a symbolic link, instead of by its full path.
+- **The tab bar keeps the tab in front in view** when its title changes and makes it wider (Windows).
+
 ## 0.17.0
 
 ### New
