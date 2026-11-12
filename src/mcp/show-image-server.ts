@@ -102,7 +102,8 @@ server.registerTool(
     description:
       'Show a task list with progress in the status bar of ClaudeTerm, for multi-step work, or when the user asks for one. ' +
       'Send the whole list each time, every task with its status; an empty list removes it. ' +
-      'A superpowers plan is tracked by ClaudeTerm itself: do not mirror it here.',
+      'A superpowers plan is tracked by ClaudeTerm itself: do not mirror a single plan here. An unfinished list shows in place ' +
+      'of the plan, so set one while a plan runs only for work across several plans, or when the user asks for it.',
     inputSchema: {
       title: z.string().optional().describe('A short title shown above the list; default: Tasks'),
       tasks: z.array(z.object({ title: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })).describe('The whole list, in order')

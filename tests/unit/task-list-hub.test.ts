@@ -238,9 +238,9 @@ describe('TaskListHub', () => {
 })
 
 describe('shownPlan', () => {
-  it('an unfinished plan with an unfinished list shows the plan, whichever side changed last', () => {
-    expect(shownPlan(plan(false), listStatus(false), 'list')).toEqual({ plan: plan(false), agentList: false })
-    expect(shownPlan(plan(false), listStatus(false), 'plan')).toEqual({ plan: plan(false), agentList: false })
+  it('an unfinished plan with an unfinished list shows the list, whichever side changed last: the agent set it on purpose', () => {
+    expect(shownPlan(plan(false), listStatus(false), 'list')).toEqual({ plan: listStatus(false), agentList: true })
+    expect(shownPlan(plan(false), listStatus(false), 'plan')).toEqual({ plan: listStatus(false), agentList: true })
   })
 
   it('an unfinished plan with a finished list shows the plan, whichever side changed last', () => {

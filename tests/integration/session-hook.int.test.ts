@@ -1,6 +1,6 @@
 import { build } from 'esbuild'
 import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -29,6 +29,9 @@ const expectedStatus = {
 }
 
 const work = mkdtempSync(join(tmpdir(), 'ct-hookint-'))
+// the status line reads Claude Code's settings for the auto-compact window: every hook here gets a config folder of its own,
+// never the real ~/.claude
+const CLAUDE_CONFIG = join(work, 'claude-config')
 const bundle = join(work, 'session-hook.js')
 let server: PipeServerHandle | null = null
 
@@ -43,7 +46,7 @@ afterEach(async () => {
 
 function runAll(file: string, args: string[], env: Record<string, string>, input = INPUT): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((res) => {
-    const p = spawn(file, args, { env: { ...(process.env as Record<string, string>), ...env }, windowsHide: true })
+    const p = spawn(file, args, { env: { ...(process.env as Record<string, string>), CLAUDE_CONFIG_DIR: CLAUDE_CONFIG, ...env }, windowsHide: true })
     let stdout = ''
     let stderr = ''
     p.stdout.on('data', (d) => { stdout += String(d) })
@@ -144,6 +147,20 @@ describe('session hook end to end', () => {
     const r = await run(process.execPath, [bundle, 'status'], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, input)
     expect(r).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([{ ...expectedStatus, projectDir: project }])
+  })
+
+  it('node bundle: the status line shows the context against the auto-compact window the user settings set, not the model\'s 1M', async () => {
+    const { pipe, got } = await listen()
+    const config = join(work, 'claude-config-512k')
+    mkdirSync(config, { recursive: true })
+    writeFileSync(join(config, 'settings.json'), JSON.stringify({ autoCompactWindow: 512000 }))
+    const input = JSON.stringify({ ...(JSON.parse(STATUS_INPUT) as object), context_window: { context_window_size: 1000000, used_percentage: 30.7, current_usage: { input_tokens: 7000, cache_read_input_tokens: 300000 } } })
+    const r = await run(process.execPath, [bundle, 'status'], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe, CLAUDE_CONFIG_DIR: config }, input)
+    expect(r).toEqual({ code: 0, stdout: '' })
+    const context = (got[0] as { context: { usedTokens: number; size: number; usedPct: number } }).context
+    expect(context.size).toBe(512000)
+    expect(context.usedTokens).toBe(307000)
+    expect(context.usedPct).toBeCloseTo(59.96, 2)
   })
 
   it('node bundle: Stop forwards the background work still running as the turn ended, and prints nothing', async () => {

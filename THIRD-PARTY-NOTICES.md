@@ -150,3 +150,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Claude Agent SDK
+
+ClaudeTerm uses @anthropic-ai/claude-agent-sdk 0.3.322, Anthropic's Claude Agent SDK. Its license line follows.
+
+© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here: https://code.claude.com/docs/en/legal-and-compliance.
+
+ClaudeTerm uses the SDK unmodified to talk to the Claude Code the user installed. It ships none of the SDK's Claude Code binaries. The SDK is not covered by ClaudeTerm's MIT License.

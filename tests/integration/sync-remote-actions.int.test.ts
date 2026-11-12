@@ -585,8 +585,17 @@ describe('remoteTabInfo', () => {
       fork: null,
       exited: false,
       activity: null,
+      // a device that sends no view (an older device) has no chat for this tab: the tab is a plain remote terminal
+      view: null,
       remote: { device: A_ID, accountName: 'Work', images: 3, title: 'vim' }
     })
+  })
+
+  it("a Claude tab's view is its device's: chat or terminal; a device that sends none has no chat for it", () => {
+    expect(remoteTabInfo(A_ID, { ...remoteEntry(), view: 'chat' }).view).toBe('chat')
+    expect(remoteTabInfo(A_ID, { ...remoteEntry(), view: 'terminal' }).view).toBe('terminal')
+    expect(remoteTabInfo(A_ID, remoteEntry()).view).toBeNull()
+    expect(remoteTabInfo(A_ID, { ...remoteEntry(), kind: 'shell', view: 'chat' }).view).toBeNull()
   })
 
   it('the folder the tab works in is the folder its device sent; the cwd stays the one it opened in', () => {

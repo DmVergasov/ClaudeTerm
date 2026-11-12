@@ -31,6 +31,12 @@ describe('statusSegments', () => {
     expect(segments.map((s) => s.key)).not.toContain('week')
   })
 
+  it('shows a context fill with no size as its share alone, which a chat knows without the token counts', () => {
+    const fillOnly: MainStatus = { ...main, context: { usedTokens: 0, size: 0, usedPct: 42 } }
+    const context = statusSegments({ tabId: 't', main: fillOnly, agents: [], background: [] }, NOW).find((s) => s.key === 'context')
+    expect(context).toMatchObject({ text: 'ctx 42%', title: '42% of the context window used', level: 'normal', fill: 0.42 })
+  })
+
   it('shows only the model early in a session', () => {
     const early: MainStatus = { model: { id: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5' }, effort: null, context: null, fiveHour: null, sevenDay: null }
     expect(statusSegments({ tabId: 't', main: early, agents: [], background: [] }, 0)).toEqual([{ key: 'model', text: 'Haiku 4.5', title: 'claude-haiku-4-5-20251001', level: 'normal' }])
@@ -92,10 +98,12 @@ describe('helpers', () => {
 })
 
 describe('changesSegment', () => {
-  it('counts the files and lines, and names the scope in the title', () => {
-    expect(changesSegment({ files: 3, additions: 40, deletions: 12, title: 'Uncommitted changes in D:\\repo' }))
-      .toEqual({ key: 'changes', text: '± 3 files +40 −12', title: 'Uncommitted changes in D:\\repo', level: 'normal' })
-    expect(changesSegment({ files: 1, additions: 1, deletions: 0, title: 't' }).text).toBe('± 1 file +1 −0')
+  it('counts the files and lines in parts the bar colors, with a file icon, and names the scope in the title', () => {
+    expect(changesSegment({ files: 3, additions: 40, deletions: 12, title: 'Uncommitted changes in D:\\repo' })).toEqual({
+      key: 'changes', text: '3 files +40 −12', title: 'Uncommitted changes in D:\\repo', level: 'normal',
+      icon: 'file-diff', diff: { files: '3 files', added: '+40', removed: '−12' }
+    })
+    expect(changesSegment({ files: 1, additions: 1, deletions: 0, title: 't' }).text).toBe('1 file +1 −0')
   })
 })
 

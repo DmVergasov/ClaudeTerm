@@ -1,3 +1,4 @@
+import type { TabView } from './chat'
 import type { DevicePlatform } from './devices'
 import type { ReviewCounter } from './review'
 import type { NotificationCase, TabKind, TabPlace } from './types'
@@ -42,6 +43,8 @@ export interface RemoteTab {
   forkOf: string | null
   /** the tab is a fork, even after its head closed (its title keeps " (fork)") */
   fork: boolean
+  /** the view a Claude tab shows on its device; an older device leaves it out, and null is a shell tab or no view */
+  view?: TabView | null
 }
 
 export interface RemoteDeviceView {
@@ -51,10 +54,10 @@ export interface RemoteDeviceView {
   online: boolean
 }
 
-/** a review part is one of the parts of a review too large for one push; an older device drops the kind */
-export type PushKind = 'status' | 'plan' | 'review' | 'review-part' | 'images'
+/** a review part is one of the parts of a review too large for one push; an older device drops the kind. chat: a chat's snapshot; chat-patch: a batch of its patches */
+export type PushKind = 'status' | 'plan' | 'review' | 'review-part' | 'images' | 'chat' | 'chat-patch'
 
-export const PUSH_KINDS: readonly PushKind[] = ['status', 'plan', 'review', 'review-part', 'images']
+export const PUSH_KINDS: readonly PushKind[] = ['status', 'plan', 'review', 'review-part', 'images', 'chat', 'chat-patch']
 
 export interface RemoteSnapshot {
   data: string
@@ -108,6 +111,9 @@ export const REVIEW_PART_BYTES = 2 * 1024 * 1024
 /** the most encoded bytes one file of a review keeps: a bigger file keeps its header, and its lines are not shown on another device */
 export const REVIEW_FILE_BYTES = REVIEW_PART_BYTES - 64 * 1024
 export const MAX_REVIEW_PARTS = 16
+
+/** the JSON size of one chat push: a snapshot keeps its newest items that fit, and a batch over it is replaced by a snapshot */
+export const MAX_CHAT_PUSH_BYTES = 2 * 1024 * 1024
 
 export const IMAGE_PART_BYTES = 4 * 1024 * 1024
 export const IMAGE_CACHE_BYTES = 64 * 1024 * 1024

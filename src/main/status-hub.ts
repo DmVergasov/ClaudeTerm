@@ -51,6 +51,14 @@ export class StatusHub {
     }
   }
 
+  /** a background task stopped from the window: it leaves the tab's list, and no later status brings it back */
+  dropBackground(tabId: string, taskId: string): void {
+    const t = this.tab(tabId)
+    if (!t.background.some((task) => task.id === taskId)) return
+    t.background = t.background.filter((task) => task.id !== taskId)
+    this.deps.onChange(tabId)
+  }
+
   /** a turn ended (Stop): the background work Claude started that still runs; each turn end says it anew */
   background(tabId: string, sessionId: string, tasks: BackgroundTask[]): void {
     const t = this.tab(tabId)

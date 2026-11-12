@@ -154,7 +154,8 @@ export class RemoteHolder {
         selfId: () => deps.selfId(),
         isLocal: (tabId) => deps.isLocal(tabId),
         present: () => deps.present(),
-        events: deps.viewerEvents
+        events: deps.viewerEvents,
+        log: (m) => this.deps.log(m)
       })
       // a toast for a call that fails after dispose is dropped: the window is no longer showing this device
       this.actions = new RemoteActions(

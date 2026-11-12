@@ -17,12 +17,11 @@ const statusMsg = (tabId: string): StatusMessage => ({
   sevenDay: { usedPct: 41.2, resetsAt: Math.floor(Date.now() / 1000) + 3 * 86400 }
 })
 
-test('the title bar drags the window and its controls do not', async () => {
+test('the title bar drags the window and its limits do not', async () => {
   const { app, page } = await launchApp()
   const region = (sel: string) => page.evaluate((s) => getComputedStyle(document.querySelector(s)!).getPropertyValue('-webkit-app-region'), sel)
   expect(await region('#titlebar')).toBe('drag')
-  // the search field and the limit meters sit in the bar, so they must opt out of the drag region to take the mouse
-  expect(await region('#titlebar .tb-search')).toBe('no-drag')
+  // the limit meters sit in the bar, so they must opt out of the drag region to show their tooltips
   expect(await region('#titlebar .tb-meters')).toBe('no-drag')
   await expect(page.locator('#titlebar .tb-name')).toHaveText('ClaudeTerm')
   const box = (await page.locator('#titlebar').boundingBox())!
@@ -75,6 +74,26 @@ test('closing the Claude tab in front takes its limits away from the title bar',
   await app.close()
 })
 
+test('a limit reads its name and percent on one line, the reset at that line\'s right end, the bar under them', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  const meter = page.locator('#titlebar .meter-limit')
+  await expect(meter.locator('.meter-head .meter-pct')).toHaveText('24%')
+  const box = async (sel: string) => (await meter.locator(sel).boundingBox())!
+  const [whole, label, pct, reset, bar] = [await meter.boundingBox(), await box('.meter-label'), await box('.meter-pct'), await box('.meter-reset'), await box('.meter-bar')]
+  // name, then percent, on the same line; the reset ends the line at the meter's right edge
+  expect(pct.x).toBeGreaterThan(label.x + label.width)
+  expect(Math.abs((pct.y + pct.height / 2) - (label.y + label.height / 2))).toBeLessThanOrEqual(2)
+  expect(reset.x).toBeGreaterThan(pct.x + pct.width)
+  expect(Math.abs((reset.x + reset.width) - (whole!.x + whole!.width))).toBeLessThanOrEqual(1)
+  expect(bar.y).toBeGreaterThan(pct.y + pct.height - 1)
+  // the percent stands out in the text color, the name in the quiet one
+  const color = (sel: string) => meter.locator(sel).evaluate((el) => getComputedStyle(el).color)
+  expect(await color('.meter-pct')).toBe('rgb(237, 237, 240)')
+  expect(await color('.meter-label')).toBe('rgb(140, 140, 150)')
+  await app.close()
+})
+
 test('both limit meters are one line high and equally tall, whatever their reset reads', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   const now = Math.floor(Date.now() / 1000)
@@ -99,13 +118,11 @@ test('both limit meters are one line high and equally tall, whatever their reset
   await app.close()
 })
 
-test('the search field opens Recent sessions', async () => {
+test('the title bar has no search field: Recent sessions is with the tabs, and the bar\'s only controls are the limits', async () => {
   const { app, page } = await launchApp()
-  const sessions = page.locator('#sessions')
-  await expect(sessions).toBeHidden()
-  await page.locator('#titlebar .tb-search').click()
-  await expect(sessions).toBeVisible()
-  await expect(page.locator('#titlebar .tb-search')).toHaveText(/Search past sessions/)
+  await expect(page.locator('#titlebar .tb-name')).toHaveText('ClaudeTerm')
+  await expect(page.locator('#titlebar .tb-search')).toHaveCount(0)
+  await expect(page.locator('#titlebar button')).toHaveCount(0)
   await app.close()
 })
 
@@ -143,30 +160,13 @@ test('a menu taller than the window stays below the title bar, inside the window
   await app.close()
 })
 
-test('at the minimum width the search field and the meters do not overlap, nor run under the window buttons', async () => {
-  const { app, page, tabId, pipeName } = await launchClaudeTab()
-  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
-  await expect(page.locator('#titlebar .tb-meters')).toBeVisible()
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getParentWindow() === null)!.setSize(480, 800))
-  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(500)
-  const search = (await page.locator('#titlebar .tb-search').boundingBox())!
-  const meters = (await page.locator('#titlebar .tb-meters').boundingBox())!
-  const bar = (await page.locator('#titlebar').boundingBox())!
-  // the window buttons take the bar's right padding: the meters must end before it
-  const padRight = await page.evaluate(() => parseFloat(getComputedStyle(document.getElementById('titlebar')!).paddingRight))
-  expect(search.x + search.width, 'the search field runs into the meters').toBeLessThanOrEqual(meters.x + 0.5)
-  expect(meters.x + meters.width, 'the meters run under the window buttons').toBeLessThanOrEqual(bar.x + bar.width - padRight + 0.5)
-  await app.close()
-})
-
-test('the title bar\'s search field is 30 px high, and the window\'s scrollbars are dark', async () => {
+test('the window\'s scrollbars are dark', async () => {
   const { app, page } = await launchApp()
-  expect(Math.round((await page.locator('#titlebar .tb-search').boundingBox())!.height)).toBe(30)
   expect(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme)).toBe('dark')
   await app.close()
 })
 
-test('wherever the app name shows, the search text is whole and nothing overlaps; at 900 px both are visible', async () => {
+test('the limits stand in the middle of the window, and at any width they run neither into the name nor under the window buttons', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
   await expect(page.locator('#titlebar .tb-meters')).toBeVisible()
@@ -176,25 +176,23 @@ test('wherever the app name shows, the search text is whole and nothing overlaps
     await app.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows().find((x) => x.getParentWindow() === null)!.setSize(w, 800), width)
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width + frame)
   }
-  // the widths around the threshold: where the name shows, the full layout must fit
-  for (const width of [820, 830, 839, 850]) {
+  // 480 px is the window's minimum width
+  for (const width of [480, 600, 760, 900, 1200, 1600]) {
     await setWidth(width)
-    const name = await page.locator('#titlebar .tb-name').boundingBox()
-    if (name === null) continue
-    const search = (await page.locator('#titlebar .tb-search').boundingBox())!
     const meters = (await page.locator('#titlebar .tb-meters').boundingBox())!
+    const left = (await page.locator('#titlebar .tb-name').boundingBox()) ?? (await page.locator('#titlebar .tb-mark').boundingBox())!
     const bar = (await page.locator('#titlebar').boundingBox())!
-    const padRight = await page.evaluate(() => parseFloat(getComputedStyle(document.getElementById('titlebar')!).paddingRight))
-    const text = await page.locator('#titlebar .tb-search-text').evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5)
-    expect(text, `the search text is cut at ${width} px`).toBe(true)
-    expect(name.x + name.width, `the name runs into the search field at ${width} px`).toBeLessThanOrEqual(search.x + 0.5)
-    expect(search.x + search.width, `the search field runs into the meters at ${width} px`).toBeLessThanOrEqual(meters.x + 0.5)
-    expect(meters.x + meters.width, `the meters run under the window buttons at ${width} px`).toBeLessThanOrEqual(bar.x + bar.width - padRight + 0.5)
+    // the window buttons' room is the right column's padding (none on macOS, where the traffic lights are on the left)
+    const buttons = await page.locator('#titlebar .tb-right').evaluate((el) => parseFloat(getComputedStyle(el).paddingRight))
+    const middle = await page.evaluate(() => window.innerWidth / 2)
+    expect(left.x + left.width, `the limits run into the name at ${width} px`).toBeLessThanOrEqual(meters.x + 0.5)
+    expect(meters.x + meters.width, `the limits run under the window buttons at ${width} px`).toBeLessThanOrEqual(bar.x + bar.width - buttons + 0.5)
+    // with room on both sides, the limits' middle is the window's
+    if (width >= 900) expect(Math.abs(meters.x + meters.width / 2 - middle), `the limits are off the middle at ${width} px`).toBeLessThanOrEqual(1.5)
   }
-  // a comfortable width: the name and the search text are in the bar
-  await setWidth(900)
+  // a comfortable width shows the name and the reset times
+  await setWidth(1200)
   await expect(page.locator('#titlebar .tb-name')).toBeVisible()
-  await expect(page.locator('#titlebar .tb-search-text')).toBeVisible()
-  await expect(page.locator('#titlebar .tb-search-text')).toHaveText(/Search past sessions/)
+  await expect(page.locator('#titlebar .meter-reset').first()).toBeVisible()
   await app.close()
 })

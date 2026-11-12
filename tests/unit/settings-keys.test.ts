@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { isSettingKey, isSettingValue, SETTING_KEYS } from '../../src/shared/settings-keys'
 
 describe('settings keys', () => {
-  it('lists the 25 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-seven plain settings', () => {
-    expect(SETTING_KEYS).toHaveLength(57)
+  it('lists the 25 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-eight plain settings', () => {
+    expect(SETTING_KEYS).toHaveLength(58)
+    expect(SETTING_KEYS).toContain('claude.view')
     expect(SETTING_KEYS).toContain('devices.keepAwake')
     expect(SETTING_KEYS).toContain('agentMessages.enabled')
     expect(SETTING_KEYS).toContain('agentMessages.marks')

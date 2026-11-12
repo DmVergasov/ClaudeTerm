@@ -1,0 +1,30 @@
+{
+  "command": "the SDK's own binary (node_modules/@anthropic-ai/claude-agent-sdk-<platform>/claude[.exe]): never run, spawnClaudeCodeProcess starts the user's claude",
+  "args": [
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--input-format",
+    "stream-json",
+    "--model=haiku",
+    "--permission-prompt-tool=stdio",
+    "--setting-sources=",
+    "--include-partial-messages",
+    "--settings",
+    "{{SETTINGS}}"
+  ],
+  "cwd": "{{CWD}}",
+  "envAdded": {
+    "CLAUDE_CODE_ENTRYPOINT": "sdk-ts",
+    "CLAUDE_AGENT_SDK_VERSION": "0.3.322",
+    "CLAUDE_CODE_SDK_READS_SESSION_STATE": "1"
+  },
+  "argsAddedBy": {
+    "permissionMode: 'plan'": [
+      "--permission-mode=plan"
+    ],
+    "resume: <session id>": [
+      "--resume=00000000-0000-4000-8000-000000000001"
+    ]
+  }
+}

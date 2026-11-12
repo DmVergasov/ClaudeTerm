@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AUTOMATIC, checkNumber, checkOptionalText, checkPatterns, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeOptions } from '../../src/renderer/settings-form'
+import { AUTOMATIC, checkNumber, checkOptionalText, checkPatterns, checkText, CUSTOM_THEME, profileOptions, profileValue, soundChoice, themeChoices } from '../../src/renderer/settings-form'
 
 describe('settings form', () => {
   it('checkPatterns: one pattern per line, trimmed, empty lines dropped; an empty field is an empty list', () => {
@@ -38,17 +38,24 @@ describe('settings form', () => {
     expect(checkText('   ')).toEqual({ ok: false, error: 'Cannot be empty' })
   })
 
-  it('themeOptions: the built-in themes; a custom object or an unknown name gets an extra selected item', () => {
-    expect(themeOptions('One Half Dark')).toEqual({
-      options: [{ value: 'Graphite', label: 'Graphite' }, { value: 'Campbell', label: 'Campbell' }, { value: 'One Half Dark', label: 'One Half Dark' }, { value: 'One Half Light', label: 'One Half Light' }],
-      selected: 'One Half Dark'
-    })
-    const custom = themeOptions({ background: '#000000' })
-    expect(custom.options.at(-1)).toEqual({ value: CUSTOM_THEME, label: 'Custom (settings.json)' })
-    expect(custom.selected).toBe(CUSTOM_THEME)
-    const unknown = themeOptions('Dracula')
-    expect(unknown.options.at(-1)).toEqual({ value: 'Dracula', label: 'Dracula (not found)' })
-    expect(unknown.selected).toBe('Dracula')
+  it('themeChoices: a card per built-in theme, Graphite first, the saved one chosen', () => {
+    const c = themeChoices('Campbell')
+    expect(c.map((x) => x.value)).toEqual(['Graphite', 'Campbell', 'One Half Dark', 'One Half Light'])
+    expect(c.filter((x) => x.selected).map((x) => x.value)).toEqual(['Campbell'])
+    expect(c.every((x) => x.selectable)).toBe(true)
+    expect(c[0]).toMatchObject({ title: 'Graphite', note: "ClaudeTerm's own, in the window's colors", colors: { background: '#0E0E10', foreground: '#D4D4DA', green: '#63C08F', cursor: '#D97757' } })
+    expect(c.map((x) => x.note)).toEqual(["ClaudeTerm's own, in the window's colors", "Windows Terminal's default", 'Soft contrast on slate', 'A light terminal in the dark window'])
+  })
+
+  it('themeChoices: a theme object from settings.json is one more card, chosen, not selectable, in its colors over Campbell', () => {
+    const c = themeChoices({ background: '#101010' })
+    expect(c).toHaveLength(5)
+    expect(c[4]).toMatchObject({ value: CUSTOM_THEME, title: 'Custom (settings.json)', note: 'Your own colors from settings.json', selectable: false, selected: true, colors: { background: '#101010', foreground: '#CCCCCC' } })
+    expect(c.filter((x) => x.selected)).toHaveLength(1)
+  })
+
+  it('themeChoices: an unknown name is one more card, chosen, not selectable, in Graphite colors', () => {
+    expect(themeChoices('Solarized')[4]).toMatchObject({ value: 'Solarized', title: 'Solarized (not found)', note: "Not one of ClaudeTerm's themes: Graphite is used", selectable: false, selected: true, colors: { background: '#0E0E10' } })
   })
 
   it('profileOptions: Automatic first, then the profiles; a missing current one is shown as not found', () => {

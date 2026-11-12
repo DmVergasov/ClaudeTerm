@@ -1,7 +1,7 @@
 import { NUMBER_LIMITS } from '../shared/settings-keys'
 import { MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
 import type { Settings } from '../shared/types'
-import { THEMES } from './themes'
+import { resolveTheme, THEMES } from './themes'
 
 // What the settings window shows and accepts, kept apart from the DOM.
 
@@ -43,11 +43,45 @@ export function checkPatterns(text: string): Checked<string[]> {
 
 const plain = (names: string[]): Option[] => names.map((n) => ({ value: n, label: n }))
 
-export function themeOptions(theme: Settings['theme']): { options: Option[]; selected: string } {
+/** one card of the theme picker: the four colors a card shows, and whether it can be picked */
+export interface ThemeChoice {
+  value: string
+  title: string
+  note: string | null
+  colors: { background: string; foreground: string; green: string; cursor: string }
+  selectable: boolean
+  selected: boolean
+}
+
+/** the note under each built-in theme's card */
+const THEME_NOTES: Record<string, string> = {
+  Graphite: "ClaudeTerm's own, in the window's colors",
+  Campbell: "Windows Terminal's default",
+  'One Half Dark': 'Soft contrast on slate',
+  'One Half Light': 'A light terminal in the dark window'
+}
+
+function cardColors(t: { background?: string; foreground?: string; green?: string; cursor?: string }): ThemeChoice['colors'] {
+  const foreground = t.foreground ?? '#FFFFFF'
+  return { background: t.background ?? '#000000', foreground, green: t.green ?? foreground, cursor: t.cursor ?? foreground }
+}
+
+/** the theme cards: one per built-in theme, then a card for a theme object or a name that is not built in, chosen and not selectable */
+export function themeChoices(theme: Settings['theme']): ThemeChoice[] {
   const names = Object.keys(THEMES)
-  if (typeof theme !== 'string') return { options: [...plain(names), { value: CUSTOM_THEME, label: 'Custom (settings.json)' }], selected: CUSTOM_THEME }
-  const extra = names.includes(theme) ? [] : [{ value: theme, label: `${theme} (not found)` }]
-  return { options: [...plain(names), ...extra], selected: theme }
+  const built: ThemeChoice[] = names.map((name) => ({
+    value: name,
+    title: name,
+    note: THEME_NOTES[name] ?? null,
+    colors: cardColors(THEMES[name]),
+    selectable: true,
+    selected: theme === name
+  }))
+  if (typeof theme !== 'string') {
+    return [...built, { value: CUSTOM_THEME, title: 'Custom (settings.json)', note: 'Your own colors from settings.json', colors: cardColors(resolveTheme(theme)), selectable: false, selected: true }]
+  }
+  if (names.includes(theme)) return built
+  return [...built, { value: theme, title: `${theme} (not found)`, note: "Not one of ClaudeTerm's themes: Graphite is used", colors: cardColors(THEMES.Graphite), selectable: false, selected: true }]
 }
 
 export function profileOptions(names: string[], current: string | null): { options: Option[]; selected: string } {

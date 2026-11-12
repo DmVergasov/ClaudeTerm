@@ -2,14 +2,17 @@ import { open } from 'node:fs/promises'
 import { checkImageFile, MAX_IMAGE_BYTES } from '../shared/image-file'
 import { hasText } from '../shared/note'
 import { isUuid } from '../shared/protocol'
+import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, TabView } from '../shared/chat'
 import type { DeviceResult } from '../shared/devices'
-import { IMAGE_PART_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, REMOTE_COPY, REVIEW_FILE_BYTES, REVIEW_PART_BYTES, type FolderResult, type PushKind, type RemoteTab } from '../shared/remote'
+import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, REMOTE_COPY, REVIEW_FILE_BYTES, REVIEW_PART_BYTES, type FolderResult, type PushKind, type RemoteTab } from '../shared/remote'
 import { MAX_HASH, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { PlanUpdate } from '../shared/ipc'
 import type { RecentSession, TabInfo, TabPlace } from '../shared/types'
 import type { AccountStore } from './accounts'
+import { capItems, capSnapshot, MAX_CHAT_PATCHES } from './chat/chat-mirror'
 import type { ImageHub } from './image-hub'
 import { isAbsPath, isHash } from './ipc-guards'
+import { pathKey } from './path-key'
 import type { NoteHub } from './note-hub'
 import type { ReviewHub } from './review-hub'
 import type { StatusHub } from './status-hub'
@@ -61,9 +64,37 @@ const OBJECT_BYTES = 64
 const C0_RE = /[\u0000-\u001f]/g
 const NUL_RE = /\u0000/g
 
+/** what a member's chat calls reach on this device: the tab's chat, and what a message needs here (files, the view, the terminal) */
+export interface HostChat {
+  /** the chat of the tab, cut to the chat push's cap; null for a tab with no chat */
+  snapshot(tabId: string): ChatSnapshot | null
+  /** a message: null when sent or queued; else why it was not sent */
+  send(tabId: string, s: ChatSend): Promise<string | null>
+  answer(tabId: string, cardId: string, a: ChatAnswer): boolean
+  interrupt(tabId: string): void
+  setMode(tabId: string, mode: ChatPermissionMode): Promise<void>
+  setModel(tabId: string, model: string | null, effort: string | null): Promise<void>
+  stopTask(tabId: string, taskId: string): Promise<void>
+  older(tabId: string, beforeId: string): { items: ChatItem[]; hasOlder: boolean } | null
+  /** the permission modes the tab offers on this device: a member may set only these */
+  modes(tabId: string): ChatPermissionMode[]
+  commands(tabId: string): Promise<ChatCommandInfo[]>
+  models(tabId: string): Promise<ChatModelInfo[]>
+  /** the project files that match a query, as the @ picker lists them */
+  files(tabId: string, query: string): Promise<string[]>
+  /** the files a member copied here, as attachments the tab's messages may carry (registered for the tab) */
+  attach(tabId: string, paths: string[]): Promise<ChatAttachment[]>
+  /** the tab's view: a Claude tab restarts in it; false when it does not change now */
+  setView(tabId: string, view: TabView): Promise<boolean>
+  /** a line typed into the tab's terminal once its prompt is empty (null: only the switch); false when it cannot go */
+  openInTerminal(tabId: string, line: string | null): Promise<boolean>
+}
+
 /** what this device gives a member about its tabs: the directory and the hub updates each tab has */
 export interface HostContext {
   tabs: Pick<TabManager, 'list' | 'get' | 'close' | 'rename' | 'setMuted' | 'restart' | 'switchAccount' | 'size' | 'canFork' | 'fork'>
+  /** the chats of this device's Claude tabs; left out, no tab has a chat for a member */
+  chat?: HostChat
   images: Pick<ImageHub, 'list' | 'unseenCount' | 'notice' | 'markSeen' | 'remove' | 'get'>
   /** the extensions of the image files this device shows: the ones the image panel takes */
   imageExtensions(): string[]
@@ -130,6 +161,19 @@ export function hostTabs(ctx: HostContext): HostTabs {
 
 /** the sessions each member device was last answered with, by host context: open-session opens only these, for that member */
 const listedByMember = new WeakMap<HostContext, Map<string, Set<string>>>()
+
+/** the files each member copied to this device, by path key, by host context: a chat message may carry only these */
+const copiedByMember = new WeakMap<HostContext, Map<string, Set<string>>>()
+/** the most files a member's copies are remembered by, per member: the oldest are forgotten first */
+const MAX_COPIED = 10_000
+/** the text of the refusals of the chat calls */
+const NOT_CHAT = 'not a chat tab'
+const NOT_COPIED = 'not a file sent to this device'
+const NO_VIEW = 'the tab cannot change its view now'
+const NO_TERMINAL = 'the line cannot be typed into the terminal now'
+const NO_MODE = 'the permission mode is not offered here'
+/** the chat-sends of each tab in the order they came: by host context, then tab id */
+const chatOrder = new WeakMap<HostContext, Map<string, Promise<unknown>>>()
 
 /** the sessions answered to a device that is no longer in the group are forgotten; the members that stay keep theirs, offline ones too */
 export function pruneListedMembers(ctx: HostContext, members: string[]): void {
@@ -346,13 +390,196 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
         const args = CALL_ARGS['recv-end'](a)
         if (!args) throw new CallError('bad arguments')
         // an older sender names no tab: it types the paths itself, as 0.15.0 did
-        if (args.id === undefined) return { paths: await ctx.receiver.end(args.transfer, device) }
+        if (args.id === undefined) return { paths: await endTransfer(ctx, device, args.transfer) }
         const { id } = tabCall(ctx, { id: args.id })
-        const paths = await ctx.receiver.end(args.transfer, device)
+        const paths = await endTransfer(ctx, device, args.transfer)
         return { paths, text: ctx.typedPaths(id, paths) }
+      }
+    },
+    // the chats of this device's Claude tabs: each call runs on the tab's own chat; a tab that is not a Claude tab in its chat view is refused
+    'chat-send': {
+      run: (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-send'](a), true)
+        // in the tab's order: a message whose files are still attached is not overtaken by a later one
+        return inChatOrder(ctx, args.id, async () => {
+          // a message carries only the files this member copied here; they are registered for the tab as the window's are
+          const copied = copiedOf(ctx, device)
+          if (!args.attachments.every((f) => copied.has(pathKey(f.path)))) throw new CallError(NOT_COPIED)
+          const attachments = await chat.attach(args.id, args.attachments.map((f) => f.path))
+          const refused = await chat.send(args.id, { text: args.text, attachments })
+          if (refused !== null) throw new CallError(refused)
+          return {}
+        })
+      }
+    },
+    // the answer is { ok }: false when the card is answered already (the first answer wins)
+    'chat-answer': {
+      run: (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-answer'](a), true)
+        return { ok: chat.answer(args.id, args.cardId, args.answer) }
+      }
+    },
+    'chat-interrupt': {
+      run: (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-interrupt'](a), true)
+        chat.interrupt(args.id)
+        return {}
+      }
+    },
+    'chat-mode': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-mode'](a), true)
+        // only the modes the window offers: a member does not set one the device's own chats do not show
+        if (!chat.modes(args.id).includes(args.mode)) throw new CallError(NO_MODE)
+        await chat.setMode(args.id, args.mode)
+        return {}
+      }
+    },
+    'chat-model': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-model'](a), true)
+        await chat.setModel(args.id, args.model, args.effort)
+        return {}
+      }
+    },
+    'chat-stop-task': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-stop-task'](a), true)
+        await chat.stopTask(args.id, args.taskId)
+        return {}
+      }
+    },
+    // bulk: a page of a long stretch of tools is megabytes, and it goes on the bulk lane, not ahead of the input
+    'chat-older': {
+      bulk: true,
+      run: (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-older'](a), true)
+        const page = chat.older(args.id, args.beforeId)
+        if (!page) throw new CallError(NOT_CHAT)
+        // cut the way a snapshot is cut: the newest items of the page that fit a push, and hasOlder when some were left out
+        const cut = capItems(page.items, MAX_CHAT_PUSH_BYTES - Buffer.byteLength(JSON.stringify({ items: [], hasOlder: true })))
+        return { items: cut.items, hasOlder: page.hasOlder || cut.cut }
+      }
+    },
+    // a Claude tab in either view can switch view: the handoff of a command switches to the terminal on the same call
+    'chat-view': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-view'](a), false)
+        if (!(await chat.setView(args.id, args.view))) throw new CallError(NO_VIEW)
+        return {}
+      }
+    },
+    'chat-commands': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-commands'](a), true)
+        return chat.commands(args.id)
+      }
+    },
+    'chat-models': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-models'](a), true)
+        return chat.models(args.id)
+      }
+    },
+    // the modes the tab offers on this device, the ones a member's chip lists (at most the six there are)
+    'chat-modes': {
+      run: (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-modes'](a), true)
+        return chat.modes(args.id).slice(0, 6)
+      }
+    },
+    'chat-files': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-files'](a), true)
+        return chat.files(args.id, args.query)
+      }
+    },
+    'chat-terminal': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-terminal'](a), false)
+        if (!(await chat.openInTerminal(args.id, args.line === '' ? null : args.line))) throw new CallError(NO_TERMINAL)
+        return {}
       }
     }
   }
+}
+
+/** runs a chat call of a tab after the ones of that tab that came before it, whatever they did: a chat-send's files may take a while */
+function inChatOrder<T>(ctx: HostContext, tabId: string, run: () => Promise<T>): Promise<T> {
+  let chains = chatOrder.get(ctx)
+  if (!chains) {
+    chains = new Map()
+    chatOrder.set(ctx, chains)
+  }
+  const next = (chains.get(tabId) ?? Promise.resolve()).then(() => run(), () => run())
+  const tail = next.then(() => undefined, () => undefined)
+  chains.set(tabId, tail)
+  void tail.then(() => {
+    if (chains.get(tabId) === tail) chains.delete(tabId)
+  })
+  return next
+}
+
+/** the checked arguments of a chat call, and the chat of this device: a Claude tab, in its chat view when `inChat` is set */
+function chatCall<A extends { id: string }>(ctx: HostContext, checked: A | null, inChat: boolean): { args: A; chat: HostChat } {
+  if (!checked) throw new CallError('bad arguments')
+  const info = ctx.tabs.get(checked.id)
+  if (!ctx.chat || info?.kind !== 'claude' || (inChat && info.view !== 'chat')) throw new CallError(NOT_CHAT)
+  return { args: checked, chat: ctx.chat }
+}
+
+/** the transfer's files, kept for the member that began it: their paths are remembered as copied by that member */
+async function endTransfer(ctx: HostContext, device: string, transfer: string): Promise<string[]> {
+  const paths = await ctx.receiver.end(transfer, device)
+  let copied = copiedByMember.get(ctx)
+  if (!copied) {
+    copied = new Map()
+    copiedByMember.set(ctx, copied)
+  }
+  let set = copied.get(device)
+  if (!set) {
+    set = new Set()
+    copied.set(device, set)
+  }
+  for (const p of paths) {
+    set.add(pathKey(p))
+    if (set.size > MAX_COPIED) {
+      const oldest = set.values().next().value
+      if (oldest !== undefined) set.delete(oldest)
+    }
+  }
+  return paths
+}
+
+/** a member that leaves: the files it copied here are no longer ones its messages may carry */
+export function forgetCopiedBy(ctx: HostContext, device: string): void {
+  copiedByMember.get(ctx)?.delete(device)
+}
+
+/** the paths, by path key, of the files this member copied to this device */
+function copiedOf(ctx: HostContext, device: string): Set<string> {
+  return copiedByMember.get(ctx)?.get(device) ?? new Set<string>()
+}
+
+/**
+ * The push of a batch of a chat's patches to the members that watch it: the batch as it is, or the chat's snapshot when the
+ * batch is over what the receiver takes (MAX_CHAT_PUSH_BYTES as JSON, or MAX_CHAT_PATCHES patches); null when neither can go
+ */
+export function chatBatchPush(
+  batch: { fromRev: number; toRev: number; patches: ChatPatch[] },
+  snapshot: () => ChatSnapshot | null
+): { k: PushKind; v: unknown } | null {
+  if (batch.patches.length <= MAX_CHAT_PATCHES && Buffer.byteLength(JSON.stringify(batch)) <= MAX_CHAT_PUSH_BYTES) return { k: 'chat-patch', v: batch }
+  const s = snapshot()
+  return s === null ? null : { k: 'chat', v: s }
+}
+
+/** the chat of a Claude tab in its chat view, as a push; null for any other tab, or a tab with no chat */
+function chatPushOf(ctx: HostContext, tabId: string): { k: PushKind; v: unknown } | null {
+  const info = ctx.tabs.get(tabId)
+  if (!ctx.chat || info?.kind !== 'claude' || info.view !== 'chat') return null
+  const s = ctx.chat.snapshot(tabId)
+  return s === null ? null : { k: 'chat', v: s }
 }
 
 /**
@@ -386,9 +613,17 @@ export function clampPush(k: PushKind, v: unknown): unknown {
       return clampImages(v)
     case 'review':
       return clampReview(v)
+    case 'chat':
+      return clampChat(v)
     default:
       return v
   }
+}
+
+/** a snapshot cut to the chat push's cap; a batch of patches is not cut here: the sender replaces one over the cap by a snapshot */
+function clampChat(v: unknown): unknown {
+  if (!isRecord(v) || !Array.isArray(v.items)) return v
+  return capSnapshot(v as unknown as ChatSnapshot, MAX_CHAT_PUSH_BYTES)
 }
 
 // ---- the directory
@@ -442,7 +677,9 @@ function remoteTabOf(ctx: HostContext, info: TabInfo): RemoteTab | null {
     // until TabPlaces has answered for the tab, its place is not known here: the other devices wait for it
     placeKnown: ctx.places.has(id),
     forkOf: head !== null && isUuid(head) ? head : null,
-    fork: info.fork !== null
+    fork: info.fork !== null,
+    // the view of a Claude tab; a shell tab has none, and the wire leaves it out
+    ...(info.kind === 'claude' && info.view !== null ? { view: info.view } : {})
   }
 }
 
@@ -480,9 +717,12 @@ async function pushesOf(ctx: HostContext, tabId: string): Promise<Array<{ k: Pus
       stale: () => (ctx.reviewRevs.get(tabId) ?? 0) !== rev
     })) ?? []
   }
-  // read after the last turn of the clamp: a status, plan or images update pushed meanwhile is not followed by an older one
+  // read after the last turn of the clamp: a status, plan or images update pushed meanwhile is not followed by an older one.
+  // The chat is read here too, and goes first: a batch of its patches sent while the pushes are sent is covered by it
+  const chat = chatPushOf(ctx, tabId)
   const status = ctx.status.get(tabId)
   const out: Array<{ k: PushKind; v: unknown }> = [
+    ...(chat === null ? [] : [chat]),
     { k: 'status', v: clampPush('status', { main: status.main, agents: status.agents, background: status.background }) },
     { k: 'plan', v: clampPush('plan', planPush(ctx.shownPlan(tabId))) },
     {

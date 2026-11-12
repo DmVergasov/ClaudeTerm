@@ -14,13 +14,19 @@ function limitWindow(v: unknown): StatusMessage['fiveHour'] {
   return usedPct !== null && resetsAt !== null ? { usedPct, resetsAt } : null
 }
 
-/** The fields ClaudeTerm shows, taken from the JSON Claude Code passes to a statusLine command (code.claude.com/docs/en/statusline). */
-export function statusFromStatusLine(input: unknown, tabId: string): StatusMessage | null {
+/**
+ * The fields ClaudeTerm shows, taken from the JSON Claude Code passes to a statusLine command (code.claude.com/docs/en/statusline).
+ * `windowOf`: the auto-compact window the settings set for the model in the session's folder, or null; the context is shown
+ * against it when it is smaller than the model's window, since the conversation compacts there.
+ */
+export function statusFromStatusLine(input: unknown, tabId: string, windowOf?: (modelId: string, projectDir: string | null) => number | null): StatusMessage | null {
   const i = obj(input)
   const sessionId = i?.session_id
   const model = obj(i?.model)
   const id = str(model?.id)
   if (!i || !isUuid(sessionId) || !id) return null
+  // the session's own folder, which /cd and entering or leaving a worktree change; a Bash cd moves only current_dir
+  const projectDir = str(obj(i.workspace)?.project_dir)
   const cw = obj(i.context_window)
   const size = num(cw?.context_window_size)
   const usage = obj(cw?.current_usage)
@@ -28,11 +34,12 @@ export function statusFromStatusLine(input: unknown, tabId: string): StatusMessa
   if (usage && size !== null && size > 0) {
     // same input-only formula as used_percentage
     const usedTokens = (num(usage.input_tokens) ?? 0) + (num(usage.cache_creation_input_tokens) ?? 0) + (num(usage.cache_read_input_tokens) ?? 0)
-    context = { usedTokens, size, usedPct: num(cw?.used_percentage) ?? (usedTokens / size) * 100 }
+    const window = windowOf?.(id, projectDir ?? str(i.cwd)) ?? null
+    context = window !== null && window < size
+      ? { usedTokens, size: window, usedPct: (usedTokens / window) * 100 }
+      : { usedTokens, size, usedPct: num(cw?.used_percentage) ?? (usedTokens / size) * 100 }
   }
   const limits = obj(i.rate_limits)
-  // the session's own folder, which /cd and entering or leaving a worktree change; a Bash cd moves only current_dir
-  const projectDir = str(obj(i.workspace)?.project_dir)
   return {
     v: 1,
     type: 'status',

@@ -1,15 +1,9 @@
-import { icon } from './icons'
-import { shortcutLabel } from './keymap'
 import type { LimitMeter } from './limit-meters'
 
-/** what the bar's controls do */
-export interface TitleBarCallbacks {
-  openRecent(): void
-}
-
 /**
- * The window's own title bar: the mark and the name, the search of past sessions, and the usage limits of the tab in
- * front. The bar is the window's drag strip, so every control in it opts out of dragging (CSS).
+ * The window's own title bar: the mark and the name on the left, and the usage limits of the tab in front in the middle.
+ * Recent sessions has its own buttons with the tabs. The bar is the window's drag strip, so the limits opt out of dragging
+ * (CSS) to show their tooltips.
  */
 export class TitleBar {
   private readonly meters: HTMLElement
@@ -17,32 +11,22 @@ export class TitleBar {
   private readonly meterEls = new Map<LimitMeter['key'], HTMLElement>()
   private shown = ''
 
-  constructor(root: HTMLElement, platform: string, cb: TitleBarCallbacks) {
+  constructor(root: HTMLElement) {
     const mark = document.createElement('span')
     mark.className = 'tb-mark'
     mark.textContent = '>_'
     const name = document.createElement('span')
     name.className = 'tb-name'
     name.textContent = 'ClaudeTerm'
-    const search = document.createElement('button')
-    search.type = 'button'
-    search.className = 'tb-search'
-    search.title = `Search past sessions (${shortcutLabel('recentSessions', platform)})`
-    search.innerHTML = icon('search', 14)
-    const text = document.createElement('span')
-    text.className = 'tb-search-text'
-    text.textContent = 'Search past sessions'
-    const key = document.createElement('kbd')
-    key.className = 'tb-search-key'
-    key.textContent = shortcutLabel('recentSessions', platform)
-    search.append(text, key)
-    search.addEventListener('click', () => cb.openRecent())
-    const center = document.createElement('div')
-    center.className = 'tb-center'
-    center.append(search)
+    const left = document.createElement('div')
+    left.className = 'tb-left'
+    left.append(mark, name)
     this.meters = document.createElement('div')
     this.meters.className = 'tb-meters'
-    root.replaceChildren(mark, name, center, this.meters)
+    // the right column is the window buttons' room, as wide as the left one at most, so the limits stay in the middle
+    const right = document.createElement('div')
+    right.className = 'tb-right'
+    root.replaceChildren(left, this.meters, right)
     this.render([])
   }
 
@@ -70,12 +54,13 @@ function buildMeter(m: LimitMeter): HTMLElement {
   head.className = 'meter-head'
   const label = document.createElement('span')
   label.className = 'meter-label'
-  const reset = document.createElement('span')
-  reset.className = 'meter-reset'
-  head.append(label, reset)
   const pct = document.createElement('span')
   pct.className = 'meter-pct'
-  el.append(head, pct)
+  const reset = document.createElement('span')
+  reset.className = 'meter-reset'
+  // the name and the percent on one line, the reset at its right end, the bar under them
+  head.append(label, pct, reset)
+  el.append(head)
   if (m.bar) {
     const bar = document.createElement('div')
     bar.className = 'meter-bar'

@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { assistantLine } from '../fixtures/transcript'
 import { bufferText, launchApp } from '../e2e/helpers'
+import { launchChatTab, sendMessage } from '../e2e/chat-helpers'
 
 const OUT = resolve(__dirname, '..', '..', 'docs', 'images')
 const DEMO_CLAUDE = resolve(__dirname, 'demo-claude.mjs')
@@ -175,7 +176,7 @@ test('README screenshots', async () => {
   mkdirSync(temp)
 
   const settings = {
-    claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' },
+    claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell', view: 'terminal' },
     defaultProfile: 'Windows PowerShell',
     sidePanel: { noRoom: 'narrow' }
   }
@@ -301,14 +302,22 @@ test('settings window screenshot', async () => {
   const { app, page } = await launchApp()
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   const [win] = await Promise.all([app.waitForEvent('window'), page.evaluate(() => window.ct.openSettingsWindow())])
+  await win.waitForSelector('#settings-nav [data-tab="appearance"]')
+  await win.locator('#settings-nav [data-tab="appearance"]').click()
   await win.waitForSelector('#settings [data-key="font.size"]')
   const cdp = await win.context().newCDPSession(win)
   await expect(win.locator('[data-key="font.family"]')).toHaveValue('Cascadia Mono, Consolas, Menlo, monospace')
   // the whole form, without the scrollbar a 720 px tall window has
-  const height = await win.evaluate(() => document.documentElement.scrollHeight)
-  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 640, height, deviceScaleFactor: 2, mobile: false })
-  await expect.poll(() => win.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true)
-  await win.mouse.move(630, 10)
+  const overflow = (): Promise<number> => win.evaluate(() => {
+    const settings = document.querySelector('#settings')!
+    return document.documentElement.scrollHeight + settings.scrollHeight - settings.clientHeight
+  })
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 880, height: await overflow(), deviceScaleFactor: 2, mobile: false })
+  await expect.poll(() => win.evaluate(() => {
+    const settings = document.querySelector('#settings')!
+    return settings.scrollHeight <= settings.clientHeight
+  })).toBe(true)
+  await win.mouse.move(870, 10)
   await win.screenshot({ path: join(OUT, 'settings.png') })
   await app.close()
 })
@@ -365,7 +374,7 @@ test('review panel screenshot', async () => {
   const temp = join(root, 'temp')
   mkdirSync(temp)
   // wide enough for the file tree and the diff next to it
-  const settings = { claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell' }, defaultProfile: 'Windows PowerShell', review: { width: 800 }, sidePanel: { noRoom: 'narrow' } }
+  const settings = { claude: { command: 'node demo-claude.mjs', shellProfile: 'Windows PowerShell', view: 'terminal' }, defaultProfile: 'Windows PowerShell', review: { width: 800 }, sidePanel: { noRoom: 'narrow' } }
   const { app, page, pipeName } = await launchApp({
     settings, args: ['--claude', project], env: { CLAUDE_CONFIG_DIR: join(root, 'claude-config'), TEMP: temp, TMP: temp }
   })
@@ -402,4 +411,96 @@ test('review panel screenshot', async () => {
   await page.mouse.move(300, 300)
   await page.screenshot({ path: join(OUT, 'review-panel.png') })
   await app.close()
+})
+
+// ---- chat: the conversation at work and a question card. Both are scripted on the chat stand-in (tests/fixtures/fake-claude) ----
+
+const CHAT_PROMPT = 'Plot monthly revenue for 2026 and compare it with 2025'
+const CHAT_REGIONS = 'Add the Q3 revenue by region to the dashboard'
+const REGION_QUESTION = {
+  questions: [{
+    question: 'How should the Q3 regions be shown?',
+    header: 'Chart',
+    multiSelect: false,
+    options: [
+      { label: 'Bars per region (Recommended)', description: 'One bar per region, 2025 next to 2026' },
+      { label: 'Stacked bars', description: 'The regions add up to one bar per quarter' }
+    ]
+  }]
+}
+
+/** an invented project for the chat shots: a folder named acme-dashboard under a temp folder of the run */
+function chatProject(): string {
+  const dir = join(mkdtempSync(join(tmpdir(), 'ct-shots-chat-')), 'acme-dashboard')
+  mkdirSync(join(dir, 'src', 'charts'), { recursive: true })
+  writeFileSync(join(dir, 'src', 'charts', 'revenue.ts'), REVENUE_BEFORE)
+  return dir
+}
+
+/** the window at the size of the other shots, with the chat in front, the pointer away from it */
+async function chatWindow(app: ElectronApplication, page: Page): Promise<void> {
+  await fitWindowTo(app, 1280, 800)
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false })
+  await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight, window.devicePixelRatio].join('x'))).toBe('1280x800x2')
+  await page.mouse.move(1270, 790)
+}
+
+test('chat screenshots', async () => {
+  test.setTimeout(120_000)
+  mkdirSync(OUT, { recursive: true })
+  const work = chatProject()
+  const { app, page, tabId } = await launchChatTab({
+    turns: {
+      [CHAT_PROMPT]: [
+        { text: 'The 2026 numbers are in. I will switch the chart to thousands of dollars and keep the growth line from dividing by zero.' },
+        { tool: { name: 'Edit', input: { file_path: 'src/charts/revenue.ts', old_string: 'return rows.map((r) => r.total)', new_string: 'return rows.map((r) => Math.round(r.total / 1000))' }, result: 'The file has been updated successfully.' } },
+        {
+          task: {
+            description: 'Look for related revenue data',
+            result: 'Two reports found: the Q3 regions and the year-over-year view.',
+            agents: [
+              { type: 'Explore', description: 'Find the revenue reports', ms: 1500 },
+              { type: 'general-purpose', description: 'Check the 2025 totals', ms: 2500 }
+            ]
+          }
+        },
+        {
+          text: 'Revenue is up in every month of 2026 so far, from **+14 %** in January to **+32 %** in September.\n\nWhat changed:\n\n- `revenue.ts` returns monthly totals in thousands of dollars\n- `growth()` gives `0` for a month with no sales last year, instead of dividing by zero\n\nThe chart is ready. Should I add the Q3 revenue by region next?'
+        }
+      ]
+    }
+  }, { work })
+  try {
+    await sendMessage(page, CHAT_PROMPT)
+    await expect(page.locator('.chat-host:visible .chat-column')).toContainText('Should I add the Q3 revenue by region next?', { timeout: 30_000 })
+    await expect.poll(async () => (await page.evaluate((id) => window.ct.chatSnapshot(id), tabId))?.state.turn ?? null, { timeout: 30_000 }).toBe('idle')
+    await page.locator('.chat-steps.folded .chat-step-head').click()
+    await expect(page.locator('.chat-steps.open')).toHaveCount(1)
+    await chatWindow(app, page)
+    await page.screenshot({ path: join(OUT, 'chat.png') })
+  } finally {
+    await app.close()
+  }
+})
+
+test('chat question screenshot', async () => {
+  test.setTimeout(120_000)
+  mkdirSync(OUT, { recursive: true })
+  const work = chatProject()
+  const { app, page } = await launchChatTab({
+    turns: {
+      [CHAT_REGIONS]: [
+        { ask: { tool: 'AskUserQuestion', input: REGION_QUESTION }, allowed: [{ text: 'Building the bars.' }], denied: [] }
+      ]
+    }
+  }, { work })
+  try {
+    await sendMessage(page, CHAT_REGIONS)
+    await expect(page.locator('.chat-host:visible .chat-card-question')).toHaveCount(1, { timeout: 30_000 })
+    await chatWindow(app, page)
+    await page.screenshot({ path: join(OUT, 'chat-question.png') })
+  } finally {
+    await app.close()
+  }
 })

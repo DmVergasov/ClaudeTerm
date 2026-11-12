@@ -4,6 +4,9 @@ import { groupLabels, moveInGroup, panelOrder, showsGroupLabels, storedGroups, t
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
 
+/** what Claude waits for in a tab: a question, a permission, or the user to read the turn it finished */
+export type TabWaiting = 'question' | 'permission' | 'done'
+
 export interface TabBarItem {
   id: string
   title: string
@@ -17,6 +20,8 @@ export interface TabBarItem {
   mail: boolean
   /** Claude in this tab is waiting for the user */
   attention: boolean
+  /** what it waits for, named on its row in the left panel; null: nothing, or the tab is only marked unread */
+  waiting: TabWaiting | null
   /** what Claude is doing in the tab; the icon spins for it unless Claude waits for the user */
   activity: TabActivity
   images: number
@@ -62,6 +67,8 @@ export interface TabBarCallbacks {
   /** the left panel's foot: the Recent sessions window and the Settings window */
   openRecent(): void
   openSettings(): void
+  /** the Settings window at its Notifications section */
+  openNotifications(): void
   openMenu(anchor: HTMLElement): void
   tabMenu(id: string, at: { x: number; y: number }): void
   toggleGroup(id: string): void
@@ -213,8 +220,10 @@ export class TabBar {
 
   private renderTab(item: TabBarItem, active: boolean): HTMLElement {
     const el = document.createElement('div')
-    el.className = `tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${item.group !== null ? ' remote' : ''}${item.dim ? ' dim' : ''}`
+    el.className = `tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${item.waiting === 'done' ? ' attn-done' : ''}${item.group !== null ? ' remote' : ''}${item.dim ? ' dim' : ''}`
     el.dataset.tabId = item.id
+    // the tab's soft pulse runs on the badge's clock, so a redraw carries it on in step with the badge
+    if (item.attention) el.style.setProperty('--pulse-delay', pulseDelay())
     if (item.group !== null) el.style.setProperty('--group-color', this.groupColor(item.group))
     el.draggable = true
     el.title = item.group === null || item.deviceName === null ? `${item.title}\n${item.folder}` : REMOTE_COPY.tabTooltip(item.title, item.deviceName, item.folder)

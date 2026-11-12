@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { isTabView } from '../shared/chat'
 import { isUuid } from '../shared/protocol'
 import type { SessionSnapshot, SessionSnapshotTab } from '../shared/types'
 
@@ -33,7 +34,9 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       // written before ClaudeTerm kept track of it: nothing in the background
       background: x.kind === 'claude' && x.background === true,
       // written before forks existed: an ordinary tab
-      fork: x.kind === 'claude' ? parseFork(x.fork) : null
+      fork: x.kind === 'claude' ? parseFork(x.fork) : null,
+      // written before views existed, or by hand: null, and a shell tab has none
+      view: x.kind === 'claude' && isTabView(x.view) ? x.view : null
     })
   }
   // a fork's head is another Claude tab of the list, before or after it (tabs on top are dragged freely), and is not

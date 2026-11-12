@@ -4,6 +4,7 @@ import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import type { MailUnread } from '../shared/mail'
+import type { TabView } from '../shared/chat'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import { deviceColor, MAX_SNAPSHOT_BYTES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type RemoteDeviceView } from '../shared/remote'
 import type { NotificationCase, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
@@ -17,7 +18,7 @@ import { Lightbox } from './lightbox'
 import { PlanList } from './plan-list'
 import { RecentSessionsWindow } from './recent-sessions'
 import { imagePasteInput, imagePasteRoute, isImagePasteKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
-import { SearchBar } from './search'
+import { SearchBar, type FindTarget } from './search'
 import { loadInter } from './dom'
 import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
 import { NoteOverlay } from './note-overlay'
@@ -25,11 +26,13 @@ import { RestoreBanner } from './restore-banner'
 import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
 import { UpdateBanner } from './update-banner'
-import { TabBar, type TabBarCallbacks, type TabBarGroup, type TabBarItem } from './tabbar'
+import { TabBar, type TabBarCallbacks, type TabBarGroup, type TabBarItem, type TabWaiting } from './tabbar'
 import { shownActivity } from './tab-row'
 import { TabPanel } from './tab-panel'
 import { orderToWrite, tabBarOrder } from './tab-groups'
 import { TerminalView } from './terminal-view'
+import { ChatView } from './chat/chat-view'
+import { ChatFind } from './chat/chat-find'
 import { resolveTheme } from './themes'
 import { showToast } from './toasts'
 import { promptText } from './claude-screen'
@@ -42,10 +45,17 @@ import { claudeTitle, folderName } from './util'
 
 interface TabState {
   info: TabInfo
-  view: TerminalView
+  /** the tab's terminal: null while a Claude tab is in its chat view, which has no process of its own to show */
+  view: TerminalView | null
+  /** the chat of a Claude tab, local or another device's; null for a shell or a setup-token tab */
+  chat: ChatView | null
   oscTitle: string | null
+  /** the session's title as its transcript gives it; null while the session has none */
+  sessionTitle: string | null
   bell: boolean
   attention: boolean
+  /** what the attention is for: the last case that started it; null with no attention */
+  waitReason: NotificationCase | null
   /** marked unread, or left unfinished: it pulses on this device until it is opened here, whatever the other devices do */
   unread: boolean
   /** Mark as unread on the tab in front: it pulses once it is left */
@@ -103,6 +113,8 @@ const statusUpdates = new Map<string, StatusUpdate>()
 const planUpdates = new Map<string, PlanUpdate>()
 /** the extra accounts, without their tokens */
 let accounts: AccountView[] = []
+/** the plan of the main account's login, as Claude Code keeps it; null until read, or when it names none */
+let mainPlan: string | null = null
 /** the other devices of the group, by name: their tabs are groups of the tab bar, in this order */
 let remoteDevices: RemoteDeviceView[] = []
 /** whether the devices came in as an event: then the answer to the first request is older and is not applied */
@@ -125,13 +137,37 @@ let choiceMenu: { el: HTMLElement; at: { x: number; y: number }; build: () => Me
 /** a tab pulses while Claude waits in it, or while it is marked unread */
 const pulsing = (t: TabState | undefined): boolean => t !== undefined && (t.attention || t.unread)
 
+/** what a waiting tab's row names: the question or permission Claude waits on, or its finished turn (a peer's too); null while
+ * nothing waits, or the tab is only marked unread */
+const waitingOf = (t: TabState): TabWaiting | null => {
+  if (!t.attention || t.waitReason === null || t.waitReason === 'bell') return null
+  return t.waitReason === 'question' || t.waitReason === 'permission' ? t.waitReason : 'done'
+}
+
 /** a fork's title gets ` (fork)` after the usual one, unless the user named the tab */
-const titleOf = (t: TabState): string => t.info.customTitle ?? `${t.oscTitle ?? t.info.remote?.title ?? folderName(t.info.folder)}${t.info.fork ? ' (fork)' : ''}`
+/** a chat tab is named by its session's title, a terminal tab by its program's; each falls back to the other, then to the folder */
+const titleOf = (t: TabState): string => {
+  const own = t.info.view === 'chat' ? t.sessionTitle ?? t.oscTitle : t.oscTitle ?? t.sessionTitle
+  return t.info.customTitle ?? `${own ?? t.info.remote?.title ?? folderName(t.info.folder)}${t.info.fork ? ' (fork)' : ''}`
+}
 
 /** where a new tab opens: the defaultFolder setting, else the home folder */
 const defaultFolder = (): string => settings.defaultFolder ?? appInfo.homeDir
 
 const remoteDeviceOf = (id: string): RemoteDeviceView | undefined => remoteDevices.find((d) => d.id === id)
+
+/**
+ * The account row at the foot of the left panel: the account the tab in front runs on. A remote tab names its device's
+ * account and the device; an extra account says so; the main account (a shell tab's too) names its plan when Claude Code
+ * keeps one.
+ */
+function footAccount(): { name: string; detail: string } {
+  const t = activeId === null ? undefined : tabs.get(activeId)
+  const remote = t?.info.remote
+  if (remote) return { name: remote.accountName ?? MAIN_ACCOUNT, detail: `On ${remoteDeviceOf(remote.device)?.name ?? 'another device'}` }
+  if (t && t.info.kind === 'claude' && t.info.account !== null) return { name: accountLabel(t.info.account, accounts), detail: 'Extra account' }
+  return { name: MAIN_ACCOUNT, detail: mainPlan ?? 'Claude Code login' }
+}
 const isOnline = (deviceId: string): boolean => remoteDeviceOf(deviceId)?.online === true
 
 /** a remote device's tabs in this window's order: as dragged here, or with each fork after its family (tabBarOrder) */
@@ -169,6 +205,7 @@ function tabBarItem(id: string): TabBarItem | null {
     bell: t.bell,
     mail: mailMarked(id),
     attention: pulsing(t),
+    waiting: waitingOf(t),
     activity: t.info.activity,
     // a remote tab's unseen Media count is its device's, as the directory gives it
     images: remote ? remote.images : t.images,
@@ -210,6 +247,9 @@ function renderTabs(): void {
   // the sheet's header names the active tab; a remote tab shows its device's color
   const active = items.find((item) => item.id === activeId)
   sheetHeader.render(active ?? null, active?.group ? deviceColor(active.group) : undefined)
+  refreshModes()
+  const foot = footAccount()
+  tabPanel.setAccount(foot.name, foot.detail)
   // the order is the shown bar's or panel's grouping: main takes it when it differs, so the tab order follows the groups (the next render finds them equal).
   // Not before every tab's place is known: until then a tab sits in No project and that temporary order must not reach main.
   // A remote tab's id never reaches main: its order is its device's
@@ -329,8 +369,28 @@ function accountOf(tabId: string | null): string | null {
 }
 
 function renderStatus(tabId: string): void {
-  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null)
+  // the background tasks of the status decide whether the view switch asks first
+  refreshModes()
+  // a chat-view tab's status bar leaves the model to the composer, and stops its background tasks through the chat
+  const t = tabs.get(tabId)
+  const chat = t && isChatView(t) ? { tab: tabId, stopTask: (taskId: string) => stopTaskOf(tabId, taskId) } : undefined
+  statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null, Date.now(), chat)
   titleBar.render(limitMeters(statusUpdates.get(tabId) ?? null, Date.now(), settings.claude.limitPace))
+}
+
+/**
+ * A background task stopped from the status bar: once main has sent the stop, the task leaves the tab's status, so its list and
+ * the count drop it. A stop main did not send (a remote tab, a refusal) leaves the task where it is.
+ */
+async function stopTaskOf(tabId: string, taskId: string): Promise<boolean> {
+  const stopped = await ct.chatStopTask(tabId, taskId)
+  const u = statusUpdates.get(tabId)
+  if (stopped && u) {
+    statusUpdates.set(tabId, { ...u, background: u.background.filter((task) => task.id !== taskId) })
+    // the bar shows the tab in front only: another tab's list is drawn when it comes to the front
+    if (tabId === activeId) renderStatus(tabId)
+  }
+  return stopped
 }
 
 /** Continue as …: the tab's conversation restarts on another account */
@@ -357,20 +417,37 @@ async function sendRefusal(tabId: string): Promise<string | null> {
  * The Enter goes straight to the terminal: Enter in an exited tab would restart the session.
  */
 async function sendToClaude(tabId: string, message: string): Promise<string | null> {
+  const t = tabs.get(tabId)
+  // a tab in its chat view takes the message as a message of the conversation
+  if (t && isChatView(t)) return ct.chatSend(tabId, { text: message, attachments: [], from: 'review' })
   const before = await sendRefusal(tabId)
   if (before !== null) return before
-  tabs.get(tabId)?.view.term.paste(message)
+  tabs.get(tabId)?.view?.term.paste(message)
   await new Promise((r) => setTimeout(r, 50))
   const refusal = await sendRefusal(tabId)
   if (refusal !== null) return refusal
   writeToTab(tabId, '\r')
-  if (tabId === activeId) tabs.get(tabId)?.view.term.focus()
+  if (tabId === activeId) focusTab(tabId)
   return null
+}
+
+/** a Claude tab whose conversation is shown in the chat view */
+const isChatView = (t: TabState): boolean => t.info.view === 'chat' && t.chat !== null
+
+/** whether a tab has a chat: a Claude tab, local or another device's; the chat of a remote tab is its device's host's */
+const hasChat = (info: TabInfo): boolean => info.kind === 'claude' && info.view !== null
+
+/** the tab's own view takes the keyboard: its composer in the chat view, its terminal otherwise */
+function focusTab(tabId: string): void {
+  const t = tabs.get(tabId)
+  if (!t) return
+  if (isChatView(t)) t.chat?.focus()
+  else t.view?.term.focus()
 }
 
 function setFontSize(size: number): void {
   fontSize = Math.min(72, Math.max(6, size))
-  for (const t of tabs.values()) t.view.setFont(settings.font.family, fontSize)
+  for (const t of tabs.values()) t.view?.setFont(settings.font.family, fontSize)
 }
 
 /** the tab ids in the order the shown tab bar lists them: on the left, the panel's (this device's groups, then each unfolded device section) */
@@ -456,15 +533,58 @@ function reportAttentionCount(): void {
 }
 
 function copySelection(t: TabState): boolean {
-  if (!t.view.term.hasSelection()) return false
-  ct.writeClipboardText(t.view.term.getSelection())
-  t.view.term.clearSelection()
+  const term = t.view?.term
+  if (!term || !term.hasSelection()) return false
+  ct.writeClipboardText(term.getSelection())
+  term.clearSelection()
   return true
+}
+
+/** the text selected in the chat in front goes to the clipboard; false when no text of that chat is selected */
+function copyChatSelection(): boolean {
+  const t = activeId ? tabs.get(activeId) : undefined
+  if (!t || !isChatView(t) || !t.chat) return false
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || selection.anchorNode === null || !t.chat.element.contains(selection.anchorNode)) return false
+  // a selection in the composer's text area is not in the page's selection text: nothing is copied over the clipboard then
+  const text = selection.toString()
+  if (text === '') return false
+  ct.writeClipboardText(text)
+  return true
+}
+
+/** where the page's selection starts and ends */
+interface SelectionEnds { anchor: Node | null; anchorOffset: number; focus: Node | null; focusOffset: number }
+
+function selectionEnds(): SelectionEnds {
+  const s = window.getSelection()
+  return { anchor: s?.anchorNode ?? null, anchorOffset: s?.anchorOffset ?? -1, focus: s?.focusNode ?? null, focusOffset: s?.focusOffset ?? -1 }
+}
+
+const sameEnds = (a: SelectionEnds, b: SelectionEnds): boolean =>
+  a.anchor === b.anchor && a.anchorOffset === b.anchorOffset && a.focus === b.focus && a.focusOffset === b.focusOffset
+
+/** the chats' finds: one per chat, so a Find keeps its place while its chat is in front */
+const chatFinds = new WeakMap<ChatView, ChatFind>()
+
+/** the find target of the tab in front: its chat's find in the chat view, its terminal's search otherwise */
+function findTarget(): FindTarget | null {
+  const t = activeId ? tabs.get(activeId) : undefined
+  if (!t) return null
+  if (t.chat && isChatView(t)) {
+    let find = chatFinds.get(t.chat)
+    if (!find) {
+      find = new ChatFind(t.chat)
+      chatFinds.set(t.chat, find)
+    }
+    return find
+  }
+  return t.view?.search ?? null
 }
 
 async function paste(t: TabState, allowImage: boolean): Promise<void> {
   const clip = await ct.readClipboard()
-  if (clip.text.length > 0) t.view.term.paste(clip.text)
+  if (clip.text.length > 0) t.view?.term.paste(clip.text)
   else if (allowImage && clip.hasImage) await pasteImage(t)
 }
 
@@ -482,10 +602,10 @@ async function pasteImage(t: TabState): Promise<void> {
   if (route === 'remote') {
     // the text is the path the image was saved at on the tab's device, quoted for that tab's shell
     const text = await ct.pasteImageToRemote(t.info.id)
-    if (text) t.view.term.paste(text)
+    if (text) t.view?.term.paste(text)
   } else if (route === 'file') {
     const file = await ct.saveClipboardImage()
-    if (file) t.view.term.paste(`"${file}"`)
+    if (file) t.view?.term.paste(`"${file}"`)
   } else {
     handleInput(t.info.id, imagePasteInput(ct.platform))
   }
@@ -587,7 +707,8 @@ function attachTerminalMouse(tabId: string, view: TerminalView): void {
   })
 }
 
-function addTab(info: TabInfo): void {
+/** a tab's terminal: its xterm, drawn in the terminals' area, hidden until the tab is in front */
+function makeTerminal(info: TabInfo): TerminalView {
   const view = new TerminalView({
     tabId: info.id,
     container: document.getElementById('terminals')!,
@@ -615,9 +736,160 @@ function addTab(info: TabInfo): void {
   })
   view.show(false)
   attachTerminalMouse(info.id, view)
-  tabs.set(info.id, { info, view, oscTitle: null, bell: false, attention: false, unread: false, unreadOnLeave: false, images: 0 })
+  return view
+}
+
+/** a Claude tab's chat: its conversation and composer, hidden until the tab is in its chat view and in front */
+function makeChat(tabId: string): ChatView {
+  return new ChatView({
+    tabId,
+    container: document.getElementById('terminals')!,
+    platform: ct.platform,
+    // a refusal or a failure shows under the composer's field, and the composer keeps the draft
+    send: (s) => ct.chatSend(tabId, s),
+    interrupt: () => ct.chatInterrupt(tabId),
+    attach: (paths) => ct.chatAttach(tabId, paths),
+    pickFiles: () => ct.chatPickFiles(tabId),
+    pasteImage: () => ct.saveClipboardImage(),
+    pathForFile: (file) => ct.pathForFile(file),
+    setMode: (mode) => ct.chatSetMode(tabId, mode),
+    modes: () => ct.chatModes(tabId),
+    models: () => ct.chatModels(tabId),
+    commands: () => ct.chatCommands(tabId),
+    files: (query) => ct.chatFiles(tabId, query),
+    setModel: (model, effort) => ct.chatSetModel(tabId, model, effort),
+    // a session picked in the window resumes here, or opens in a tab of its own (main routes it); a pick the chat cannot take
+    // (main answers null) is said under the composer
+    resume: (refused) => { void sessionsWindow.open((s) => resumePicked(tabId, s, refused)) },
+    // a notice's line, or null for a dialog: the terminal is switched to, and nothing typed
+    openInTerminal: (line) => ct.chatOpenInTerminal(tabId, line),
+    // a view switch that would stop the tab's background tasks asks in the sheet header first, with this tab's own count
+    askSwitch: (go, cancel) => sheetHeader.askBeforeSwitch(tabId, backgroundOf(tabId), go, cancel),
+    answer: (cardId, a) => ct.chatAnswer(tabId, cardId, a),
+    restart: () => ct.restartTab(tabId, false),
+    older: (beforeId) => ct.chatOlder(tabId, beforeId),
+    // a card the Media panel marked deleted is no card: its picture is not drawn, as one with no card is not
+    imageCard: (cardId) => imageUpdates.get(tabId)?.cards.find((c) => c.id === cardId && !c.deleted) ?? null,
+    openImages: (cards, index) => lightbox.open(cards, index),
+    revealChange: (path) => {
+      sidePanel.open('changes')
+      reviewPanel.revealFile(tabId, path)
+    },
+    openExternal: (url) => ct.openExternal(url),
+    copy: (text) => ct.writeClipboardText(text)
+  })
+}
+
+function addTab(info: TabInfo): void {
+  const chat = hasChat(info) ? makeChat(info.id) : null
+  // a tab in its chat view has no terminal: its process is the chat's, and it gets one when the view changes
+  const view = chat !== null && info.view === 'chat' ? null : makeTerminal(info)
+  tabs.set(info.id, { info, view, chat, oscTitle: null, sessionTitle: null, bell: false, attention: false, waitReason: null, unread: false, unreadOnLeave: false, images: 0 })
   if (!order.includes(info.id)) order.push(info.id)
   renderTabs()
+}
+
+/** the tab's terminal, made when it is missing: a terminal tab's output can come before anything else has asked for it */
+function ensureTerminal(t: TabState): TerminalView {
+  if (!t.view) {
+    t.view = makeTerminal(t.info)
+    showTab(t, t.info.id === activeId, false)
+  }
+  return t.view
+}
+
+/** shows a tab's view: its chat in the chat view, its terminal otherwise; neither while the tab is not in front */
+function showTab(t: TabState, visible: boolean, focus: boolean): void {
+  const chat = visible && t.info.view === 'chat' && t.chat !== null
+  t.view?.show(visible && !chat, focus)
+  t.chat?.show(chat, focus)
+  // a chat left, or out of its chat view, takes its Find's highlights and walk with it: a Find in another tab searches that tab
+  if (!chat && t.chat) chatFinds.get(t.chat)?.clearDecorations()
+}
+
+/** the tab's view changed: its terminal is made before the process's first output can come, or goes with the chat */
+function applyView(t: TabState): void {
+  if (t.info.view === 'chat') {
+    t.view?.dispose()
+    t.view = null
+  } else if (t.info.view === 'terminal') {
+    ensureTerminal(t)
+  }
+  if (t.info.id !== activeId) return
+  showTab(t, true, true)
+  if (isChatView(t)) loadChat(t.info.id)
+}
+
+/** a chat's snapshot requests: whether one is pending, and whether a patch came that the view could not take while it was */
+interface ChatLoad { pending: boolean; stale: boolean }
+const chatLoads = new Map<string, ChatLoad>()
+
+/**
+ * The chat in front is drawn from main's snapshot of it. One request at a time per tab: a patch the view cannot take while
+ * a request is pending marks the chat stale, and the reply asks once more. A reply for a tab that is not in front is not drawn.
+ */
+function loadChat(tabId: string): void {
+  let load = chatLoads.get(tabId)
+  if (!load) {
+    load = { pending: false, stale: false }
+    chatLoads.set(tabId, load)
+  }
+  if (load.pending) {
+    load.stale = true
+    return
+  }
+  load.pending = true
+  const pending = load
+  // a rejected request ends too: the flag must not stay set, or the chat would never be loaded again
+  const settled = (): void => {
+    pending.pending = false
+    if (pending.stale) {
+      pending.stale = false
+      loadChat(tabId)
+    }
+  }
+  void ct.chatSnapshot(tabId).then((s) => {
+    const t = tabs.get(tabId)
+    if (s && t && isChatView(t) && activeId === tabId) t.chat?.load(s)
+    settled()
+  }, settled)
+}
+
+/** the Chat | Terminal switch of the tab in front: a Claude tab's, with a chat; a shell tab has none */
+function refreshModes(): void {
+  const t = activeId ? tabs.get(activeId) : undefined
+  if (!t || t.info.view === null || !hasChat(t.info)) {
+    sheetHeader.setModes(null)
+    return
+  }
+  sheetHeader.setModes({ tab: t.info.id, view: t.info.view, busy: t.info.activity === 'working', background: backgroundOf(t.info.id) })
+}
+
+/** the background tasks a tab's status names: its own count, which a question about its switch goes by */
+const backgroundOf = (tabId: string): number => statusUpdates.get(tabId)?.background.length ?? 0
+
+/**
+ * A session picked in the sessions window for a chat. Main says where the pick goes: a restart of the tab's own process stops the
+ * background tasks, so that asks in the sheet header first (Resume runs it, Cancel keeps the chat). A session held by another tab,
+ * or of another folder, opens without a question.
+ */
+function resumePicked(tabId: string, s: { id: string; cwd: string }, refused: () => void): void {
+  void ct.chatResumePlan(tabId, s.id).then((where) => {
+    const go = (): void => {
+      void ct.chatResume(tabId, s.id, s.cwd).then((r) => { if (r === null) refused() })
+    }
+    const background = backgroundOf(tabId)
+    if (where !== 'restart' || background === 0) {
+      go()
+      return
+    }
+    sheetHeader.askBeforeSwitch(tabId, background, go, () => undefined, { question: 'Resume here anyway?', action: 'Resume' })
+  })
+}
+
+/** a tab's view is main's to change: it refuses while Claude works, and the tab then stays in its view */
+function switchTo(tabId: string, view: TabView): void {
+  void ct.setTabView(tabId, view).then((ok) => { if (!ok) showToast(`Cannot switch to ${view === 'chat' ? 'Chat' : 'Terminal'} now`) })
 }
 
 /**
@@ -625,7 +897,8 @@ function addTab(info: TabInfo): void {
  * read to its end or whose prompt holds a draft (notifications.autoUnread).
  */
 function leave(t: TabState): void {
-  const unfinished = settings.notifications.autoUnread && t.info.kind === 'claude' && !t.info.exited && leftUnfinished(t.view.screen())
+  // a chat has no screen to read: only a terminal can be left unfinished
+  const unfinished = settings.notifications.autoUnread && t.info.kind === 'claude' && !t.info.exited && t.view !== null && leftUnfinished(t.view.screen())
   if (t.unreadOnLeave || unfinished) t.unread = true
   t.unreadOnLeave = false
 }
@@ -651,16 +924,20 @@ function showDocs(tabId: string, claude: boolean): void {
 function activate(tabId: string): void {
   const left = activeId !== null && activeId !== tabId ? tabs.get(activeId) : undefined
   if (left) leave(left)
+  // the focus inside the tab being left goes with it: a field there is no field in front, so the card of the tab that comes may take the keyboard
+  const at = document.activeElement
+  if (left && at instanceof HTMLElement && (left.chat?.element.contains(at) || left.view?.element.contains(at))) at.blur()
   activeId = tabId
   frontFallback.activated(tabId)
   planList.close()
   const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
   const focus = !busy
-  for (const [id, t] of tabs) t.view.show(id === tabId, focus)
+  for (const [id, t] of tabs) showTab(t, id === tabId, focus)
   const t = tabs.get(tabId)
   if (t) {
     t.bell = false
     t.attention = false
+    t.waitReason = null
     t.unread = false
   }
   closeBanner(tabId)
@@ -673,6 +950,8 @@ function activate(tabId: string): void {
   renderTabs()
   // the left panel's group of a tab is known once git has answered for its folder (see onTabPlace)
   if (settings.tabs.position === 'left' && places.has(tabId)) tabPanel.unfoldFor(tabId)
+  // a chat in front is drawn from its snapshot, as it is now
+  if (t && isChatView(t)) loadChat(tabId)
   reviewPanel.show(claude ? reviewUpdates.get(tabId) ?? null : null)
   // the images first: setAvailable can switch a shown Changes panel to Images and fire onChange, which must find this tab's images
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
@@ -828,8 +1107,13 @@ function openFolderDialog(id: string): void {
   folderDialog.open(name === undefined ? REMOTE_COPY.changeFolderTitle : REMOTE_COPY.changeFolderOn(name), id, {
     list: (path) => ct.listFolders(id, path),
     open: (path) => ct.changeFolder(id, path),
-    closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
+    closed: () => { if (activeId) focusTab(activeId) }
   })
+}
+
+/** the chat's code is set in the terminal's font setting as it is written (a list of families), with a generic monospace after it */
+function setCodeFont(family: string): void {
+  document.documentElement.style.setProperty('--mono', `${family}, monospace`)
 }
 
 function applySettings(s: Settings): void {
@@ -838,11 +1122,12 @@ function applySettings(s: Settings): void {
   // a change to some other setting keeps the Ctrl+= zoom
   if (s.font.family !== prev.font.family || s.font.size !== prev.font.size) {
     fontSize = s.font.size
-    for (const t of tabs.values()) t.view.setFont(s.font.family, fontSize)
+    for (const t of tabs.values()) t.view?.setFont(s.font.family, fontSize)
   }
+  if (s.font.family !== prev.font.family) setCodeFont(s.font.family)
   if (JSON.stringify(s.theme) !== JSON.stringify(prev.theme)) {
     const theme = resolveTheme(s.theme)
-    for (const t of tabs.values()) t.view.setTheme(theme)
+    for (const t of tabs.values()) t.view?.setTheme(theme)
     // the sheet's surround in the terminal's own background: the gutter reads as part of the terminal in every theme
     document.documentElement.style.setProperty('--term-bg', resolveTheme(s.theme).background ?? '')
   }
@@ -878,7 +1163,7 @@ async function boot(): Promise<void> {
   // the bundled Inter is a local file: the wait is a frame or two, and nothing reflows once the window is built. The title bar
   // is built after it, as is every subscription below
   await loadInter()
-  titleBar = new TitleBar(document.getElementById('titlebar')!, ct.platform, { openRecent: () => void sessionsWindow.open() })
+  titleBar = new TitleBar(document.getElementById('titlebar')!)
   appInfo = await ct.appInfo()
   settings = await ct.getSettings()
   // the window must come up even when the accounts cannot be listed
@@ -901,30 +1186,31 @@ async function boot(): Promise<void> {
     newTab: () => void ct.openTab({ kind: 'shell', cwd: defaultFolder() }),
     openRecent: () => void sessionsWindow.open(),
     openSettings: () => ct.openSettingsWindow(),
+    openNotifications: () => ct.openSettingsWindow('notifications'),
     openMenu: (anchor) => newTabMenu(anchor),
     tabMenu,
     toggleGroup,
     groupMenu: (id, at) => menuRequest(Promise.resolve(null), () => showChoiceMenu(at, () => chipItems(id))),
     toggleImages: () => {
       runAction({ type: 'toggleImages' }, activeId)
-      if (activeId) tabs.get(activeId)?.view.term.focus()
+      if (activeId) focusTab(activeId)
     },
     toggleChanges: () => {
       runAction({ type: 'toggleChanges' }, activeId)
-      if (activeId) tabs.get(activeId)?.view.term.focus()
+      if (activeId) focusTab(activeId)
     },
     toggleDocs: () => {
       runAction({ type: 'toggleDocs' }, activeId)
-      if (activeId) tabs.get(activeId)?.view.term.focus()
+      if (activeId) focusTab(activeId)
     },
     toggleMessages: () => {
       sidePanel.toggle('messages')
-      if (activeId) tabs.get(activeId)?.view.term.focus()
+      if (activeId) focusTab(activeId)
     },
     toggleNote: () => {
       runAction({ type: 'toggleNote' }, activeId)
       // the keyboard goes back to the terminal, unless an empty note took it to be written in
-      if (activeId && !document.activeElement?.closest('#note')) tabs.get(activeId)?.view.term.focus()
+      if (activeId && !document.activeElement?.closest('#note')) focusTab(activeId)
     },
     switchPosition: () => {
       const next: TabPosition = settings.tabs.position === 'top' ? 'left' : 'top'
@@ -933,15 +1219,31 @@ async function boot(): Promise<void> {
   }
   tabBar = new TabBar(document.getElementById('tabbar')!, tabCallbacks, ct.platform)
   tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
-  sheetHeader = new SheetHeader(document.getElementById('sheet-header')!, tabCallbacks, ct.platform)
+  sheetHeader = new SheetHeader(document.getElementById('sheet-header')!, {
+    ...tabCallbacks,
+    switchView: (view) => { if (activeId) switchTo(activeId, view) },
+    // files dropped on the header go to the chat in front, as a drop on the sheet does
+    drop: (files) => {
+      const t = activeId ? tabs.get(activeId) : undefined
+      if (t && isChatView(t)) t.chat?.dropFiles(files)
+    }
+  }, ct.platform)
   document.documentElement.style.setProperty('--term-bg', resolveTheme(settings.theme).background ?? '')
+  setCodeFont(settings.font.family)
   showTabs(settings.tabs.position)
   noteOverlay = new NoteOverlay(document.getElementById('note')!, {
     setText: (id, text, generation) => ct.setNoteText(id, text, generation),
     setView: (id, shown, form, generation) => ct.setNoteView(id, shown, form, generation),
-    focusTerminal: () => { if (activeId) tabs.get(activeId)?.view.term.focus() },
+    focusTerminal: () => { if (activeId) focusTab(activeId) },
     changed: () => renderTabs()
   }, ct.platform)
+  ct.onTabSessionTitle((id, title) => {
+    const t = tabs.get(id)
+    if (!t) return
+    t.sessionTitle = title
+    renderTabs()
+    renderTitle()
+  })
   ct.onTabPlace((id, place) => {
     // the group is known with the first answer for the tab: a later change of its branch keeps a group the user folded
     const first = !places.has(id)
@@ -954,16 +1256,54 @@ async function boot(): Promise<void> {
   })
   searchBar = new SearchBar(
     document.getElementById('search')!,
-    () => (activeId ? tabs.get(activeId)?.view.search ?? null : null),
-    () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
+    findTarget,
+    () => {
+      // a closed Find leaves no highlight on any chat, whichever tab its search was in
+      for (const t of tabs.values()) if (t.chat) chatFinds.get(t.chat)?.clearDecorations()
+      if (activeId) focusTab(activeId)
+    }
   )
   document.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement | null
-    if (target?.closest('.xterm') || (target?.tagName === 'INPUT' && !target.classList.contains('review-find-input')) || target?.tagName === 'TEXTAREA') return
+    const onComposer = target?.classList.contains('chat-input') === true
+    // AltGr types a character on many layouts (AltGr+7 is { on German). Windows sends it as Ctrl+Alt, so a character key with
+    // Ctrl+Alt stays with the composer; a digit is still a tab switch
+    if (onComposer && (e.getModifierState('AltGraph') || (e.ctrlKey && e.altKey && [...e.key].length === 1 && !/^\d$/.test(e.key)))) return
+    // the chat composer keeps its keys (typing, Enter, Esc, arrows), but an app chord still runs with it focused; its copy
+    // and paste are left to the textarea by the checks below
+    const composer = onComposer && (e.ctrlKey || e.metaKey || e.altKey)
+    if (!composer && (target?.closest('.xterm') || (target?.tagName === 'INPUT' && !target.classList.contains('review-find-input')) || target?.tagName === 'TEXTAREA')) return
     const a = mapKey(e, ct.platform)
+    // a chat's selected text is copied from the page; the terminal copies its own selection in its key handler
+    if (a?.type === 'copy' && copyChatSelection()) {
+      e.preventDefault()
+      return
+    }
     if (!a || a.type === 'send' || a.type === 'copyOrInterrupt' || a.type === 'smartPaste' || a.type === 'paste' || a.type === 'copy') return
     e.preventDefault()
     runAction(a, activeId)
+  })
+  // a chat's selected text goes to the clipboard as the mouse lets go of it, once per gesture (a drag, a double or triple click):
+  // only a press that began in the chat in front, a release that changed the selection, and a selection whose focus is in the
+  // chat too. So a click on another control with the selection still there, or a drag out to the status bar, copies nothing
+  let press: SelectionEnds | null = null
+  document.addEventListener('mousedown', (e) => {
+    const t = activeId ? tabs.get(activeId) : undefined
+    const target = e.target as Element | null
+    press = e.button === 0 && t?.chat && isChatView(t) && t.chat.element.contains(target) && !target?.closest?.('textarea, input')
+      ? selectionEnds()
+      : null
+  }, true)
+  document.addEventListener('mouseup', (e) => {
+    const before = press
+    press = null
+    if (!before || e.button !== 0 || (e.target as Element | null)?.closest?.('textarea, input')) return
+    const now = selectionEnds()
+    if (sameEnds(before, now)) return
+    // the conversation, not the whole chat: the composer is in the chat's element too, and a drag can end in it
+    const body = (activeId ? tabs.get(activeId) : undefined)?.chat?.element.querySelector(':scope > .chat-body')
+    if (!body || !body.contains(now.anchor) || !body.contains(now.focus)) return
+    copyChatSelection()
   })
   // a file dropped outside a terminal must not navigate the window
   document.addEventListener('dragover', (e) => e.preventDefault())
@@ -975,12 +1315,12 @@ async function boot(): Promise<void> {
     open: (id, device) => ct.openSession(id, device),
     opening: closeMenu,
     setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
-    closed: () => { if (activeId) tabs.get(activeId)?.view.term.focus() }
+    closed: () => { if (activeId) focusTab(activeId) }
   }, ct.platform)
   folderDialog = new FolderDialog(document.getElementById('folder-dialog')!)
   ct.onStarred((ids) => sessionsWindow.applyStars(new Set(ids)))
   ct.onRemoteSessions((list) => sessionsWindow.applyRemote(list))
-  planList = new PlanList(document.getElementById('plan-list')!, () => { if (activeId) tabs.get(activeId)?.view.term.focus() }, () => { if (activeId) ct.clearTaskList(activeId) })
+  planList = new PlanList(document.getElementById('plan-list')!, () => { if (activeId) focusTab(activeId) }, () => { if (activeId) ct.clearTaskList(activeId) })
   statusBar =new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'), (anchor) => {
     const r = anchor.getBoundingClientRect()
     // the menu opens over the status bar, kept inside the window; a remote tab's accounts are asked for first, a local tab's need no answer
@@ -997,6 +1337,12 @@ async function boot(): Promise<void> {
     accounts = v.accounts
     renderTitle()
     if (activeId) renderStatus(activeId)
+    renderTabs()
+  })
+  // the plan is read once, after the window is up: the foot names the login until then
+  void ct.accountPlan().catch(() => null).then((plan) => {
+    mainPlan = plan
+    renderTabs()
   })
   updateBanner = new UpdateBanner(document.getElementById('update-banner')!, () => ct.installUpdate())
   ct.onUpdate((s) => updateBanner.update(s))
@@ -1017,7 +1363,10 @@ async function boot(): Promise<void> {
     const t = tabs.get(tabId)
     if (!t || tabId === activeId) return
     if (reason === 'bell') t.bell = true
-    else t.attention = true
+    else {
+      t.attention = true
+      t.waitReason = reason
+    }
     renderTabs()
   })
   ct.onBanner(showBanner)
@@ -1027,13 +1376,19 @@ async function boot(): Promise<void> {
     const t = tabs.get(tabId)
     if (!t) return
     t.attention = false
+    t.waitReason = null
     t.bell = false
     renderTabs()
   })
   // before main types a continue into a Claude tab: only this window has the terminal's screen
   ct.onPromptQuery((queryId, tabId) => {
     const t = tabs.get(tabId)
-    const text = t ? promptText(t.view.screen().rows) : null
+    // a chat-view tab has no terminal screen: its prompt is the composer's, and a draft in it holds the continue back
+    if (t && isChatView(t)) {
+      ct.answerPrompt(queryId, t.chat?.hasDraft() === true ? 'draft' : 'empty')
+      return
+    }
+    const text = t?.view ? promptText(t.view.screen().rows) : null
     ct.answerPrompt(queryId, text === null ? 'none' : text === '' ? 'empty' : 'draft')
   })
   sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width, messages: settings.review.width }, (width, resize) => ct.setPanel(width, resize))
@@ -1047,7 +1402,7 @@ async function boot(): Promise<void> {
       insertPath: (p) => {
         if (!activeId) return
         handleInput(activeId, `"${p}" `)
-        tabs.get(activeId)?.view.term.focus()
+        focusTab(activeId)
       },
       open: (cards, index) => lightbox.open(cards, index),
       markSeen: (tabId) => ct.markImagesSeen(tabId)
@@ -1151,6 +1506,8 @@ async function boot(): Promise<void> {
   refreshPanelButtons()
   ct.onImages((u) => {
     imageUpdates.set(u.tabId, u)
+    // a chat's bubble whose image card comes now shows its thumbnail
+    tabs.get(u.tabId)?.chat?.imagesChanged()
     const t = tabs.get(u.tabId)
     if (t) {
       t.images = u.unseen
@@ -1174,10 +1531,23 @@ async function boot(): Promise<void> {
   ct.onTabUpdated((info) => {
     const t = tabs.get(info.id)
     if (!t) return
+    const viewChanged = t.info.view !== info.view
     t.info = info
+    if (viewChanged) applyView(t)
     renderTabs()
     // a switch of the account shows at once
     if (info.id === activeId) renderStatus(info.id)
+  })
+  // the patches of the chat in front; a patch that does not follow the chat's revision asks for its snapshot again
+  ct.onChatPatch((tabId, fromRev, toRev, patches) => {
+    const t = tabs.get(tabId)
+    if (!t || tabId !== activeId || !isChatView(t)) return
+    if (!t.chat?.patch(fromRev, toRev, patches)) loadChat(tabId)
+  })
+  // a remote chat's snapshot came (a member attached its tab): the chat in front is drawn from it again
+  ct.onChatReload((tabId) => {
+    const t = tabs.get(tabId)
+    if (t && tabId === activeId && isChatView(t)) loadChat(tabId)
   })
   ct.onTabClosed((id) => {
     closeBanner(id)
@@ -1186,7 +1556,11 @@ async function boot(): Promise<void> {
     const frontBefore = activeId
     const wasFront = id === activeId
     if (wasFront) planList.close()
-    t.view.dispose()
+    t.view?.dispose()
+    // the closed chat's Find clears the page's highlights when it painted them last
+    if (t.chat) chatFinds.get(t.chat)?.clearDecorations()
+    t.chat?.dispose()
+    chatLoads.delete(id)
     tabs.delete(id)
     places.delete(id)
     imageUpdates.delete(id)
@@ -1243,34 +1617,39 @@ async function boot(): Promise<void> {
     renderTitle()
     if (activeId) renderStatus(activeId)
   })
-  ct.onPtyData((id, data) => tabs.get(id)?.view.write(data))
+  // a tab without its terminal yet gets one first: its process's output can come before the view change is drawn. A chat
+  // tab has no terminal: output still in flight from its terminal is dropped, so no hidden xterm is built for it
+  ct.onPtyData((id, data) => {
+    const t = tabs.get(id)
+    if (t && !isChatView(t)) ensureTerminal(t).write(data)
+  })
   ct.onPtyReset((id) => {
     const t = tabs.get(id)
     if (!t) return
-    t.view.reset()
+    t.view?.reset()
     // the stopped process's title and marks don't describe the new one
     t.oscTitle = null
     t.bell = false
     t.attention = false
+    t.waitReason = null
     t.unread = false
     renderTabs()
   })
-  ct.onPtyExit((id, code) => tabs.get(id)?.view.write(`\r\n\x1b[90m[process exited with code ${code}] Enter — restart, ${shortcutLabel('closeTab', ct.platform)} — close\x1b[0m\r\n`))
+  ct.onPtyExit((id, code) => tabs.get(id)?.view?.write(`\r\n\x1b[90m[process exited with code ${code}] Enter — restart, ${shortcutLabel('closeTab', ct.platform)} — close\x1b[0m\r\n`))
   // the size of a tab that another device typed into last; null: this window's own fit applies again
-  ct.onTabSize((id, size) => tabs.get(id)?.view.setFixedSize(size))
+  ct.onTabSize((id, size) => tabs.get(id)?.view?.setFixedSize(size))
   // a copy of this window's tab on another device: the screen, once the output before the request is written
   ct.onScreenSeed((id, token) => {
-    const t = tabs.get(id)
-    if (!t) ct.seedScreen(id, token, '')
-    else t.view.term.write('', () => ct.seedScreen(id, token, t.view.serialize(MAX_SNAPSHOT_BYTES)))
+    const view = tabs.get(id)?.view
+    if (!view) ct.seedScreen(id, token, '')
+    else view.term.write('', () => ct.seedScreen(id, token, view.serialize(MAX_SNAPSHOT_BYTES)))
   })
   ct.onToast((m) => showToast(m))
   ct.onSettings(applySettings)
   window.addEventListener('focus', () => {
     if (sessionsWindow.isOpen || folderDialog.isOpen) return
     if (document.activeElement?.closest('#image-panel, #note')) return
-    const t = activeId ? tabs.get(activeId) : undefined
-    t?.view.term.focus()
+    if (activeId) focusTab(activeId)
   })
   banner = new RestoreBanner(document.getElementById('banner')!, () => ct.runRestore())
   restoreInfo = await ct.getRestoreInfo()
@@ -1292,11 +1671,11 @@ async function boot(): Promise<void> {
       ptyInput: (id) => inputLog.get(id ?? activeId ?? '') ?? '',
       ptySizes: (id) => [...sizeLog.get(id ?? activeId ?? '') ?? []],
       termSize: (id) => {
-        const t = tabs.get(id ?? activeId ?? '')
-        return t ? { cols: t.view.term.cols, rows: t.view.term.rows } : null
+        const view = tabs.get(id ?? activeId ?? '')?.view
+        return view ? { cols: view.term.cols, rows: view.term.rows } : null
       },
-      bufferText: (id) => tabs.get(id ?? activeId ?? '')?.view.bufferText() ?? '',
-      themeBackground: () => (activeId ? tabs.get(activeId)?.view.term.options.theme?.background ?? null : null),
+      bufferText: (id) => tabs.get(id ?? activeId ?? '')?.view?.bufferText() ?? '',
+      themeBackground: () => (activeId ? tabs.get(activeId)?.view?.term.options.theme?.background ?? null : null),
       banners: () => [...banners].map(([tabId, b]) => ({ tabId, title: b.title, body: b.body })),
       clickBanner: (id) => banners.get(id)?.click(),
       // what Send (the Changes panel, the note) does with a tab

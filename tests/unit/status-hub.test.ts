@@ -29,6 +29,17 @@ const meta = (description: string): AgentMeta => ({ description, toolUseId: null
 const task = (id: string, description: string | null = 'build'): BackgroundTask => ({ id, type: 'shell', description, command: 'make' })
 
 describe('StatusHub', () => {
+  it('a task dropped after its stop is gone for good: a later status brings no trace of it', () => {
+    const { hub, changes } = makeHub()
+    hub.background(TAB, SID, [task('a'), task('b')])
+    changes.length = 0
+    hub.dropBackground(TAB, 'a')
+    expect(changes).toEqual([TAB])
+    expect(hub.get(TAB).background).toEqual([task('b')])
+    hub.status(status())
+    expect(hub.get(TAB).background).toEqual([task('b')])
+  })
+
   it('status sets the main part and notifies', () => {
     const { hub, changes } = makeHub()
     hub.status(status())

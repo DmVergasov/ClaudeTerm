@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, PNG_1x1 } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, KEYS, launchApp, launchClaudeTab, PNG_1x1 } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // the animations are what these tests check; keep the desktop quiet while they run
@@ -42,17 +42,21 @@ test('an idle window runs no animation', async () => {
   await app.close()
 })
 
-test('a working Claude tab runs its glyph and the line under the header, and nothing is left running after the turn', async () => {
+test('a working Claude tab runs its glyph on the tab and in the header, nothing sweeps under the header, and nothing is left running after the turn', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab(QUIET)
   await page.emulateMedia({ reducedMotion: 'no-preference' })
+  const spins = (where: 'header' | 'tabs'): Promise<number> => page.evaluate((w) => document.getAnimations()
+    .filter((a) => {
+      const target = (a.effect as KeyframeEffect).target as Element | null
+      return a.playState === 'running' && (a as CSSAnimation).animationName === 'tab-spin' && (w === 'header' ? target?.closest('#sheet-header') : !target?.closest('#sheet-header'))
+    })
+    .length, where)
 
   expect(await turn(pipeName, tabId)).toEqual({ ok: true })
-  await expect.poll(() => runningNames(page)).toEqual(expect.arrayContaining(['tab-spin', 'sheet-sweep']))
-  // the header's icon is a static glyph: the sweep line under the header already says the tab works, and only the tab's own spinner runs
-  const headerSpins = await page.evaluate(() => document.getAnimations()
-    .filter((a) => a.playState === 'running' && (a as CSSAnimation).animationName === 'tab-spin' && ((a.effect as KeyframeEffect).target as Element | null)?.closest('#sheet-header'))
-    .length)
-  expect(headerSpins).toBe(0)
+  // the tab's own glyph and the one in the sheet's header both step while Claude works; no line sweeps under the header (it distracted)
+  await expect.poll(() => spins('tabs')).toBeGreaterThan(0)
+  await expect.poll(() => spins('header')).toBe(1)
+  expect(await runningNames(page)).not.toContain('sheet-sweep')
 
   expect(await turnEnd(pipeName, tabId)).toEqual({ ok: true })
   await expect.poll(() => runningAnimations(page)).toEqual([])
@@ -150,14 +154,14 @@ test('the Recent sessions backdrop fades in with its box, and nothing animates u
   const animation = (sel: string): Promise<string> => page.locator(sel).evaluate((el) => getComputedStyle(el).animationName)
 
   await page.emulateMedia({ reducedMotion: 'no-preference' })
-  await page.locator('#titlebar .tb-search').click()
+  await page.keyboard.press(KEYS.recentSessions)
   await expect(page.locator('#sessions')).toBeVisible()
   expect(await animation('#sessions')).toBe('fade-in')
   await page.keyboard.press('Escape')
   await expect(page.locator('#sessions')).toBeHidden()
 
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.locator('#titlebar .tb-search').click()
+  await page.keyboard.press(KEYS.recentSessions)
   await expect(page.locator('#sessions')).toBeVisible()
   expect(await animation('#sessions')).toBe('none')
   await app.close()

@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, launchClaudeTab } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, launchClaudeTab, openTabInFront } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // the icon and the line under the header are what these tests check; keep the desktop quiet while they run
@@ -11,16 +11,12 @@ const QUIET = { ...FAKE_CLAUDE_SETTINGS, attention: { sound: 'none', flash: fals
 
 const freshFolder = (): string => mkdtempSync(join(tmpdir(), 'ct-folder-'))
 
-/** what the hooks report: a prompt starts a turn, Stop ends it */
+/** what the hooks report when a prompt starts a turn */
 const turn = (pipeName: string, tabId: string): Promise<unknown> => sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })
-const turnEnd = (pipeName: string, tabId: string): Promise<unknown> => sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })
 
 /** opens a tab in the folder and waits until main has it; the new tab is the active one */
 async function openTab(page: Page, kind: 'shell' | 'claude', cwd: string): Promise<string> {
-  const count = await page.evaluate(() => window.__ct!.tabIds().length)
-  await page.evaluate((o) => window.ct.openTab(o), { kind, cwd })
-  await page.waitForFunction((n) => window.__ct!.tabIds().length === n, count + 1)
-  return (await page.evaluate(() => window.__ct!.activeTabId()))!
+  return openTabInFront(page, kind, cwd)
 }
 
 /** the main window's size: the window clamps it to its minimum width */
@@ -78,19 +74,18 @@ test('double-clicking the header\'s title renames the tab', async () => {
   await app.close()
 })
 
-test('the line under the header runs while Claude works in the tab and stops when the turn ends', async () => {
+test('no line runs under the header while Claude works in the tab: the tab\'s own glyph says it works', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab(QUIET)
   const header = page.locator('#sheet-header')
-  await expect(header).not.toHaveClass(/working/)
-  await expect(header.locator('.sh-sweep')).toBeHidden()
-
   expect(await turn(pipeName, tabId)).toEqual({ ok: true })
-  await expect(header).toHaveClass(/working/)
-  await expect(header.locator('.sh-sweep')).toBeVisible()
-
-  expect(await turnEnd(pipeName, tabId)).toEqual({ ok: true })
-  await expect(header).not.toHaveClass(/working/)
-  await expect(header.locator('.sh-sweep')).toBeHidden()
+  await expect(page.locator(`[data-tab-id="${tabId}"] .spin`).first()).toBeVisible()
+  // nothing in the header is drawn wider than a button and as thin as a line (the old sweep was 2 px high)
+  const lines = await header.evaluate((h) => [...h.querySelectorAll<HTMLElement>('*')].filter((el) => {
+    const r = el.getBoundingClientRect()
+    return r.height > 0 && r.height <= 3 && r.width > 40
+  }).length)
+  expect(lines).toBe(0)
+  await expect(header.locator('.sh-sweep')).toHaveCount(0)
   await app.close()
 })
 

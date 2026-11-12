@@ -17,6 +17,20 @@ describe('third-party notices', () => {
     expect(notices).toContain('Copyright (c) 2013-2023 Cole Bemis')
   })
 
+  it('electron-builder leaves out the Agent SDK\'s platform packages', () => {
+    expect(read('electron-builder.yml')).toMatch(/files:[\s\S]*- "!node_modules\/@anthropic-ai\/claude-agent-sdk-\*\/\*\*"/)
+  })
+
+  it('package.json pins the Agent SDK to one version', () => {
+    expect(JSON.parse(read('package.json')).dependencies['@anthropic-ai/claude-agent-sdk']).toBe('0.3.322')
+  })
+
+  it('the notices name the Claude Agent SDK and the terms it is used under', () => {
+    const notices = read('THIRD-PARTY-NOTICES.md')
+    expect(notices).toMatch(/## Claude Agent SDK[\s\S]*@anthropic-ai\/claude-agent-sdk 0\.3\.322/)
+    expect(notices).toContain('© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here: https://code.claude.com/docs/en/legal-and-compliance.')
+  })
+
   it('the README links the notices from its license section', () => {
     expect(read('README.md')).toContain('(THIRD-PARTY-NOTICES.md)')
   })

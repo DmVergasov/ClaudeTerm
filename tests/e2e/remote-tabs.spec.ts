@@ -10,7 +10,7 @@ import type { TaskList } from '../../src/shared/task-list'
 import { PEER_ORIGIN, turnPromptLine } from '../fixtures/transcript'
 import { LIST_TIMEOUT_MS, MAX_TRANSFER_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY } from '../../src/shared/remote'
 import { LINUX, MAC, WIN } from '../fixtures/platform'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, keepingClipboard, PNG_1x1, processAlive, PROMPT, TEST_SHELL, typeInTerminal, writeTranscript } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, keepingClipboard, PNG_1x1, processAlive, PROMPT, showSettingsTab, TEST_SHELL, typeInTerminal, writeTranscript } from './helpers'
 import { closePaired, type Device, openShell, pairApps, pairedApps, relaunch, setWindowSize, SLOW, startApps, termSize } from './device-pair'
 
 test.afterEach(closePaired)
@@ -1003,7 +1003,7 @@ test('a Claude tab whose process exits on its own while it waits clears its mark
   const marker = `ct-exit-probe-${Date.now()}`
   const command = `node -e 'setTimeout(()=>{},1e9)' ${marker}; exit #`
   const { a, b } = await pairedApps({
-    a: { settings: { ...quietNotifications(), claude: { command, shellProfile: TEST_SHELL } }, args: ['--claude', work] },
+    a: { settings: { ...quietNotifications(), claude: { command, shellProfile: TEST_SHELL, view: 'terminal' } }, args: ['--claude', work] },
     b: { settings: quietNotifications() }
   })
   const claude = a.firstTab
@@ -2155,7 +2155,8 @@ test('B typing into A keeps A awake; unticking the setting on A lets it sleep', 
   await a.page.locator('.terminal-host:visible .xterm').click()
   const [settings] = await Promise.all([a.app.waitForEvent('window'), a.page.keyboard.press(KEYS.settings)])
   await settings.waitForSelector('#settings .section-title')
-  const keep = settings.getByRole('checkbox', { name: 'Keep this computer awake while another device uses it' })
+  await showSettingsTab(settings, 'devices')
+  const keep = settings.getByRole('switch', { name: 'Keep this computer awake while another device uses it' })
   await expect(keep).toBeHidden()
 
   await pairApps(a, b)
@@ -2261,6 +2262,7 @@ test("a connected device whose tabs are not listed yet shows no count, and a sec
   await a.page.locator('.terminal-host:visible .xterm').click()
   const [settings] = await Promise.all([a.app.waitForEvent('window'), a.page.keyboard.press(KEYS.settings)])
   await settings.waitForSelector('#settings .section-title')
+  await showSettingsTab(settings, 'devices')
   // a device that is connected before its tab list has come is not counted as having no tabs: the text is never 'No tabs open'
   await settings.evaluate(() => {
     document.body.dataset.noTabs = 'never'
@@ -2272,18 +2274,22 @@ test("a connected device whose tabs are not listed yet shows no count, and a sec
   await expect(settings.locator('#devices')).toContainText('1 tab open', SLOW)
   expect(await settings.evaluate(() => document.body.dataset.noTabs)).toBe('never')
 
-  // a section the window does not know is ignored: after the Devices section is shown, the page's own root is not scrolled to
+  // a section the window does not know is ignored: the tab in front stays where it is
   const sendSection = (name: string) =>
     a.app.evaluate(({ BrowserWindow }, [channel, section]) => {
       BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('settings.html'))?.webContents.send(channel, section)
     }, [IPC.evSettingsSection, name] as [string, string])
-  const devicesTop = () => settings.evaluate(() => document.getElementById('devices')!.getBoundingClientRect().top)
+  // the window is on another tab first: a section sent to it brings its Devices tab in front
+  await settings.locator('#settings-nav [data-tab="general"]').click()
+  await expect(settings.locator('#devices')).toBeHidden()
   await sendSection('devices')
-  await expect.poll(devicesTop, SLOW).toBeLessThan(100)
-  const shown = await devicesTop()
+  await expect(settings.locator('#settings-nav [data-tab="devices"]')).toHaveAttribute('aria-current', 'page', SLOW)
+  await expect(settings.locator('#devices')).toBeVisible()
+  // an unknown name changes nothing: the Devices tab is still the one in front
   await sendSection('settings')
   await new Promise((resolve) => setTimeout(resolve, 300))
-  expect(await devicesTop()).toBe(shown)
+  await expect(settings.locator('#settings-nav [data-tab="devices"]')).toHaveAttribute('aria-current', 'page')
+  await expect(settings.locator('#devices')).toBeVisible()
 })
 
 test("B's Settings shows A's tab count again once A's link comes back", async () => {
@@ -2292,6 +2298,7 @@ test("B's Settings shows A's tab count again once A's link comes back", async ()
   await b.page.locator('.terminal-host:visible .xterm').click()
   const [settings] = await Promise.all([b.app.waitForEvent('window'), b.page.keyboard.press(KEYS.settings)])
   await settings.waitForSelector('#settings .section-title')
+  await showSettingsTab(settings, 'devices')
   await expect(settings.locator('#devices')).toContainText(REMOTE_COPY.tabCount(1), SLOW)
   // A goes: its count goes with its link; when it comes back its first list shows the count again
   await a.app.close()
@@ -2314,6 +2321,7 @@ test("no devices view reaches B's window once its Settings window has closed, ev
   await b.page.locator('.terminal-host:visible .xterm').click()
   const [settings] = await Promise.all([b.app.waitForEvent('window'), b.page.keyboard.press(KEYS.settings)])
   await settings.waitForSelector('#settings .section-title')
+  await showSettingsTab(settings, 'devices')
   await new Promise((resolve) => setTimeout(resolve, 300))
   const listed = (await tabIdsOf(b)).length
   // two tabs opened on A without waiting for each: the first one B lists starts a coalesced view that is still pending
@@ -2383,23 +2391,23 @@ test("open_device_settings opens the Devices section, where each device's line c
   const win = await openDeviceSettings(a)
   await expect.poll(() => win.url(), SLOW).toMatch(/#devices$/)
   await expect(win.locator('#devices')).toContainText(REMOTE_COPY.tabCount(2), SLOW)
-  // the section is brought to the top of the window: it is not left below the fold, where the window opens without the section
-  await expect.poll(() => win.locator('#devices').evaluate((e) => e.getBoundingClientRect().top), SLOW).toBeLessThan(40)
+  // the section is shown: its tab is the one in front
+  await expect(win.locator('#settings-nav [data-tab="devices"]')).toHaveAttribute('aria-current', 'page', SLOW)
+  await expect(win.locator('#devices')).toBeVisible()
 })
 
-test('open_device_settings brings a Settings window that is open to the Devices section, scrolled away from it', async () => {
+test('open_device_settings brings a Settings window that is open to the Devices section, when it shows another tab', async () => {
   test.setTimeout(180_000)
   const { a } = await pairedApps()
   const win = await openDeviceSettings(a)
   await expect.poll(() => win.url(), SLOW).toMatch(/#devices$/)
-  const top = (): Promise<number> => win.locator('#devices').evaluate((e) => e.getBoundingClientRect().top)
-  // the page is built (its tab count is listed); the person then scrolls the window back to its top, where the Devices section is below the fold
+  // the page is built (its tab count is listed); the person then shows the General tab
   await expect(win.locator('#devices')).toContainText(REMOTE_COPY.tabCount(1), SLOW)
-  // the page scrolls inside #settings, below the bar
-  await win.evaluate(() => { document.getElementById('settings')!.scrollTop = 0 })
-  await expect.poll(top, SLOW).toBeGreaterThan(40)
+  await showSettingsTab(win, 'general')
+  await expect(win.locator('#devices')).toBeHidden()
   expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'open_device_settings' })).toEqual({ ok: true })
-  await expect.poll(top, SLOW).toBeLessThan(40)
+  await expect(win.locator('#settings-nav [data-tab="devices"]')).toHaveAttribute('aria-current', 'page', SLOW)
+  await expect(win.locator('#devices')).toBeVisible()
 })
 
 test('the Devices count follows the tabs B opens and closes while the window shows them, and goes when B is gone', async () => {

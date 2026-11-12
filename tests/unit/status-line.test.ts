@@ -45,6 +45,21 @@ describe('statusFromStatusLine', () => {
     })
   })
 
+  // Claude Code reports the model's whole window (1M) and a percentage of it; the conversation compacts at the window the settings set
+  it('measures the context against the auto-compact window when one is set below the model\'s window', () => {
+    const input = { ...full, workspace: { project_dir: SHELL }, context_window: { context_window_size: 1000000, used_percentage: 30.7, current_usage: { input_tokens: 7000, cache_read_input_tokens: 300000 } } }
+    const asked: Array<[string, string | null]> = []
+    const windowOf = (model: string, dir: string | null): number | null => { asked.push([model, dir]); return 512000 }
+    const context = statusFromStatusLine(input, TAB, windowOf)?.context
+    expect(context?.usedTokens).toBe(307000)
+    expect(context?.size).toBe(512000)
+    expect(context?.usedPct).toBeCloseTo(59.96, 2)
+    expect(asked).toEqual([['claude-opus-5-5', SHELL]])
+    // a window at or over the model's own changes nothing; neither does none
+    expect(statusFromStatusLine({ ...input, context_window: { ...input.context_window, context_window_size: 200000 } }, TAB, () => 512000)?.context).toEqual({ usedTokens: 307000, size: 200000, usedPct: 30.7 })
+    expect(statusFromStatusLine(input, TAB, () => null)?.context).toEqual({ usedTokens: 307000, size: 1000000, usedPct: 30.7 })
+  })
+
   it('computes the percentage when used_percentage is null', () => {
     const input = { ...full, context_window: { context_window_size: 200000, used_percentage: null, current_usage: { input_tokens: 50000 } } }
     expect(statusFromStatusLine(input, TAB)?.context).toEqual({ usedTokens: 50000, size: 200000, usedPct: 25 })

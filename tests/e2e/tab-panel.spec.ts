@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, panelSettled, PROMPT, writeTranscript } from './helpers'
+import type { AttentionReason } from '../../src/shared/protocol'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, panelSettled, PROMPT, showSettingsTab, writeTranscript, openTabInFront } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // a tab finds its project group once git answers for its folder, late on a busy machine, as when other tests run at the
@@ -22,10 +23,7 @@ const currentBranch = (repo: string): string => execFileSync('git', ['rev-parse'
 
 /** opens a tab in the folder and waits until main has it; the new tab is the active one */
 async function openTab(page: Page, kind: 'shell' | 'claude', cwd: string): Promise<string> {
-  const count = await page.evaluate(() => window.__ct!.tabIds().length)
-  await page.evaluate((o) => window.ct.openTab(o), { kind, cwd })
-  await page.waitForFunction((n) => window.__ct!.tabIds().length === n, count + 1)
-  return (await page.evaluate(() => window.__ct!.activeTabId()))!
+  return openTabInFront(page, kind, cwd)
 }
 
 const row = (page: Page, id: string): Locator => page.locator(`#tabpanel .tp-tab[data-tab-id="${id}"]`)
@@ -84,7 +82,8 @@ test('the position button and the Settings window put the tabs on the left and b
   await expect.poll(() => readSettings(dataDir).tabs?.position).toBe('top')
 
   const win = await openSettings(app, page)
-  await win.locator('[data-key="tabs.position"]').selectOption('left')
+  await showSettingsTab(win, 'appearance')
+  await win.locator('[data-key="tabs.position"][data-value="left"]').click()
   await expect(page.locator('#tabpanel')).toBeVisible()
   await expect(page.locator('#tabbar')).toBeHidden()
   await app.close()
@@ -108,6 +107,62 @@ test('the column\'s footer opens Recent sessions and Settings', async () => {
   await expect.poll(() => app.windows().length).toBe(2)
   await page.locator('#tabpanel .tp-recent').click()
   await expect(page.locator('#sessions')).toBeVisible()
+  await app.close()
+})
+
+test('the ▾ beside New tab is a drawn chevron in a square box like New tab\'s, and on top a drawn chevron too', async () => {
+  const folder = freshFolder()
+  const { app, page } = await launchApp({ settings: left(folder) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const menu = page.locator('#tabpanel .tab-menu')
+  const plus = page.locator('#tabpanel .tp-new')
+  await expect(menu.locator('svg')).toHaveCount(1)
+  await expect(menu).toHaveText('')
+  const [m, p] = [(await menu.boundingBox())!, (await plus.boundingBox())!]
+  expect(Math.abs(m.width - m.height)).toBeLessThanOrEqual(0.5)
+  expect(Math.abs(m.height - p.height)).toBeLessThanOrEqual(0.5)
+  const look = (sel: string) => page.locator(sel).evaluate((el) => { const s = getComputedStyle(el); return { bg: s.backgroundColor, border: s.borderTopWidth, radius: s.borderTopLeftRadius } })
+  expect(await look('#tabpanel .tab-menu')).toEqual(await look('#tabpanel .tp-new'))
+  // on top the button keeps no box, but its chevron is drawn the same way
+  await page.evaluate(() => window.ct.setSetting('tabs.position', 'top'))
+  await expect(page.locator('#tabbar .tab-menu svg')).toHaveCount(1)
+  await expect(page.locator('#tabbar .tab-menu')).toHaveText('')
+  await app.close()
+})
+
+test('the foot names the account of the tab in front with its plan, and its bell opens Settings at the notifications', async () => {
+  // Claude Code's login, in a config folder of the test's own: a Max plan
+  const config = mkdtempSync(join(tmpdir(), 'ct-claude-config-'))
+  writeFileSync(join(config, '.claude.json'), JSON.stringify({ oauthAccount: { organizationType: 'claude_max' } }))
+  const folder = freshFolder()
+  const dataDir = makeDataDir(left(folder))
+  const work = '0b6f3c2e-4d5a-4e6f-8a7b-9c0d1e2f3a4b'
+  writeFileSync(join(dataDir, 'accounts.json'), JSON.stringify({ version: 1, accounts: [{ id: work, name: 'Work', addedAt: '2026-10-01T09:00:00.000Z', token: 'e2e-token-work-0000000001', encrypted: false }] }))
+  const { app, page } = await launchApp({ dataDir, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const account = page.locator('#tabpanel .tp-account')
+  // the first tab is a shell tab, on the main account: the plan is the login's
+  await expect(account.locator('.tp-account-name')).toHaveText('Main account')
+  await expect(account.locator('.tp-account-plan')).toHaveText('Max plan')
+  await expect(account.locator('.tp-avatar')).toHaveText('MA')
+  // a Claude tab on an extra account names that account
+  await page.evaluate(({ cwd, id }) => window.ct.openTab({ kind: 'claude', cwd, account: id }), { cwd: folder, id: work })
+  await expect(account.locator('.tp-account-name')).toHaveText('Work')
+  await expect(account.locator('.tp-account-plan')).toHaveText('Extra account')
+  await expect(account.locator('.tp-avatar')).toHaveText('WO')
+
+  await account.locator('.tp-notify').click()
+  await expect.poll(() => app.windows().length).toBe(2)
+  const settings = app.windows().find((w) => w !== page)!
+  await expect.poll(() => settings.url()).toMatch(/#notifications$/)
+  await app.close()
+})
+
+test('without a plan Claude Code names, the foot names the login', async () => {
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  await expect(page.locator('#tabpanel .tp-account-name')).toHaveText('Main account')
+  await expect(page.locator('#tabpanel .tp-account-plan')).toHaveText('Claude Code login')
   await app.close()
 })
 
@@ -740,7 +795,7 @@ test("the panel header's Docs button shows once a Claude tab has a document, and
   const shown = await page.locator('#tabpanel .tp-head button').evaluateAll((els) => els.filter((el) => !(el as HTMLElement).hidden).map((el) => el.classList[0]))
   expect(shown).toEqual(['tab-new', 'tab-menu'])
   const foot = await page.locator('#tabpanel .tp-foot button').evaluateAll((els) => els.filter((el) => !(el as HTMLElement).hidden).map((el) => el.classList[0]))
-  expect(foot).toEqual(['tp-recent', 'tp-settings', 'tab-position'])
+  expect(foot).toEqual(['tp-recent', 'tp-notify', 'tp-settings', 'tab-position'])
 
   await button.click()
   await expect(panel).toHaveClass(/collapsed/)
@@ -764,7 +819,7 @@ const columnBoxes = (page: Page, holder: string): Promise<{ box: { left: number,
     }
   })
 
-test('at its narrowest, half its first width, the column keeps every button inside it: New tab and ▾ in the head, Recent sessions, Settings and the position switch in the foot', async () => {
+test('at its narrowest, half its first width, the column keeps every button inside it: New tab and ▾ in the head, Recent sessions on its row and the account row\'s buttons on theirs in the foot', async () => {
   const { app, page, pipeName, tabId, work } = await launchClaudeTab(left(freshFolder()))
   const spec = join(work, 'spec.md')
   writeFileSync(spec, '# Spec\n')
@@ -782,11 +837,15 @@ test('at its narrowest, half its first width, the column keeps every button insi
   const head = await columnBoxes(page, '#tabpanel .tp-head')
   const foot = await columnBoxes(page, '#tabpanel .tp-foot')
   expect(head.buttons.map((b) => b.name).sort()).toEqual(['tab-menu', 'tab-new'])
-  expect(foot.buttons.map((b) => b.name).sort()).toEqual(['tab-position', 'tp-recent', 'tp-settings'])
-  // each row stays on one line
+  expect(foot.buttons.map((b) => b.name).sort()).toEqual(['tab-position', 'tp-notify', 'tp-recent', 'tp-settings'])
+  // each row stays on one line: the head, and the account row's buttons under Recent sessions
   expect(new Set(head.buttons.map((b) => b.top)).size).toBe(1)
-  expect(new Set(foot.buttons.map((b) => b.top)).size).toBe(1)
-  // the narrow column drops the words: New tab keeps its icon, and so do the footer's buttons
+  const accountRow = foot.buttons.filter((b) => b.name !== 'tp-recent')
+  expect(new Set(accountRow.map((b) => b.top)).size).toBe(1)
+  expect(accountRow[0]!.top).toBeGreaterThan(foot.buttons.find((b) => b.name === 'tp-recent')!.top)
+  // the narrow column drops the words, and the account's avatar and names: New tab keeps its icon, and so do the footer's buttons
+  await expect(page.locator('#tabpanel .tp-account-text')).toBeHidden()
+  await expect(page.locator('#tabpanel .tp-avatar')).toBeHidden()
   await expect(page.locator('#tabpanel .tp-label').first()).toBeHidden()
   await expect(page.locator('#tabpanel .tp-new svg')).toBeVisible()
   await expect(page.locator('#tabpanel .tp-settings svg')).toBeVisible()
@@ -875,5 +934,161 @@ test('a click on a tab in the left panel activates it even when the panel is dra
   await page.mouse.move(to.x, to.y, { steps: 8 })
   await page.mouse.up()
   await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(secondId)
+  await app.close()
+})
+
+/** a Claude tab in a background row of the left panel, and a way to make Claude wait in it */
+async function waitingRow(): Promise<{ app: ElectronApplication, page: Page, claude: string, wait: (reason: AttentionReason) => Promise<unknown> }> {
+  const folder = freshFolder()
+  const { app, page, pipeName } = await launchApp({ settings: left(folder) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const claude = await openTab(page, 'claude', folder)
+  await page.evaluate((id) => window.ct.activateTab(id), home)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, home)
+  const wait = (reason: AttentionReason): Promise<unknown> => sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: SID, reason })
+  return { app, page, claude, wait }
+}
+
+test('a waiting row names what Claude waits for in a word that breathes, a finished turn reads Done in green, and opening the tab clears it', async () => {
+  const { app, page, claude, wait } = await waitingRow()
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  const status = row(page, claude).locator('.tab-status')
+  // found and read in one go: a redraw of the panel replaces the word
+  const look = (): Promise<{ animation: string, color: string }> => page.evaluate((id) => {
+    const s = getComputedStyle(document.querySelector(`#tabpanel [data-tab-id="${id}"] .tab-status`)!)
+    return { animation: s.animationName, color: s.color }
+  }, claude)
+  expect(await wait('question')).toEqual({ ok: true })
+  await expect(status).toHaveText('Question')
+  // the word takes the badge's place
+  await expect(row(page, claude).locator('.tab-attn')).toHaveCount(0)
+  const asks = await look()
+  expect(asks.animation).toBe('tab-status-breathe')
+  expect(await wait('permission')).toEqual({ ok: true })
+  await expect(status).toHaveText('Permission')
+  expect(await wait('done')).toEqual({ ok: true })
+  await expect(status).toHaveText('Done')
+  await expect(row(page, claude).locator('.tab-icon.done')).toHaveCount(1)
+  // Done breathes too, in the app's green (#63C08F), not in the accent
+  expect(await look()).toEqual({ animation: 'tab-status-breathe', color: 'rgb(99, 192, 143)' })
+  expect(asks.color).not.toBe('rgb(99, 192, 143)')
+
+  await page.evaluate((id) => window.ct.activateTab(id), claude)
+  await expect(status).toHaveCount(0)
+  await expect(row(page, claude).locator('.tab-icon.done')).toHaveCount(0)
+  await app.close()
+})
+
+test('a waiting row pulses softly under its word, in step with it: in the accent while Claude asks, in green once it has answered, still under reduced motion', async () => {
+  const { app, page, claude, wait } = await waitingRow()
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  // the pulse is a layer under the row's content, its ::before; read beside the colours the same 10% mix gives in the
+  // accent and in the green. Found and read in one go: a redraw of the panel replaces the row
+  const look = (): Promise<{ animation: string, bg: string, accent: string, green: string }> => page.evaluate((id) => {
+    const s = getComputedStyle(document.querySelector(`#tabpanel [data-tab-id="${id}"]`)!, '::before')
+    const mix = (v: string): string => {
+      const p = document.createElement('div')
+      p.style.background = `color-mix(in srgb, var(${v}) 10%, transparent)`
+      document.body.append(p)
+      const c = getComputedStyle(p).backgroundColor
+      p.remove()
+      return c
+    }
+    return { animation: s.animationName, bg: s.backgroundColor, accent: mix('--accent'), green: mix('--green') }
+  }, claude)
+  // how far into its 2 s cycle an animation is; the row's pulse and its word's breath run on one clock
+  const phase = (name: string): Promise<number> => page.evaluate((n) => {
+    const t = document.getAnimations().find((a) => (a as CSSAnimation).animationName === n)?.effect?.getComputedTiming()
+    return t ? (((Number(t.localTime) - Number(t.delay)) % 2000) + 2000) % 2000 : -1
+  }, name)
+
+  expect(await wait('question')).toEqual({ ok: true })
+  await expect(row(page, claude).locator('.tab-status')).toHaveText('Question')
+  const asks = await look()
+  expect(asks.animation).toBe('tab-row-pulse')
+  expect(asks.bg).toBe(asks.accent)
+  const drift = Math.abs((await phase('tab-row-pulse')) - (await phase('tab-status-breathe')))
+  expect(Math.min(drift, 2000 - drift)).toBeLessThan(100)
+
+  expect(await wait('done')).toEqual({ ok: true })
+  await expect(row(page, claude).locator('.tab-status')).toHaveText('Done')
+  const done = await look()
+  expect(done.animation).toBe('tab-row-pulse')
+  expect(done.bg).toBe(done.green)
+  expect(done.green).not.toBe(done.accent)
+
+  // under reduced motion the tint stays, still
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  expect(await look()).toMatchObject({ animation: 'none', bg: done.green })
+
+  // the tab in front never pulses
+  await page.evaluate((id) => window.ct.activateTab(id), claude)
+  await expect(row(page, claude)).toHaveClass(/\bactive\b/)
+  await expect(row(page, claude)).not.toHaveClass(/\battention\b/)
+  expect((await look()).animation).toBe('none')
+  await app.close()
+})
+
+test('a waiting row\'s word stands at the row\'s right end whatever marks come before it, and the row\'s own background stays a row\'s', async () => {
+  const folder = freshFolder()
+  const { app, page, pipeName } = await launchApp({ settings: left(folder) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const plain = await openTab(page, 'claude', folder)
+  const muted = await openTab(page, 'claude', folder)
+  const idle = await openTab(page, 'claude', folder)
+  await page.evaluate((id) => window.ct.muteTab(id, true), muted)
+  await page.evaluate((id) => window.ct.activateTab(id), home)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, home)
+  for (const id of [plain, muted]) {
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId: id, sessionId: SID, reason: 'question' })).toEqual({ ok: true })
+    await expect(row(page, id).locator('.tab-status')).toHaveText('Question')
+  }
+  await expect(row(page, muted).locator('.tab-muted')).toHaveCount(1)
+  const right = (id: string): Promise<number> => row(page, id).locator('.tab-status').evaluate((el) => el.getBoundingClientRect().right)
+  expect(Math.abs((await right(plain)) - (await right(muted)))).toBeLessThanOrEqual(0.5)
+  // the pulse is a layer under the row's content: the row's own background is a row's like any other, so a hover still shows
+  const background = (id: string): Promise<string> => row(page, id).evaluate((el) => getComputedStyle(el).backgroundColor)
+  expect(await background(plain)).toBe(await background(idle))
+  expect(await background(muted)).toBe(await background(idle))
+  await app.close()
+})
+
+test('pointing at a row with a word shows the row\'s × in the word\'s place', async () => {
+  const { app, page, claude, wait } = await waitingRow()
+  const status = row(page, claude).locator('.tab-status')
+  const close = row(page, claude).locator('.tab-close')
+  expect(await wait('question')).toEqual({ ok: true })
+  await expect(status).toBeVisible()
+  await expect(close).toBeHidden()
+  await row(page, claude).hover()
+  await expect(status).toBeHidden()
+  await expect(close).toBeVisible()
+  await page.locator('#titlebar').hover()
+  await expect(status).toBeVisible()
+  await app.close()
+})
+
+test('an open group shows its count, a pulsing dot while one of its tabs waits, and a drawn chevron', async () => {
+  const folder = freshFolder()
+  const repo = gitRepo()
+  const { app, page, pipeName } = await launchApp({ settings: left(folder) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
+  const claude = await openTab(page, 'claude', repo)
+  await openTab(page, 'shell', repo)
+  const group = groupNamed(page, basename(repo))
+  await expect(group).toHaveCount(1)
+  await expect(group).not.toHaveClass(/\bfolded\b/)
+  await expect(group.locator('.tp-group-count')).toHaveText('2')
+  await expect(group.locator('.tp-group-dot')).toHaveCount(0)
+  await expect(group.locator('.tp-chevron svg')).toHaveCount(1)
+
+  await page.evaluate((id) => window.ct.activateTab(id), home)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, home)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: SID, reason: 'question' })).toEqual({ ok: true })
+  await expect(group.locator('.tp-group-dot')).toHaveClass(/\bpulse\b/)
+  await expect(group.locator('.tp-tab')).toHaveCount(2)
   await app.close()
 })

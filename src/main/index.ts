@@ -1,11 +1,12 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, type Rectangle } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
+import { accessSync, appendFileSync, constants, existsSync, mkdirSync, promises as fsPromises, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, hostname, release, tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
 import { dirname, join } from 'node:path'
 import type { AccountResult, AccountsView } from '../shared/accounts'
-import { IPC, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
+import { commandWord, isTabView, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSnapshot } from '../shared/chat'
+import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import type { DocRead } from '../shared/docs'
 import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
 import { DEVICE_COPY, type ActiveDevicesView, type DeviceResult, type DevicePlatform, type DevicesView, MAX_DEVICE_NAME } from '../shared/devices'
@@ -58,6 +59,19 @@ import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './setti
 import { Coalescer } from './coalesce'
 import { SettingsWindow } from './settings-window'
 import { claudeProjectsDir, SessionHistory } from './session-history'
+import { ChatHub } from './chat/chat-hub'
+import { ChatSessions } from './chat/chat-sessions'
+import { isHandoffLine, openInTerminal, type HandoffDeps } from './chat/terminal-handoff'
+import { chatPromptState, planChatResume, routeChatResume, type ChatResumeDeps } from './chat/chat-routing'
+import { scaleChatImage } from './chat/chat-image'
+import { isChatAnswer, isChatSend, isPermissionMode } from './chat/chat-guards'
+import { canonicalFolder, readTrustFile } from './chat/chat-files'
+import { attachFiles, attachmentOf, isChatPaths, isChatQuery, type AttachDeps } from './chat/chat-attachments'
+import { matchFiles, projectFiles } from './chat/project-files'
+import { cachedTrustList, chatSupport } from './chat/chat-support'
+import { resolveChatLaunch, type ChatLaunchDeps } from './chat/claude-spawn'
+import { loadSdk, startSdkEngine } from './chat/sdk-engine'
+import { claudeAccountFile, readPlan } from './claude-plan'
 import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
 import { NoteHub } from './note-hub'
@@ -97,7 +111,7 @@ import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager } from './tab-manager'
 import { TabPlaces } from './tab-places'
-import { clampPush, hostHandlers, hostTabs, planPush, pruneListedMembers, reviewPushes, withoutTabId, type HostContext } from './remote-host'
+import { chatBatchPush, clampPush, forgetCopiedBy, hostHandlers, hostTabs, planPush, pruneListedMembers, reviewPushes, withoutTabId, type HostContext } from './remote-host'
 import { clearFlag, frontClears, presentViewers, RemoteFront } from './remote-front'
 import { RemoteHolder, type RemoteHolderDeps } from './remote-holder'
 import { readAgentMeta } from './transcript-agent-info'
@@ -129,6 +143,43 @@ function isDirectory(p: string): boolean {
 function childEnv(): Record<string, string> {
   return buildChildEnv(process.env)
 }
+
+/** where a chat's launch looks for the Claude command on this computer */
+const chatLaunchDeps: ChatLaunchDeps = {
+  platform: process.platform,
+  isFile: (p) => {
+    try {
+      return statSync(p).isFile()
+    } catch {
+      return false
+    }
+  },
+  isExecutable: isExecutableFile,
+  where: async (name) => {
+    const r = await execRunner('where.exe', [name])
+    return r.code === 0 ? r.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0) : []
+  },
+  loginShell
+}
+
+/** the trusted folders of Claude Code's .claude.json, parsed once per version of the file for all the chat starts of this run */
+const trustList = cachedTrustList({
+  stat: async (file) => {
+    try {
+      const s = await fsPromises.stat(file)
+      return { mtimeMs: s.mtimeMs, size: s.size }
+    } catch {
+      return null
+    }
+  },
+  read: readTrustFile
+})
+
+/** the ids a chat call names (items, cards, tasks) and the model and effort: short strings, or null for the optional ones */
+const isChatRef = (v: unknown): v is string => typeof v === 'string' && v.length <= 256
+const isOptionalChatRef = (v: unknown): v is string | null => v === null || isChatRef(v)
+/** a command handed to the terminal: one line of text, or null for a switch only */
+const isTerminalLine = (v: unknown): v is string | null => v === null || (typeof v === 'string' && isHandoffLine(v))
 
 if (!app.requestSingleInstanceLock({ argv: process.argv })) {
   app.quit()
@@ -205,6 +256,8 @@ function bootstrap(): void {
   const hookScript = resourcePath('hook/session-hook.js')
   // the Claude Code version each command answered --version with: the last start's cache seeds it, a probe adds to it
   const versions = new Map<string, string | null>()
+  // the probe running (or run) for each command: a chat start waits for the answer it is already waiting for
+  const versionProbes = new Map<string, Promise<string | null>>()
   const seededVersion = readVersionCache(dataDir)
   if (seededVersion) versions.set(seededVersion.command, seededVersion.version)
   /** the version the command in use answered with, null when no probe has answered for it */
@@ -221,7 +274,9 @@ function bootstrap(): void {
   // the previous run restarted into an update: reopen its tabs without asking
   const restoreAfterUpdate = consumeUpdateMarker(dataDir, Date.now())
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
-  const history = new SessionHistory(claudeProjectsDir(process.env, homedir()))
+  // the sessions of the chats this app started: Claude Code marks them as SDK sessions, and Recent sessions lists them
+  const chatSessions = new ChatSessions(join(dataDir, 'chat-sessions.json'))
+  const history = new SessionHistory(claudeProjectsDir(process.env, homedir()), undefined, (id) => chatSessions.has(id))
   const starred = new StarredSessions(dataDir, toast)
   const tabLayout = new TabLayoutStore(dataDir, toast)
   const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
@@ -270,6 +325,7 @@ function bootstrap(): void {
         imageTimers.delete(tabId)
         const update = imagesUpdate(tabId)
         send(IPC.evImages, update)
+        chatHub.imagesChanged(tabId, update.cards)
         pushToMembers(tabId, 'images', { cards: update.cards, unseen: update.unseen, notice: update.notice })
       }, 50))
     }
@@ -423,6 +479,8 @@ function bootstrap(): void {
     void s.tempWatcher?.close()
     s.tempWatcher = null
     s.transcriptPath = transcriptPath
+    // a new session has no title until its transcript says so
+    setSessionTitle(tabId, null)
     const gen = images.generation(tabId)
     s.feed = new TranscriptFeed({
       transcriptPath,
@@ -438,6 +496,7 @@ function bootstrap(): void {
       onInterrupt: (agentId, at) => review.interrupted(tabId, agentId, at),
       onTurn: (turnIndex, peer) => turns.report(tabId, turnIndex, peer),
       onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at),
+      onTitle: (title) => setSessionTitle(tabId, title),
       pollMaxMs: testFeedMaxMs,
       subagentPollMaxMs: testFeedMaxMs,
       subagentScanMaxMs: testFeedMaxMs
@@ -489,6 +548,7 @@ function bootstrap(): void {
       remote?.host.changed()
     }
   })
+  const shownFallbacks = new Set<string>()
   const tabs = new TabManager({
     onTabStarted: (tab) => {
       startTabImages(tab)
@@ -549,10 +609,24 @@ function bootstrap(): void {
       noteHub.removeTab(tabId)
       taskLists.removeTab(tabId)
       newerSide.delete(tabId)
+      chatHub.removeTab(tabId)
     },
     // read at each start: the console host applies to tabs opened after a change
     spawn: (o) => spawnPty({ ...o, bundledConpty: settings.conpty === 'bundled' }),
     pipeName,
+    defaultView: () => settings.claude.view,
+    startChat: (req) => {
+      const handle = chatHub.start(req)
+      // the members that watch the tab take the new chat's snapshot at once, so they hold its starting state before its first batch
+      pushChatSnapshot(req.tab.id)
+      return handle
+    },
+    // ten restored tabs with one old Claude Code give one toast: each distinct reason is shown once per run
+    onChatFallback: (_tabId, reason) => {
+      if (shownFallbacks.has(reason)) return
+      shownFallbacks.add(reason)
+      toast(reason)
+    },
     baseEnv: childEnv,
     resolveLaunch: (req) => {
       if (req.kind === 'claude' || req.setupToken) {
@@ -570,7 +644,7 @@ function bootstrap(): void {
         // a fork without a conversation of its own starts as a fork of its head's conversation
         const forkFrom = req.kind === 'claude' && !req.resumeSessionId && req.fork ? req.fork.from : null
         const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? forkFrom, forkSession: forkFrom !== null }
-        return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env }
+        return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env, claude }
       }
       const profile = profiles.find((p) => p.name === req.profile) ?? pickProfile(profiles, settings.defaultProfile)
       if (req.profile && profile.name !== req.profile) toast(`Profile "${req.profile}" not found; using ${profile.name}`)
@@ -607,6 +681,8 @@ function bootstrap(): void {
         }
         // the other devices show the tab's activity and exit too: an update goes out in the directory
         remote?.host.changed()
+        // a tab that changes its view (chat or terminal) shows the title that view names it by
+        syncChatTitle(t.id)
         // an agent's start or stop changes the activity without a state change: the hold follows it
         updateAwake()
       },
@@ -620,6 +696,7 @@ function bootstrap(): void {
         tabAttention.drop(id)
         tabInputs.drop(id)
         titles.delete(id)
+        sessionTitles.delete(id)
         lastReviews.delete(id)
         reviewRevs.delete(id)
         if (lastLocalActive === id) lastLocalActive = null
@@ -632,6 +709,7 @@ function bootstrap(): void {
         tabInputs.bump(id)
         clearAttention(id)
         send(IPC.evTabActivated, id)
+        chatHub.activated(id)
         review.activated(id)
         places.refresh(id)
         applySize(id, sizes.claim(id, null))
@@ -664,6 +742,83 @@ function bootstrap(): void {
   })
   const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
 
+  // the first bytes of a picture: its header gives its size, which is read without a decode (a picture over the budget is no decode)
+  const headOf = async (p: string): Promise<Buffer | null> => {
+    try {
+      const file = await fsPromises.open(p, 'r')
+      try {
+        const buf = Buffer.alloc(256 * 1024)
+        const { bytesRead } = await file.read(buf, 0, buf.length, 0)
+        return buf.subarray(0, bytesRead)
+      } finally {
+        await file.close()
+      }
+    } catch {
+      return null
+    }
+  }
+
+  // a chat's attached files: stat-ed when they are attached, read when the message goes; an image is scaled to what Claude takes
+  const attachDeps: AttachDeps = {
+    stat: async (p) => {
+      try {
+        const info = await fsPromises.stat(p)
+        return { size: info.size, isFile: info.isFile() }
+      } catch {
+        return null
+      }
+    },
+    read: (p) => fsPromises.readFile(p),
+    scale: async (data, mediaType) => scaleChatImage(data, mediaType, nativeImage),
+  }
+
+  // one chat per Claude tab in its chat view: the SDK's conversation, folded into a model the window draws
+  const chatHub: ChatHub = new ChatHub({
+    engine: startSdkEngine,
+    support: async (tab, env) => chatSupport(settings.claude.command, await canonicalFolder(tab.cwd), env, {
+      // the probe the Claude tab started with, still running or done: a chat start waits for its answer
+      version: (command) => versionProbes.get(command) ?? Promise.resolve(versions.get(command) ?? null),
+      readTrust: trustList,
+      launch: (command) => resolveChatLaunch(command, chatLaunchDeps),
+      home: homedir()
+    }),
+    history: async (sessionId, folder) => (await loadSdk()).getSessionMessages(sessionId, { dir: folder, includeSystemMessages: true }),
+    window: (tabId, fromRev, toRev, patches) => send(IPC.evChatPatch, tabId, fromRev, toRev, patches),
+    // the patches of a tab a member watches go to its members, whatever tab the window shows
+    remote: (tabId, fromRev, toRev, patches) => pushChatBatch(tabId, fromRev, toRev, patches),
+    watched: (tabId) => (remote?.host.watchers(tabId).length ?? 0) > 0,
+    activeTabId: () => tabs.activeTabId(),
+    exists: (tabId) => tabs.get(tabId) !== null,
+    cards: (tabId) => images.list(tabId),
+    attach: attachDeps,
+    setSession: (tabId, sessionId) => {
+      tabs.setClaudeSession(tabId, sessionId, 'startup')
+    },
+    setWorking: (tabId, working) => {
+      tabs.setWorking(tabId, working)
+    },
+    // the status bar of a chat tab: the model and the context fill; only while the tab shows its chat
+    status: (tabId, s) => {
+      const tab = tabs.get(tabId)
+      if (!tab || tab.view !== 'chat' || tab.claudeSessionId === null || s.model === null) return
+      statusHub.status({
+        v: 1,
+        type: 'status',
+        tabId,
+        sessionId: tab.claudeSessionId,
+        model: { id: s.model, displayName: s.model },
+        effort: s.effort,
+        // no context segment until the fill is read: an unknown fill is not a measured 0 %; the counts are 0 when the answer gives none
+        context: s.contextPct === null ? null : s.contextUsed !== null && s.contextSize !== null ? { usedTokens: s.contextUsed, size: s.contextSize, usedPct: s.contextPct } : { usedTokens: 0, size: 0, usedPct: s.contextPct },
+        fiveHour: s.fiveHour,
+        sevenDay: s.sevenDay
+      })
+    },
+    recordSession: (sessionId) => chatSessions.add(sessionId),
+    now: () => Date.now(),
+    log
+  })
+
   // ---- remote tabs: the other devices' tabs in this window, and this device's tabs as the other devices see them
   /** the size of each tab's PTY, and the device it is sized for (null: this window) */
   const sizes = new TabSizes()
@@ -684,6 +839,25 @@ function bootstrap(): void {
   }
   /** the title of each of this device's tabs, from its program */
   const titles = new Map<string, string>()
+  /** the session title of each of this device's Claude tabs, from its transcript (see attachTranscript) */
+  const sessionTitles = new Map<string, string>()
+  /** a chat tab has no terminal to title it: its session's title is its title for the other devices and the agents list */
+  const syncChatTitle = (tabId: string): void => {
+    if (tabs.get(tabId)?.view !== 'chat') return
+    const next = sessionTitles.get(tabId)
+    if (titles.get(tabId) === next) return
+    if (next === undefined) titles.delete(tabId)
+    else titles.set(tabId, next)
+    // the members' directory carries the title: they hear of the change with it
+    remote?.host.changed()
+  }
+  /** a tab's session title: the window names the tab by it, and a chat tab's title goes to the other devices too */
+  const setSessionTitle = (tabId: string, title: string | null): void => {
+    if (title === null) sessionTitles.delete(tabId)
+    else sessionTitles.set(tabId, title)
+    send(IPC.evTabSessionTitle, tabId, title)
+    syncChatTitle(tabId)
+  }
   /** the latest review update of each of this device's tabs */
   const lastReviews = new Map<string, ReviewUpdate>()
   /** the rev of each tab's latest review: a counter of the publishes, which only grows */
@@ -829,6 +1003,8 @@ function bootstrap(): void {
     },
     attentionCleared: (tabId) => send(IPC.evAttentionClear, tabId),
     ring: (tabId, reason) => attention.ringInFront(tabId, reason),
+    chat: (tabId, fromRev, toRev, patches) => send(IPC.evChatPatch, tabId, fromRev, toRev, patches),
+    chatReload: (tabId) => send(IPC.evChatReload, tabId),
     push: (tabId, value) => {
       if (value.k === 'status') {
         send(IPC.evStatus, { tabId, ...value.v })
@@ -910,6 +1086,32 @@ function bootstrap(): void {
     reviewRevs,
     profiles: () => profiles.map((p) => p.name),
     typedPaths: (tabId, paths) => typedTextOf(tabId, paths),
+    // the chats of this device's tabs as the members' calls reach them: the hub's own calls, and what a message needs here
+    chat: {
+      snapshot: (tabId) => chatHub.remoteSnapshot(tabId),
+      send: (tabId, s) => chatHub.send(tabId, s),
+      answer: (tabId, cardId, a) => chatHub.answer(tabId, cardId, a),
+      interrupt: (tabId) => chatHub.interrupt(tabId),
+      setMode: (tabId, mode) => chatHub.setMode(tabId, mode),
+      setModel: (tabId, model, effort) => chatHub.setModel(tabId, model, effort),
+      // a task the chat stopped is gone from the tab's status, whoever asked: no later status brings it back
+      stopTask: async (tabId, taskId) => {
+        await chatHub.stopTask(tabId, taskId)
+        statusHub.dropBackground(tabId, taskId)
+      },
+      older: (tabId, beforeId) => chatHub.older(tabId, beforeId),
+      commands: (tabId) => chatHub.commands(tabId),
+      models: (tabId) => chatHub.models(tabId),
+      modes: (tabId) => chatHub.modes(tabId),
+      files: async (tabId, query) => {
+        const tab = tabs.get(tabId)
+        return tab ? matchFiles(await projectFiles(tab.cwd, execGit), query) : []
+      },
+      attach: (tabId, paths) => attachFilesOf(tabId, paths),
+      setView: (tabId, view) => tabs.setView(tabId, view),
+      // the note names the command's first word: `/config`, `!npm`
+      openInTerminal: (tabId, line) => openInTerminal(tabId, line, commandWord(line ?? ''), handoffDeps),
+    },
     openTab: (r) => openTab({ kind: r.kind, cwd: defaultFolder(), profile: r.profile, account: r.account, resumeSessionId: r.resume }, false),
     writeInput: (tabId, data, from) => writeInput(tabId, data, from),
     folders: (tabId, path) => folderListingOf(tabId, path, folderDeps()),
@@ -988,6 +1190,8 @@ function bootstrap(): void {
     },
     onPeerGone: (device) => {
       remoteFronts.delete(device)
+      // a member that left takes the files it copied with it: a message may not name them again
+      forgetCopiedBy(hostCtx, device)
       peerGoneReceived(device)
       for (const [tabId, s] of sizes.dropViewer(device)) applySize(tabId, s)
     },
@@ -1065,6 +1269,18 @@ function bootstrap(): void {
     // a value is clamped only when a member is attached to the tab: nobody else gets it
     if (remote.host.watchers(tabId).length > 0) remote.host.push(tabId, k, clampPush(k, v))
     remote.host.changed()
+  }
+
+  /** the patches of a chat for the members that watch its tab: the batch as it is, or the chat as a snapshot when the batch is too large */
+  const pushChatBatch = (tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]): void => {
+    if (!remote || remote.host.watchers(tabId).length === 0) return
+    const push = chatBatchPush({ fromRev, toRev, patches }, () => chatHub.remoteSnapshot(tabId))
+    if (push) remote.host.push(tabId, push.k, push.v)
+  }
+  /** a chat that starts (or starts again) in a tab: the members that watch the tab take its snapshot at once, before its first batch */
+  const pushChatSnapshot = (tabId: string): void => {
+    const s = chatHub.remoteSnapshot(tabId)
+    if (remote && s !== null && remote.host.watchers(tabId).length > 0) remote.host.push(tabId, 'chat', s)
   }
 
   /** whether a device of the group lists a tab in this window */
@@ -1162,11 +1378,38 @@ function bootstrap(): void {
       return true
     }
   })
+  // what is typed into a tab: a chat-view tab gets it as a message of its chat, a terminal tab as typed keys
+  const writeToClaude = (tabId: string, data: string): void => {
+    if (tabs.get(tabId)?.view !== 'chat') {
+      tabs.write(tabId, data)
+      return
+    }
+    // the Enter that follows the text is the message's own end: it sends nothing by itself
+    const text = data.replace(/\r$/, '')
+    if (text === '') return
+    chatHub.send(tabId, { text, attachments: [], from: 'auto' }).then(
+      (reason) => {
+        if (reason !== null) log.warn(`cannot continue the chat of tab=${tabId}: ${reason}`)
+      },
+      (e: unknown) => log.warn(`cannot continue the chat of tab=${tabId}: ${String(e)}`),
+    )
+  }
+  // a line handed to the terminal: the tab's terminal waits for Claude Code's empty prompt, which a chat-view tab does not show
+  const handoffDeps: HandoffDeps = {
+    setView: (tabId, view) => tabs.setView(tabId, view),
+    promptState: (tabId) => promptQueries.ask(tabId),
+    write: (tabId, data) => tabs.write(tabId, data),
+    note: (tabId, text) => chatHub.noteForChat(tabId, text),
+    toast: (text) => toast(text),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    exists: (tabId) => tabs.get(tabId) !== null,
+  }
   const autoContinue = new AutoContinue({
     enabled: () => settings.claude.autoContinue,
-    promptState: (tabId) => promptQueries.ask(tabId),
-    // writes go to the PTY directly: what it types is not taken for the user's keys
-    write: (tabId, data) => tabs.write(tabId, data),
+    // a chat-view tab has no terminal screen to read: its prompt is the window's answer, the composer's draft (a draft holds the continue back)
+    promptState: (tabId) => chatPromptState(tabs.get(tabId)?.view ?? null, chatHub.isRunning(tabId), () => promptQueries.ask(tabId)),
+    // a terminal tab's writes go to its PTY directly: what it types is not taken for the user's keys
+    write: writeToClaude,
     notify: (tabId) => {
       raiseAttention(tabId, 'done')
     },
@@ -1242,7 +1485,7 @@ function bootstrap(): void {
       // a fork opens where it was saved, and joins its head's family below, once the head is open too
       const fork = t.kind === 'claude' && t.fork ? { of: null, from: t.fork.from } : null
       const opened = openTab(
-        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId, account: t.kind === 'claude' ? t.account : null, muted: t.muted, fork },
+        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId, account: t.kind === 'claude' ? t.account : null, muted: t.muted, fork, view: t.view ?? undefined },
         false
       )
       // the note stored under the fork's own conversation goes with the tab to the conversation it gets
@@ -1370,12 +1613,20 @@ function bootstrap(): void {
       versions.set(command, null)
       return
     }
-    void probeClaudeVersion(dataDir, command, run).then((version) => {
+    // the stored promise is the probe's own answer: it never rejects, so a chat start that awaits it always gets the version
+    const probe = probeClaudeVersion(dataDir, command, run)
+    versionProbes.set(command, probe)
+    void probe.then((version) => {
       const watcherBefore = mailWatcher()
       const versionBefore = localVersion()
       versions.set(command, version)
-      if (mailWatcher() !== watcherBefore) writeTabSettings()
-      if (localVersion() !== versionBefore) mailSync.announce()
+      // the side effects of the answer: a failure here is logged, it must not reject the probe's promise
+      try {
+        if (mailWatcher() !== watcherBefore) writeTabSettings()
+        if (localVersion() !== versionBefore) mailSync.announce()
+      } catch (e) {
+        log.warn(`cannot apply the Claude Code version answer: ${String(e)}`)
+      }
     })
   }
   /** the agents: this device's Claude tabs with a session, then those of each connected device that takes mail */
@@ -1487,6 +1738,8 @@ function bootstrap(): void {
       log.info(`session ${msg.source} tab=${msg.tabId} id=${msg.sessionId} transcript=${msg.transcriptPath ?? '-'}`)
       const before = tabs.get(msg.tabId)?.claudeSessionId ?? null
       if (!tabs.setClaudeSession(msg.tabId, msg.sessionId, msg.source)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      // a chat tab shows the new conversation too: a clear, a compaction or a resume under another id
+      chatHub.sessionChanged(msg.tabId, msg.sessionId, msg.source)
       // a conversation resumed under a new id keeps the mail it had: the old id reads as the new one from now on
       if (msg.source === 'resume' && before !== null && before !== msg.sessionId) mailHub.alias(before, msg.sessionId)
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
@@ -1879,6 +2132,14 @@ function bootstrap(): void {
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
   ipcMain.handle(IPC.layoutGet, (): TabLayout => tabLayout.get())
   ipcMain.on(IPC.layoutSet, (_e, c: unknown) => { if (isTabLayoutChange(c)) tabLayout.set(c) })
+  /** a listed session in a new Claude tab: Claude Code finds a conversation by its folder, and a folder that is gone cannot resume it */
+  const openListedSession = (s: { id: string; cwd: string }): TabInfo | null => {
+    if (!isDirectory(s.cwd)) {
+      toast(`The folder of this session no longer exists: ${s.cwd}`)
+      return null
+    }
+    return openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id })
+  }
   ipcMain.on(IPC.sessionsOpen, (_e, id: unknown, device?: unknown) => {
     // the device of the section the pick was made in; a value that is not a device drops the pick
     if (device !== undefined && !isDeviceId(device)) return
@@ -1893,12 +2154,7 @@ function bootstrap(): void {
       tabs.activate(tab.id)
       return
     }
-    // Claude Code finds a conversation by its folder: resuming it anywhere else fails
-    if (!isDirectory(s.cwd)) {
-      toast(`The folder of this session no longer exists: ${s.cwd}`)
-      return
-    }
-    openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id })
+    openListedSession(s)
   })
   ipcMain.on(IPC.tabsClose, (_e, id: unknown) => {
     if (!isId(id)) return
@@ -1969,6 +2225,144 @@ function bootstrap(): void {
       toast(`Cannot open tab: ${(e as Error).message}`)
     }
   })
+  // ---- chats: a call for a tab without a chat does nothing; chatSend answers with the hub's reason, as a tab without one has no conversation
+  /** a local Claude tab: the only kind that has a chat */
+  const isLocalClaudeTab = (tabId: unknown): tabId is string => isId(tabId) && tabs.get(tabId)?.kind === 'claude'
+  /** a chat call that is not awaited: a failure is logged, never thrown into the main process */
+  const chatCall = (call: Promise<void>, what: string): void => {
+    call.catch((e: unknown) => log.warn(`${what}: ${String(e)}`))
+  }
+  // a chat call about a remote tab (one of the other devices' tabs in this window) goes to the device that runs it
+  ipcMain.handle(IPC.chatSnapshot, (_e, tabId: unknown): ChatSnapshot | null => {
+    if (isLocalClaudeTab(tabId)) return chatHub.snapshot(tabId)
+    return isId(tabId) && remote?.viewer.has(tabId) ? remote.viewer.chatSnapshot(tabId) : null
+  })
+  ipcMain.handle(IPC.chatSend, (_e, tabId: unknown, s: unknown): Promise<string | null> => {
+    if (!isId(tabId) || !isChatSend(s)) return Promise.resolve('Invalid message')
+    if (remote?.viewer.has(tabId)) return remote.actions.chatSend(tabId, s)
+    return chatHub.send(tabId, s)
+  })
+  ipcMain.on(IPC.chatInterrupt, (_e, tabId: unknown) => {
+    if (isLocalClaudeTab(tabId)) chatHub.interrupt(tabId)
+    else if (isId(tabId) && remote?.viewer.has(tabId)) remote.actions.chatInterrupt(tabId)
+  })
+  ipcMain.handle(IPC.chatAnswer, (_e, tabId: unknown, cardId: unknown, a: unknown): boolean | Promise<boolean> => {
+    if (!isId(tabId) || !isChatRef(cardId) || !isChatAnswer(a)) return false
+    if (remote?.viewer.has(tabId)) return remote.actions.chatAnswer(tabId, cardId, a)
+    return isLocalClaudeTab(tabId) ? chatHub.answer(tabId, cardId, a) : false
+  })
+  ipcMain.on(IPC.chatSetMode, (_e, tabId: unknown, mode: unknown) => {
+    if (!isId(tabId) || !isPermissionMode(mode)) return
+    if (remote?.viewer.has(tabId)) remote.actions.chatMode(tabId, mode)
+    else if (isLocalClaudeTab(tabId)) chatCall(chatHub.setMode(tabId, mode), 'cannot set the permission mode')
+  })
+  ipcMain.on(IPC.chatSetModel, (_e, tabId: unknown, model: unknown, effort: unknown) => {
+    if (!isId(tabId) || !isOptionalChatRef(model) || !isOptionalChatRef(effort)) return
+    if (remote?.viewer.has(tabId)) remote.actions.chatModel(tabId, model, effort)
+    else if (isLocalClaudeTab(tabId)) chatCall(chatHub.setModel(tabId, model, effort), 'cannot set the model')
+  })
+  // the answer says the stop was sent to the chat's engine: the window then drops the task. A remote tab's stop is not answered here.
+  ipcMain.handle(IPC.chatStopTask, async (_e, tabId: unknown, taskId: unknown): Promise<boolean> => {
+    if (!isId(tabId) || !isChatRef(taskId)) return false
+    if (remote?.viewer.has(tabId)) {
+      remote.actions.chatStopTask(tabId, taskId)
+      return false
+    }
+    if (!isLocalClaudeTab(tabId)) return false
+    try {
+      await chatHub.stopTask(tabId, taskId)
+      statusHub.dropBackground(tabId, taskId)
+      return true
+    } catch (e) {
+      log.warn(`cannot stop the task: ${String(e)}`)
+      return false
+    }
+  })
+  ipcMain.handle(IPC.chatCommands, (_e, tabId: unknown): Promise<ChatCommandInfo[]> => {
+    if (isLocalClaudeTab(tabId)) return chatHub.commands(tabId)
+    return isId(tabId) && remote?.viewer.has(tabId) ? remote.actions.chatCommands(tabId) : Promise.resolve([])
+  })
+  ipcMain.handle(IPC.chatModels, (_e, tabId: unknown): Promise<ChatModelInfo[]> => {
+    if (isLocalClaudeTab(tabId)) return chatHub.models(tabId)
+    return isId(tabId) && remote?.viewer.has(tabId) ? remote.actions.chatModels(tabId) : Promise.resolve([])
+  })
+  ipcMain.handle(IPC.chatOlder, (_e, tabId: unknown, beforeId: unknown): Promise<{ items: ChatItem[]; hasOlder: boolean } | null> => {
+    if (!isId(tabId) || !isChatRef(beforeId)) return Promise.resolve(null)
+    if (remote?.viewer.has(tabId)) return remote.actions.chatOlder(tabId, beforeId)
+    return Promise.resolve(isLocalClaudeTab(tabId) ? chatHub.older(tabId, beforeId) : null)
+  })
+  ipcMain.handle(IPC.chatModes, (_e, tabId: unknown): Promise<ChatPermissionMode[]> => {
+    if (isLocalClaudeTab(tabId)) return Promise.resolve(chatHub.modes(tabId))
+    if (!isId(tabId) || !remote?.viewer.has(tabId)) return Promise.resolve([])
+    // a member's chat offers the modes its host's tab offers, Auto included; a host that refuses or is too old gives the three every device has
+    return remote.actions.chatModes(tabId).then((modes) => modes ?? ['default', 'acceptEdits', 'plan'])
+  })
+  ipcMain.handle(IPC.chatOpenInTerminal, (_e, tabId: unknown, line: unknown): Promise<boolean> => {
+    if (!isTerminalLine(line)) return Promise.resolve(false)
+    if (isLocalClaudeTab(tabId)) return openInTerminal(tabId, line, commandWord(line ?? ''), handoffDeps)
+    if (isId(tabId) && remote?.viewer.has(tabId)) return remote.actions.chatTerminal(tabId, line)
+    return Promise.resolve(false)
+  })
+  // a session picked in a chat: in this tab when the tab works in the session's folder (the conversation resumes here), else in a new tab
+  // the window's folder argument is not trusted: the routing takes the session's folder from the list
+  const chatResumeDeps: ChatResumeDeps = {
+    listed: (id) => listedSessions.get(id),
+    tabs: () => tabs.list(),
+    resume: (tabId, sessionId) => tabs.resumeSession(tabId, sessionId),
+    activate: (tabId) => tabs.activate(tabId),
+    open: (s) => openListedSession(s) !== null,
+  }
+  // where a pick goes, asked before the picker's question: only a restart in the tab's own folder stops background tasks
+  ipcMain.handle(IPC.chatResumePlan, (_e, tabId: unknown, sessionId: unknown): Promise<'here' | 'restart' | 'new-tab' | null> => (
+    isLocalClaudeTab(tabId) && isSessionId(sessionId) ? Promise.resolve(planChatResume(tabId, sessionId, chatResumeDeps)) : Promise.resolve(null)
+  ))
+  ipcMain.handle(IPC.chatResume, (_e, tabId: unknown, sessionId: unknown, _cwd: unknown): Promise<'here' | 'new-tab' | null> => (
+    isLocalClaudeTab(tabId) && isSessionId(sessionId) ? routeChatResume(tabId, sessionId, chatResumeDeps) : Promise.resolve(null)
+  ))
+  // the files a chat's composer attaches: an image joins the Media panel, and the files are allowed for the tab's messages
+  const attachFilesOf = (tabId: string, paths: string[]): Promise<ChatAttachment[]> => attachFiles(tabId, paths, {
+    stat: attachDeps.stat,
+    head: headOf,
+    addImage: (id, path, source, caption) => images.add(id, path, source, caption)?.id ?? null,
+    allow: (id, attached) => chatHub.allow(id, attached),
+  })
+  // a remote tab's files are copied to its device first, as a drop is, and the attachments carry the paths they have there
+  const attachRemoteFilesOf = async (tabId: string, paths: string[]): Promise<ChatAttachment[]> => {
+    const sizes: number[] = []
+    const sent = await copies.copy(tabId, async () => {
+      const files = await Promise.all(paths.map((p) => fileToSend(p)))
+      sizes.push(...files.map((f) => f.size))
+      return files
+    })
+    return sent === null ? [] : sent.paths.map((path, i) => attachmentOf(path, sizes[i] ?? 0))
+  }
+  ipcMain.handle(IPC.chatAttach, (_e, tabId: unknown, paths: unknown): Promise<ChatAttachment[]> => {
+    if (!isId(tabId) || !isChatPaths(paths)) return Promise.resolve([])
+    if (isLocalClaudeTab(tabId)) return attachFilesOf(tabId, paths)
+    return remote?.viewer.has(tabId) ? attachRemoteFilesOf(tabId, paths) : Promise.resolve([])
+  })
+  ipcMain.handle(IPC.chatPickFiles, async (e, tabId: unknown): Promise<ChatAttachment[]> => {
+    if (!isId(tabId) || !(isLocalClaudeTab(tabId) || remote?.viewer.has(tabId))) return []
+    const owner = BrowserWindow.fromWebContents(e.sender)
+    const options: Electron.OpenDialogOptions = { title: 'Attach files', properties: ['openFile', 'multiSelections'] }
+    const r = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    if (r.canceled) return []
+    return isLocalClaudeTab(tabId) ? attachFilesOf(tabId, r.filePaths) : attachRemoteFilesOf(tabId, r.filePaths)
+  })
+  ipcMain.handle(IPC.chatFiles, async (_e, tabId: unknown, query: unknown): Promise<string[]> => {
+    if (!isId(tabId) || !isChatQuery(query)) return []
+    if (remote?.viewer.has(tabId)) return remote.actions.chatFiles(tabId, query)
+    const tab = isLocalClaudeTab(tabId) ? tabs.get(tabId) : undefined
+    if (!tab) return []
+    return matchFiles(await projectFiles(tab.cwd, execGit), query)
+  })
+  // a remote tab's view switches on its device; the tab's own view and the handoff of a command go through the same switch
+  ipcMain.handle(IPC.tabsSetView, (_e, tabId: unknown, view: unknown): Promise<boolean> => {
+    if (!isId(tabId) || !isTabView(view)) return Promise.resolve(false)
+    if (remote?.viewer.has(tabId)) return remote.actions.chatView(tabId, view)
+    return tabs.setView(tabId, view)
+  })
+
   // Change folder: a remote tab's folder is listed and changed on its device, where the folder is
   ipcMain.handle(IPC.foldersList, (_e, id: unknown, path: unknown): Promise<FolderResult> => {
     if (!isId(id) || !(path === null || isFolderInput(path))) return Promise.resolve({ ok: false, error: 'bad arguments' })
@@ -2282,7 +2676,10 @@ function bootstrap(): void {
       else void w.loadFile(join(__dirname, '../renderer/settings.html'), section ? { hash: section } : undefined)
     }
   })
-  ipcMain.on(IPC.settingsOpenWindow, () => settingsWindow.open())
+  ipcMain.on(IPC.settingsOpenWindow, (_e, section: unknown) => settingsWindow.open(isSettingsSection(section) ? section : undefined))
+  // the plan named at the foot of the tabs. Tests read only the .claude.json of a CLAUDE_CONFIG_DIR they set, never the user's
+  const claudeAccount = isTest && !process.env.CLAUDE_CONFIG_DIR ? null : claudeAccountFile(process.env, homedir())
+  ipcMain.handle(IPC.accountPlan, () => (claudeAccount === null ? null : readPlan(claudeAccount)))
   if (process.platform === 'darwin') Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate(app.name, () => settingsWindow.open())))
   ipcMain.handle(IPC.clipboardRead, async (): Promise<ClipboardContent> => ({ text: await clipboard.readText(), hasImage: await clipboard.has('image/png') }))
   ipcMain.on(IPC.clipboardWriteText, (_e, text: string) => { void clipboard.writeText(text) })

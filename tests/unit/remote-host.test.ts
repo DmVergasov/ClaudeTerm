@@ -3,14 +3,16 @@ import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { clampPush, hostHandlers, hostTabs, packFiles, pruneListedMembers, readImagePart, reviewPushes } from '../../src/main/remote-host'
+import { chatBatchPush, clampPush, hostHandlers, hostTabs, packFiles, pruneListedMembers, readImagePart, reviewPushes } from '../../src/main/remote-host'
+import { MAX_CHAT_PATCHES, parseChatPush } from '../../src/main/chat/chat-mirror'
 import { Calls, CallError, type CallLink } from '../../src/main/sync/calls'
 import { CALL_REPLIES, parsePush } from '../../src/main/sync/remote-shapes'
 import { parseRemoteTab } from '../../src/main/sync/remote-wire'
 import { MAX_FRAME_BYTES } from '../../src/main/sync/wire'
 import type { AccountView } from '../../src/shared/accounts'
 import { MAX_IMAGE_BYTES } from '../../src/shared/image-file'
-import { IMAGE_PART_BYTES, MAX_REVIEW_PARTS, REVIEW_PART_BYTES, type PushKind } from '../../src/shared/remote'
+import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_REVIEW_PARTS, REVIEW_PART_BYTES, type PushKind } from '../../src/shared/remote'
+import type { ChatPatch, ChatSnapshot } from '../../src/shared/chat'
 import { REMOTE_COPY } from '../../src/shared/remote'
 import type { PlanStatus, PlanTask, RecentSession, TabPlace } from '../../src/shared/types'
 import { ACC_WORK, B_ID, T1, T2, T3, T9, T_LONG_CWD, fakeHost, imageCard, mainStatus, reviewUpdate, tabId, tabInfo } from '../fixtures/host-context'
@@ -34,6 +36,32 @@ function expectReceived(f: ReturnType<typeof fakeHost>): void {
   expect(entries.length).toBeGreaterThan(0)
   for (const e of entries) expect(parseRemoteTab(JSON.parse(JSON.stringify(e)))).toEqual(e)
 }
+
+describe('chatBatchPush (chat mode): a batch goes as it is, or as the chat when it is over the push cap', () => {
+  const batch = (n: number, text = 'a'): { fromRev: number; toRev: number; patches: ChatPatch[] } => ({
+    fromRev: 0,
+    toRev: n,
+    patches: Array.from({ length: n }, () => ({ op: 'append', id: 'item-1', text } as ChatPatch)),
+  })
+  const snap = { tabId: T1, rev: 9, items: [], hasOlder: false, state: { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false } } as unknown as ChatSnapshot
+
+  it('a small batch is a chat-patch push, as it is', () => {
+    expect(chatBatchPush(batch(3), () => snap)).toEqual({ k: 'chat-patch', v: batch(3) })
+  })
+
+  it('a batch of more patches than a push takes is replaced by the chat as a snapshot push', () => {
+    expect(chatBatchPush(batch(MAX_CHAT_PATCHES + 1), () => snap)).toEqual({ k: 'chat', v: snap })
+  })
+
+  it('a batch over the push cap in bytes is replaced by the snapshot too', () => {
+    const big = batch(2, 'x'.repeat(MAX_CHAT_PUSH_BYTES))
+    expect(chatBatchPush(big, () => snap)).toEqual({ k: 'chat', v: snap })
+  })
+
+  it('a batch with no chat left to send says nothing', () => {
+    expect(chatBatchPush(batch(MAX_CHAT_PATCHES + 1), () => null)).toBeNull()
+  })
+})
 
 describe('the directory of this device', () => {
   it('the directory entry of a tab says what the other devices show', () => {
@@ -819,5 +847,23 @@ describe('the Recent sessions of this device (R1, R2, R9)', () => {
     pruneListedMembers(f.ctx, [B_ID])
     expect(hostHandlers(f.ctx, B_ID)['open-session']!.run({ session: S1 })).toEqual({ id: T3 })
     expect(() => hostHandlers(f.ctx, C_ID)['open-session']!.run({ session: S1 })).toThrow(REMOTE_COPY.unknownSession)
+  })
+})
+
+describe('clampPush of a chat snapshot (chat mode): the push fits the member', () => {
+  const STATE = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
+
+  it('a 5 000-item conversation is cut to the newest items under 2 MiB, and the member accepts the cut snapshot', () => {
+    const items = Array.from({ length: 5000 }, (_, i) => ({ kind: 'notice', id: `n${i}`, tone: 'info', text: 'x'.repeat(400), action: null }))
+    const v = clampPush('chat', { tabId: T1, rev: 4, items, hasOlder: false, state: STATE }) as { items: unknown[]; hasOlder: boolean }
+    expect(Buffer.byteLength(JSON.stringify(v))).toBeLessThanOrEqual(2 * 1024 * 1024)
+    expect(v.hasOlder).toBe(true)
+    expect(v.items.at(-1)).toEqual(items[4999])
+    expect(parseChatPush(v)).not.toBeNull()
+  })
+
+  it('a snapshot that fits is kept whole', () => {
+    const v = { tabId: T1, rev: 1, items: [], hasOlder: false, state: STATE }
+    expect(clampPush('chat', v)).toEqual(v)
   })
 })

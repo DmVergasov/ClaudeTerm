@@ -1,3 +1,4 @@
+import { isTabView, type ChatAnswer, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPermissionMode, type ChatSend, type TabView } from '../../shared/chat'
 import { MAX_IMAGE_BYTES } from '../../shared/image-file'
 import type { ImagesUpdate, StatusUpdate } from '../../shared/ipc'
 import { isUuid } from '../../shared/protocol'
@@ -5,6 +6,7 @@ import { MAX_HASH } from '../../shared/review'
 import {
   IMAGE_PART_BYTES,
   MAX_FOLDER_ENTRIES,
+  MAX_INPUT_CHARS,
   MAX_PATH_TEXT,
   MAX_REVIEW_PARTS,
   MAX_SNAPSHOT_BYTES,
@@ -45,6 +47,8 @@ import type {
   RecentSession,
   TabKind
 } from '../../shared/types'
+import { isChatAnswer, isChatSend, isPermissionMode } from '../chat/chat-guards'
+import { isItems } from '../chat/chat-mirror'
 import { isAccountRef, isPtySize } from '../ipc-guards'
 import { isChunk, isNonNegativeSafeInteger, isPositiveSafeInteger, isString, isTitle, orNull, parseCounter } from './remote-wire'
 import { isPlainObject } from './views'
@@ -125,6 +129,19 @@ export interface CallArgs {
   'recv-part': { transfer: string; file: number; offset: number; data: string }
   'recv-end': { transfer: string; id?: string }
   tabs: Empty
+  'chat-send': { id: string } & ChatSend
+  'chat-answer': { id: string; cardId: string; answer: ChatAnswer }
+  'chat-interrupt': { id: string }
+  'chat-mode': { id: string; mode: ChatPermissionMode }
+  'chat-model': { id: string; model: string | null; effort: string | null }
+  'chat-stop-task': { id: string; taskId: string }
+  'chat-older': { id: string; beforeId: string }
+  'chat-view': { id: string; view: TabView }
+  'chat-commands': { id: string }
+  'chat-models': { id: string }
+  'chat-modes': { id: string }
+  'chat-files': { id: string; query: string }
+  'chat-terminal': { id: string; line: string }
 }
 
 /** the reply each call method answers with */
@@ -154,6 +171,19 @@ export interface CallReplies {
   'recv-part': Empty
   'recv-end': { paths: string[]; text?: string }
   tabs: Empty
+  'chat-send': Empty
+  'chat-answer': { ok: boolean }
+  'chat-interrupt': Empty
+  'chat-mode': Empty
+  'chat-model': Empty
+  'chat-stop-task': Empty
+  'chat-older': { items: ChatItem[]; hasOlder: boolean }
+  'chat-view': Empty
+  'chat-commands': ChatCommandInfo[]
+  'chat-models': ChatModelInfo[]
+  'chat-modes': ChatPermissionMode[]
+  'chat-files': string[]
+  'chat-terminal': Empty
 }
 
 export type CallMethod = keyof CallArgs
@@ -206,6 +236,41 @@ function jsonBytesOf(v: unknown): number {
 /** the rev of a review push: the host's counter for the review, or null for a review of an older device */
 export function reviewRevOf(v: unknown): number | null {
   return isPlainObject(v) && isNonNegativeSafeInteger(v.rev) ? v.rev : null
+}
+
+// the chat calls: ids and names up to 500 characters, a model or effort up to 200, a list of commands or models up to 1000
+const MAX_CHAT_ID = 500
+const MAX_CHAT_MODEL = 200
+const MAX_CHAT_LIST = 1000
+/** the permission modes a tab offers: the six there are */
+const MAX_CHAT_MODES = 6
+const MAX_CHAT_TEXT = 64 * 1024
+const CHAT_GROUPS: readonly ChatCommandInfo['group'][] = ['builtin', 'project', 'plugin']
+
+/** a chat-older page: its items, each one checked, and hasOlder; a page of another shape is null */
+function chatPageOf(v: unknown): { items: ChatItem[]; hasOlder: boolean } | null {
+  if (!isPlainObject(v) || !isItems(v.items) || typeof v.hasOlder !== 'boolean') return null
+  return { items: v.items, hasOlder: v.hasOlder }
+}
+
+function chatCommandOf(v: unknown): ChatCommandInfo | null {
+  if (!isPlainObject(v)) return null
+  const { name, description, argumentHint, group, source, terminal } = v
+  if (!isString(name, 1, MAX_CHAT_ID) || !isString(description, 0, MAX_CHAT_TEXT) || !isString(argumentHint, 0, MAX_CHAT_ID)) return null
+  if (!CHAT_GROUPS.some((g) => g === group) || !orNull(source, (s) => isString(s, 0, MAX_CHAT_TEXT)) || typeof terminal !== 'boolean') return null
+  return { name, description, argumentHint, group: group as ChatCommandInfo['group'], source: source as string | null, terminal }
+}
+
+function chatModelOf(v: unknown): ChatModelInfo | null {
+  if (!isPlainObject(v)) return null
+  const { value, displayName, description, efforts } = v
+  if (!isString(value, 1, MAX_CHAT_ID) || !isString(displayName, 0, MAX_CHAT_ID) || !isString(description, 0, MAX_CHAT_TEXT)) return null
+  const list = listOf(efforts, MAX_CHAT_LIST, (x) => (isString(x, 1, MAX_CHAT_ID) ? x : null))
+  if (list === null) return null
+  // an older device sends no resolved id: the field is then absent, not null
+  if (v.resolved === undefined) return { value, displayName, description, efforts: list }
+  if (!isString(v.resolved, 1, MAX_CHAT_ID)) return null
+  return { value, displayName, description, efforts: list, resolved: v.resolved }
 }
 
 /** The arguments of each call method, or null when they do not fit. Returns a copy of the known fields only. */
@@ -305,7 +370,66 @@ export const CALL_ARGS: { [M in CallMethod]: (a: unknown) => CallArgs[M] | null 
     return { transfer, file, offset, data }
   },
   'recv-end': recvEndOf,
-  tabs: emptyOf
+  tabs: emptyOf,
+  'chat-send': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id } = a
+    const send: unknown = { text: a.text, attachments: a.attachments }
+    if (!isUuid(id) || !isChatSend(send)) return null
+    return { id, ...send }
+  },
+  'chat-answer': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, cardId, answer } = a
+    if (!isUuid(id) || !isString(cardId, 1, MAX_CHAT_ID) || !isChatAnswer(answer)) return null
+    return { id, cardId, answer }
+  },
+  'chat-interrupt': idOf,
+  'chat-mode': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, mode } = a
+    if (!isUuid(id) || !isPermissionMode(mode)) return null
+    return { id, mode }
+  },
+  'chat-model': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, model, effort } = a
+    if (!isUuid(id) || !orNull(model, (s) => isString(s, 1, MAX_CHAT_MODEL)) || !orNull(effort, (s) => isString(s, 1, MAX_CHAT_MODEL))) return null
+    return { id, model: model as string | null, effort: effort as string | null }
+  },
+  'chat-stop-task': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, taskId } = a
+    if (!isUuid(id) || !isString(taskId, 1, MAX_CHAT_ID)) return null
+    return { id, taskId }
+  },
+  'chat-older': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, beforeId } = a
+    if (!isUuid(id) || !isString(beforeId, 1, MAX_CHAT_ID)) return null
+    return { id, beforeId }
+  },
+  'chat-view': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, view } = a
+    if (!isUuid(id) || !isTabView(view)) return null
+    return { id, view }
+  },
+  'chat-commands': idOf,
+  'chat-models': idOf,
+  'chat-modes': idOf,
+  'chat-files': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, query } = a
+    if (!isUuid(id) || !isString(query, 0, MAX_PATH_TEXT)) return null
+    return { id, query }
+  },
+  'chat-terminal': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, line } = a
+    if (!isUuid(id) || !isString(line, 0, MAX_INPUT_CHARS)) return null
+    return { id, line }
+  }
 })
 
 /** The reply of each call method, or null when it does not fit. Returns a copy of the known fields only. */
@@ -334,7 +458,21 @@ export const CALL_REPLIES: { [M in CallMethod]: (v: unknown) => CallReplies[M] |
   'recv-begin': transferOf,
   'recv-part': emptyOf,
   'recv-end': pathsOf,
-  tabs: emptyOf
+  tabs: emptyOf,
+  'chat-send': emptyOf,
+  'chat-answer': okOf,
+  'chat-interrupt': emptyOf,
+  'chat-mode': emptyOf,
+  'chat-model': emptyOf,
+  'chat-stop-task': emptyOf,
+  'chat-older': chatPageOf,
+  'chat-view': emptyOf,
+  'chat-commands': (v) => listOf(v, MAX_CHAT_LIST, chatCommandOf),
+  'chat-models': (v) => listOf(v, MAX_CHAT_LIST, chatModelOf),
+  // the modes a tab offers: at most the six Claude Code has, each one a mode the protocol knows
+  'chat-modes': (v) => listOf(v, MAX_CHAT_MODES, (x) => (isPermissionMode(x) ? x : null)),
+  'chat-files': (v) => listOf(v, MAX_CHAT_LIST, (x) => (isString(x, 1, MAX_PATH_TEXT) ? x : null)),
+  'chat-terminal': emptyOf
 })
 
 /** The push of a kind, checked; `tabId` is the tab the push came for. A card of another tab refuses the push. */

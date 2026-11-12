@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Locator } from '@playwright/test'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -98,6 +98,27 @@ test('Ctrl+Shift+H opens the window: newest first, filter as you type, Enter con
   await expect(win.locator('.session-last').last()).toHaveText('why does login fail')
   await page.keyboard.type('login')
   await expect(win.locator('.session-title')).toHaveText(['Fix the login bug'])
+  await page.keyboard.press('Enter')
+  await expect(win).toBeHidden()
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  const id = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`--resume ${SID_A}`)
+  await app.close()
+})
+
+test('a search typed before the list arrives selects its best match, not the project heading above it: Enter continues that session', async () => {
+  const { config } = makeConfig()
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  // the list answers late, as on a busy machine: the whole search is typed before it is in
+  await delayIpc(app, 'sessions:list', 1500)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press(KEYS.recentSessions)
+  const win = page.locator('#sessions')
+  await expect(win).toBeVisible()
+  await page.keyboard.type('login')
+  await expect(win.locator('.session-row')).toHaveCount(1)
+  await expect(win.locator('.session-row.selected .session-title')).toHaveText('Fix the login bug')
   await page.keyboard.press('Enter')
   await expect(win).toBeHidden()
   await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
@@ -232,6 +253,19 @@ test('the window keeps the keyboard: Tab and clicks inside it leave typing in th
 })
 
 /** every project opens folded except the newest one: tests that need all the rows unfold the rest */
+/** the next calls of a channel wait `ms` before the real handler answers: the answer comes late */
+async function delayIpc(app: ElectronApplication, channel: string, ms: number): Promise<void> {
+  await app.evaluate(({ ipcMain }, { channel, ms }) => {
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (event: unknown, ...args: unknown[]) => unknown> })._invokeHandlers
+    const real = handlers.get(channel)!
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, async (event, ...args) => {
+      await new Promise((r) => setTimeout(r, ms))
+      return real(event, ...args)
+    })
+  }, { channel, ms })
+}
+
 async function unfoldAll(win: Locator): Promise<void> {
   await expect(win.locator('.sessions-group').first()).toBeVisible()
   for (;;) {

@@ -46,7 +46,27 @@ const GOOD_ARGS: Array<[CallMethod, unknown]> = [
   ['recv-begin', { id: T1, files: [{ name: 'a.png', size: 0 }] }],
   ['recv-part', { transfer: T2, file: 0, offset: 0, data: 'AAAA' }],
   ['recv-end', { transfer: T2 }],
-  ['recv-end', { transfer: T2, id: T1 }]
+  ['recv-end', { transfer: T2, id: T1 }],
+  ['chat-send', { id: T1, text: 'Fix the build', attachments: [] }],
+  ['chat-send', { id: T1, text: '', attachments: [{ kind: 'image', path: 'C:\\work\\shot.png', name: 'shot.png', size: 10, cardId: CARD }] }],
+  ['chat-send', { id: T1, text: 'see', attachments: [{ kind: 'file', path: '/Users/x/a.txt', name: 'a.txt', size: 0, cardId: null }] }],
+  ['chat-answer', { id: T1, cardId: 'c1', answer: { type: 'permission', choice: 'deny', suggestion: null, message: null } }],
+  ['chat-answer', { id: T1, cardId: 'c1', answer: { type: 'question', answers: null } }],
+  ['chat-answer', { id: T1, cardId: 'c1', answer: { type: 'plan', choice: 'keep-planning', message: 'Wait' } }],
+  ['chat-answer', { id: T1, cardId: 'c1', answer: { type: 'dialog', choice: null } }],
+  ['chat-interrupt', { id: T1 }],
+  ['chat-mode', { id: T1, mode: 'plan' }],
+  ['chat-model', { id: T1, model: 'opus', effort: null }],
+  ['chat-model', { id: T1, model: null, effort: 'high' }],
+  ['chat-stop-task', { id: T1, taskId: 'task-1' }],
+  ['chat-older', { id: T1, beforeId: 'item-1' }],
+  ['chat-view', { id: T1, view: 'chat' }],
+  ['chat-commands', { id: T1 }],
+  ['chat-models', { id: T1 }],
+  ['chat-modes', { id: T1 }],
+  ['chat-files', { id: T1, query: 'src/' }],
+  ['chat-terminal', { id: T1, line: 'ls' }],
+  ['chat-terminal', { id: T1, line: '' }]
 ]
 
 const BAD_ARGS: Array<[CallMethod, unknown]> = [
@@ -95,13 +115,46 @@ const BAD_ARGS: Array<[CallMethod, unknown]> = [
   ['review', { id: T1, action: { k: 'viewed', path: 'a', hash: 'a\u0000b', viewed: true } }],
   ['recv-end', { transfer: 'x' }],
   ['recv-end', { transfer: T2, id: 'x' }],
-  ['recv-end', { transfer: T2, id: 5 }]
+  ['recv-end', { transfer: T2, id: 5 }],
+  ['chat-send', { id: T1, text: 5, attachments: [] }],
+  ['chat-send', { id: T1, text: 'x'.repeat(1024 * 1024 + 1), attachments: [] }],
+  ['chat-send', { id: T1, text: 'hi', attachments: 'none' }],
+  ['chat-send', { id: T1, text: 'hi', attachments: [{ kind: 'file', path: 'a.txt', name: 'a.txt', size: 1, cardId: null }] }],
+  ['chat-send', { id: T1, text: 'hi', attachments: [{ kind: 'video', path: '/a.mp4', name: 'a.mp4', size: 1, cardId: null }] }],
+  ['chat-send', { id: 'x', text: 'hi', attachments: [] }],
+  ['chat-answer', { id: T1, cardId: 5, answer: { type: 'dialog', choice: null } }],
+  ['chat-answer', { id: T1, cardId: '', answer: { type: 'dialog', choice: null } }],
+  ['chat-answer', { id: T1, cardId: 'c1', answer: { type: 'nope' } }],
+  ['chat-answer', { id: T1, cardId: 'c1', answer: { type: 'permission', choice: 'always', suggestion: null, message: null } }],
+  ['chat-answer', { id: T1, cardId: 'c1' }],
+  ['chat-interrupt', { id: 'x' }],
+  ['chat-interrupt', {}],
+  ['chat-mode', { id: T1, mode: 'yolo' }],
+  ['chat-mode', { id: T1, mode: 3 }],
+  ['chat-model', { id: T1, model: 5, effort: null }],
+  ['chat-model', { id: T1, model: 'x'.repeat(201), effort: null }],
+  ['chat-model', { id: T1, model: null }],
+  ['chat-model', { id: T1, model: 'opus', effort: '' }],
+  ['chat-stop-task', { id: T1, taskId: '' }],
+  ['chat-stop-task', { id: T1, taskId: 5 }],
+  ['chat-older', { id: T1, beforeId: 5 }],
+  ['chat-older', { id: 'x', beforeId: 'item-1' }],
+  ['chat-view', { id: T1, view: 'grid' }],
+  ['chat-view', { id: T1, view: 5 }],
+  ['chat-commands', { id: 'x' }],
+  ['chat-commands', {}],
+  ['chat-models', { id: 5 }],
+  ['chat-modes', { id: 5 }],
+  ['chat-files', { id: T1, query: 5 }],
+  ['chat-files', { id: T1, query: 'x'.repeat(MAX_PATH_TEXT + 1) }],
+  ['chat-terminal', { id: T1, line: 5 }],
+  ['chat-terminal', { id: T1, line: 'x'.repeat(1024 * 1024 + 1) }]
 ]
 
 describe('call arguments', () => {
   it('GOOD_ARGS and BAD_ARGS hold a case for every method of the table', () => {
     const methods = Object.keys(CALL_ARGS).sort()
-    expect(methods).toHaveLength(25)
+    expect(methods).toHaveLength(38)
     expect([...new Set(GOOD_ARGS.map(([m]) => m))].sort()).toEqual(methods)
     expect([...new Set(BAD_ARGS.map(([m]) => m))].sort()).toEqual(methods)
   })
@@ -151,6 +204,51 @@ describe('call arguments', () => {
     expect((CALL_ARGS as Record<string, unknown>)['__proto__']).toBeUndefined()
     expect((CALL_REPLIES as Record<string, unknown>).constructor).toBeUndefined()
     expect((CALL_REPLIES as Record<string, unknown>)['__proto__']).toBeUndefined()
+  })
+})
+
+describe('chat-modes', () => {
+  it('its arguments are a tab id; its reply is at most six permission modes, each one a known mode', () => {
+    expect(CALL_ARGS['chat-modes']({ id: T1 })).toEqual({ id: T1 })
+    expect(CALL_ARGS['chat-modes']({ id: 5 })).toBeNull()
+    expect(CALL_REPLIES['chat-modes'](['default', 'acceptEdits', 'plan', 'auto'])).toEqual(['default', 'acceptEdits', 'plan', 'auto'])
+    expect(CALL_REPLIES['chat-modes'](['default', 'yolo'])).toBeNull()
+    expect(CALL_REPLIES['chat-modes'](['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk', 'default'])).toBeNull()
+    expect(CALL_REPLIES['chat-modes'](null)).toBeNull()
+  })
+})
+
+describe('chat call replies', () => {
+  it('a page of chat-older is its items and hasOlder; a null page is a failed call, and a bad item refuses the page', () => {
+    expect(CALL_REPLIES['chat-older']({ items: [], hasOlder: false })).toEqual({ items: [], hasOlder: false })
+    expect(CALL_REPLIES['chat-older']({ items: [{ kind: 'divider', id: 'd', text: 'Earlier' }], hasOlder: true })).not.toBeNull()
+    expect(CALL_REPLIES['chat-older'](null)).toBeNull()
+    expect(CALL_REPLIES['chat-older']({ items: [{ kind: 'nope', id: 'd' }], hasOlder: true })).toBeNull()
+    expect(CALL_REPLIES['chat-older']({ items: [], hasOlder: 'no' })).toBeNull()
+  })
+
+  it('the lists of chat-files, chat-commands and chat-models check each entry', () => {
+    expect(CALL_REPLIES['chat-files'](['src/a.ts'])).toEqual(['src/a.ts'])
+    expect(CALL_REPLIES['chat-files']([5])).toBeNull()
+    const command = { name: 'compact', description: 'Compact the conversation', argumentHint: '', group: 'builtin', source: null, terminal: false }
+    expect(CALL_REPLIES['chat-commands']([command])).toEqual([command])
+    expect(CALL_REPLIES['chat-commands']([{ ...command, group: 'other' }])).toBeNull()
+    const model = { value: 'opus', displayName: 'Opus', description: 'Most capable', efforts: ['high'] }
+    expect(CALL_REPLIES['chat-models']([model])).toEqual([model])
+    expect(CALL_REPLIES['chat-models']([{ value: 'opus' }])).toBeNull()
+    // the id the model resolves to: optional (an older device sends none), bounded when it comes
+    const resolved = { ...model, resolved: 'claude-opus-5-5' }
+    expect(CALL_REPLIES['chat-models']([resolved])).toEqual([resolved])
+    expect(CALL_REPLIES['chat-models']([{ ...model, resolved: 'x'.repeat(501) }])).toBeNull()
+    expect(CALL_REPLIES['chat-models']([{ ...model, resolved: 5 }])).toBeNull()
+  })
+
+  it('the chat calls that answer with nothing take an object, and a null reply is a failed call', () => {
+    expect(CALL_REPLIES['chat-send']({})).toEqual({})
+    expect(CALL_REPLIES['chat-answer']({ ok: true })).toEqual({ ok: true })
+    expect(CALL_REPLIES['chat-answer']({ ok: false })).toEqual({ ok: false })
+    expect(CALL_REPLIES['chat-answer']({})).toBeNull()
+    expect(CALL_REPLIES['chat-terminal'](null)).toBeNull()
   })
 })
 

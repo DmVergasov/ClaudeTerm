@@ -1,3 +1,4 @@
+import { isTabView } from '../../shared/chat'
 import { type MailRecord } from '../../shared/mail'
 import { isUuid } from '../../shared/protocol'
 import { MAX_INPUT_CHARS, MAX_OUT_CHARS, MAX_PATH_TEXT, MAX_REMOTE_TABS, PUSH_KINDS, type PushKind, type RemoteTab } from '../../shared/remote'
@@ -174,7 +175,7 @@ export function parseRemoteTab(v: unknown): RemoteTab | null {
   if (!isPlainObject(v)) return null
   const {
     id, kind, profile, cwd, customTitle, title, claudeSessionId, account, accountName, muted, exited, working,
-    attention, attentionSeq, images, note, counter, status, size, place, placeKnown, folder, forkOf, fork
+    attention, attentionSeq, images, note, counter, status, size, place, placeKnown, folder, forkOf, fork, view
   } = v
   if (!isUuid(id) || (kind !== 'claude' && kind !== 'shell')) return null
   if (!isString(profile, 1, MAX_PROFILE_LENGTH) || !isString(cwd, 1, MAX_PATH_TEXT)) return null
@@ -218,7 +219,9 @@ export function parseRemoteTab(v: unknown): RemoteTab | null {
     folder: isString(folder, 1, MAX_PATH_TEXT) ? folder : cwd,
     // a head is kept only for a fork: a head of a tab that is no fork is no head
     forkOf: fork === true && isUuid(forkOf) ? forkOf : null,
-    fork: fork === true
+    fork: fork === true,
+    // the view of a Claude tab: an older device sends none, and a view that is not one of the views is left out
+    ...(isTabView(view) ? { view } : {})
   }
 }
 

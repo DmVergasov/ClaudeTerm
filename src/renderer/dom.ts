@@ -4,10 +4,10 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial
   return e
 }
 
-/** a settings section: its title, a note beside it, and its fields */
+/** a settings section: its title with a note beside it, then its rows in one card (the content goes in the body) */
 export function section(title: string, note: string | null, ...content: HTMLElement[]): HTMLElement {
   const h = el('h2', { className: 'section-title' }, title, ...(note ? [el('span', { className: 'section-note', textContent: note })] : []))
-  return el('section', {}, h, ...content)
+  return el('section', { className: 'settings-section' }, h, el('div', { className: 'section-body' }, ...content))
 }
 
 /**

@@ -2,7 +2,8 @@
 
 export const ICON_NAMES = [
   'search', 'plus', 'chevron-down', 'chevron-right', 'branch', 'terminal', 'image', 'file-diff',
-  'file-text', 'note', 'mail', 'history', 'settings', 'panel-left', 'panel-top', 'x'
+  'file-text', 'note', 'mail', 'history', 'settings', 'panel-left', 'panel-top', 'x', 'bell',
+  'check', 'play', 'volume', 'music', 'message-square', 'paperclip', 'arrow-up', 'users'
 ] as const
 
 export type IconName = (typeof ICON_NAMES)[number]
@@ -24,7 +25,16 @@ const SHAPES: Record<IconName, string> = {
   settings: '<circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>',
   'panel-left': '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path>',
   'panel-top': '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path>',
-  x: '<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>'
+  x: '<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>',
+  bell: '<path d="M10.268 21a2 2 0 0 0 3.464 0"></path><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"></path>',
+  check: '<path d="M20 6 9 17l-5-5"></path>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"></polygon>',
+  volume: '<path d="M11 5 6 9H2v6h4l5 4V5z"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>',
+  music: '<path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>',
+  'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>',
+  paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>',
+  'arrow-up': '<path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>'
 }
 
 /** an inline SVG of the icon, `size` px square; hidden from screen readers, the caller names the control */

@@ -61,6 +61,15 @@ describe('runSessionHook: other hook events', () => {
     expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', attention('done'))
   })
 
+  it('reports a question once, as a question: the permission dialog Claude Code opens for AskUserQuestion is no permission prompt', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    // what Claude Code sends for one question, a second apart: PreToolUse, then PermissionRequest for the same tool
+    const ask = { session_id: SID, tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Which colour?', options: [] }] } }
+    await runSessionHook(JSON.stringify({ ...ask, hook_event_name: 'PreToolUse' }), ENV, send)
+    await runSessionHook(JSON.stringify({ ...ask, hook_event_name: 'PermissionRequest' }), ENV, send)
+    expect(send.mock.calls.map((c) => (c as unknown[])[1])).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question' }])
+  })
+
   it('marks a Stop with background work still in flight and lists it; an empty background_tasks lists none; a missing one says nothing of it', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     const task = { id: 'bmv6531d6', type: 'shell', status: 'running', description: 'build', command: 'make' }

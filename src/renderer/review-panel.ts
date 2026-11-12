@@ -138,6 +138,24 @@ interface Drag {
 /** the lines a drag covers, from..to */
 const dragRange = (d: Drag): [number, number] => [Math.min(d.start[0], d.end[0]), Math.max(d.start[1], d.end[1])]
 
+/**
+ * The file of the review that a chat names: the file at exactly that path, else the one whose relative path is the longest
+ * ending of it (`tests/index.ts` for `/repo/tests/index.ts`, not the root's `index.ts`). Separators are compared as /, and
+ * case is ignored where the file system ignores it.
+ */
+function revealedFile(files: readonly ReviewFile[], path: string, ignoreCase: boolean): ReviewFile | undefined {
+  const norm = (p: string): string => (ignoreCase ? p.replace(/\\/g, '/').toLowerCase() : p.replace(/\\/g, '/'))
+  const want = norm(path)
+  const exact = files.find((file) => norm(file.path) === want)
+  if (exact !== undefined) return exact
+  let best: ReviewFile | undefined
+  for (const file of files) {
+    const rel = norm(file.relPath)
+    if (want.endsWith(`/${rel}`) && (best === undefined || rel.length > norm(best.relPath).length)) best = file
+  }
+  return best
+}
+
 /** a typed find query takes effect after this long without a key */
 const QUERY_DELAY_MS = 150
 
@@ -194,6 +212,8 @@ export class ReviewPanel {
   private loading: { tabId: string; scope: ReviewScope | null } | null = null
   private loadingTimer: ReturnType<typeof setTimeout> | null = null
   private readonly samePath: (a: string, b: string) => boolean
+  /** a file the chat asked to show: kept until the tab's review has it */
+  private revealRequest: { tabId: string; path: string } | null = null
 
   constructor(private readonly root: HTMLElement, private readonly panel: SidePanel, private readonly cb: ReviewPanelCallbacks, private readonly platform: string) {
     this.samePath = platform === 'win32' ? (a, b) => a.toLowerCase() === b.toLowerCase() : (a, b) => a === b
@@ -532,6 +552,8 @@ export class ReviewPanel {
     if (!l || !update || update.tabId !== l.tabId || l.scope === null || update.view.kind !== 'scope' || update.view.scope === l.scope) this.endLoading()
     if (this.update) this.reanchor(this.update)
     if (this.panel.isShowing('changes')) this.render()
+    this.applyReveal()
+    this.dropUnlistedReveal()
   }
 
   /** the view with the lines the expand buttons show put into its hunks; a file whose content changed shows its diff as it comes */
@@ -594,6 +616,43 @@ export class ReviewPanel {
 
   dropTab(tabId: string): void {
     this.perTab.delete(tabId)
+    if (this.revealRequest?.tabId === tabId) this.revealRequest = null
+  }
+
+  /** the chat's Edit asks for a file: the review unfolds it and scrolls to it, now or when the review has it */
+  revealFile(tabId: string, path: string): void {
+    this.revealRequest = { tabId, path }
+    this.applyReveal()
+  }
+
+  /** the requested file, once the tab's review lists it: unfolded, and drawn when Changes shows */
+  private applyReveal(): void {
+    const r = this.revealRequest
+    const u = this.update
+    if (!r || !u || u.tabId !== r.tabId) return
+    const f = revealedFile(u.files, r.path, this.platform === 'win32')
+    if (!f) return
+    this.state(u.tabId).folds.set(f.path, false)
+    if (this.panel.isShowing('changes')) this.render()
+  }
+
+  /** a request whose file the tab's list, as this update has it, does not hold is dropped: it lasted until one update of the list */
+  private dropUnlistedReveal(): void {
+    const r = this.revealRequest
+    const u = this.update
+    if (r && u && u.tabId === r.tabId && revealedFile(u.files, r.path, this.platform === 'win32') === undefined) this.revealRequest = null
+  }
+
+  /** the render that draws the requested file's row scrolls to it: the request is done only then, so a later render still does it */
+  private scrollToReveal(): void {
+    const r = this.revealRequest
+    const u = this.update
+    if (!r || !u || u.tabId !== r.tabId) return
+    const f = revealedFile(u.files, r.path, this.platform === 'win32')
+    const box = f === undefined ? undefined : [...this.filesEl.querySelectorAll<HTMLElement>('.review-file')].find((e) => e.dataset.path === f.relPath)
+    if (!box) return
+    this.revealRequest = null
+    box.scrollIntoView({ block: 'start' })
   }
 
   /** the side panel changed: opening Changes shows what it kept and recomputes it */
@@ -676,6 +735,7 @@ export class ReviewPanel {
     )
     this.renderFooter(u, s)
     if (caret) this.focusDraft(caret)
+    this.scrollToReveal()
   }
 
   /** focus the comment box, with the caret where it was; a method of its own, so that TypeScript reads draftArea anew */

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, win32 } from 'node:path'
 import { NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS, type SettingKey, type SettingValue } from '../shared/settings-keys'
+import { isTabView } from '../shared/chat'
 import { DEFAULT_DEVICE_PORT } from '../shared/devices'
 import { DEFAULT_TEST_PATTERNS, MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
 import type { ConptyHost, NoRoomMode, NotificationSettings, ProfileDef, Settings, TabPosition } from '../shared/types'
@@ -8,7 +9,7 @@ import type { ConptyHost, NoRoomMode, NotificationSettings, ProfileDef, Settings
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   defaultFolder: null,
-  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true },
+  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true, view: 'chat' },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
   theme: 'Graphite',
@@ -132,7 +133,8 @@ export function parseSettings(text: string | null): ParsedSettings {
         wholeIn(NUMBER_LIMITS['claude.statusRefreshInterval'].min, NUMBER_LIMITS['claude.statusRefreshInterval'].max), d.claude.statusRefreshInterval),
       autoContinue: take('claude.autoContinue', claude.autoContinue, isBool, d.claude.autoContinue),
       continueAfterRestore: take('claude.continueAfterRestore', claude.continueAfterRestore, isBool, d.claude.continueAfterRestore),
-      limitPace: take('claude.limitPace', claude.limitPace, isBool, d.claude.limitPace)
+      limitPace: take('claude.limitPace', claude.limitPace, isBool, d.claude.limitPace),
+      view: take('claude.view', claude.view, isTabView, d.claude.view)
     },
     profiles,
     font: {

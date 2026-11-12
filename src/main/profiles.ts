@@ -250,6 +250,22 @@ export interface ProbeSpec {
 }
 
 /**
+ * The flags of a POSIX shell that runs one command line the way a Claude tab's shell reads it: bash and zsh read their
+ * interactive rc files too (where many put claude on PATH), fish and other shells their login files. Used by the
+ * version probe and by a chat's login-shell launch, so both find the same claude.
+ */
+export function loginShellCommandFlags(family: ShellFamily): string[] {
+  switch (family) {
+    case 'bash':
+      return ['--login', '-i', '-c']
+    case 'zsh':
+      return ['-l', '-i', '-c']
+    default:
+      return ['-l', '-c']
+  }
+}
+
+/**
  * How the version probe runs `<command> --version`: in the shell a Claude tab runs the command in, read the way that
  * shell reads it there (buildLaunch), so that the probe runs what the tab would run and the login shell sets its PATH.
  */
@@ -262,11 +278,9 @@ export function buildProbe(profile: ProfileDef, command: string, platform: NodeJ
     case 'cmd':
       return { file: profile.command, args: ['/c', line], verbatim: true, detached: false }
     case 'bash':
-      return { file: profile.command, args: ['--login', '-i', '-c', line], verbatim: false, detached }
     case 'zsh':
-      return { file: profile.command, args: ['-l', '-i', '-c', line], verbatim: false, detached }
     case 'fish':
-      return { file: profile.command, args: ['-l', '-c', line], verbatim: false, detached }
+      return { file: profile.command, args: [...loginShellCommandFlags(shellFamily(profile)), line], verbatim: false, detached }
     default:
       throw new Error(`profile "${profile.name}" cannot host claude`)
   }

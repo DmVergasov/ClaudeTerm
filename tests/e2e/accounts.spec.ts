@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { LINUX, WIN } from '../fixtures/platform'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, makeDataDir, TEST_SHELL, type Launched, KEYS } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, makeDataDir, showSettingsTab, TEST_SHELL, type Launched, KEYS } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const WORK = '0b6f3c2e-4d5a-4e6f-8a7b-9c0d1e2f3a4b'
@@ -216,6 +216,7 @@ async function openSettings(app: ElectronApplication, page: Page): Promise<Page>
   await page.locator('.terminal-host:visible .xterm').click()
   const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
   await win.waitForSelector('#settings .section-title')
+  await showSettingsTab(win, 'accounts')
   return win
 }
 

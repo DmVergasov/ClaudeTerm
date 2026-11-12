@@ -1,4 +1,5 @@
 import type { AccountResult, AccountsView } from './accounts'
+import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, TabView } from './chat'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { MailConversationView, MailUnread } from './mail'
 import type { DeviceResult, DevicesView } from './devices'
@@ -28,6 +29,8 @@ export const IPC = {
   tabsMute: 'tabs:mute',
   tabsCanFork: 'tabs:can-fork',
   tabsFork: 'tabs:fork',
+  /** a Claude tab's view: its chat or its terminal */
+  tabsSetView: 'tabs:set-view',
   tabsChangeFolder: 'tabs:change-folder',
   foldersList: 'folders:list',
   ptyWrite: 'pty:write',
@@ -37,6 +40,7 @@ export const IPC = {
   settingsGet: 'settings:get',
   settingsOpen: 'settings:open',
   settingsOpenWindow: 'settings:open-window',
+  accountPlan: 'account:plan',
   settingsView: 'settings:view',
   settingsSet: 'settings:set',
   settingsPickSound: 'settings:pick-sound',
@@ -105,6 +109,7 @@ export const IPC = {
   evTabActivated: 'ev:tab-activated',
   evTabsOrder: 'ev:tabs-order',
   evTabPlace: 'ev:tab-place',
+  evTabSessionTitle: 'ev:tab-session-title',
   evPtyData: 'ev:pty-data',
   evPtyExit: 'ev:pty-exit',
   evPtyReset: 'ev:pty-reset',
@@ -137,7 +142,33 @@ export const IPC = {
   /** the unread agent messages per tab, local and remote, sent on every change of the mail and of the tabs */
   evMail: 'ev:mail',
   mailConversations: 'mail:conversations',
-  mailRead: 'mail:read'
+  mailRead: 'mail:read',
+  /** the chat of a Claude tab in its chat view: its conversation, its patches, and what the user does in it */
+  chatSnapshot: 'chat:snapshot',
+  chatSend: 'chat:send',
+  chatInterrupt: 'chat:interrupt',
+  chatAnswer: 'chat:answer',
+  chatSetMode: 'chat:set-mode',
+  chatSetModel: 'chat:set-model',
+  chatStopTask: 'chat:stop-task',
+  chatCommands: 'chat:commands',
+  chatModels: 'chat:models',
+  chatOlder: 'chat:older',
+  /** the permission modes a chat offers, Auto among them once Claude Code reported it */
+  chatModes: 'chat:modes',
+  /** a command handed to the terminal: the tab turns to it and the line is typed into Claude Code's prompt */
+  chatOpenInTerminal: 'chat:open-in-terminal',
+  /** a session picked in a chat: it resumes in this tab when the tab works in its folder, else it opens in a new tab */
+  chatResume: 'chat:resume',
+  chatResumePlan: 'chat:resume-plan',
+  /** the files of a chat's composer: attached (paths handed out for the tab), picked in a dialog, and the folder's files for the @ picker */
+  chatAttach: 'chat:attach',
+  chatPickFiles: 'chat:pick-files',
+  chatFiles: 'chat:files',
+  /** the patches of a chat, in order: from the rev the window had to the rev they make */
+  evChatPatch: 'ev:chat-patch',
+  /** a remote chat's snapshot arrived: the window reloads the chat from ct.chatSnapshot */
+  evChatReload: 'ev:chat-reload'
 } as const
 
 export interface AppInfo {
@@ -200,6 +231,10 @@ export interface SettingsView {
 
 export type SetSettingResult = { ok: true } | { ok: false; error: string }
 
+/** the sections a Settings window can be opened at */
+export type SettingsSection = 'devices' | 'notifications'
+export const isSettingsSection = (v: unknown): v is SettingsSection => v === 'devices' || v === 'notifications'
+
 export type Unsubscribe = () => void
 
 /** what Claude Code's prompt in a tab holds: only its placeholder, text the user typed and did not send, or no prompt on screen */
@@ -232,6 +267,8 @@ export interface CtApi {
   canForkTab(tabId: string): Promise<boolean>
   /** opens a new Claude tab that forks the tab's conversation, after its family */
   forkTab(tabId: string): void
+  /** a Claude tab shows its chat or its terminal; false when it is not a local Claude tab, or the switch does not happen */
+  setTabView(tabId: string, view: TabView): Promise<boolean>
   /** the subfolders of the tab's folder (null: the tab's own folder), read on the tab's device, with the folders recently used there */
   listFolders(tabId: string, path: string | null): Promise<FolderResult>
   /** moves the tab to another folder on its device; a refusal is its message (a remote tab goes to its device) */
@@ -247,8 +284,10 @@ export interface CtApi {
   listProfiles(): Promise<string[]>
   getSettings(): Promise<Settings>
   openSettingsFile(): void
-  /** opens the settings window, or brings it forward */
-  openSettingsWindow(): void
+  /** opens the settings window, or brings it forward; at `section` when given */
+  openSettingsWindow(section?: SettingsSection): void
+  /** the plan of the login Claude Code keeps, such as "Max plan"; null when it names none */
+  accountPlan(): Promise<string | null>
   getSettingsView(): Promise<SettingsView>
   /** writes one setting to settings.json and applies it */
   setSetting(key: SettingKey, value: SettingValue): Promise<SetSettingResult>
@@ -370,6 +409,8 @@ export interface CtApi {
   onTabsOrder(cb: (ids: string[]) => void): Unsubscribe
   /** a tab's project, worktree and branch changed; null when its folder is not in git */
   onTabPlace(cb: (tabId: string, place: TabPlace | null) => void): Unsubscribe
+  /** a Claude tab's session title, from its transcript; null when the session has none (yet) */
+  onTabSessionTitle(cb: (tabId: string, title: string | null) => void): Unsubscribe
   onPtyData(cb: (tabId: string, data: string) => void): Unsubscribe
   onPtyExit(cb: (tabId: string, code: number) => void): Unsubscribe
   onPtyReset(cb: (tabId: string) => void): Unsubscribe
@@ -377,7 +418,7 @@ export interface CtApi {
   onToast(cb: (message: string) => void): Unsubscribe
   onSettings(cb: (settings: Settings) => void): Unsubscribe
   onSettingsView(cb: (view: SettingsView) => void): Unsubscribe
-  /** the Settings window is asked to show a section while it is open: 'devices' */
+  /** the Settings window is asked to show a section while it is open */
   onSettingsSection(cb: (section: string) => void): Unsubscribe
   onRestore(cb: (info: RestoreInfo | null) => void): Unsubscribe
   onStatus(cb: (update: StatusUpdate) => void): Unsubscribe
@@ -421,4 +462,36 @@ export interface CtApi {
   onMail(cb: (unread: MailUnread) => void): Unsubscribe
   /** the main window's full-screen state changed (sent when it shows, too) */
   onFullScreen(cb: (on: boolean) => void): Unsubscribe
+  /** the conversation of a local Claude tab in its chat view; null for another tab, or one whose chat is not running */
+  chatSnapshot(tabId: string): Promise<ChatSnapshot | null>
+  /** sends a message to the tab's chat; null when it was sent or queued behind the running turn, else why not */
+  chatSend(tabId: string, s: ChatSend): Promise<string | null>
+  /** stops the running turn */
+  chatInterrupt(tabId: string): void
+  /** the answer to a card of the chat; false when no such card waits, or the answer does not fit it */
+  chatAnswer(tabId: string, cardId: string, a: ChatAnswer): Promise<boolean>
+  chatSetMode(tabId: string, mode: ChatPermissionMode): void
+  chatSetModel(tabId: string, model: string | null, effort: string | null): void
+  chatStopTask(tabId: string, taskId: string): Promise<boolean>
+  chatCommands(tabId: string): Promise<ChatCommandInfo[]>
+  chatModels(tabId: string): Promise<ChatModelInfo[]>
+  /** the page of the conversation before an item, for the chat's older history; null for a chat that is not running */
+  chatOlder(tabId: string, beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null>
+  /** the permission modes the chat of a tab offers */
+  chatModes(tabId: string): Promise<ChatPermissionMode[]>
+  /** switches a local Claude tab to its terminal and types the line there once Claude Code's prompt is empty; null: only the switch. False when the switch is refused */
+  chatOpenInTerminal(tabId: string, line: string | null): Promise<boolean>
+  /** resumes a session in a local Claude tab ('here'), or opens it in a new tab ('new-tab'); null when neither happens */
+  chatResume(tabId: string, sessionId: string, cwd: string): Promise<'here' | 'new-tab' | null>
+  /** where a pick would go, without going there: a restart in the tab's own folder asks first */
+  chatResumePlan(tabId: string, sessionId: string): Promise<'here' | 'restart' | 'new-tab' | null>
+  /** the files attached to the tab's next message: stats each one, registers the images with the Media panel; a path that is not a file is left out */
+  chatAttach(tabId: string, paths: string[]): Promise<ChatAttachment[]>
+  /** the same, for the files picked in a dialog; none when the dialog is cancelled */
+  chatPickFiles(tabId: string): Promise<ChatAttachment[]>
+  /** the files of the tab's folder whose path matches the query, best first, for the @ picker */
+  chatFiles(tabId: string, query: string): Promise<string[]>
+  /** a chat's patches: from the rev the window had to the rev they make; a window that is not at fromRev asks for a snapshot */
+  onChatPatch(cb: (tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]) => void): Unsubscribe
+  onChatReload(cb: (tabId: string) => void): Unsubscribe
 }

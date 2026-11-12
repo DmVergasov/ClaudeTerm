@@ -1,6 +1,8 @@
+import type { ChatPatch, ChatSnapshot } from '../../shared/chat'
 import { type DevicePlatform, type DeviceView } from '../../shared/devices'
 import { ATTACH_TIMEOUT_MS, MAX_INPUT_CHARS, MAX_REMOTE_TABS, REATTACH_MS, type RemoteDeviceView, type RemoteTab } from '../../shared/remote'
 import type { NotificationCase } from '../../shared/types'
+import { ChatMirror, parseChatPush } from '../chat/chat-mirror'
 import { isTerminalAnswer } from '../ipc-guards'
 import { AttachedView, type StreamItem, type ViewStep } from './attached-view'
 import type { Calls } from './calls'
@@ -30,6 +32,10 @@ export interface ViewerEvents {
   /** a device is present with this tab of it in front, and its attention rings here: see Attention.ringInFront */
   ring(tabId: string, reason: NotificationCase): void
   push(tabId: string, value: PushValue): void
+  /** a chat of an attached tab moved on: its counted patches, from their revisions */
+  chat?(tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]): void
+  /** a chat of an attached tab was loaded from a snapshot: the window reloads it (its revisions do not count) */
+  chatReload?(tabId: string): void
 }
 
 export interface RemoteTabsDeps {
@@ -40,6 +46,8 @@ export interface RemoteTabsDeps {
   events: ViewerEvents
   /** how long before a tab in front attaches again after a loss; REATTACH_MS by default */
   reattachMs?: number
+  /** says what this window refused: a chat push it cannot check is logged the first time for its tab and kind */
+  log?(message: string): void
 }
 
 /** a remote tab as this viewer holds it */
@@ -58,6 +66,8 @@ interface Entry {
   claimed: boolean
   /** attached when its device left: attached again when the device comes back */
   resume: boolean
+  /** the chat of the tab while it is attached: from the host's snapshot on; null until one comes in this attach */
+  chat: ChatMirror | null
 }
 
 /** a device of the group as this viewer knows it */
@@ -114,6 +124,8 @@ export class RemoteTabs {
   /** the device that has a remote tab of this window in front */
   private frontDevice: string | null = null
   private disposed = false
+  /** the chat pushes refused, by tab and kind: each is logged the first time only */
+  private readonly refusedChats = new Set<string>()
 
   constructor(private readonly deps: RemoteTabsDeps) {
     this.reattachMs = deps.reattachMs ?? REATTACH_MS
@@ -242,6 +254,11 @@ export class RemoteTabs {
     return this.known.get(device)?.calls ?? null
   }
 
+  /** a copy of the chat of an attached remote tab, as its device's host holds it; null when the tab has none attached */
+  chatSnapshot(tabId: string): ChatSnapshot | null {
+    return this.entryOf(tabId)?.chat?.snapshot() ?? null
+  }
+
   /** the tab in front in this window: a remote one, a local one or none */
   activated(tabId: string | null): void {
     if (this.disposed) return
@@ -336,7 +353,12 @@ export class RemoteTabs {
         return
       }
       case 'push': {
-        if (!d.tabs.has(m.id)) return
+        const e = d.tabs.get(m.id)
+        if (!e) return
+        if (m.k === 'chat' || m.k === 'chat-patch') {
+          this.chatPush(e, m.k, m.v)
+          return
+        }
         const value = parsePush(m.k, m.v, m.id)
         if (!value) return
         if (value.k === 'review-part') this.reviewPart(m.id, value.part)
@@ -352,6 +374,39 @@ export class RemoteTabs {
         // in, claim and front are the host's; calls and replies go to the link's Calls
         return
     }
+  }
+
+  /**
+   * A chat push of an attached tab. A snapshot starts the tab's chat, as the host's model is at its revision; a batch moves
+   * it on when it follows the chat's revision. A batch with no chat yet is left out: the snapshot of the attach covers it.
+   * A snapshot of another tab, or a batch that does not follow, ends the attach: the tab attaches again for a fresh snapshot.
+   */
+  private chatPush(e: Entry, k: 'chat' | 'chat-patch', v: unknown): void {
+    const push = parseChatPush(v)
+    if (!push) {
+      this.chatRefused(e.id, k)
+      return
+    }
+    if (!e.view) return
+    if ('snapshot' in push) {
+      if (k !== 'chat') return
+      const s: ChatSnapshot = push.snapshot
+      if (s.tabId !== e.id) {
+        this.chatRefused(e.id, k)
+        this.lose(e)
+        return
+      }
+      e.chat = new ChatMirror()
+      e.chat.load(s)
+      this.deps.events.chatReload?.(e.id)
+      return
+    }
+    if (k !== 'chat-patch' || !e.chat) return
+    if (!e.chat.apply(push.fromRev, push.toRev, push.patches)) {
+      this.lose(e)
+      return
+    }
+    this.deps.events.chat?.(e.id, push.fromRev, push.toRev, push.patches)
   }
 
   /**
@@ -449,7 +504,8 @@ export class RemoteTabs {
         pending: null,
         timer: null,
         claimed: tab.size.by === self,
-        resume: false
+        resume: false,
+        chat: null
       }
       d.tabs.set(tab.id, entry)
       this.owner.set(tab.id, d.id)
@@ -535,6 +591,7 @@ export class RemoteTabs {
       this.reviews.delete(e.id)
       if (e.view) e.resume = true
       e.view = null
+      e.chat = null
       e.token++
       // the call (if one is out) is rejected by the link's Calls: it is no longer this tab's
       e.pending = null
@@ -575,6 +632,8 @@ export class RemoteTabs {
     this.cancelTimer(e)
     const token = ++e.token
     e.view = new AttachedView()
+    // the chat of an earlier attach is not this one's: the snapshot of this attach starts it
+    e.chat = null
     e.pending = token
     d.calls.call('attach', { id: e.id }, { timeoutMs: ATTACH_TIMEOUT_MS }).then(
       (v) => this.settled(e, token, () => this.attached(e, token, v)),
@@ -626,7 +685,16 @@ export class RemoteTabs {
   private lose(e: Entry): void {
     e.token++
     e.view = null
+    e.chat = null
     if (this.frontId === e.id && this.online(e.device)) this.scheduleReattach(e)
+  }
+
+  /** a chat push this window refused: logged the first time for its tab and kind */
+  private chatRefused(tabId: string, k: 'chat' | 'chat-patch'): void {
+    const key = `${tabId} ${k}`
+    if (this.refusedChats.has(key)) return
+    this.refusedChats.add(key)
+    this.deps.log?.(`push of ${k} for tab ${tabId} refused by this window`)
   }
 
   private scheduleReattach(e: Entry): void {

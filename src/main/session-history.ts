@@ -16,9 +16,12 @@ export function claudeProjectsDir(env: NodeJS.ProcessEnv, home: string): string 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** Claude Code in a terminal, in VS Code, in the desktop app; `sdk-*` and `print` are scripted runs */
+/** Claude Code in a terminal, in VS Code, in the desktop app; `sdk-*` and `print` are scripted runs, except a chat ClaudeTerm started (`sdk-ts`) */
 const INTERACTIVE = new Set(['cli', 'claude-vscode', 'claude-desktop'])
-const isInteractive = (entrypoint: unknown): boolean => entrypoint === undefined || (typeof entrypoint === 'string' && INTERACTIVE.has(entrypoint))
+const CHAT_ENTRYPOINT = 'sdk-ts'
+/** knownChat: the session is one of the chats ClaudeTerm started, which are listed like the interactive ones */
+const isInteractive = (entrypoint: unknown, knownChat = false): boolean =>
+  entrypoint === undefined || (typeof entrypoint === 'string' && (INTERACTIVE.has(entrypoint) || (knownChat && entrypoint === CHAT_ENTRYPOINT)))
 
 /** One line, whitespace collapsed, at most 200 characters; null for nothing. */
 export function oneLine(v: unknown): string | null {
@@ -79,13 +82,14 @@ export interface SessionHead {
 
 /**
  * The start of a transcript. `whole` tells whether the window holds the entire file (otherwise its last line
- * may be cut). Null when the file is not a session for the list: a sidechain or a scripted (`claude -p`) run.
+ * may be cut). Null when the file is not a session for the list: a sidechain or a scripted (`claude -p`) run. `knownChat`:
+ * the session is one of the chats ClaudeTerm started, so its SDK entrypoint counts as interactive.
  */
-export function parseSessionHead(text: string, whole: boolean): SessionHead | null {
+export function parseSessionHead(text: string, whole: boolean, knownChat = false): SessionHead | null {
   const list = entries(text, false, !whole)
   // user, attachment and system entries carry the folder; the first user entry can be far in
   const first = list.find((e) => typeof e.cwd === 'string' && e.cwd.length > 0)
-  if (first && (first.isSidechain === true || !isInteractive(first.entrypoint))) return null
+  if (first && (first.isSidechain === true || !isInteractive(first.entrypoint, knownChat))) return null
   let hasUser = false
   let typed: string | null = null
   let command: string | null = null
@@ -111,11 +115,12 @@ export interface SessionTail {
 /**
  * The end of a transcript. Claude Code appends its title and the last prompt again as the conversation goes
  * on, so the last occurrence is the current one. `fromStart` tells whether the window starts at the file's start.
+ * `knownChat` as in parseSessionHead.
  */
-export function parseSessionTail(text: string, fromStart: boolean): SessionTail {
+export function parseSessionTail(text: string, fromStart: boolean, knownChat = false): SessionTail {
   const t: SessionTail = { customTitle: null, aiTitle: null, lastPrompt: null, folder: null }
   for (const e of entries(text, !fromStart, false)) {
-    if (!t.folder && typeof e.cwd === 'string' && e.cwd.length > 0 && e.isSidechain !== true) t.folder = { cwd: e.cwd, interactive: isInteractive(e.entrypoint) }
+    if (!t.folder && typeof e.cwd === 'string' && e.cwd.length > 0 && e.isSidechain !== true) t.folder = { cwd: e.cwd, interactive: isInteractive(e.entrypoint, knownChat) }
     if (e.type === 'custom-title') t.customTitle = oneLine(e.customTitle) ?? t.customTitle
     else if (e.type === 'ai-title') t.aiTitle = oneLine(e.aiTitle) ?? t.aiTitle
     else if (e.type === 'last-prompt') t.lastPrompt = oneLine(e.lastPrompt) ?? t.lastPrompt
@@ -166,9 +171,14 @@ interface TranscriptFile {
 
 /** The most recently active Claude Code sessions, read from Claude Code's transcripts. */
 export class SessionHistory {
-  private readonly cache = new Map<string, { size: number; mtimeMs: number; summary: SessionSummary | null }>()
+  private readonly cache = new Map<string, { size: number; mtimeMs: number; knownChat: boolean; summary: SessionSummary | null }>()
 
-  constructor(private readonly projectsDir: string, private readonly fs: HistoryFs = nodeHistoryFs) {}
+  /** alsoInteractive: whether a session id is one of the chats ClaudeTerm started; those are listed as the terminal's are */
+  constructor(
+    private readonly projectsDir: string,
+    private readonly fs: HistoryFs = nodeHistoryFs,
+    private readonly alsoInteractive: (sessionId: string) => boolean = () => false
+  ) {}
 
   /**
    * The latest `limit` sessions, newest first, plus every starred one however old. Starred sessions do not
@@ -222,23 +232,25 @@ export class SessionHistory {
   }
 
   private async summary(f: TranscriptFile): Promise<SessionSummary | null> {
+    // a chat ClaudeTerm starts after its transcript was read as a scripted run: the answer is read again then
+    const knownChat = this.alsoInteractive(f.id)
     const cached = this.cache.get(f.path)
-    if (cached && cached.size === f.size && cached.mtimeMs === f.mtimeMs) return cached.summary
+    if (cached && cached.size === f.size && cached.mtimeMs === f.mtimeMs && cached.knownChat === knownChat) return cached.summary
     let summary: SessionSummary | null
     try {
-      summary = await this.read(f)
+      summary = await this.read(f, knownChat)
     } catch {
       return null // locked or gone: try again next time
     }
-    this.cache.set(f.path, { size: f.size, mtimeMs: f.mtimeMs, summary })
+    this.cache.set(f.path, { size: f.size, mtimeMs: f.mtimeMs, knownChat, summary })
     return summary
   }
 
-  private async read(f: TranscriptFile): Promise<SessionSummary | null> {
-    const head = parseSessionHead(await this.fs.read(f.path, 0, Math.min(f.size, HEAD_BYTES)), f.size <= HEAD_BYTES)
+  private async read(f: TranscriptFile, knownChat: boolean): Promise<SessionSummary | null> {
+    const head = parseSessionHead(await this.fs.read(f.path, 0, Math.min(f.size, HEAD_BYTES)), f.size <= HEAD_BYTES, knownChat)
     if (!head) return null
-    let tail = await this.tail(f, TAIL_BYTES)
-    if (!tail.customTitle && !tail.aiTitle && !tail.lastPrompt && f.size > TAIL_BYTES) tail = await this.tail(f, WIDE_TAIL_BYTES)
+    let tail = await this.tail(f, TAIL_BYTES, knownChat)
+    if (!tail.customTitle && !tail.aiTitle && !tail.lastPrompt && f.size > TAIL_BYTES) tail = await this.tail(f, WIDE_TAIL_BYTES, knownChat)
     if (!head.hasUser && !tail.lastPrompt) return null
     let cwd = head.cwd
     if (cwd === null) {
@@ -249,8 +261,8 @@ export class SessionHistory {
     return { id: f.id, cwd, title: tail.customTitle ?? tail.aiTitle, firstPrompt: head.firstPrompt, lastPrompt: tail.lastPrompt, modifiedAt: f.mtimeMs }
   }
 
-  private async tail(f: TranscriptFile, bytes: number): Promise<SessionTail> {
+  private async tail(f: TranscriptFile, bytes: number, knownChat: boolean): Promise<SessionTail> {
     const start = Math.max(0, f.size - bytes)
-    return parseSessionTail(await this.fs.read(f.path, start, f.size - start), start === 0)
+    return parseSessionTail(await this.fs.read(f.path, start, f.size - start), start === 0, knownChat)
   }
 }

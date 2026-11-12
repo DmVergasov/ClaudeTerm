@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PtyHandle, SpawnOptions } from '../../src/main/pty-host'
-import { TabManager, type LaunchRequest, type ResolvedLaunch, type TabEvents, type TabManagerDeps } from '../../src/main/tab-manager'
+import type { ClaudeLaunch } from '../../src/main/profiles'
+import { TabManager, type ChatHandle, type ChatStartRequest, type LaunchRequest, type ResolvedLaunch, type TabEvents, type TabManagerDeps } from '../../src/main/tab-manager'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const SID_B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -10,15 +11,20 @@ class FakePty implements PtyHandle {
   writes: string[] = []
   sizes: Array<[number, number]> = []
   killed = false
+  /** a real process ends when it is killed; a test that wants it so sets this */
+  exitsOnKill = false
   constructor(readonly opts: SpawnOptions) {}
   write(d: string): void { this.writes.push(d) }
   resize(c: number, r: number): void { this.sizes.push([c, r]) }
-  kill(): void { this.killed = true }
+  kill(): void {
+    this.killed = true
+    if (this.exitsOnKill) this.opts.onExit(0)
+  }
   emitData(d: string): void { this.opts.onData(d) }
   emitExit(code: number): void { this.opts.onExit(code) }
 }
 
-function setup(over: Partial<TabManagerDeps> = {}) {
+function setup(over: Partial<TabManagerDeps> = {}, opts: { exitOnKill?: boolean } = {}) {
   const ptys: FakePty[] = []
   const log: string[] = []
   const data: Array<[string, string]> = []
@@ -41,6 +47,7 @@ function setup(over: Partial<TabManagerDeps> = {}) {
   const deps: TabManagerDeps = {
     spawn: (o) => {
       const p = new FakePty(o)
+      p.exitsOnKill = opts.exitOnKill ?? false
       ptys.push(p)
       return p
     },
@@ -230,7 +237,7 @@ describe('TabManager', () => {
   })
 
   it('setFolder reports to onFolderChanged only; changeFolder reports to both, and a restart back to cwd to onFolderChanged only', async () => {
-    const { tm, folderChanged, tabFolderChanged } = setup({ restartWaitMs: 0 })
+    const { tm, folderChanged, tabFolderChanged } = setup({ restartWaitMs: 0 }, { exitOnKill: true })
     const t = tm.open({ kind: 'claude', cwd: '/a', resumeSessionId: SID_A })
     tm.setFolder(t.id, '/a/sub')
     expect(folderChanged).toEqual([[t.id, '/a/sub']])
@@ -247,7 +254,7 @@ describe('TabManager', () => {
 
   it('a restart starts Claude in the folder the tab was opened in, and the tab shows that folder again', async () => {
     const onFolderChanged = vi.fn()
-    const { tm, ptys } = setup({ onFolderChanged, restartWaitMs: 0 })
+    const { tm, ptys } = setup({ onFolderChanged, restartWaitMs: 0 }, { exitOnKill: true })
     const t = tm.open({ kind: 'claude', cwd: 'D:\\repo', resumeSessionId: SID_A })
     tm.setFolder(t.id, 'D:\\repo\\.claude\\worktrees\\feat')
     await tm.restart(t.id, { live: true })
@@ -258,7 +265,7 @@ describe('TabManager', () => {
   })
 
   it('a tab opened muted stays muted through a restart', async () => {
-    const { tm, ptys } = setup({ restartWaitMs: 0 })
+    const { tm, ptys } = setup({ restartWaitMs: 0 }, { exitOnKill: true })
     const t = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, muted: true })
     expect(t.muted).toBe(true)
     await tm.restart(t.id, { live: true })
@@ -276,9 +283,9 @@ describe('TabManager', () => {
     expect(tm.setClaudeSession(s.id, SID_A)).toBe(false)
     expect(tm.setClaudeSession('unknown', SID_A)).toBe(false)
     expect(tm.snapshot()).toEqual([
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null, muted: false, working: false, background: false, fork: null },
-      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null, muted: false, working: false, background: false, fork: null },
-      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null, muted: false, working: false, background: false, fork: null }
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_A, account: null, muted: false, working: false, background: false, fork: null, view: 'terminal' },
+      { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: SID_B, account: null, muted: false, working: false, background: false, fork: null, view: 'terminal' },
+      { kind: 'shell', profile: 'Windows PowerShell', cwd: 'D:\\same', title: null, claudeSessionId: null, account: null, muted: false, working: false, background: false, fork: null, view: null }
     ])
   })
 
@@ -478,7 +485,7 @@ describe('TabManager', () => {
   })
 
   it('changeFolder restarts the tab in the new folder; a Claude tab starts a new conversation', async () => {
-    const { tm, ptys, launches, folderChanged, log } = setup({ restartWaitMs: 0 })
+    const { tm, ptys, launches, folderChanged, log } = setup({ restartWaitMs: 0 }, { exitOnKill: true })
     const t = tm.open({ kind: 'claude', cwd: '/a', resumeSessionId: SID_A })
     expect(await tm.changeFolder(t.id, '/b')).toBe(true)
     expect(ptys.at(-1)!.opts.cwd).toBe('/b')
@@ -489,7 +496,7 @@ describe('TabManager', () => {
   })
 
   it('changeFolder of a shell tab keeps its profile; of an unknown tab answers false, and so does a tab that is restarting', async () => {
-    const { tm, ptys, launches } = setup({ restartWaitMs: 0 })
+    const { tm, ptys, launches } = setup({ restartWaitMs: 0 }, { exitOnKill: true })
     const t = tm.open({ kind: 'shell', cwd: '/a', profile: 'Bash' })
     expect(await tm.changeFolder('nope', '/b')).toBe(false)
     const done = tm.restart(t.id, { live: true })
@@ -885,5 +892,375 @@ describe('TabManager forks', () => {
     const started = ptys.length
     expect(await tm.switchAccount(B.id, 'work')).toBe(false)
     expect(ptys).toHaveLength(started)
+  })
+})
+
+describe('TabManager views', () => {
+  it('a Claude tab opens in the view the setting names, unless the request names one', () => {
+    const { tm } = setup({ defaultView: () => 'chat' })
+    expect(tm.open({ kind: 'claude', cwd: 'D:\\x' }).view).toBe('chat')
+    expect(tm.open({ kind: 'claude', cwd: 'D:\\x', view: 'terminal' }).view).toBe('terminal')
+  })
+
+  it('a shell tab has no view', () => {
+    const { tm } = setup({ defaultView: () => 'chat' })
+    expect(tm.open({ kind: 'shell', cwd: 'D:\\x' }).view).toBeNull()
+  })
+
+  it('without a defaultView a Claude tab opens in the terminal view', () => {
+    const { tm } = setup()
+    expect(tm.open({ kind: 'claude', cwd: 'D:\\x' }).view).toBe('terminal')
+  })
+
+  it('snapshot carries the view of each tab', () => {
+    const { tm } = setup({ defaultView: () => 'chat' })
+    tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    tm.open({ kind: 'shell', cwd: 'D:\\y' })
+    expect(tm.snapshot().map((t) => t.view)).toEqual(['chat', null])
+    expect(tm.snapshot().map((t) => t.view)).toEqual(tm.list().map((t) => t.view))
+  })
+})
+
+describe('TabManager chat view', () => {
+  const CLAUDE: ClaudeLaunch = { command: 'claude', settingsPath: null, resumeSessionId: null, forkSession: false }
+
+  /** a chat process the test ends by hand; stop() does nothing unless the test makes it exit */
+  class FakeChat implements ChatHandle {
+    stops = 0
+    kills = 0
+    exitOnStop = false
+    constructor(readonly req: ChatStartRequest, private readonly calls: string[]) {}
+    stop(): void {
+      this.stops++
+      this.calls.push('stop')
+      if (this.exitOnStop) this.end(0, null)
+    }
+    kill(): void {
+      this.kills++
+      this.calls.push('kill')
+    }
+    end(code: number | null, fallback: string | null): void {
+      this.req.exit(code, fallback)
+    }
+  }
+
+  /** a Claude tab's launch carries its claude inputs, so the tab can start a chat process */
+  function chatSetup(over: Partial<TabManagerDeps> = {}) {
+    const chats: FakeChat[] = []
+    const calls: string[] = []
+    const startChat = vi.fn((req: ChatStartRequest): ChatHandle => {
+      calls.push('start')
+      const chat = new FakeChat(req, calls)
+      chats.push(chat)
+      return chat
+    })
+    const resolveLaunch = vi.fn((req: LaunchRequest): ResolvedLaunch => ({
+      profileName: 'Windows PowerShell',
+      spec: { file: 'powershell.exe', args: ['-NoLogo'] },
+      ...(req.kind === 'claude' ? { claude: CLAUDE } : {})
+    }))
+    const base = setup({ resolveLaunch, startChat, ...over })
+    return { ...base, chats, calls, startChat, resolveLaunch }
+  }
+
+  it('a chat tab starts its chat process, not a PTY', () => {
+    const { tm, ptys, chats, startChat, log } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    expect(startChat).toHaveBeenCalledTimes(1)
+    expect(ptys).toEqual([])
+    expect(startChat.mock.calls[0][0]).toMatchObject({ tab: expect.objectContaining({ id: tab.id, view: 'chat' }), claude: CLAUDE })
+    expect(startChat.mock.calls[0][0].env).toEqual({ PATH: 'C:\\Windows', CLAUDETERM_TAB_ID: tab.id, CLAUDETERM_PIPE: '\\\\.\\pipe\\test' })
+    chats[0].end(0, null)
+    expect(log).toContain(`exit:${tab.id}:0`)
+    expect(tm.get(tab.id)?.exited).toBe(true)
+  })
+
+  it('a chat tab without a chat process starts its PTY as before', () => {
+    const { tm, ptys } = setup({ defaultView: () => 'chat', resolveLaunch: () => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] }, claude: CLAUDE }) })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    expect(ptys).toHaveLength(1)
+    expect(tm.get(tab.id)?.view).toBe('chat')
+  })
+
+  it('a fallback starts the PTY in the same tab and says why', () => {
+    const fallbacks: Array<[string, string]> = []
+    const { tm, ptys, chats, log } = chatSetup({ defaultView: () => 'chat', onChatFallback: (id, reason) => fallbacks.push([id, reason]) })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    chats[0].end(null, 'the chat engine did not start')
+    expect(fallbacks).toEqual([[tab.id, 'the chat engine did not start']])
+    expect(tm.get(tab.id)).toMatchObject({ view: 'terminal', exited: false })
+    expect(ptys).toHaveLength(1)
+    expect(ptys[0].opts.cwd).toBe('D:\\x')
+    expect(log).toContain(`updated:${tab.id}:false`)
+    expect(log).not.toContain(`exit:${tab.id}:-1`)
+  })
+
+  it('setView waits for the old process before starting the new one', async () => {
+    vi.useFakeTimers()
+    const { tm, ptys, startChat } = chatSetup()
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    expect(tab.view).toBe('terminal')
+    const switched = tm.setView(tab.id, 'chat')
+    vi.advanceTimersByTime(1000)
+    expect(startChat).not.toHaveBeenCalled()
+    ptys[0].emitExit(0)
+    expect(await switched).toBe(true)
+    expect(startChat).toHaveBeenCalledTimes(1)
+    expect(ptys).toHaveLength(1)
+  })
+
+  it('setView kills a chat process that does not stop', async () => {
+    vi.useFakeTimers()
+    const { tm, ptys, chats, startChat } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const switched = tm.setView(tab.id, 'terminal')
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(chats[0].stops).toBe(1)
+    expect(chats[0].kills).toBe(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(chats[0].kills).toBe(1)
+    expect(ptys).toEqual([])
+    chats[0].end(null, null)
+    expect(await switched).toBe(true)
+    expect(ptys).toHaveLength(1)
+    expect(startChat).toHaveBeenCalledTimes(1)
+  })
+
+  it('setView is refused while a turn runs', async () => {
+    const { tm, chats, startChat } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    tm.setWorking(tab.id, true)
+    expect(await tm.setView(tab.id, 'terminal')).toBe(false)
+    expect(tm.get(tab.id)?.view).toBe('chat')
+    expect(chats[0].stops).toBe(0)
+    expect(startChat).toHaveBeenCalledTimes(1)
+  })
+
+  it('setView is refused while agents run', async () => {
+    const { tm, chats, startChat } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    tm.setAgentsRunning(tab.id, true)
+    expect(await tm.setView(tab.id, 'terminal')).toBe(false)
+    expect(tm.get(tab.id)?.view).toBe('chat')
+    expect(chats[0].stops).toBe(0)
+    expect(startChat).toHaveBeenCalledTimes(1)
+  })
+
+  it('setView is refused for a shell tab, an unknown tab (a remote tab is none of this manager\'s) and the view the tab has', async () => {
+    const { tm, ptys, startChat } = chatSetup()
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    const claude = tm.open({ kind: 'claude', cwd: 'D:\\y' })
+    expect(await tm.setView(shell.id, 'chat')).toBe(false)
+    expect(await tm.setView('gone', 'chat')).toBe(false)
+    expect(await tm.setView(claude.id, 'terminal')).toBe(false)
+    expect(ptys).toHaveLength(2)
+    expect(startChat).not.toHaveBeenCalled()
+    expect(tm.get(claude.id)?.view).toBe('terminal')
+  })
+
+  it('setView is refused while the tab is preparing a restart', async () => {
+    let release!: (ok: boolean) => void
+    const gate = new Promise<boolean>((r) => { release = r })
+    const { tm, ptys, startChat } = chatSetup({ resumable: () => gate })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    ptys[0].emitExit(0)
+    const restarted = tm.restart(tab.id)
+    expect(await tm.setView(tab.id, 'chat')).toBe(false)
+    release(true)
+    await restarted
+    expect(ptys).toHaveLength(2)
+    expect(tm.get(tab.id)?.view).toBe('terminal')
+    expect(startChat).not.toHaveBeenCalled()
+  })
+
+  it('setView is refused while the tab is restarting', async () => {
+    vi.useFakeTimers()
+    const { tm, ptys, startChat } = chatSetup()
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const restarting = tm.restart(tab.id, { live: true })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await tm.setView(tab.id, 'chat')).toBe(false)
+    ptys[0].emitExit(0)
+    await restarting
+    expect(ptys).toHaveLength(2)
+    expect(startChat).not.toHaveBeenCalled()
+  })
+
+  it('closing a chat tab stops its process', () => {
+    const { tm, chats } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    tm.close(tab.id)
+    expect(chats[0].stops).toBe(1)
+    expect(chats[0].kills).toBe(0)
+  })
+
+  it('restarting a chat tab stops its process first', async () => {
+    const { tm, chats, calls, startChat } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    chats[0].exitOnStop = true
+    await tm.restart(tab.id, { live: true })
+    expect(startChat).toHaveBeenCalledTimes(2)
+    expect(calls).toEqual(['start', 'stop', 'start'])
+    expect(tm.get(tab.id)?.exited).toBe(false)
+  })
+
+  it('disposeAll kills chat processes', () => {
+    const { tm, chats } = chatSetup({ defaultView: () => 'chat' })
+    tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    tm.disposeAll()
+    expect(chats[0].kills).toBe(1)
+    expect(chats[0].stops).toBe(0)
+  })
+
+  it('write and resize ignore a chat tab', () => {
+    const { tm, ptys, chats } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    expect(() => {
+      tm.write(tab.id, 'hello\r')
+      tm.resize(tab.id, 100, 40)
+    }).not.toThrow()
+    expect(ptys).toEqual([])
+    expect(chats[0].stops + chats[0].kills).toBe(0)
+  })
+
+  it('the snapshot keeps the new view', async () => {
+    const { tm, ptys, chats } = chatSetup()
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const switched = tm.setView(tab.id, 'chat')
+    ptys[0].emitExit(0)
+    expect(await switched).toBe(true)
+    expect(tm.snapshot()[0].view).toBe('chat')
+    expect(chats).toHaveLength(1)
+  })
+  it('a chat process that ignores stop is killed at 5 s, and the new one starts only after the old one exits', async () => {
+    vi.useFakeTimers()
+    const { tm, chats, startChat } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const restarted = tm.restart(tab.id, { live: true })
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(chats[0].kills).toBe(0)
+    expect(startChat).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(chats[0].kills).toBe(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(startChat).toHaveBeenCalledTimes(1)
+    chats[0].end(null, null)
+    await restarted
+    expect(startChat).toHaveBeenCalledTimes(2)
+    expect(tm.get(tab.id)?.exited).toBe(false)
+  })
+
+  it('a chat process that never exits is killed, and a restart starts nothing beside it', async () => {
+    vi.useFakeTimers()
+    const { tm, chats, startChat } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const restarted = tm.restart(tab.id, { live: true })
+    await vi.advanceTimersByTimeAsync(7000)
+    await restarted
+    expect(chats[0].stops).toBe(1)
+    expect(chats[0].kills).toBe(1)
+    expect(startChat).toHaveBeenCalledTimes(1)
+    expect(tm.get(tab.id)?.exited).toBe(true)
+  })
+
+  it('a chat process still alive after a switch is waited for by the next restart, which starts nothing until it exits', async () => {
+    vi.useFakeTimers()
+    const { tm, chats, ptys } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const switched = tm.setView(tab.id, 'terminal')
+    await vi.advanceTimersByTimeAsync(7000)
+    expect(await switched).toBe(false)
+    expect(tm.get(tab.id)).toMatchObject({ view: 'terminal', exited: true })
+    // the restart starts the terminal the tab now has, once the old chat process is gone
+    const restarted = tm.restart(tab.id)
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(ptys).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(chats[0].stops).toBe(2)
+    expect(chats[0].kills).toBe(2)
+    expect(ptys).toHaveLength(0)
+    chats[0].end(null, null)
+    await restarted
+    expect(ptys).toHaveLength(1)
+    expect(tm.get(tab.id)?.exited).toBe(false)
+  })
+
+  it('disposeAll kills a chat process that is still stopping during a switch', async () => {
+    vi.useFakeTimers()
+    const { tm, chats } = chatSetup({ defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    const switched = tm.setView(tab.id, 'terminal')
+    await vi.advanceTimersByTimeAsync(1000)
+    tm.disposeAll()
+    expect(chats[0].kills).toBe(1)
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(await switched).toBe(false)
+  })
+
+  it('a chat process reports its exit once: a second report from its handle does nothing', () => {
+    const fallbacks: Array<[string, string]> = []
+    const { tm, chats, ptys, log } = chatSetup({ defaultView: () => 'chat', onChatFallback: (id, reason) => fallbacks.push([id, reason]) })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x' })
+    chats[0].end(0, null)
+    chats[0].end(3, 'a late fallback')
+    expect(log.filter((l) => l === `exit:${tab.id}:0`)).toHaveLength(1)
+    expect(log).not.toContain(`exit:${tab.id}:3`)
+    expect(fallbacks).toEqual([])
+    expect(ptys).toEqual([])
+    expect(tm.get(tab.id)).toMatchObject({ view: 'chat', exited: true })
+  })
+})
+
+describe('TabManager resumeSession', () => {
+  it('resumeSession restarts a Claude tab on the given conversation, and its fork is no copy any more', async () => {
+    const resolveLaunch = vi.fn((req: LaunchRequest): ResolvedLaunch => ({ profileName: 'Windows PowerShell', spec: { file: 'powershell.exe', args: ['-NoLogo'] } }))
+    const { tm, ptys } = setup({ resolveLaunch }, { exitOnKill: true })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: null, fork: { of: null, from: SID_A } })
+    resolveLaunch.mockClear()
+
+    expect(await tm.resumeSession(tab.id, SID_B)).toBe(true)
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_B }))
+    expect(ptys).toHaveLength(2)
+    expect(tm.get(tab.id)).toMatchObject({ claudeSessionId: SID_B, fork: { of: null, from: null } })
+  })
+
+  it('resumeSession is refused while the tab works, and changes nothing', async () => {
+    const { tm, ptys } = setup({}, { exitOnKill: true })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    tm.setWorking(tab.id, true)
+
+    expect(await tm.resumeSession(tab.id, SID_B)).toBe(false)
+    expect(ptys).toHaveLength(1)
+    expect(tm.get(tab.id)?.claudeSessionId).toBe(SID_A)
+  })
+
+  it('resumeSession is refused for a shell tab and an unknown tab', async () => {
+    const { tm, ptys } = setup({}, { exitOnKill: true })
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    expect(await tm.resumeSession(shell.id, SID_B)).toBe(false)
+    expect(await tm.resumeSession('no-such-tab', SID_B)).toBe(false)
+    expect(ptys).toHaveLength(1)
+  })
+
+  it('a chat tab restarts its chat process on the new conversation', async () => {
+    const chats: ChatHandle[] = []
+    const startChat = vi.fn((req: ChatStartRequest): ChatHandle => {
+      const chat: ChatHandle = { stop: () => req.exit(0, null), kill: () => undefined }
+      chats.push(chat)
+      return chat
+    })
+    const resolveLaunch = vi.fn((req: LaunchRequest): ResolvedLaunch => ({
+      profileName: 'Windows PowerShell',
+      spec: { file: 'powershell.exe', args: ['-NoLogo'] },
+      ...(req.kind === 'claude' ? { claude: { command: 'claude', settingsPath: null, resumeSessionId: req.resumeSessionId ?? null, forkSession: false } } : {}),
+    }))
+    const { tm } = setup({ resolveLaunch, startChat, defaultView: () => 'chat' })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    resolveLaunch.mockClear()
+
+    expect(await tm.resumeSession(tab.id, SID_B)).toBe(true)
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', resumeSessionId: SID_B }))
+    expect(startChat).toHaveBeenCalledTimes(2)
+    expect(startChat.mock.calls[1][0].claude.resumeSessionId).toBe(SID_B)
   })
 })

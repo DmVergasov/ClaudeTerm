@@ -128,9 +128,9 @@ export class TaskListHub {
 }
 
 /**
- * What the status bar shows of a tab's superpowers plan and task list: an unfinished plan wins; a finished plan
- * gives way to an unfinished list (the agent's own list, `agentList`); with both finished, the one that finished
- * later shows: `newer` names the side whose status changed last.
+ * What the status bar shows of a tab's superpowers plan and task list: an unfinished list (the agent's own list,
+ * `agentList`) wins, as the agent set it on purpose, e.g. to track work across several plans; else an unfinished plan;
+ * with both finished, the one that finished later shows: `newer` names the side whose status changed last.
  */
 export function shownPlan(
   plan: PlanStatus | null,
@@ -139,7 +139,7 @@ export function shownPlan(
 ): { plan: PlanStatus | null; agentList: boolean } {
   if (!list) return { plan, agentList: false }
   if (!plan) return { plan: list, agentList: true }
-  if (!plan.finished) return { plan, agentList: false }
   if (!list.finished) return { plan: list, agentList: true }
+  if (!plan.finished) return { plan, agentList: false }
   return newer === 'list' ? { plan: list, agentList: true } : { plan, agentList: false }
 }

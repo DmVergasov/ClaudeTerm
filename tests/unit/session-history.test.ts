@@ -55,6 +55,12 @@ describe('parseSessionHead', () => {
     expect(parseSessionHead(text, true)).toEqual({ cwd: 'D:\\a', firstPrompt: 'fix the login', hasUser: true })
   })
 
+  it('parseSessionHead lists an sdk-ts session it knows as a chat', () => {
+    const text = jsonl(user('D:\\a', 'hi', { entrypoint: 'sdk-ts' }))
+    expect(parseSessionHead(text, true)).toBeNull()
+    expect(parseSessionHead(text, true, true)).toEqual({ cwd: 'D:\\a', firstPrompt: 'hi', hasUser: true })
+  })
+
   it('takes the folder from a leading attachment when no user entry is in the window', () => {
     expect(parseSessionHead(jsonl({ type: 'last-prompt', lastPrompt: 'x' }, attachment('D:\\a')), true)).toEqual({ cwd: 'D:\\a', firstPrompt: null, hasUser: false })
   })

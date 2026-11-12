@@ -1,8 +1,19 @@
+import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
 import { type AttentionMessage, type AttentionReason, defaultPipeName, isUuid, type PipeMessage, type PipeResponse } from '../shared/protocol'
 import type { BackgroundTask } from '../shared/types'
+import { compactWindow } from './compact-window'
 import { statusFromStatusLine } from './status-line'
+
+/** a settings file's text; the status line runs in a short-lived process of its own, so a small synchronous read is fine */
+const readText = (path: string): string | null => {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
+}
 
 export type Sender = (pipeName: string, msg: PipeMessage) => Promise<PipeResponse>
 
@@ -69,7 +80,9 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
   const agentId = typeof input.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null
   const attention = (reason: AttentionReason, background = false): AttentionMessage =>
     ({ v: 1, type: 'attention', tabId, sessionId, reason, ...(agentId ? { agentId } : {}), ...(background ? { background: true as const } : {}) })
-  if (event === 'PermissionRequest') return attention('permission')
+  // Claude Code asks an AskUserQuestion through its permission dialog too, a second after PreToolUse reported the question:
+  // that one is no permission prompt, and the question is reported already
+  if (event === 'PermissionRequest') return input.tool_name === 'AskUserQuestion' ? null : attention('permission')
   if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') return attention('question')
   // background_tasks: the background work still in flight, which wakes the session again when it ends
   if (event === 'Stop') {
@@ -107,6 +120,6 @@ export async function runStatusLine(stdinText: string, env: NodeJS.ProcessEnv, s
   const tabId = env.CLAUDETERM_TAB_ID
   if (!isUuid(tabId)) return false
   const input = parseInput(stdinText)
-  const msg = input ? statusFromStatusLine(input, tabId) : null
+  const msg = input ? statusFromStatusLine(input, tabId, (model, dir) => compactWindow(model, dir, env, readText)) : null
   return msg ? deliver(msg, env, send) : false
 }

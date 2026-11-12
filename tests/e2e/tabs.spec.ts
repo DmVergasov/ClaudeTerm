@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { WIN } from '../fixtures/platform'
-import { bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, makeDataDir, ROOT, TEST_SHELL, testEnv, typeInTerminal } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, launchApp, makeDataDir, ROOT, TEST_SHELL, testEnv, typeInTerminal, openTabInFront } from './helpers'
 
 const electronExe = createRequire(__filename)('electron') as unknown as string
 
@@ -152,10 +152,7 @@ const freshFolder = (): string => mkdtempSync(join(tmpdir(), 'ct-folder-'))
 
 /** opens a shell tab in the folder and waits until main has it; the new tab is the active one */
 async function openShell(page: Page, cwd: string): Promise<string> {
-  const count = await page.evaluate(() => window.__ct!.tabIds().length)
-  await page.evaluate((o) => window.ct.openTab(o), { kind: 'shell' as const, cwd })
-  await page.waitForFunction((n) => window.__ct!.tabIds().length === n, count + 1)
-  return (await page.evaluate(() => window.__ct!.activeTabId()))!
+  return openTabInFront(page, 'shell', cwd)
 }
 
 /** the tab ids the tab bar shows, in their order on screen */

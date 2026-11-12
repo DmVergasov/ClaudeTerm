@@ -91,17 +91,20 @@ test('a list with no task in progress shows its count alone, not a check mark', 
   await app.close()
 })
 
-test('a superpowers plan in progress hides the list; when the plan run ends, the list shows again', async () => {
+test('an unfinished list shows in place of a superpowers plan in progress; once the list is removed, the plan shows again', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   const run = planRun()
   await startPlan(pipeName, tabId, run)
-  expect(await setList(pipeName, tabId, almostDone)).toEqual({ ok: true, info: 'Task list updated: 1 of 2 done.' })
   const seg = segment(page)
+  await expect(seg.locator('.status-text')).toHaveText('1/2 · Escape quotes and separators')
+  // the agent set its own list on purpose (work across several plans): it shows, not the plan
+  expect(await setList(pipeName, tabId, almostDone)).toEqual({ ok: true, info: 'Task list updated: 1 of 2 done.' })
+  await expect(seg.locator('.status-text')).toHaveText('1/2 · Write the changelog')
+  await expect(seg).toHaveAttribute('title', 'Release prep — 1 of 2 done. Click for the task list')
+  expect(await setList(pipeName, tabId, null)).toEqual({ ok: true, info: 'Task list removed.' })
   await expect(seg.locator('.status-text')).toHaveText('1/2 · Escape quotes and separators')
   await expect(seg).toHaveAttribute('title', 'CSV Export — 1 of 2 done. Click for the task list')
   rmSync(run, { recursive: true, force: true })
-  await expect(seg.locator('.status-text')).toHaveText('1/2 · Write the changelog')
-  await expect(seg).toHaveAttribute('title', 'Release prep — 1 of 2 done. Click for the task list')
   await app.close()
 })
 
@@ -205,11 +208,11 @@ test('Clear in the task box removes an agent list from the status bar, the file 
   await app.close()
 })
 
-test('the task box of a superpowers plan has no Clear button, even with an agent list kept behind it', async () => {
+test('the task box of a superpowers plan has no Clear button, even with a finished agent list kept behind it', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   const run = planRun()
   await startPlan(pipeName, tabId, run)
-  expect(await setList(pipeName, tabId, almostDone)).toEqual({ ok: true, info: 'Task list updated: 1 of 2 done.' })
+  expect(await setList(pipeName, tabId, allDone)).toEqual({ ok: true, info: 'Task list updated: 2 of 2 done.' })
   const seg = segment(page)
   await expect(seg.locator('.status-text')).toHaveText('1/2 · Escape quotes and separators')
   await seg.click()

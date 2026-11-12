@@ -1,3 +1,5 @@
+import type { TabView } from './chat'
+
 export type TabKind = 'claude' | 'shell'
 export type ShellFamily = 'powershell' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'wsl' | 'other'
 
@@ -45,6 +47,8 @@ export interface TabInfo {
   exited: boolean
   /** what Claude is doing in the tab; null while it is idle, and in a shell tab */
   activity: TabActivity
+  /** the view a Claude tab shows: chat or its terminal; null in a shell tab */
+  view: TabView | null
   /** set on a tab that runs on another device; the tab is shown and controlled from here */
   remote?: TabRemote
 }
@@ -64,6 +68,8 @@ export interface OpenTabRequest {
   muted?: boolean
   /** a fork of another tab's conversation (a Claude tab) */
   fork?: TabFork | null
+  /** the view of a Claude tab; left out: the view the setting names */
+  view?: TabView
 }
 
 export type ImageSource = 'created' | 'shown' | 'read' | 'tool' | 'pasted'
@@ -101,6 +107,8 @@ export interface SessionSnapshotTab {
   background: boolean
   /** a fork of a Claude tab: `of` is the head's index in this list, null when the head is not kept */
   fork: { of: number | null; from: string | null } | null
+  /** the view a Claude tab was saved in; null: a shell tab, or a tab saved before views existed */
+  view: TabView | null
 }
 
 export interface SessionSnapshot {
@@ -155,7 +163,7 @@ export interface Settings {
    * the same for a restored tab Claude was working in when ClaudeTerm closed; limitPace: the title bar shows how fast each
    * usage limit is spent, with a bar, a color and a forecast from the pace (off: the fixed 70% and 90% only)
    */
-  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean; limitPace: boolean }
+  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean; limitPace: boolean; view: TabView }
   profiles: ProfileDef[]
   font: { family: string; size: number }
   theme: string | Record<string, string>

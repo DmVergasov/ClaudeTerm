@@ -26,15 +26,18 @@ test('Claude waiting in a background tab makes that tab pulse until it is opened
   await expect(claudeTab).not.toHaveClass(/\battention\b/)
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
   await expect(claudeTab).toHaveClass(/\battention\b/)
-  // the badge breathes on the tab; the tab itself does not animate. Found and read in one go: a redraw of the tab bar
-  // replaces its elements, and a replaced one has no style left
+  // the badge breathes on the tab, and a soft tint pulses under the tab (its ::before); the tab element itself does not
+  // animate. Found and read in one go: a redraw of the tab bar replaces its elements, and a replaced one has no style left
   await expect(claudeTab.locator('.tab-attn')).toHaveCount(1)
   expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`[data-tab-id="${id}"] .tab-attn`)!, '::after').animationName, tabId)).toBe('tab-breathe')
   expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`[data-tab-id="${id}"]`)!).animationName, tabId)).toBe('none')
+  const pulse = (): Promise<string> => page.evaluate((id) => getComputedStyle(document.querySelector(`[data-tab-id="${id}"]`)!, '::before').animationName, tabId)
+  expect(await pulse()).toBe('tab-row-pulse')
   await expect(claudeTab.locator('.tab-bell')).toHaveCount(0)
 
   await claudeTab.click()
   await expect(claudeTab).not.toHaveClass(/\battention\b/)
+  expect(await pulse()).toBe('none')
   await app.close()
 })
 
@@ -66,17 +69,45 @@ test('the pulse keeps its phase when the tab bar is redrawn', async () => {
   await app.close()
 })
 
-test('with the tabs on the left, the row of a tab that waits for the user shows the breathing badge', async () => {
+test('on the tab bar, the badge of a finished answer breathes in green, and the tab\'s ✳ turns into a green dot', async () => {
+  const { app, page, tabId, work, pipeName } = await launchClaudeTab(QUIET)
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
+  const tab = page.locator(`#tabbar [data-tab-id="${tabId}"]`)
+  const badge = tab.locator('.tab-attn')
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'question' })).toEqual({ ok: true })
+  await expect(badge).toHaveCount(1)
+  await expect(badge).not.toHaveClass(/\bdone\b/)
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
+  await expect(badge).toHaveClass(/\bdone\b/)
+  await expect(tab.locator('.tab-icon.done')).toHaveCount(1)
+  // the app's green, #63C08F
+  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`#tabbar [data-tab-id="${id}"] .tab-attn`)!).backgroundColor, tabId)).toBe('rgb(99, 192, 143)')
+  await app.close()
+})
+
+test('with the tabs on the left, a row waiting for a permission names it, breathing, and a row marked unread shows the breathing badge', async () => {
   const { app, page, tabId, work, pipeName } = await launchClaudeTab({ ...QUIET, tabs: { position: 'left' } })
   await page.emulateMedia({ reducedMotion: 'no-preference' })
+  const row = page.locator(`#tabpanel .tp-tab[data-tab-id="${tabId}"]`)
+  // marked unread, then left: the row has the badge, as nothing names what it waits for
+  await row.click({ button: 'right' })
+  await page.locator('.menu-item', { hasText: 'Mark as unread' }).click()
   // the waiting tab is a background one: another tab is the active one
   await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
   await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, tabId)
-  const row = page.locator(`#tabpanel .tp-tab[data-tab-id="${tabId}"]`)
-  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
   await expect(row).toHaveClass(/\battention\b/)
   await expect(row.locator('.tab-attn')).toHaveCount(1)
+  await expect(row.locator('.tab-status')).toHaveCount(0)
   expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`#tabpanel [data-tab-id="${id}"] .tab-attn`)!, '::after').animationName, tabId)).toBe('tab-breathe')
+  // a row marked unread pulses softly too
+  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`#tabpanel [data-tab-id="${id}"]`)!, '::before').animationName, tabId)).toBe('tab-row-pulse')
+
+  // Claude asks for a permission: the word takes the badge's place, and breathes
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'permission' })).toEqual({ ok: true })
+  await expect(row.locator('.tab-status')).toHaveText('Permission')
+  await expect(row.locator('.tab-attn')).toHaveCount(0)
+  expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`#tabpanel [data-tab-id="${id}"] .tab-status`)!).animationName, tabId)).toBe('tab-status-breathe')
   expect(await page.evaluate((id) => getComputedStyle(document.querySelector(`#tabpanel [data-tab-id="${id}"]`)!).animationName, tabId)).toBe('none')
   await app.close()
 })

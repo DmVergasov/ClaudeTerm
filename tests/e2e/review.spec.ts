@@ -260,7 +260,18 @@ test('show_diff opens a file git ignores when its paths name it', async () => {
 test('the status bar counter shows the uncommitted changes without a status line, and opens the panel', async () => {
   const { app, page } = await reviewTab(upper)
   const counter = page.locator('#statusbar .status-changes')
-  await expect(counter.locator('.status-text')).toHaveText('± 1 file +1 −1')
+  await expect(counter.locator('.status-text')).toHaveText('1 file +1 −1')
+  // as the mockups draw it: a file icon, the added lines in green and the removed in red, at the bar's right end
+  await expect(counter.locator('svg')).toHaveCount(1)
+  const color = (sel: string) => counter.locator(sel).evaluate((el) => getComputedStyle(el).color)
+  expect(await color('.status-added')).toBe('rgb(99, 192, 143)')
+  expect(await color('.status-removed')).toBe('rgb(242, 134, 126)')
+  await expect(counter.locator('.status-added')).toHaveText('+1')
+  await expect(counter.locator('.status-removed')).toHaveText('−1')
+  const bar = (await page.locator('#statusbar').boundingBox())!
+  const seg = (await counter.boundingBox())!
+  const padding = await page.locator('#statusbar').evaluate((el) => parseFloat(getComputedStyle(el).paddingRight))
+  expect(Math.abs((seg.x + seg.width) - (bar.x + bar.width - padding))).toBeLessThanOrEqual(1)
   // the hidden panel keeps the update without building its rows; the badge follows it
   await expect(page.locator('.review-file')).toHaveCount(0)
   await expect(changesTab(page).locator('.badge')).toHaveText('1')

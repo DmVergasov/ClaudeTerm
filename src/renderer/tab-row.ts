@@ -2,7 +2,7 @@ import type { TabActivity } from '../shared/types'
 import { icon } from './icons'
 import { shortcutLabel } from './keymap'
 import { noteIcon } from './note-overlay'
-import type { TabBarCallbacks, TabBarItem } from './tabbar'
+import type { TabBarCallbacks, TabBarItem, TabWaiting } from './tabbar'
 
 /** one full breath of the attention badge: the 2 s tab-breathe animation in styles.css */
 const PULSE_CYCLE_MS = 2000
@@ -58,39 +58,49 @@ export function spinner(cls: string): HTMLElement {
 /** a tab's activity as its icon shows it: none while Claude waits for the user, whose pulse says more */
 export const shownActivity = (item: Pick<TabBarItem, 'activity' | 'attention'>): TabActivity => item.attention ? null : item.activity
 
-/** a tab's kind icon: the spinner while Claude works in it; otherwise ✳ for a Claude tab and the terminal glyph for a shell tab */
+/**
+ * A tab's kind icon: the spinner while Claude works in it; a green dot when its finished turn waits to be read; otherwise ✳
+ * for a Claude tab and the terminal glyph for a shell tab
+ */
 export function tabIcon(item: TabBarItem): HTMLElement {
   if (shownActivity(item)) return spinner('tab-icon')
   const el = document.createElement('span')
   el.className = 'tab-icon'
-  if (item.kind === 'claude') el.textContent = '✳'
+  if (item.waiting === 'done') {
+    el.classList.add('done')
+    el.textContent = '●'
+  } else if (item.kind === 'claude') el.textContent = '✳'
   else el.innerHTML = icon('terminal', 13)
   return el
+}
+
+/** the word a waiting row shows in the left panel, and its tooltip */
+const WAITING_WORDS: Record<TabWaiting, { text: string; title: string }> = {
+  question: { text: 'Question', title: 'Claude asks you a question' },
+  permission: { text: 'Permission', title: 'Claude asks for your permission' },
+  done: { text: 'Done', title: 'Claude finished its answer' }
 }
 
 export interface TabParts {
   icon: HTMLElement
   label: HTMLElement
-  /** the attention badge, then the note, muted, bell, envelope and images marks, in this order */
+  /** the note, muted, bell, envelope and images marks, then the attention badge or the waiting word, in this order */
   marks: HTMLElement[]
   close: HTMLButtonElement
 }
 
-/** what a tab shows of itself, on the tab bar and in the left panel alike: the kind icon, the title, the marks and × */
-export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCallbacks, 'close'>): TabParts {
+/**
+ * What a tab shows of itself, on the tab bar and in the left panel alike: the kind icon, the title, the marks and ×. With
+ * `words` (the left panel's rows), a tab that waits names what for in place of the badge, in a word that breathes: a question
+ * or a permission in the accent, a finished answer in green. The badge or the word comes last, so it stands at the same place
+ * on every tab, whatever other marks a tab has.
+ */
+export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCallbacks, 'close'>, words = false): TabParts {
   const kindIcon = tabIcon(item)
   const label = document.createElement('span')
   label.className = 'tab-title'
   label.textContent = item.title
   const marks: HTMLElement[] = []
-  if (item.attention) {
-    // Claude waits for the user here: a dot that breathes until the tab is opened
-    const a = document.createElement('span')
-    a.className = 'tab-attn'
-    a.title = 'Claude waits for you'
-    a.style.setProperty('--pulse-delay', pulseDelay())
-    marks.push(a)
-  }
   if (item.note) {
     const n = document.createElement('span')
     n.className = 'tab-note'
@@ -118,6 +128,21 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
     b.innerHTML = icon('image', 12)
     b.append(String(item.images))
     marks.push(b)
+  }
+  if (words && item.waiting !== null) {
+    const w = document.createElement('span')
+    w.className = `tab-status ${item.waiting === 'done' ? 'done' : 'ask'}`
+    w.textContent = WAITING_WORDS[item.waiting].text
+    w.title = WAITING_WORDS[item.waiting].title
+    w.style.setProperty('--pulse-delay', pulseDelay())
+    marks.push(w)
+  } else if (item.attention) {
+    // Claude waits for the user here: a dot that breathes until the tab is opened, green once Claude has answered
+    const a = document.createElement('span')
+    a.className = item.waiting === 'done' ? 'tab-attn done' : 'tab-attn'
+    a.title = 'Claude waits for you'
+    a.style.setProperty('--pulse-delay', pulseDelay())
+    marks.push(a)
   }
   const close = button('×', 'tab-close', `Close (${shortcutLabel('closeTab', platform)})`, (e) => {
     e.stopPropagation()

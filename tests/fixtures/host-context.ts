@@ -48,6 +48,7 @@ export function tabInfo(id: string, over: Partial<TabInfo> = {}): TabInfo {
     fork: null,
     exited: false,
     activity: null,
+    view: 'terminal',
     ...over
   }
 }

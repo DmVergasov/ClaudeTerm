@@ -6,19 +6,18 @@ html, body { margin: 0; height: 100%; background: var(--ground); color: var(--fg
 #app { display: flex; flex-direction: column; height: 100vh; }
 /* The window's own title bar, the window's drag strip. The system's window buttons sit in its right end: the padding
    keeps the content out of the overlay. On macOS the traffic lights sit at the left, which the padding leaves room for. */
-#titlebar { container: titlebar / inline-size; flex: none; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)) 0 14px; background: var(--ground); border-bottom: 1px solid var(--line); user-select: none; -webkit-app-region: drag; }
-body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
+/* three columns over the whole width, the side ones equal, so the limits stand in the middle of the window. The window buttons' room is the
+   right column's padding and the traffic lights' the left one's: a side whose content needs more than its half pushes the limits aside, never
+   under itself */
+#titlebar { container: titlebar / inline-size; flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 44px; background: var(--ground); border-bottom: 1px solid var(--line); user-select: none; -webkit-app-region: drag; }
+.tb-left { display: flex; align-items: center; gap: 10px; min-width: 0; padding-left: 14px; }
+body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
+.tb-right { height: 100%; padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)); }
 #titlebar button, #titlebar input, #titlebar a, #titlebar [role=button] { -webkit-app-region: no-drag; }
 /* the overlays and menus cover the window's top strip too: without this, a press there drags the window */
 .menu, #lightbox, #sessions, #folder-dialog, #plan-list, #search, #toasts { -webkit-app-region: no-drag; }
 .tb-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: var(--accent); color: var(--ground); font: 700 11px ui-monospace, Consolas, monospace; }
 .tb-name { color: var(--text); font-weight: 600; white-space: nowrap; }
-.tb-center { flex: 1; min-width: 0; display: flex; justify-content: center; }
-.tb-search { display: flex; align-items: center; gap: 8px; width: min(320px, 100%); height: 30px; padding: 0 8px 0 10px; background: var(--raised); color: var(--text-3); border: 1px solid var(--line-2); border-radius: 8px; font: inherit; font-size: 12px; cursor: pointer; }
-.tb-search:hover { color: var(--text-2); background: var(--raised-2); }
-.tb-search svg { flex: none; }
-.tb-search-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.tb-search-key { flex: none; padding: 0 5px; border: 1px solid var(--line-2); border-radius: 4px; color: var(--text-3); font: 10.5px ui-monospace, Consolas, monospace; }
 .tb-meters { display: flex; align-items: center; gap: 14px; -webkit-app-region: no-drag; }
 /* a usage limit: its label and reset on one line, its % under them, and a bar of the % used with a mark where the time gone by stands */
 .meter { display: flex; flex-direction: column; gap: 3px; width: 156px; }
@@ -27,21 +26,18 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 .meter.warn { --meter: var(--amber); }
 .meter.crit { --meter: var(--red); }
 /* the head never wraps, and its line height is fixed, so both meters are as tall whatever their reset reads */
-.meter-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; line-height: 14px; white-space: nowrap; }
+.meter-head { display: flex; align-items: baseline; gap: 7px; line-height: 14px; white-space: nowrap; }
 .meter-label { color: var(--text-3); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
-.meter-reset { color: var(--text-3); font-size: 10.5px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.meter-pct { color: var(--text); font-size: 12px; font-weight: 600; line-height: 16px; font-variant-numeric: tabular-nums; }
+.meter-reset { margin-left: auto; color: var(--text-3); font-size: 10.5px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.meter-pct { color: var(--text); font-size: 12px; font-weight: 600; line-height: 14px; font-variant-numeric: tabular-nums; }
 .meter.warn .meter-pct, .meter.crit .meter-pct { color: var(--meter); }
 .meter-bar { position: relative; height: 4px; border-radius: 2px; background: var(--line-2); }
 .meter-bar::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: var(--used, 0%); border-radius: inherit; background: var(--meter); transition: width 600ms ease; }
 .meter-bar::after { content: ''; position: absolute; top: -2px; left: var(--elapsed, 0%); width: 2px; height: 8px; border-radius: 1px; background: var(--text); transform: translateX(-50%); }
-/* a narrow title bar: the search field keeps its icon, the meters drop their reset times and narrow, and the name steps aside for the
-   mark, so the search field and the meters never overlap, and the meters stay clear of the window buttons */
-/* the container query measures the bar's content box: its padding, the window buttons' room included, is left out. 704 px is the narrowest
-   content width at which the full layout fits with the search text whole (measured with the Windows padding of 137 px) */
-@container titlebar (width < 704px) {
-  .tb-search { width: 28px; padding: 0; justify-content: center; }
-  .tb-name, .tb-search-text, .tb-search-key, .meter-reset { display: none; }
+/* a narrow title bar: the meters drop their reset times and narrow, and the name steps aside for the mark. The full layout needs
+   326 px of meters plus twice the wider side: 600 px with the Windows buttons' 137 px, 726 px with the traffic lights' gap and the name */
+@container titlebar (width < 760px) {
+  .tb-name, .meter-reset { display: none; }
   .tb-meters { gap: 10px; }
   .meter { width: 112px; }
 }
@@ -59,14 +55,18 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 .sh-branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sh-folder { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 12px; }
 .sh-spacer { flex: 1; min-width: 0; }
-.sh-modes { display: flex; flex: none; }
+.sh-modes { display: flex; flex: none; position: relative; }
+.sh-modes[hidden], .sh-mode-confirm[hidden] { display: none; }
+.sh-mode { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer; }
+.sh-mode:hover:not(:disabled) { color: var(--text-2); }
+.sh-mode[aria-pressed="true"] { color: var(--text); border-color: var(--border); background: var(--raised); }
+.sh-mode:disabled { opacity: 0.45; cursor: default; }
+.sh-mode-confirm { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised-2); color: var(--text); font-size: 12px; white-space: nowrap; }
+.sh-mode-confirm-button { padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
 #sheet-header .tab-changes-toggle, #sheet-header .tab-images-toggle, #sheet-header .tab-docs-toggle, #sheet-header .tab-messages-toggle, #sheet-header .tab-note-toggle { flex: none; gap: 6px; height: 30px; padding: 0 9px; border-radius: 8px; font-size: 12px; }
 #sheet-header .tab-changes-toggle:hover, #sheet-header .tab-images-toggle:hover, #sheet-header .tab-docs-toggle:hover, #sheet-header .tab-messages-toggle:hover, #sheet-header .tab-note-toggle:hover { background: var(--raised); }
 #sheet-header .badge { position: static; display: inline-block; min-width: 16px; height: 16px; margin-left: -2px; }
 /* Claude works in the active tab: a 2 px line under the header runs across, and stops when the turn ends */
-.sh-sweep { position: absolute; left: 0; bottom: 0; width: 24%; height: 2px; display: none; background: linear-gradient(to right, transparent, var(--accent), transparent); }
-#sheet-header.working .sh-sweep { display: block; animation: sheet-sweep 1.8s linear infinite; }
-@keyframes sheet-sweep { from { transform: translateX(-100%); } to { transform: translateX(420%); } }
 #workspace { flex: 1; display: flex; min-width: 0; min-height: 0; position: relative; }
 #terminals { flex: 1; position: relative; min-width: 0; background: var(--term-bg, var(--term)); }
 /* No padding here: FitAddon sizes the terminal from this element's computed height/width, which with
@@ -88,6 +88,16 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 .tab-wtline { position: absolute; left: 10px; right: 10px; bottom: 3px; height: 2px; border-radius: 1px; }
 .tab.exited .tab-title { text-decoration: line-through; opacity: 0.55; }
 .tab-icon { font-size: 11px; color: var(--accent); }
+/* Claude finished a turn the user has not read yet: a quiet green dot */
+.tab-icon.done { display: inline-block; width: 1em; text-align: center; color: var(--green); font-size: 9px; }
+/* a waiting row in the left panel names what for in a word that breathes at the row's right end: a question or a permission
+   in the accent, a finished answer in green; the row's soft pulse (below, with the badge) breathes with it. Pointing at the
+   row puts its × in the word's place. */
+.tab-status { --status: var(--accent); flex: none; padding: 0 7px; border-radius: 10px; background: color-mix(in srgb, var(--status) 14%, transparent); color: var(--status); font-size: 11px; font-weight: 600; line-height: 16px; white-space: nowrap; animation: tab-status-breathe 2s ease-in-out infinite; animation-delay: var(--pulse-delay, 0ms); }
+.tab-status.done { --status: var(--green); }
+@keyframes tab-status-breathe { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status) 45%, transparent); } 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--status) 0%, transparent); } }
+.tp-tab.has-status:not(:hover) .tab-close { display: none; }
+.tp-tab.has-status:hover .tab-status { display: none; }
 /* Claude works in the tab: its icon runs through Claude Code's own spinner glyphs. The delay (set from one clock) keeps
    the phase when the tabs are redrawn. */
 .spin { display: inline-block; width: 1em; text-align: center; color: var(--accent); }
@@ -102,7 +112,17 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 /* the attention badge: an 8 px accent dot, with a ring that breathes out from it (the ring scales up and fades) */
 .tab-attn, .tab-group-attention { position: relative; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .tab-attn::after, .tab-group-attention::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 1px solid var(--accent); animation: tab-breathe 2s ease-out infinite; animation-delay: var(--pulse-delay, 0ms); }
+.tab-attn.done { background: var(--green); }
+.tab-attn.done::after { border-color: var(--green); }
 @keyframes tab-breathe { from { transform: scale(1); opacity: 0.6; } to { transform: scale(2.2); opacity: 0; } }
+/* a tab that needs you pulses softly as a whole: a faint tint under its content swells and fades in step with its badge or
+   word (the same 2 s, and the same clock through --pulse-delay); in the accent while Claude asks or the tab is marked
+   unread, in green once Claude has answered. The tint is a layer of its own, so a hover still shows; the tab in front never
+   pulses, and under reduced motion the tint stays, still. */
+.tab.attention:not(.active), .tp-tab.attention:not(.active) { isolation: isolate; --row-pulse: var(--accent); }
+.tab.attention.attn-done, .tp-tab.attention.attn-done { --row-pulse: var(--green); }
+.tab.attention:not(.active)::before, .tp-tab.attention:not(.active)::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: color-mix(in srgb, var(--row-pulse) 10%, transparent); pointer-events: none; animation: tab-row-pulse 2s ease-in-out infinite; animation-delay: var(--pulse-delay, 0ms); }
+@keyframes tab-row-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .tab.remote { position: relative; }
 .tab.remote::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--group-color); }
 .tab.remote.dim { opacity: 0.5; }
@@ -124,7 +144,7 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 .tab-position { display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
 .tab-position:hover { color: var(--fg); }
 /* the left panel's foot: the position switch sits at its right, in the foot's own row */
-.tp-foot .tab-position { height: 30px; margin-left: auto; padding: 0 8px; border-radius: 8px; }
+.tp-foot .tab-position { flex: none; height: 30px; padding: 0 8px; border-radius: 8px; }
 .tp-foot .tab-position:hover { background: var(--raised); }
 
 /* The left panel, on the ground: the head (the wide New tab button and ▾), the groups of tabs with their rows of two lines
@@ -136,12 +156,14 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 .tab-new.tp-new svg { flex: none; color: var(--accent); }
 .tp-new .tp-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .tp-new .tp-key { flex: none; color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
-.tp-head .tab-menu { flex: none; height: 30px; padding: 0 8px; border-radius: 8px; }
-.tp-head .tab-menu:hover { background: var(--raised); }
+/* the ▾ beside New tab: a square box like New tab's, with a drawn chevron */
+.tab-menu { display: inline-flex; align-items: center; justify-content: center; }
+.tp-head .tab-menu { flex: none; box-sizing: border-box; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line-2); border-radius: 8px; background: var(--raised); color: var(--text-3); }
+.tp-head .tab-menu:hover { background: var(--raised-2); color: var(--text); }
 .tp-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 6px 8px; }
 .tp-group-head { display: flex; align-items: center; gap: 6px; height: 26px; margin-top: 6px; padding: 0 8px; border-radius: 6px; cursor: pointer; }
 .tp-group-head:hover { background: #ffffff08; }
-.tp-chevron { display: inline-block; width: 10px; color: var(--text-3); font-size: 8px; text-align: center; transition: transform 0.12s; }
+.tp-chevron { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 12px; color: var(--text-3); transition: transform 0.12s; }
 .tp-group.folded .tp-chevron { transform: rotate(-90deg); }
 .tp-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 .tp-group-count { color: var(--muted); font-size: 11px; }
@@ -182,21 +204,28 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 .tp-device-count { min-width: 14px; padding: 0 4px; border-radius: 7px; background: var(--dc); color: #111; font-size: 10px; line-height: 14px; text-align: center; font-weight: 600; }
 /* a remote row whose device is offline: its text is muted (its section is already faded) */
 .tp-tab.dim { color: var(--muted); }
-/* the foot: Recent sessions and Settings, then the position switch at the right of Settings' row */
-.tp-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; flex-shrink: 0; padding: 6px 8px 8px; border-top: 1px solid var(--line); }
-.tp-recent, .tp-settings { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border: 0; border-radius: 8px; background: none; color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.tp-recent:hover, .tp-settings:hover { background: var(--raised); color: var(--text); }
-.tp-recent svg, .tp-settings svg { flex: none; color: var(--text-3); }
-.tp-recent { flex: 1 1 100%; }
-.tp-settings { flex: 1 1 auto; }
+/* the foot: Recent sessions on its own row, then the account row: the account of the tab in front with its plan, then
+   Notification settings, Settings and the position switch */
+.tp-foot { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; padding: 6px 8px 8px; border-top: 1px solid var(--line); }
+.tp-recent { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border: 0; border-radius: 8px; background: none; color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.tp-recent:hover { background: var(--raised); color: var(--text); }
+.tp-recent svg { flex: none; color: var(--text-3); }
+.tp-account { display: flex; align-items: center; gap: 2px; min-width: 0; padding: 8px 0 0 4px; border-top: 1px solid var(--line); }
+.tp-avatar { flex: none; width: 28px; height: 28px; margin-right: 8px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--raised-2); color: var(--text-2); font-size: 11px; font-weight: 600; }
+.tp-account-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 16px; }
+.tp-account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 500; }
+.tp-account-plan { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 11px; }
+.tp-notify, .tp-settings { flex: none; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--text-3); cursor: pointer; }
+.tp-notify:hover, .tp-settings:hover { background: var(--raised); color: var(--text); }
 .tp-label { overflow: hidden; text-overflow: ellipsis; }
 /* a column narrower than 200 px keeps the icons only, in one row: each button's title still names it */
 @container tabpanel (width < 200px) {
-  .tp-new .tp-label, .tp-new .tp-key, .tp-recent .tp-label, .tp-settings .tp-label { display: none; }
+  .tp-new .tp-label, .tp-new .tp-key, .tp-recent .tp-label { display: none; }
   .tab-new.tp-new { justify-content: center; padding: 0; }
-  .tp-foot { flex-wrap: nowrap; }
-  .tp-recent, .tp-settings { flex: 1 1 0; justify-content: center; padding: 0; }
-  .tp-foot .tab-position { margin-left: 0; }
+  .tp-recent { justify-content: center; padding: 0; }
+  /* the account row keeps its buttons: the avatar and the names step aside (the row's title still names them) */
+  .tp-avatar, .tp-account-text { display: none; }
+  .tp-account { justify-content: space-between; padding-left: 0; }
 }
 .tp-resize { position: absolute; top: 0; bottom: 0; right: -3px; width: 6px; cursor: col-resize; z-index: 5; }
 .tp-resize:hover { background: #ffffff18; }
@@ -499,7 +528,14 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 /* Send to Claude is the primary button */
 .review-send { height: 30px; padding: 0 14px; background: var(--accent); color: var(--ground); border: 0; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 600; }
 .review-send:disabled { opacity: 0.45; cursor: default; }
-#statusbar .status-changes { cursor: pointer; }
+/* the Changes counter stands at the bar's right end, as the mockups draw it: a file icon, the files, the added lines in green
+   and the removed in red; the separator before it goes, the space says it */
+#statusbar .status-changes { cursor: pointer; margin-left: auto; gap: 6px; }
+#statusbar .status-sep:has(+ .status-changes) { display: none; }
+#statusbar .status-icon { flex: none; display: inline-flex; color: var(--text-3); }
+#statusbar .status-files { color: var(--text-2); }
+#statusbar .status-added { color: var(--green); }
+#statusbar .status-removed { color: var(--red); }
 #statusbar .status-changes:hover { color: var(--fg); }
 #statusbar .status-plan { cursor: pointer; min-width: 0; max-width: 40ch; }
 #statusbar .status-plan:hover { color: var(--fg); }
@@ -517,6 +553,13 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 #plan-list .plan-task.current .plan-mark { color: var(--accent); }
 #statusbar .status-account { cursor: pointer; }
 #statusbar .status-account:hover { color: var(--fg); }
+#statusbar.in-chat .status-background { cursor: pointer; }
+#statusbar.in-chat .status-background:hover { color: var(--fg); }
+.status-tasks { position: fixed; z-index: 50; width: 340px; max-height: 60vh; overflow: auto; background: var(--raised); border: 1px solid var(--line-2); border-radius: 12px; padding: 6px 0; box-shadow: 0 16px 40px #000a; -webkit-app-region: no-drag; }
+.status-tasks .status-task { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 12px; color: var(--fg); }
+.status-tasks .status-task-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-tasks .status-task-stop { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); cursor: pointer; }
+.status-tasks .status-task-stop:hover { border-color: var(--border); color: var(--fg); }
 
 /* the menus and dialogs pop in (140 ms, from 98% size), the toasts slide up 8 px, the lightbox fades in; all off under reduced motion */
 @media (prefers-reduced-motion: no-preference) {
@@ -531,12 +574,11 @@ body.platform-darwin:not(.fullscreen) #titlebar { padding-left: 84px; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes badge-pop { from { transform: scale(0.8); } to { transform: none; } }
 
-/* Under reduced motion nothing moves: the working glyph is the still ✻, the sweep rests at the right of the header, the
+/* Under reduced motion nothing moves: the working glyph is the still ✻, the
    attention ring and the group dots stay where they are, and the bars jump to their values. */
 @media (prefers-reduced-motion: reduce) {
   .meter-bar::before, #statusbar .status-bar::before, .tp-chevron { transition: none; }
   .spin::before { animation: none; content: '✻'; }
-  #sheet-header.working .sh-sweep { animation: none; transform: translateX(160%); }
-  .tab-attn::after, .tab-group-attention::after, .tb-group-dot.pulse, .tp-group-dot.pulse { animation: none; }
+  .tab-attn::after, .tab-group-attention::after, .tb-group-dot.pulse, .tp-group-dot.pulse, .tab-status, .tab.attention:not(.active)::before, .tp-tab.attention:not(.active)::before { animation: none; }
   .badge.pop { animation: none; }
 }

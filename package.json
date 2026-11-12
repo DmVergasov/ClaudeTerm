@@ -30,6 +30,7 @@
     "perf": "npm run build && playwright test -c playwright.perf.config.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.322",
     "electron-updater": "^6.8.9",
     "node-pty": "1.1.0"
   },

@@ -59,11 +59,11 @@ Audio and video files (`mp4`, `mov`, `webm`, `mkv`, `mp3`, `wav`, `m4a`, `ogg`) 
 
 ### 📊 A status bar that answers "how much is left?"
 
-Under every Claude tab: the current model with its reasoning effort as a small pill, how full the context window is with a small bar, and which subagents are running right now with their model and effort. Hover for exact token counts and a list of the agents with their tasks.
+Under every Claude tab: the current model with its reasoning effort as a small pill, how full the context window is with a small bar (measured against the auto-compact window when your settings set one, such as `"autoCompactWindow": 512000`, since that is where the conversation compacts), and which subagents are running right now with their model and effort. Hover for exact token counts and a list of the agents with their tasks.
 
-The title bar across the top of the window holds the 5-hour and weekly usage limits on its right, with the same kind of hover: when each limit resets. Its **Search past sessions** button opens Recent sessions (`Ctrl+Shift+H`, `⇧⌘H` on macOS).
+The title bar across the top of the window holds the 5-hour and weekly usage limits in its middle, with the same kind of hover: when each limit resets. **Recent sessions** is with the tabs: at the bottom of the tabs on the left, in the ▾ menu of the tabs on top, and on `Ctrl+Shift+H` (`⇧⌘H` on macOS).
 
-Each limit has a small bar: it fills with what is spent, and a mark on it shows how much of the limit's window has gone by, so a fill past the mark is a pace the limit will not last at. The color says where the pace leads: the accent for the five-hour limit and blue for the weekly one while the limit lasts until it resets, yellow when it would run out in the second half of the time left (or 90% is spent), red when sooner. Hover for when, at this pace, it runs out, or how much of it will be spent by the reset. To do without it, clear **Show in the title bar how fast the usage limits are spent** in Settings → Claude Code: the limits then show the % alone, yellow from 70% and red from 90%.
+Each limit has a small bar: it fills with what is spent, and a mark on it shows how much of the limit's window has gone by, so a fill past the mark is a pace the limit will not last at. The color says where the pace leads: the accent for the five-hour limit and blue for the weekly one while the limit lasts until it resets, yellow when it would run out in the second half of the time left (or 90% is spent), red when sooner. Hover for when, at this pace, it runs out, or how much of it will be spent by the reset. To do without it, clear **Pace of the usage limits** in Settings → Claude Code: the limits then show the % alone, yellow from 70% and red from 90%.
 
 When Claude ends its turn with work still running in the background — a shell command, a monitor, an agent it started there — the status bar says how many and what: `2 in background: build, tail -f server.log`. A long list is cut short; hover for each one's kind and command. Every turn end renews the list; it goes away once nothing runs any more, and with the session.
 
@@ -81,13 +81,13 @@ When Claude asks for a permission, asks you a question or finishes its turn whil
 
 The app icon counts the tabs that need you: a number on the Dock icon (macOS) and the launcher (Linux), a dot over the taskbar button (Windows) with the number in its tooltip. `Ctrl+Shift+J` (`⌘J` on macOS) opens the next of them.
 
-While Claude works in a tab, from your prompt to the end of its turn, the tab's ✳ spins through Claude Code's own spinner glyphs, on the tab bar and in the left panel, where a folded group spins too when Claude works in one of its tabs. It keeps spinning while an agent Claude started still works after the turn ends, since Claude Code waits for it and carries on when it reports. A tab where Claude waits for you shows a breathing badge instead. The ✳, ◐ or ◑ that Claude Code puts before its title is left out of the tab's name, since the icon shows the same.
+While Claude works in a tab, from your prompt to the end of its turn, the tab's ✳ spins through Claude Code's own spinner glyphs, on the tab bar, in the left panel and in the header of the tab in front, and a folded group spins too when Claude works in one of its tabs. It keeps spinning while an agent Claude started still works after the turn ends, since Claude Code waits for it and carries on when it reports. A tab where Claude waits for you shows a breathing badge instead; in the left panel its row names what for, in a word that breathes at the row's end — **Question** or **Permission**, or **Done** in green with a green dot for a finished answer — and its group shows a pulsing dot beside the number of its tabs. On the tab bar the badge of a finished answer breathes in green. The whole tab pulses softly with its badge or word, a faint tint that swells and fades, in green once Claude has answered; the tab in front never pulses. The ✳, ◐ or ◑ that Claude Code puts before its title is left out of the tab's name, since the icon shows the same.
 
-Claude often ends a turn while work it started still runs in the background — subagents, background shell commands, monitors — and starts another turn when that work ends. Each of those turns is signalled as a finished answer; clear **Signal a finished answer also while background work… still runs** in Settings and only the turn after which nothing runs in the background is. ClaudeTerm learns about that work from Claude Code's `Stop` hook (`background_tasks`); a Claude Code that does not send it gets every turn signalled.
+Claude often ends a turn while work it started still runs in the background — subagents, background shell commands, monitors — and starts another turn when that work ends. Each of those turns is signalled as a finished answer; clear **Signal a finished answer during background work** in Settings → Notifications and only the turn after which nothing runs in the background is. ClaudeTerm learns about that work from Claude Code's `Stop` hook (`background_tasks`); a Claude Code that does not send it gets every turn signalled.
 
-A turn that ends in an API error — a connection lost mid-response, a rate limit — counts as finished too, so a session never stops without a word. Claude Code itself leaves a response cut off mid-stream to you; with **Continue a response a dropped connection cut off** on, ClaudeTerm types Claude Code's own "resume where it stops" nudge into the tab a few seconds later instead of calling you: up to 3 times in a row, and not when Claude Code's prompt in that tab holds text of yours: then the tab calls you as usual.
+A turn that ends in an API error — a connection lost mid-response, a rate limit — counts as finished too, so a session never stops without a word. Claude Code itself leaves a response cut off mid-stream to you; with **Continue a cut-off response** on, ClaudeTerm types Claude Code's own "resume where it stops" nudge into the tab a few seconds later instead of calling you: up to 3 times in a row, and not when Claude Code's prompt in that tab holds text of yours: then the tab calls you as usual.
 
-A tab you have not finished with gets the same breathing badge: **Mark as unread** in its right-click menu marks any tab (the one in front once you leave it). Turn on **Highlight a Claude tab you leave…** in Settings, and a Claude tab you leave with Claude's reply not read to its end (Claude Code's *Jump to bottom* shows, or the terminal is scrolled back) or with an unsent prompt is marked by itself. Opening the tab clears the mark.
+A tab you have not finished with gets the same breathing badge: **Mark as unread** in its right-click menu marks any tab (the one in front once you leave it). Turn on **Highlight a tab left unread** in Settings → Notifications, and a Claude tab you leave with Claude's reply not read to its end (Claude Code's *Jump to bottom* shows, or the terminal is scrolled back) or with an unsent prompt is marked by itself. Opening the tab clears the mark.
 
 ### 🔍 Review Claude's changes next to the conversation
 
@@ -124,10 +124,28 @@ The panel follows the file: when it changes, the document is drawn again. A Mark
 - **Notes** — a note of your own on each Claude tab (which feature it is, your TODO list), shown over the terminal as a small label you open into a card; it stays with the conversation through `/clear`, a restart and Recent sessions.
 - **Proper terminal behaviour** — ConPTY on Windows, a real PTY on macOS and Linux, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (`⌘C` / `⌘V` on macOS; pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
 - **Font sizes in points**, exactly like Windows Terminal — `12` looks the same in both.
-- **Tabs on the left** — **Tabs** in Settings, or the position switch (in the tab bar, or at the bottom of the left column), moves the tabs into a column on the left, grouped by project (No project last), with the branch on every tab and a colored bar for a linked worktree. A **New tab** button sits at the top of the column, and **Recent sessions**, **Settings** and the position switch at its bottom. The panel's buttons (Changes, Docs, Media, Note) stay in each tab's header. With the tabs on top, they are grouped by project too, under a label when there are several projects. Click a group's header to fold it; drag tabs or groups to reorder them, and `Ctrl+Tab` and `Ctrl+Alt+1` … `9` follow that order.
+- **Tabs on the left** — **Tabs** in Settings → Appearance, or the position switch (in the tab bar, or at the bottom of the left column), moves the tabs into a column on the left, grouped by project (No project last), with the branch on every tab and a colored bar for a linked worktree. A **New tab** button sits at the top of the column, and **Recent sessions** at its bottom, over the account of the tab in front (the main account with its plan — Max, Pro, Team — as Claude Code's login names it, or the extra account it runs on), the bell for the notification settings, **Settings** and the position switch. The panel's buttons (Changes, Docs, Media, Note) stay in each tab's header. With the tabs on top, they are grouped by project too, under a label when there are several projects. Click a group's header to fold it; drag tabs or groups to reorder them, and `Ctrl+Tab` and `Ctrl+Alt+1` … `9` follow that order.
 - **Fork session** — the right-click menu of a Claude tab with a conversation has **Fork session**: a new tab resumes that conversation from the same point, and in the left panel the fork is shown under its tab.
 
 <p align="center"><img src="docs/images/new-tab-menu.png" width="560" alt="New tab menu with detected shell profiles"></p>
+
+### 💬 Chat
+
+A Claude tab opens as a chat: your messages, Claude's answers with their Markdown (headings, lists, tables, code), and the work between them. Each batch of tool calls folds into one line, *Ran 3 tools · 2.5s*, and opens to show every call: the file an edit changed, a command with its output. A subagent has a line of its own with its state. Claude's questions and permission requests come as cards you answer right there: a number key or a click picks an option, Enter sends it, and Esc dismisses a question.
+
+The switch in the tab's header moves the tab between the chat and Claude Code's own screen (**Terminal**). Settings → **Claude Code** → **Claude tabs open in** (Chat or Terminal) sets the view of the Claude tabs you open after the change; each tab keeps its own view and its switch.
+
+Under the conversation is the composer. **Enter** sends, **Shift+Enter** starts a new line, and **Esc** stops the turn (a command waiting to open in the terminal or for `/resume` is dropped first); with nothing running it clears the draft. The paperclip attaches files and images, **@** adds a file of the project to the message, and the chips show how Claude may act (**Ask before edits**, **Accept edits**, **Plan**, and **Auto** when your account offers it; `Shift+Tab` goes to the next one), and the model chip picks the model and its effort. A message you send while Claude works waits for the turn to end.
+
+Type `/` for Claude Code's commands. **/model** opens the model picker and **/resume** the Recent sessions window, both in the chat. A few commands need Claude Code's own screen — `/config`, `/permissions`, `/agents`, `/login`, `/doctor`, `/rewind` and others — and so does any line that starts with `!`: the tab switches to its terminal and the line is typed into Claude Code's prompt there, because the chat does not draw those dialogs and settings.
+
+A Claude tab on another of your computers shows its chat too, and you can send messages and answer its cards from there.
+
+The chat runs on Anthropic's Claude Agent SDK (its license is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) and needs **Claude Code 2.1.322 or later**. An older Claude Code, or one whose version cannot be read, opens the tab in the terminal as before. A folder Claude Code does not trust yet opens its Claude tab in the terminal for the trust dialog, whatever the setting.
+
+<p align="center"><img src="docs/images/chat.png" width="820" alt="Chat: a message, Claude's answer with a tool step and two finished subagents, and the composer with its mode and model chips"></p>
+
+<p align="center"><img src="docs/images/chat-question.png" width="820" alt="A question card in the chat: two options for the chart, the first one marked as recommended"></p>
 
 ### 📂 Open Claude Code here
 
@@ -137,7 +155,7 @@ Right-click any folder (or the background of a folder) in Explorer → **Open Cl
 
 Rebooted or closed the window? On the next start ClaudeTerm offers to reopen the same tabs, and **each Claude tab resumes its own conversation** (`claude --resume <session>`), even when several of them ran in the same folder or you used `/clear` in between.
 
-A tab Claude was still working in when ClaudeTerm closed **goes on with that work by itself** once it is reopened: a few seconds after the conversation is back, ClaudeTerm asks Claude to resume where it stopped, unless you have typed something in that tab first. That includes a tab whose turn had ended while work Claude left in the background — agents, background commands — still ran: that work stopped with ClaudeTerm, so Claude is told so and asked to check what of it finished and go on. A turn you stopped yourself with Esc or Ctrl+C is not taken up again. **Settings → Claude Code** has a checkbox to turn this off.
+A tab Claude was still working in when ClaudeTerm closed **goes on with that work by itself** once it is reopened: a few seconds after the conversation is back, ClaudeTerm asks Claude to resume where it stopped, unless you have typed something in that tab first. That includes a tab whose turn had ended while work Claude left in the background — agents, background commands — still ran: that work stopped with ClaudeTerm, so Claude is told so and asked to check what of it finished and go on. A turn you stopped yourself with Esc or Ctrl+C is not taken up again. **Go on after a restart** in **Settings → Claude Code** turns this off.
 
 **Recent sessions** (`Ctrl+Shift+H`, or **Recent sessions…** in the ▾ menu) lists your latest Claude Code conversations from every project — also ones started outside ClaudeTerm — with their titles, folders and last messages. Type to filter, Enter to continue one: ClaudeTerm opens a Claude tab in that folder with `claude --resume`, or switches to the tab that already has it. Click the ☆ of a session (or press `Ctrl+D`) to star it: starred sessions stay on top of the list, however old. **Star session** in a Claude tab's right-click menu stars that tab's conversation.
 
@@ -159,7 +177,7 @@ The computer stays awake while another device uses it: another device that types
 
 **Agent messages** let an agent in one Claude tab message an agent on another device, or on another Claude account, which Claude Code's own `ListAgents` and `SendMessage` cannot reach. Agents use `SendMessage` first, as they always have; only an agent that `ListAgents` does not show is reached through ClaudeTerm, with the `list_agents` and `message_agent` tools. A message wakes an idle agent when its Claude Code is 2.1.287 or later, and a busy agent reads it at its next step; an older Claude Code is listed as unable to receive messages.
 
-The **Agent messages** button (in the tab's header, with the other panel buttons) opens the **Agent messages** panel: **This tab** shows the conversations of the tab in front, **All** every conversation on this device, newest first. A tab with unread messages gets an envelope after its title, and so does a folded device chip or a device's header in the left panel; the button's badge counts the unread messages of the tab in front. Messages make no sound and no pop-up. In Settings → **Agent messages**, two options apply to each device on its own: **Let agents message tabs that Claude Code's own messaging can't reach** and **Mark tabs that got messages you haven't read**, both on by default.
+The **Agent messages** button (in the tab's header, with the other panel buttons) opens the **Agent messages** panel: **This tab** shows the conversations of the tab in front, **All** every conversation on this device, newest first. A tab with unread messages gets an envelope after its title, and so does a folded device chip or a device's header in the left panel; the button's badge counts the unread messages of the tab in front. Messages make no sound and no pop-up. In Settings → Panels → **Agent messages**, two options apply to each device on its own: **Let agents message tabs that Claude Code's own messaging can't reach** and **Mark tabs that got messages you haven't read**, both on by default.
 
 ## Install
 
@@ -187,7 +205,7 @@ From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in 
 
 On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff`, `show_document`, `set_task_list`, `get_task_list`, `device_status`, `open_device_settings`, `list_agents` and `message_agent` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
 
-**Requirements:** Windows 10 or 11 (x64), macOS 12 or later (Apple Silicon or Intel), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code (on Windows 2.1.139 or later).
+**Requirements:** Windows 10 or 11 (x64), macOS 12 or later (Apple Silicon or Intel), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code (on Windows 2.1.139 or later). The chat view needs Claude Code 2.1.322 or later; with an older one, Claude tabs open in the terminal.
 
 ## Keyboard shortcuts
 
@@ -220,7 +238,7 @@ Right-click a tab → **Restart session** restarts Claude Code in the same tab a
 
 ## Settings
 
-Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: notifications, font, theme, shells, Claude Code, accounts, devices, agent messages, images and updates. Changes apply at once.
+Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: tabs for General, Appearance, Claude Code, Notifications, Panels, Accounts and Devices, and a search field (`Ctrl+F`, `⌘F` on macOS) that finds a setting on any tab and lets you change it right there. Changes apply at once.
 
 ![Settings window](docs/images/settings.png)
 
@@ -237,7 +255,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "statusRefreshInterval": 5,    // that timer in seconds, 1–300; each refresh starts a few short processes per Claude tab
     "autoContinue": false,         // type a nudge into a Claude tab whose response a dropped connection cut off, up to 3 times in a row
     "continueAfterRestore": true,  // a restored tab Claude was working in when ClaudeTerm closed goes on by itself, also one whose background work it cut off
-    "limitPace": true              // each usage limit in the title bar has a bar, a color and a forecast from the pace it is spent at; false = the fixed 70% and 90% only
+    "limitPace": true,             // each usage limit in the title bar has a bar, a color and a forecast from the pace it is spent at; false = the fixed 70% and 90% only
+    "view": "chat"                 // Claude tabs open in the chat; "terminal" = Claude Code's own screen
   },
   "profiles": [                    // added to (or overriding by name) the detected profiles
     { "name": "Git Bash", "command": "C:\\Program Files\\Git\\bin\\bash.exe", "args": ["--login", "-i"] }
@@ -275,7 +294,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "treeWidth": 200,              // the file tree's width in px; dragging its right edge changes it until the next start
     "renderMarkdown": true         // show Markdown files formatted, not as plain diffs (the Render Markdown checkbox in the panel)
   },
-  "agentMessages": {               // agent messages, in Settings → Agent messages; each device has its own
+  "agentMessages": {               // agent messages, in Settings → Panels → Agent messages; each device has its own
     "enabled": true,               // false: no messages in or out on this device, no mail watcher for its new Claude tabs, the Messages button hidden
     "marks": true                  // false: no envelope marks and no badge; the messages still flow and the panel still shows them
   },

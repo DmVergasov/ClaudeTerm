@@ -3,7 +3,7 @@ import { REMOTE_COPY } from '../shared/remote'
 import { deviceGroups, groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
 import { icon } from './icons'
 import { TabHeader } from './tab-header'
-import { beginRename, bindTab, mailMark, shownActivity, spinner, tabParts } from './tab-row'
+import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
 import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarGroup, type TabBarItem } from './tabbar'
 
 /** the drag's data type that names the group dragged by its header */
@@ -56,11 +56,16 @@ export class TabPanel {
     this.head.replaceChildren(h.plus, h.more)
     this.list.className = 'tp-list'
     this.foot.className = 'tp-foot'
-    this.foot.replaceChildren(h.recent, h.settings, h.position)
+    this.foot.replaceChildren(h.recent, h.account)
     this.handle.className = 'tp-resize'
     this.width = clampTabPanelWidth(layout.width)
     root.style.width = `${this.width}px`
     this.wireResize(this.handle)
+  }
+
+  /** the account row of the foot: the account the tab in front runs on, and its plan or where it runs */
+  setAccount(name: string, detail: string): void {
+    this.header.setAccount(name, detail)
   }
 
   /** the panel is in the page only while it is shown: a hidden one would still match the selectors of the shown tab bar */
@@ -179,7 +184,7 @@ export class TabPanel {
     })
     const chevron = document.createElement('span')
     chevron.className = 'tp-chevron'
-    chevron.textContent = '▼'
+    chevron.innerHTML = icon('chevron-down', 12)
     const bar = document.createElement('span')
     bar.className = 'tp-device-bar'
     const name = document.createElement('span')
@@ -238,29 +243,28 @@ export class TabPanel {
     })
     const chevron = document.createElement('span')
     chevron.className = 'tp-chevron'
-    chevron.textContent = '▼'
+    chevron.innerHTML = icon('chevron-down', 12)
     const name = document.createElement('span')
     name.className = 'tp-group-name'
     name.textContent = label
     head.append(chevron, name)
     el.append(head)
 
-    if (folded) {
-      // a folded group shows how many tabs it holds, and a dot: pulsing when Claude waits in one of them, steady for a bell
-      const members = group.rows.flatMap((r) => byId.get(r.id) ?? [])
-      const count = document.createElement('span')
-      count.className = 'tp-group-count'
-      count.textContent = String(members.length)
-      head.append(count)
-      // and the spinning icon while Claude works in one of them
-      if (members.some(shownActivity)) head.append(spinner('tp-group-spin'))
-      const attention = members.some((m) => m.attention)
-      if (attention || members.some((m) => m.bell)) {
-        const dot = document.createElement('span')
-        dot.className = `tp-group-dot${attention ? ' pulse' : ''}`
-        head.append(dot)
-      }
-    } else {
+    // a group shows how many tabs it holds, and a dot that pulses while Claude waits in one of them; folded, it also shows
+    // the spinning icon while Claude works in one of them, and a steady dot for a bell its rows no longer show
+    const members = group.rows.flatMap((r) => byId.get(r.id) ?? [])
+    if (folded && members.some(shownActivity)) head.append(spinner('tp-group-spin'))
+    const attention = members.some((m) => m.attention)
+    if (attention || (folded && members.some((m) => m.bell))) {
+      const dot = document.createElement('span')
+      dot.className = `tp-group-dot${attention ? ' pulse' : ''}`
+      head.append(dot)
+    }
+    const count = document.createElement('span')
+    count.className = 'tp-group-count'
+    count.textContent = String(members.length)
+    head.append(count)
+    if (!folded) {
       for (const row of group.rows) {
         const item = byId.get(row.id)
         if (item) el.append(this.renderRow(section, item, row, item.id === this.activeId))
@@ -273,8 +277,10 @@ export class TabPanel {
     const place = item.place
     const el = document.createElement('div')
     const remote = item.group !== null
-    el.className = `tp-tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${row.fork ? ' fork' : ''}${remote ? ' remote' : ''}${item.dim ? ' dim' : ''}`
+    el.className = `tp-tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${item.waiting === 'done' ? ' attn-done' : ''}${item.waiting !== null ? ' has-status' : ''}${row.fork ? ' fork' : ''}${remote ? ' remote' : ''}${item.dim ? ' dim' : ''}`
     el.dataset.tabId = item.id
+    // the row's soft pulse runs on the word's clock, so a redraw carries it on in step with the word
+    if (item.attention) el.style.setProperty('--pulse-delay', pulseDelay())
     el.draggable = true
     el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(TAB_DRAG, item.id) })
     el.addEventListener('dragover', (e) => { if (dragCarries(e, TAB_DRAG)) e.preventDefault() })
@@ -294,7 +300,7 @@ export class TabPanel {
       el.append(bar)
     }
 
-    const parts = tabParts(item, this.platform, this.cb)
+    const parts = tabParts(item, this.platform, this.cb, true)
     const line = document.createElement('div')
     line.className = 'tp-l1'
     if (row.fork) {

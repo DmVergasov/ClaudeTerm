@@ -6,8 +6,8 @@ import { parseSnapshot, SessionStore } from '../../src/main/session-store'
 import type { SessionSnapshot, SessionSnapshotTab } from '../../src/shared/types'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
-const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null, muted: false, working: false, background: false, fork: null }
-const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null, muted: true, working: false, background: false, fork: null }
+const claudeTab: SessionSnapshotTab = { kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID, account: null, muted: false, working: false, background: false, fork: null, view: 'terminal' }
+const shellTab: SessionSnapshotTab = { kind: 'shell', profile: 'Git Bash', cwd: 'D:\\y', title: 'build', claudeSessionId: null, account: null, muted: true, working: false, background: false, fork: null, view: null }
 const snap = (tabs: SessionSnapshotTab[]): SessionSnapshot => ({ version: 1, savedAt: '2026-10-05T10:00:00.000Z', tabs })
 const newDir = (): string => mkdtempSync(join(tmpdir(), 'ct-sess-'))
 
@@ -186,5 +186,20 @@ describe('parseSnapshot forks', () => {
     expect(tabsOf([claudeTab, { ...shellTab, fork: { of: 0, from: SID } }])?.[1].fork).toBeNull()
     const old = { version: 1, savedAt: 'x', tabs: [{ kind: 'claude', profile: 'Windows PowerShell', cwd: 'D:\\x', title: null, claudeSessionId: SID }] }
     expect(parseSnapshot(JSON.stringify(old))?.tabs[0].fork).toBeNull()
+  })
+})
+
+describe('parseSnapshot views', () => {
+  const withView = (tab: object): string => JSON.stringify({ version: 1, savedAt: '2026-10-05T10:00:00.000Z', tabs: [tab] })
+
+  it('keeps the view a Claude tab was saved in', () => {
+    expect(parseSnapshot(withView({ ...claudeTab, view: 'terminal' }))?.tabs[0].view).toBe('terminal')
+    expect(parseSnapshot(withView({ ...claudeTab, view: 'chat' }))?.tabs[0].view).toBe('chat')
+  })
+
+  it('a Claude tab saved before views existed has none, a shell tab never has one, and a bad value is none', () => {
+    expect(parseSnapshot(withView({ ...claudeTab, view: undefined }))?.tabs[0].view).toBeNull()
+    expect(parseSnapshot(withView({ ...shellTab, view: 'chat' }))?.tabs[0].view).toBeNull()
+    expect(parseSnapshot(withView({ ...claudeTab, view: 7 }))?.tabs[0].view).toBeNull()
   })
 })

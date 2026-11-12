@@ -189,6 +189,8 @@ export class RecentSessionsWindow {
   private selected = 0
   private loading = false
   private loadId = 0
+  /** the window was opened to pick a session for a chat: the pick takes it instead of opening a tab */
+  private picking: ((session: RecentSession) => void) | null = null
   private readonly input: HTMLInputElement
   private readonly rows: HTMLElement
 
@@ -231,9 +233,11 @@ export class RecentSessionsWindow {
     return !this.root.hidden
   }
 
-  async open(): Promise<void> {
+  /** `pick`: a session picked calls it instead of opening a tab (the /resume of a chat) */
+  async open(pick?: (session: RecentSession) => void): Promise<void> {
     const id = ++this.loadId
     this.cb.opening()
+    this.picking = pick ?? null
     this.root.hidden = false
     this.input.value = ''
     this.selected = 0
@@ -248,19 +252,25 @@ export class RecentSessionsWindow {
     if (id !== this.loadId) return
     this.sessions = list
     // after this device's list: the main process leaves out of the other devices' answers the sessions this device lists
-    const remote = await this.cb.loadRemote().catch(() => [] as DeviceAnswer<RecentSession[]>[])
+    // a session picked for a chat is resumed here: the other devices' sessions are not offered for it
+    const remote = this.picking !== null ? [] : await this.cb.loadRemote().catch(() => [] as DeviceAnswer<RecentSession[]>[])
     if (id !== this.loadId) return
     this.remote = remote
     this.loading = false
     // Enter right away resumes the latest conversation, as it did before stars: it may sit below the divider
     const latest = this.input.value === '' ? list.reduce<RecentSession | undefined>((a, b) => (!a || b.modifiedAt > a.modifiedAt ? b : a), undefined) : undefined
     if (latest) this.unfolded.add(groupKey(latest))
-    this.render(latest?.id)
+    // a search typed while the list loaded selects its best match, as typing it after the load does: Enter continues that
+    // session, not the project heading above it; a row the arrows already chose stays
+    const [kept, keptHeading] = this.current()
+    const best = kept ?? (keptHeading === undefined ? firstMatch(arrangeSections(this.sessions, this.remote, this.input.value))?.id : undefined)
+    this.render(latest?.id ?? best, keptHeading)
   }
 
   close(): void {
     if (this.root.hidden) return
     this.loadId++
+    this.picking = null
     this.root.hidden = true
     this.cb.closed()
   }
@@ -319,8 +329,10 @@ export class RecentSessionsWindow {
 
   private choose(s: RecentSession | undefined): void {
     if (!s) return
+    const pick = this.picking
     this.close()
-    this.cb.open(s.id, s.device?.id)
+    if (pick) pick(s)
+    else this.cb.open(s.id, s.device?.id)
   }
 
   private render(keepSelected?: string, keepHeading?: string): void {

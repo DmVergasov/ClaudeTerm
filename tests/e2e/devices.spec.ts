@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEVICE_COPY } from '../../src/shared/devices'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, KEYS, launchApp, type Launched, writeTranscript } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, KEYS, launchApp, showSettingsTab, type Launched, writeTranscript } from './helpers'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -40,6 +40,7 @@ async function openSettings(device: Pick<Launched, 'app' | 'page'>): Promise<Pag
   await device.page.locator('.terminal-host:visible .xterm').click()
   const [win] = await Promise.all([device.app.waitForEvent('window'), device.page.keyboard.press(KEYS.settings)])
   await win.waitForSelector('#settings .section-title')
+  await showSettingsTab(win, 'devices')
   return win
 }
 
@@ -171,7 +172,7 @@ test('a name of 65 characters is refused under the input, and blur puts the name
     await name.fill('x'.repeat(65))
     await name.press('Enter')
     await expect(settingsA.getByText(DEVICE_COPY.badName, { exact: true })).toBeVisible(SLOW)
-    await settingsA.locator('.section-title').first().click()
+    await settingsA.locator('#devices .section-title').click()
     await expect(name).toHaveValue(before)
   } finally {
     await a.app.close()

@@ -308,6 +308,52 @@ describe.each([
   })
 })
 
+describe('TranscriptFeed session title', () => {
+  const titleLine = (type: 'ai-title' | 'custom-title', text: unknown, extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({ type, sessionId: SID, [type === 'ai-title' ? 'aiTitle' : 'customTitle']: text, ...extra })
+
+  it('reports the current title as it changes: the last custom title, else the last AI title, not the same one twice', async () => {
+    const { transcriptPath, cacheRoot } = setup()
+    const titles: string[] = []
+    const feed = new TranscriptFeed({
+      transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {},
+      onTitle: (title) => titles.push(title)
+    })
+    writeFileSync(transcriptPath, [
+      titleLine('ai-title', 'First  title'),
+      titleLine('ai-title', 'Second title'),
+      titleLine('custom-title', 'Custom name'),
+      titleLine('ai-title', 'Later AI title')
+    ].join('\n') + '\n')
+    await feed.poll()
+    expect(titles).toEqual(['First title', 'Second title', 'Custom name'])
+    appendFileSync(transcriptPath, titleLine('ai-title', 'Even later') + '\n')
+    await feed.poll()
+    expect(titles).toEqual(['First title', 'Second title', 'Custom name'])
+  })
+
+  it('ignores a sidechain title, and a malformed one', async () => {
+    const { transcriptPath, cacheRoot } = setup()
+    const titles: string[] = []
+    const feed = new TranscriptFeed({
+      transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {},
+      onTitle: (title) => titles.push(title)
+    })
+    writeFileSync(transcriptPath, [
+      titleLine('ai-title', 'Side agent title', { isSidechain: true }),
+      titleLine('ai-title', 42),
+      titleLine('custom-title', '   '),
+      titleLine('ai-title', null),
+      '{"type":"ai-title","aiTitle":"cut off'
+    ].join('\n') + '\n')
+    await feed.poll()
+    expect(titles).toEqual([])
+    appendFileSync(transcriptPath, titleLine('ai-title', 'Main title') + '\n')
+    await feed.poll()
+    expect(titles).toEqual(['Main title'])
+  })
+})
+
 describe('cleanupImageCache', () => {
   it('removes session folders older than the limit', () => {
     const root = mkdtempSync(join(tmpdir(), 'ct-cache-'))

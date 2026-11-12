@@ -1,3 +1,4 @@
+import type { ChatAnswer, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPermissionMode, ChatSend, TabView } from '../../shared/chat'
 import type { DeviceResult } from '../../shared/devices'
 import { IMAGE_CACHE_BYTES, IMAGE_PART_TIMEOUT_MS, IMAGE_READS_AT_ONCE, LIST_TIMEOUT_MS, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type RemoteTab } from '../../shared/remote'
 import { NOT_RUNNING, type ReviewSendState } from '../../shared/review'
@@ -417,6 +418,106 @@ export class RemoteActions {
     }
   }
 
+  /** a message to a remote chat: null when the device took it; else why not, the device's refusal or the failed call's words */
+  async chatSend(tabId: string, s: ChatSend): Promise<string | null> {
+    try {
+      await this.askTab(tabId, 'chat-send', { id: tabId, text: s.text, attachments: s.attachments })
+      return null
+    } catch (e) {
+      return messageOf(e)
+    }
+  }
+
+  /** an answer to a card of a remote chat: the device's ok (false when the card was answered already), false when the call is refused */
+  async chatAnswer(tabId: string, cardId: string, answer: ChatAnswer): Promise<boolean> {
+    try {
+      return (await this.askTab(tabId, 'chat-answer', { id: tabId, cardId, answer })).ok
+    } catch {
+      return false
+    }
+  }
+
+  /** an older page of a remote chat before an item; null when the device refuses it or does not answer */
+  async chatOlder(tabId: string, beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null> {
+    try {
+      return await this.askTab(tabId, 'chat-older', { id: tabId, beforeId })
+    } catch {
+      return null
+    }
+  }
+
+  /** the permission modes a remote chat's device offers; null when it refuses, does not answer, or is too old to know the call (the caller keeps its own list) */
+  async chatModes(tabId: string): Promise<ChatPermissionMode[] | null> {
+    try {
+      return await this.askTab(tabId, 'chat-modes', { id: tabId })
+    } catch {
+      return null
+    }
+  }
+
+  /** the commands a remote chat offers; none when the device refuses or does not answer */
+  async chatCommands(tabId: string): Promise<ChatCommandInfo[]> {
+    try {
+      return await this.askTab(tabId, 'chat-commands', { id: tabId })
+    } catch {
+      return []
+    }
+  }
+
+  /** the models a remote chat offers; none when the device refuses or does not answer */
+  async chatModels(tabId: string): Promise<ChatModelInfo[]> {
+    try {
+      return await this.askTab(tabId, 'chat-models', { id: tabId })
+    } catch {
+      return []
+    }
+  }
+
+  /** the project files that match a query in a remote chat's folder; none when the device refuses or does not answer */
+  async chatFiles(tabId: string, query: string): Promise<string[]> {
+    try {
+      return await this.askTab(tabId, 'chat-files', { id: tabId, query })
+    } catch {
+      return []
+    }
+  }
+
+  /** a remote tab's view switches on its device; a refusal gives false, and the caller says why (no toast here) */
+  async chatView(tabId: string, view: TabView): Promise<boolean> {
+    try {
+      await this.askTab(tabId, 'chat-view', { id: tabId, view })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** a command typed into a remote tab's terminal on its device (null: only the switch); a refusal gives false, and the caller says why (no toast here) */
+  async chatTerminal(tabId: string, line: string | null): Promise<boolean> {
+    try {
+      await this.askTab(tabId, 'chat-terminal', { id: tabId, line: line ?? '' })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  chatInterrupt(tabId: string): void {
+    this.fire(tabId, 'chat-interrupt', { id: tabId })
+  }
+
+  chatMode(tabId: string, mode: ChatPermissionMode): void {
+    this.fire(tabId, 'chat-mode', { id: tabId, mode })
+  }
+
+  chatModel(tabId: string, model: string | null, effort: string | null): void {
+    this.fire(tabId, 'chat-model', { id: tabId, model, effort })
+  }
+
+  chatStopTask(tabId: string, taskId: string): void {
+    this.fire(tabId, 'chat-stop-task', { id: tabId, taskId })
+  }
+
   /** a call whose answer is not needed: a failure is toasted */
   private fire<M extends CallMethod>(tabId: string, m: M, a: CallArgs[M]): void {
     this.askTab(tabId, m, a).catch((e: unknown) => {
@@ -486,6 +587,8 @@ export function remoteTabInfo(device: string, tab: RemoteTab): TabInfo {
     fork: tab.fork ? { of: tab.forkOf, from: null } : null,
     exited: tab.exited,
     activity: tab.working ? 'working' : null,
+    // the view a Claude tab shows on its device; an older device sends none, and that device has no chat for the tab: null, a plain remote terminal
+    view: tab.kind === 'claude' ? tab.view ?? null : null,
     remote: { device, accountName: tab.accountName, images: tab.images, title: tab.title }
   }
 }

@@ -1,12 +1,12 @@
 import { BrowserWindow, screen, shell } from 'electron'
-import { IPC } from '../shared/ipc'
+import { IPC, type SettingsSection } from '../shared/ipc'
 import { showWindow } from './window-show'
 import { chromeOptions, SETTINGS_TITLE_BAR_HEIGHT } from './window-chrome'
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
-export const SETTINGS_SIZE = { width: 640, height: 720 }
-export const SETTINGS_MIN = { width: 520, height: 400 }
+export const SETTINGS_SIZE = { width: 880, height: 760 }
+export const SETTINGS_MIN = { width: 560, height: 480 }
 
 /** Centred on the main window, shrunk to and kept inside the work area of its display. */
 export function settingsWindowBounds(parent: Rect, work: Rect): Rect {
@@ -44,8 +44,8 @@ export class SettingsWindow {
     return this.win !== null && !this.win.isDestroyed()
   }
 
-  /** section: the Settings section to show, 'devices' being the only one; an open window is brought forward and shown it */
-  open(section?: 'devices'): void {
+  /** section: the Settings section to show; an open window is brought forward and shown it */
+  open(section?: SettingsSection): void {
     const open = this.win
     if (open && !open.isDestroyed()) {
       if (!this.d.offScreen) open.focus()
@@ -87,7 +87,7 @@ export class SettingsWindow {
   }
 
   /** a section for an open window: a page still loading has not set its section listener yet, so the section goes once it has loaded */
-  private sendSection(win: BrowserWindow, section: 'devices'): void {
+  private sendSection(win: BrowserWindow, section: SettingsSection): void {
     const wc = win.webContents
     if (!wc.isLoading()) {
       wc.send(IPC.evSettingsSection, section)

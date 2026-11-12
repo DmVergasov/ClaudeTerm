@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { WIN } from '../fixtures/platform'
-import { bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, launchApp, launchClaudeTab } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, launchApp, launchClaudeTab, openTabInFront } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const AGENT = 'a3f1c2d4e5b60718'
@@ -59,10 +59,7 @@ const CLAUDE_TAB_READY = /fake-claude[\s\S]*[$#%>]\s*$/
 
 /** opens a tab in the folder and waits until main has it; the new tab is the active one */
 async function openTab(page: Page, kind: 'shell' | 'claude', cwd: string): Promise<string> {
-  const count = await page.evaluate(() => window.__ct!.tabIds().length)
-  await page.evaluate((o) => window.ct.openTab(o), { kind, cwd })
-  await page.waitForFunction((n) => window.__ct!.tabIds().length === n, count + 1)
-  return (await page.evaluate(() => window.__ct!.activeTabId()))!
+  return openTabInFront(page, kind, cwd)
 }
 
 async function activate(page: Page, tabId: string): Promise<void> {

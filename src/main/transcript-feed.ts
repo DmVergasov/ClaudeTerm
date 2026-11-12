@@ -7,6 +7,7 @@ import { assistantInfo, type AgentModelInfo } from './transcript-agent-info'
 import { assistantTime, interruptTime, parseEditEvents, turnReport, type TranscriptEditEvent } from './transcript-edits'
 import { PlanWorkspaceFinder } from './transcript-plan'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
+import { oneLine } from './session-history'
 
 const CHUNK_BYTES = 4 * 1024 * 1024
 
@@ -132,6 +133,8 @@ export interface TranscriptFeedOptions {
   onTurn?(turnIndex: number, peer: boolean): void
   /** a tool call in any of the session's transcripts named this plan workspace (see PlanWorkspaceFinder); `at` is the time of its result (0 when it has none) */
   onPlanWorkspace?(printed: string, at: number): void
+  /** the conversation's title in the main transcript (the last custom title, else the last AI one), reported each time it changes */
+  onTitle?(title: string): void
   /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
   locate?(): Promise<string | null>
   /** how often locate() may run while the transcript cannot be opened */
@@ -210,6 +213,9 @@ export class TranscriptFeed {
   private stopped = false
   private missingReported = false
   private lastLocate = -Infinity
+  private customTitle: string | null = null
+  private aiTitle: string | null = null
+  private reportedTitle: string | null = null
 
   constructor(private readonly o: TranscriptFeedOptions) {
     this.main = this.source(o.transcriptPath, null)
@@ -391,6 +397,7 @@ export class TranscriptFeed {
       this.reportReview(src, line)
       this.reportPlan(src, line)
       this.reportTurn(src, line)
+      this.reportTitle(src, line)
       try {
         for (const img of src.parser.parseLine(line)) {
           if (this.stopped) return
@@ -430,6 +437,30 @@ export class TranscriptFeed {
     try {
       const turn = turnReport(line, { main: src.agentId === null })
       if (turn !== null) this.o.onTurn(turn.turnIndex, turn.peer)
+    } catch (e) {
+      this.report(e)
+    }
+  }
+
+  /** The main conversation's title: a custom title wins over the AI one; a sidechain or malformed entry is left out */
+  private reportTitle(src: Source, line: string): void {
+    if (!this.o.onTitle || src.agentId !== null || !line.includes('-title"')) return
+    let entry: unknown
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      return
+    }
+    if (typeof entry !== 'object' || entry === null || (entry as { isSidechain?: unknown }).isSidechain === true) return
+    const { type, aiTitle, customTitle } = entry as { type?: unknown; aiTitle?: unknown; customTitle?: unknown }
+    if (type === 'custom-title') this.customTitle = oneLine(customTitle) ?? this.customTitle
+    else if (type === 'ai-title') this.aiTitle = oneLine(aiTitle) ?? this.aiTitle
+    else return
+    const current = this.customTitle ?? this.aiTitle
+    if (current === null || current === this.reportedTitle) return
+    this.reportedTitle = current
+    try {
+      this.o.onTitle(current)
     } catch (e) {
       this.report(e)
     }

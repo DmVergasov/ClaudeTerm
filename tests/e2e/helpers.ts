@@ -39,8 +39,8 @@ export const KEY_LABELS = MAC
 
 // "claude" prints its arguments instead of starting (on Linux also the folder it runs in, as PowerShell's prompt shows it)
 export const FAKE_CLAUDE_SETTINGS = WIN
-  ? { claude: { command: 'cmd /c echo fake-claude', shellProfile: TEST_SHELL }, defaultProfile: TEST_SHELL }
-  : { claude: { command: 'pwd; echo fake-claude', shellProfile: TEST_SHELL }, defaultProfile: TEST_SHELL, profiles: TEST_PROFILES }
+  ? { claude: { command: 'cmd /c echo fake-claude', shellProfile: TEST_SHELL, view: 'terminal' }, defaultProfile: TEST_SHELL }
+  : { claude: { command: 'pwd; echo fake-claude', shellProfile: TEST_SHELL, view: 'terminal' }, defaultProfile: TEST_SHELL, profiles: TEST_PROFILES }
 
 /** what to type for a terminal bell, then optionally a word that shows the line ran */
 export function bellCommand(after?: string): string {
@@ -176,7 +176,26 @@ export async function keepingClipboard(app: ElectronApplication, steps: () => Pr
   }
 }
 
+/**
+ * opens a tab in the folder and returns its id once it is the tab in front: the window lists a new tab a moment before it
+ * comes to the front, and a slow machine shows the gap
+ */
+export async function openTabInFront(page: Page, kind: 'shell' | 'claude', cwd: string): Promise<string> {
+  const before = await page.evaluate(() => window.__ct!.tabIds())
+  await page.evaluate((o) => window.ct.openTab(o), { kind, cwd })
+  const added = await page.waitForFunction((old) => window.__ct!.tabIds().find((id) => !old.includes(id)) ?? false, before)
+  const id = (await added.jsonValue()) as string
+  await page.waitForFunction((tabId) => window.__ct!.activeTabId() === tabId, id)
+  return id
+}
+
 /** the side panel's slide-in (panel-in) has ended: a test that acts on the panel right after it opens waits for this */
 export async function panelSettled(page: Page): Promise<void> {
   await page.evaluate(() => Promise.all(document.getElementById('image-panel')!.getAnimations().map((a) => a.finished)))
+}
+
+/** the Settings window's tab: clicks it and waits for its page to be in front */
+export async function showSettingsTab(win: Page, tab: string): Promise<void> {
+  await win.locator(`#settings-nav [data-tab="${tab}"]`).click()
+  await win.waitForSelector(`.settings-page[data-page="${tab}"]`, { state: 'visible' })
 }

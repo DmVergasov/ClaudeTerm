@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { applySettingEdit, DEFAULT_SETTINGS, loadSettingsFile, loadSettingsSafe, parseSettings } from '../../src/main/settings'
+import { isSettingKey } from '../../src/shared/settings-keys'
 import { DEFAULT_TEST_PATTERNS } from '../../src/shared/test-files'
 import { WIN } from '../fixtures/platform'
 
@@ -25,7 +26,7 @@ describe('parseSettings', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])
     expect(settings.font).toEqual({ family: DEFAULT_SETTINGS.font.family, size: 16 })
-    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true })
+    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true, view: 'chat' })
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
   })
 
@@ -457,5 +458,20 @@ describe('devices settings', () => {
     const off = applySettingEdit('{}', 'devices.keepAwake', false)
     expect(off.ok && JSON.parse(off.text)).toEqual({ devices: { keepAwake: false } })
     expect(applySettingEdit('{}', 'devices.keepAwake', 'yes')).toEqual({ ok: false, error: 'Invalid value for devices.keepAwake' })
+  })
+})
+
+describe('claude.view', () => {
+  it('the Claude tabs open in Chat by default, a terminal view is kept, another value falls back with a notice naming the key', () => {
+    expect(parseSettings(JSON.stringify({ claude: {} })).settings.claude.view).toBe('chat')
+    expect(parseSettings(JSON.stringify({ claude: {} })).errors).toEqual([])
+    expect(parseSettings(JSON.stringify({ claude: { view: 'terminal' } })).settings.claude.view).toBe('terminal')
+    const r = parseSettings(JSON.stringify({ claude: { view: 'tabs' } }))
+    expect(r.settings.claude.view).toBe('chat')
+    expect(r.errors).toEqual(['settings.json: invalid value for "claude.view", using default'])
+  })
+
+  it('claude.view is a setting key', () => {
+    expect(isSettingKey('claude.view')).toBe(true)
   })
 })

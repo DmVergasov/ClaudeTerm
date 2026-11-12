@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseMessage } from '../../src/main/sync/wire'
 import { MAX_REMOTE_COLS, MAX_REMOTE_ROWS, parseRemoteMessage, parseRemoteTab } from '../../src/main/sync/remote-wire'
-import { DEVICE_COLORS, deviceColor, MAX_INPUT_CHARS, MAX_REMOTE_TABS } from '../../src/shared/remote'
+import { DEVICE_COLORS, deviceColor, MAX_CHAT_PUSH_BYTES, MAX_INPUT_CHARS, MAX_REMOTE_TABS, PUSH_KINDS } from '../../src/shared/remote'
 
 const T1 = '0a1b2c3d-0000-4000-8000-000000000001'
 const T2 = '0a1b2c3d-0000-4000-8000-000000000002'
@@ -248,4 +248,23 @@ describe('part 2 tabs and colours', () => {
     expect(deviceColor('not-hex')).toBe(DEVICE_COLORS[0])
     expect(deviceColor('00000001-0000-4000-8000-000000000001')).toBe(DEVICE_COLORS[1])
   })
+})
+
+describe('chat on the wire', () => {
+  it('a remote tab keeps its view when it is a view; when it is absent or not one, the tab has no view and is kept', () => {
+    expect(parseRemoteTab(tab({ view: 'chat' }))?.view).toBe('chat')
+    expect(parseRemoteTab(tab({ view: 'terminal' }))?.view).toBe('terminal')
+    expect(parseRemoteTab(tab())?.view).toBeUndefined()
+    expect(parseRemoteTab(tab({ view: 'grid' }))).not.toBeNull()
+    expect(parseRemoteTab(tab({ view: 'grid' }))?.view).toBeUndefined()
+  })
+
+  it('the chat pushes are part 2 push kinds, so a device of this version takes them; an older device drops them as unknown kinds', () => {
+    expect(PUSH_KINDS).toContain('chat')
+    expect(PUSH_KINDS).toContain('chat-patch')
+    expect(parseMessage({ t: 'push', id: T1, k: 'chat', v: { items: [] } })).toEqual({ t: 'push', id: T1, k: 'chat', v: { items: [] } })
+    expect(parseMessage({ t: 'push', id: T1, k: 'chat-patch', v: { patches: [] } })).toEqual({ t: 'push', id: T1, k: 'chat-patch', v: { patches: [] } })
+  })
+
+  it('a chat push is capped at 2 MiB of JSON', () => expect(MAX_CHAT_PUSH_BYTES).toBe(2 * 1024 * 1024))
 })

@@ -2,7 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { WIN } from '../fixtures/platform'
-import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, KEYS } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, KEYS, showSettingsTab } from './helpers'
 import { setSetting } from './agent-mail'
 
 const panel = (page: Page) => page.locator('#image-panel')
@@ -144,9 +144,9 @@ test('choosing "Narrow the terminal" in the settings window moves a panel shown 
   await page.locator('.terminal-host:visible .xterm').click({ position: { x: 20, y: 20 } })
   const [win] = await Promise.all([app.waitForEvent('window'), page.keyboard.press(KEYS.settings)])
   await win.waitForSelector('#settings .section-title')
-  const select = win.locator('[data-key="sidePanel.noRoom"]')
-  await expect(select.locator('option:checked')).toHaveText('Over the terminal')
-  await select.selectOption('Narrow the terminal')
+  await showSettingsTab(win, 'appearance')
+  await expect(win.locator('[data-key="sidePanel.noRoom"][data-value="overlay"]')).toHaveAttribute('aria-checked', 'true')
+  await win.locator('[data-key="sidePanel.noRoom"][data-value="narrow"]').click()
   await expect.poll(async () => (await layout(page)).termWidth).toBe(before.termWidth - 300)
   expect((JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8')) as { sidePanel?: { noRoom?: string } }).sidePanel?.noRoom).toBe('narrow')
   await app.close()
