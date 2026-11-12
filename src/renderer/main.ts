@@ -1344,6 +1344,7 @@ async function boot(): Promise<void> {
     const p = activeId ? planUpdates.get(activeId) : undefined
     if (p?.plan) planList.toggle(anchor, p.plan, !!p.agentList)
   })
+  statusBar.alignTo(document.getElementById('terminals')!)
   ct.onAccounts((v) => {
     accounts = v.accounts
     renderTitle()

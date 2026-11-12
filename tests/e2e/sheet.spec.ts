@@ -57,6 +57,13 @@ test('the header names the active tab and its branch, in the worktree\'s color',
   const header = page.locator('#sheet-header')
   await expect(header.locator('.sh-title')).toHaveText(await page.evaluate((id) => window.__ct!.tabTitle(id)!, wt))
   await expect(header.locator('.sh-branch')).toHaveText('feat/x')
+  // the branch follows the title's text, one gap after it, not out in the middle of the header
+  const gap = await header.evaluate((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el.querySelector('.sh-title')!)
+    return el.querySelector('.sh-branch')!.getBoundingClientRect().left - range.getBoundingClientRect().right
+  })
+  expect(gap).toBeLessThanOrEqual(9)
   // the left panel's row of the same tab shows the same worktree color
   await expect.poll(() => header.locator('.sh-branch').evaluate((el) => getComputedStyle(el).color)).toBe(
     await page.locator(`#tabpanel [data-tab-id="${wt}"] .tp-branch`).evaluate((el) => getComputedStyle(el).color)
@@ -150,6 +157,25 @@ test('a long title and a narrow window keep every toggle inside the header', asy
   }
   const title = page.locator('#sheet-header .sh-title')
   expect(await title.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
+  await app.close()
+})
+
+test('in a narrow window the header\'s buttons show their icons only, so the title keeps room to be read; each button keeps its name as a tooltip', async () => {
+  const { app, page, tabId } = await launchClaudeTab({ ...QUIET, agentMessages: { enabled: true, marks: true } })
+  const long = 'x'.repeat(200)
+  await page.evaluate(([id, t]) => window.ct.renameTab(id, t), [tabId, long] as const)
+  await expect.poll(() => page.locator('#sheet-header .sh-title').textContent()).toBe(long)
+  const buttons = page.locator('#sheet-header .sh-mode:visible, #sheet-header .tab-changes-toggle:visible, #sheet-header .tab-images-toggle:visible')
+  // a wide window: the buttons have their labels
+  await setWindowSize(app, 1200, 600)
+  await expect(page.locator('#sheet-header .tab-changes-toggle .sh-label')).toBeVisible()
+  // the narrowest window: the labels give way, and the title is still there to read
+  await setWindowSize(app, 200, 500)
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThan(600)
+  await expect(page.locator('#sheet-header .sh-label:visible')).toHaveCount(0)
+  expect((await box(page.locator('#sheet-header .sh-title'))).width).toBeGreaterThanOrEqual(100)
+  expect(await buttons.count()).toBeGreaterThan(0)
+  for (const title of await buttons.evaluateAll((els) => els.map((el) => el.getAttribute('title') ?? ''))) expect(title).not.toBe('')
   await app.close()
 })
 

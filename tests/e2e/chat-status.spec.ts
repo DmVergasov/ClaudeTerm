@@ -24,11 +24,50 @@ test('in chat view the status bar has no model pill and shows the context', asyn
   const { app, page } = await launchChatTab({ turns: {}, contextPct: 42 })
   try {
     await sendMessage(page, 'hi')
-    // the context is read after the turn: the fill the stand-in answers, with the counts of its recorded answer
+    // the context is read as the turn starts and after it: the fill the stand-in answers, with the counts of its recorded answer
     await expect(page.locator('#statusbar .status-context .status-text')).toHaveText('ctx 42% · 21k/1M')
     expect(await page.locator('#statusbar .status-context .status-bar').evaluate((el) => el.style.getPropertyValue('--fill'))).toBe('42%')
     // the composer's model chip carries the model instead
     await expect(page.locator('#statusbar .status-model')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a long turn shows the context while it runs, not only once it has ended', async () => {
+  // the turn named "long" waits until it is interrupted: no result comes while the test looks
+  const { app, page, tabId } = await launchChatTab({ turns: { long: [{ wait: 60_000 }] }, contextPct: 42 })
+  try {
+    await sendMessage(page, 'long')
+    await expect.poll(() => turnState(page, tabId)).toBe('working')
+    await expect(page.locator('#statusbar .status-context .status-text')).toHaveText('ctx 42% · 21k/1M')
+    expect(await turnState(page, tabId)).toBe('working')
+    // Esc ends the waiting turn, so the app closes at once
+    await page.locator('.chat-host:visible .chat-input').click()
+    await page.keyboard.press('Escape')
+    await expect.poll(() => turnState(page, tabId)).toBe('idle')
+  } finally {
+    await app.close()
+  }
+})
+
+test('the session segments sit in the middle of the chat, under its message box, also while a side panel takes the right of the sheet', async () => {
+  const { app, page } = await launchChatTab({ turns: {}, contextPct: 42 })
+  const centers = (): Promise<{ status: number; field: number; fieldRight: number; panelLeft: number }> => page.evaluate(() => {
+    const middle = document.querySelector('#statusbar .status-zone-middle')!.getBoundingClientRect()
+    const field = [...document.querySelectorAll('.chat-field')].map((el) => el.getBoundingClientRect()).find((r) => r.width > 0)!
+    const panel = document.getElementById('image-panel')!.getBoundingClientRect()
+    return { status: middle.left + middle.width / 2, field: field.left + field.width / 2, fieldRight: field.right, panelLeft: panel.left }
+  })
+  try {
+    await sendMessage(page, 'hi')
+    await expect(page.locator('#statusbar .status-context .status-text')).toHaveText('ctx 42% · 21k/1M')
+    await expect.poll(async () => { const c = await centers(); return Math.abs(c.status - c.field) }).toBeLessThanOrEqual(2)
+    // the Media panel opens beside the chat: the chat and its message box narrow, and the segments follow their middle
+    await page.locator('#sheet-header .tab-images-toggle').click()
+    await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
+    await expect.poll(async () => { const c = await centers(); return c.panelLeft >= c.fieldRight }).toBe(true)
+    await expect.poll(async () => { const c = await centers(); return Math.abs(c.status - c.field) }).toBeLessThanOrEqual(2)
   } finally {
     await app.close()
   }
@@ -70,6 +109,8 @@ test('a background task can be stopped from the status bar', async () => {
     // Esc during a turn stops the turn only: the task is left running
     await sendMessage(page, 'long')
     await expect.poll(() => turnState(page, tabId)).toBe('working')
+    // the window shows the turn running: Esc acts on what the person sees
+    await expect(page.locator('.chat-host:visible .chat-working')).toBeVisible()
     await page.locator('.chat-host:visible .chat-input').click()
     await page.keyboard.press('Escape')
     await expect.poll(() => turnState(page, tabId)).toBe('idle')

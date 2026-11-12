@@ -251,6 +251,21 @@ export class StatusBar {
     this.refreshTasks()
   }
 
+  /**
+   * The zones span the width of `area` (the terminal or the chat): when a side panel takes the right of the sheet, the
+   * session's segments stay in the middle of the chat, under its message box, not in the middle of the whole sheet
+   */
+  alignTo(area: HTMLElement): void {
+    const place = (): void => {
+      const room = this.el.getBoundingClientRect().right - area.getBoundingClientRect().right
+      this.el.style.setProperty('--status-room', `${Math.max(0, Math.round(room))}px`)
+    }
+    // the area narrows as a panel slides in beside it, and the bar widens with the window when the window grows for one
+    const observer = new ResizeObserver(place)
+    observer.observe(area)
+    observer.observe(this.el)
+  }
+
   /** the background segment of a chat is a button: it takes the focus, and says whether its list is open */
   private markSegment(): void {
     const seg = this.el.querySelector<HTMLElement>('.status-background')
