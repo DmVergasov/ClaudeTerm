@@ -67,6 +67,27 @@ export async function chatReady(page: Page): Promise<void> {
   }), { timeout: 15_000 }).toBe(true)
 }
 
+/**
+ * The chat in front has stopped moving: a new item's pop-in has ended, and its items, its scroll and its height stay put
+ * over two frames. After a turn ends the last answer still slides into place and the status bar may show below, which
+ * shrinks the conversation and scrolls it: a test that aims the mouse at a word measures it once this is over.
+ */
+export async function chatSettled(page: Page): Promise<void> {
+  await expect.poll(() => page.evaluate(() => new Promise<boolean>((resolve) => {
+    const host = [...document.querySelectorAll<HTMLElement>('.chat-host')].find((h) => h.offsetParent !== null)
+    const scroll = host?.querySelector<HTMLElement>('.chat-scroll')
+    if (!host || !scroll) return resolve(false)
+    const snap = (): string => JSON.stringify([scroll.scrollTop, scroll.clientHeight, scroll.clientWidth, ...[...host.querySelectorAll('.chat-column > [data-item]')].map((n) => {
+      const r = n.getBoundingClientRect()
+      return [r.left, r.top, r.width, r.height]
+    })])
+    // the spinners and the agents' bars loop for as long as they are shown: only an animation that ends can move the layout
+    const moving = (): boolean => host.getAnimations({ subtree: true }).some((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity)
+    const before = snap()
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(!moving() && snap() === before)))
+  }))).toBe(true)
+}
+
 /** a message typed into the composer of the chat in front, and sent with Enter */
 export async function sendMessage(page: Page, text: string): Promise<void> {
   await chatReady(page)

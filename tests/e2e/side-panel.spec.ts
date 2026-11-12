@@ -237,23 +237,22 @@ test('the panel slides in when it opens, and does not when the user asks for red
     w.slides = 0
     document.getElementById('image-panel')!.addEventListener('animationstart', (e) => { if (e.animationName === 'panel-in') w.slides++ })
   })
-  const slides = (): Promise<number> => page.evaluate(() => {
-    const w = window as unknown as { slides: number }
-    const n = w.slides
-    w.slides = 0
-    return n
-  })
+  // the animation starts on the frame after the panel is shown, so its count is waited for, not read once at the show
+  const slides = (): Promise<number> => page.evaluate(() => (window as unknown as { slides: number }).slides)
 
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.locator('#sheet-header .tab-images-toggle').click()
   await expect(panel(page)).not.toHaveClass(/collapsed/)
-  expect(await slides()).toBe(1)
+  await expect.poll(slides).toBe(1)
   await page.locator('#sheet-header .tab-images-toggle').click()
   await expect(panel(page)).toHaveClass(/collapsed/)
+  await page.evaluate(() => { (window as unknown as { slides: number }).slides = 0 })
 
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.locator('#sheet-header .tab-images-toggle').click()
   await expect(panel(page)).not.toHaveClass(/collapsed/)
+  // past a slide's time and a few frames: no slide has started
+  await page.evaluate(() => new Promise((resolve) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(resolve)), 400)))
   expect(await slides()).toBe(0)
   await app.close()
 })

@@ -1,5 +1,5 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { launchChatTab, sendMessage, userMessages, CHAT_INPUT } from './chat-helpers'
+import { chatSettled, launchChatTab, sendMessage, userMessages, CHAT_INPUT } from './chat-helpers'
 
 // the chat in front: its Quote button, its quote bars and their parts, its column and scroll area
 const QUOTE = '.chat-host:visible .chat-quote-button'
@@ -26,8 +26,12 @@ const clipboardWrites = (app: ElectronApplication): Promise<string[]> =>
 const clearClipboardWrites = (app: ElectronApplication): Promise<void> =>
   app.evaluate(() => { ((globalThis as Record<string, unknown>).__clipboardWrites as string[]).length = 0 })
 
-/** the page point at the middle of the first `word` in the element holding `text`, and the word's edges, as a Range measures them */
+/**
+ * The page point at the middle of the first `word` in the element holding `text`, and the word's edges, as a Range measures
+ * them, once the chat has stopped moving: the mouse aims at where the word stays
+ */
 async function wordBox(page: Page, selector: string, text: string, word: string): Promise<{ x: number; y: number; left: number; right: number }> {
+  await chatSettled(page)
   return page.evaluate(({ selector, text, word }) => {
     const element = [...document.querySelectorAll(selector)].find((el) => el.getClientRects().length > 0 && el.textContent?.includes(text))
     if (!element) throw new Error(`no visible ${selector} holds ${text}`)
