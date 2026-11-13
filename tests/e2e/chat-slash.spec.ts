@@ -109,6 +109,27 @@ test('/ opens the menu, filters, and Enter runs /context', async () => {
   }
 })
 
+test('Enter completes a command with an argument hint, /model included', async () => {
+  // /model has a hint here: typed or picked, Enter completes it and waits for the argument (only /mcp and /plugin run at once)
+  const { app, page, log } = await launchChatTab({ commands: [{ name: 'model', description: 'Set the model', argumentHint: '[model]', builtin: true }], models: MODELS, turns: {} })
+  try {
+    await ready(page)
+    await page.locator(INPUT).click()
+    await page.keyboard.type('/model')
+    await page.keyboard.press('Enter')
+    await expect(page.locator(INPUT)).toHaveValue('/model ')
+    await expect(page.locator(MODEL_PICKER)).toBeHidden()
+    await page.locator(INPUT).fill('')
+    await page.keyboard.type('/mod')
+    await page.keyboard.press('Enter')
+    await expect(page.locator(INPUT)).toHaveValue('/model ')
+    await expect(page.locator(MODEL_PICKER)).toBeHidden()
+    expect(userMessages(log)).toEqual([])
+  } finally {
+    await app.close()
+  }
+})
+
 test('Tab completes a command with arguments and waits', async () => {
   const { app, page, log } = await launchChatTab({ commands: COMMANDS, turns: {} })
   try {

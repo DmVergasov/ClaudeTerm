@@ -37,6 +37,8 @@ function serverRow(s: McpServerView, o: ServerListOptions): HTMLElement {
   if (s.status !== 'disabled') icon.style.background = iconColor(s.name)
   const main = el('button', { className: 'mcp-main', type: 'button' })
   main.setAttribute('aria-expanded', String(open))
+  // a repaint of the list draws the row again: the control with this key gets the focus back (each control of a row has its own key)
+  main.dataset.focusKey = 'name'
   main.addEventListener('click', () => o.fold(s.name))
   const sub = el('span', { className: 'mcp-sub' })
   const badge = badgeOf(s)

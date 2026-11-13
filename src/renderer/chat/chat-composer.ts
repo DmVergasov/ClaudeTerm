@@ -229,7 +229,10 @@ export class ChatComposer {
     this.slash = new SlashMenu(this.field, {
       commands: () => this.fetchCommands(),
       terminal: (name) => routeSlash(`/${name}`, this.commands, this.o.unavailable()).to === 'terminal',
-      native: (name) => routeSlash(`/${name}`, this.commands, this.o.unavailable()).to === 'native',
+      native: (name) => {
+        const route = routeSlash(`/${name}`, this.commands, this.o.unavailable())
+        return route.to === 'native' && (route.name === 'mcp' || route.name === 'plugin')
+      },
       complete: (text) => this.setDraft(text),
       run: (name) => {
         this.setDraft(`/${name}`)

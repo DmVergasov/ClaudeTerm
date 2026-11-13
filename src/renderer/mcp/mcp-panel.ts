@@ -177,7 +177,7 @@ export class McpPanel {
     if (notClaude) {
       this.note.textContent = NOT_CLAUDE
       this.setShown(this.note, true)
-      this.list.replaceChildren()
+      this.setList()
       return
     }
     if (servers) this.paintServers()
@@ -189,7 +189,7 @@ export class McpPanel {
     if (view === undefined) {
       this.note.textContent = 'Loading…'
       this.setShown(this.note, true)
-      this.list.replaceChildren()
+      this.setList()
       return
     }
     if (view === null) return
@@ -207,7 +207,7 @@ export class McpPanel {
       this.note.classList.remove('mcp-note-error')
       this.setShown(this.note, true)
     }
-    this.list.replaceChildren(...serverList(view, { filter: this.filter, unfolded: this.unfolded, fold: (name) => this.fold(name) }))
+    this.setList(...serverList(view, { filter: this.filter, unfolded: this.unfolded, fold: (name) => this.fold(name) }))
   }
 
   /** the plugins: the section is filled by the plugin list; until then it says Loading, and a failed read says why */
@@ -223,7 +223,16 @@ export class McpPanel {
     } else {
       this.setShown(this.note, false)
     }
-    this.list.replaceChildren()
+    this.setList()
+  }
+
+  /** the list is drawn again: the control that had the focus is drawn again too, found by its row and its focus key */
+  private setList(...nodes: Node[]): void {
+    const active = document.activeElement
+    const kept = active instanceof HTMLElement && this.list.contains(active) ? focusKeyOf(active) : null
+    this.list.replaceChildren(...nodes)
+    if (kept === null) return
+    Array.from(this.list.querySelectorAll<HTMLElement>('[data-focus-key]')).find((c) => focusKeyOf(c) === kept)?.focus()
   }
 
   private fold(name: string): void {
@@ -235,6 +244,13 @@ export class McpPanel {
   private setShown(el: HTMLElement, shown: boolean): void {
     el.hidden = !shown
   }
+}
+
+/** a row's control as a key a repaint finds again: its row's name and its focus key; null for an element that has neither */
+function focusKeyOf(control: HTMLElement): string | null {
+  const row = control.closest<HTMLElement>('[data-name]')
+  const key = control.dataset.focusKey
+  return row && key ? JSON.stringify([row.dataset.name, key]) : null
 }
 
 function isView(p: PluginsView | { error: string }): p is PluginsView {

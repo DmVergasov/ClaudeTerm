@@ -140,6 +140,24 @@ test('with no running session the panel lists the configured servers', async () 
   }
 })
 
+test('a row keeps the focus when Enter opens its tools', async () => {
+  const { app, page } = await launchChatTab({ turns: {}, mcp: { github: { tools: ['search', 'read'] } } }, { claude: { mcpServers: { github: GITHUB } } })
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const name = page.locator('.panel-mcp [data-name="github"] .mcp-main')
+    await expect(name).toBeVisible()
+    await name.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.panel-mcp [data-name="github"] .mcp-chip')).toHaveText(['search', 'read'])
+    // the list is drawn again when the tools open: the same row's name button has the focus again
+    await expect(name).toBeFocused()
+    await expect(name).toHaveAttribute('aria-expanded', 'true')
+  } finally {
+    await app.close()
+  }
+})
+
 test('a terminal-view tab has no MCP button', async () => {
   const { app, page } = await launchChatTab({ turns: {} })
   try {

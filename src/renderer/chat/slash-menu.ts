@@ -36,7 +36,7 @@ export interface SlashMenuOptions {
   commands(): Promise<ChatCommandInfo[]>
   /** whether a command goes to the terminal, tagged in the menu */
   terminal(name: string): boolean
-  /** whether the app answers a command without arguments (/model, /resume, /mcp, /plugin): Enter runs it even when the command takes arguments */
+  /** whether Enter runs a command that takes arguments: the app's /mcp and /plugin, which open the panel at once (other commands are completed) */
   native(name: string): boolean
   /** Tab, or Enter on a command that takes arguments: the composer's text becomes this, and waits for the rest */
   complete(text: string): void
