@@ -127,10 +127,12 @@ import { cleanupImageCache, findTranscript, TranscriptFeed } from './transcript-
 import { showWindow } from './window-show'
 import { loadWindowState, trackWindowState } from './window-state'
 import type { McpResult, McpServersView, PluginsView } from '../shared/mcp'
-import { jsonFileCache } from './mcp/mcp-config'
+import { configPaths, jsonFileCache, readTabConfig, type ConfigPaths } from './mcp/mcp-config'
 import { runClaudeCli } from './mcp/claude-cli'
 import { McpHub } from './mcp/mcp-hub'
-import { isMcpAction, isMcpAddRequest, isPluginAction } from './ipc-guards'
+import { ConfigWatch } from './mcp/config-watch'
+import { RestartCoordinator } from './mcp/restart-coordinator'
+import { isMcpAction, isMcpAddRequest, isPluginAction, isReloadAction } from './ipc-guards'
 
 const dataDir = initDataDir()
 const log = createLogger(join(dataDir, 'logs'))
@@ -656,6 +658,9 @@ function bootstrap(): void {
       chatHub.removeTab(tabId)
       headsUp.forget(tabId)
       mcpHub.removeTab(tabId)
+      // a closed chat's configuration files are no longer watched
+      coordinator.removeTab(tabId)
+      void watchConfigFiles()
     },
     // read at each start: the console host applies to tabs opened after a change
     spawn: (o) => spawnPty({ ...o, bundledConpty: settings.conpty === 'bundled' }),
@@ -663,6 +668,9 @@ function bootstrap(): void {
     defaultView: () => settings.claude.view,
     startChat: (req) => {
       const handle = chatHub.start(req)
+      // what the session loads is read now: a change to it from here on is for the reload card
+      coordinator.started(req.tab.id)
+      void watchConfigFiles()
       // the members that watch the tab take the new chat's snapshot at once, so they hold its starting state before its first batch
       pushChatSnapshot(req.tab.id)
       return handle
@@ -731,6 +739,11 @@ function bootstrap(): void {
         syncChatTitle(t.id)
         // an agent's start or stop changes the activity without a state change: the hold follows it
         updateAwake()
+        // a tab that leaves its chat view no longer restarts by its chat's configuration
+        if (t.view !== 'chat' && coordinator.tracked().includes(t.id)) {
+          coordinator.removeTab(t.id)
+          void watchConfigFiles()
+        }
       },
       closed: (id) => {
         send(IPC.evTabClosed, id)
@@ -843,6 +856,13 @@ function bootstrap(): void {
     },
     setWorking: (tabId, working) => {
       tabs.setWorking(tabId, working)
+      // the turn ended: an automatic restart that waited for it may run now
+      if (!working) coordinator.turnEnded(tabId)
+    },
+    // the session answered its start: the report of a restart may begin
+    sessionReady: (tabId) => {
+      coordinator.ready(tabId)
+      send(IPC.evMcpChanged, tabId)
     },
     // the status bar of a chat tab: the model and the context fill; only while the tab shows its chat
     status: (tabId, s) => {
@@ -885,6 +905,43 @@ function bootstrap(): void {
     },
     read: (file) => fsPromises.readFile(file, 'utf8')
   })
+  // the restart of a chat whose Claude Code loads servers or plugins that changed: the reload card, the restart after the answer, the report
+  const tabConfigFiles = async (id: string): Promise<{ paths: ConfigPaths; folder: string } | null> => {
+    const env = tabs.claudeEnv(id)
+    const tab = tabs.get(id)
+    if (!env || !tab || tab.kind !== 'claude' || tab.view !== 'chat') return null
+    const folder = await canonicalFolder(tab.cwd)
+    return { paths: configPaths(env, homedir(), folder), folder }
+  }
+  const coordinator: RestartCoordinator = new RestartCoordinator({
+    read: async (id) => {
+      const files = await tabConfigFiles(id)
+      return files === null ? null : readTabConfig(files.paths, files.folder, readJson)
+    },
+    idle: (id) => chatHub.idle(id),
+    touchedAt: (id) => chatHub.configTouchedAt(id),
+    restart: (id) => {
+      tabs.restart(id, { live: true }).catch((e: Error) => log.warn(`cannot restart tab: ${e.message}`))
+    },
+    card: (id, card) => chatHub.reloadCard(id, card),
+    status: (id) => chatHub.mcpStatus(id),
+    report: (id, divider, notices) => chatHub.restartReport(id, divider, notices),
+    changed: (id) => send(IPC.evMcpChanged, id),
+    now: () => Date.now()
+  })
+  // a watched configuration file changed: every chat is compared with what its session loads
+  const configWatch = new ConfigWatch(() => coordinator.compareAll())
+  let watchSeq = 0
+  // the configuration files of every tracked chat are watched; the latest call's list is the one kept
+  const watchConfigFiles = async (): Promise<void> => {
+    const seq = ++watchSeq
+    const files: string[] = []
+    for (const id of coordinator.tracked()) {
+      const found = await tabConfigFiles(id)
+      if (found !== null) files.push(...Object.values(found.paths))
+    }
+    if (seq === watchSeq) configWatch.setFiles(files)
+  }
   const mcpHub = new McpHub({
     launch: () => resolveChatLaunch(settings.claude.command, chatLaunchDeps),
     tab: async (id) => {
@@ -896,9 +953,12 @@ function bootstrap(): void {
     readJson,
     run: runClaudeCli,
     session: chatHub,
-    changed: (id) => send(IPC.evMcpChanged, id),
-    hold: () => {},
-    release: () => {},
+    changed: (id, madeHere) => {
+      if (madeHere) coordinator.madeHere(id)
+      send(IPC.evMcpChanged, id)
+    },
+    hold: (id) => coordinator.hold(id),
+    release: (id) => coordinator.release(id),
     openPath: (file) => shell.openPath(file),
     copy: (text) => clipboard.writeText(text),
     log
@@ -2466,6 +2526,11 @@ function bootstrap(): void {
   ipcMain.handle(IPC.mcpAdd, (_e, tabId: unknown, req: unknown): Promise<McpResult> => (isLocalClaudeTab(tabId) && isMcpAddRequest(req) ? mcpHub.add(tabId, req) : Promise.resolve(notClaudeTab)))
   ipcMain.handle(IPC.mcpPlugins, (_e, tabId: unknown): Promise<PluginsView | { error: string } | null> => (isLocalClaudeTab(tabId) ? mcpHub.plugins(tabId) : Promise.resolve(null)))
   ipcMain.handle(IPC.mcpPluginAction, (_e, tabId: unknown, a: unknown): Promise<McpResult> => (isLocalClaudeTab(tabId) && isPluginAction(a) ? mcpHub.pluginAction(tabId, a) : Promise.resolve(notClaudeTab)))
+  // the reload card's buttons: Not now keeps the card with Restart; Restart restarts the chat once it is idle
+  ipcMain.handle(IPC.mcpReload, (_e, tabId: unknown, action: unknown): boolean => {
+    if (!isLocalClaudeTab(tabId) || !isReloadAction(action)) return false
+    return action === 'not-now' ? coordinator.notNow(tabId) : coordinator.restartNow(tabId)
+  })
   // the files a chat's composer attaches: an image joins the Media panel, and the files are allowed for the tab's messages
   const attachFilesOf = (tabId: string, paths: string[]): Promise<ChatAttachment[]> => attachFiles(tabId, paths, {
     stat: attachDeps.stat,
@@ -3015,6 +3080,7 @@ function bootstrap(): void {
     remote?.dispose()
     remote = null
     keepAwake.dispose()
+    configWatch.close()
     presence.dispose()
     earlyPeers.clear()
     updater.stop()
