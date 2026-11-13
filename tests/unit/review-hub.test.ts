@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditLedger } from '../../src/main/edit-ledger'
 import type { DiffInput } from '../../src/main/review-diff'
-import { ReviewHub, TOO_MANY_NOTICE, type ReviewRequest } from '../../src/main/review-hub'
+import { REVIEW_RETRY_MS, ReviewHub, TOO_MANY_NOTICE, type ReviewRequest } from '../../src/main/review-hub'
 import type { Inputs, ReviewSources, TranscriptLog } from '../../src/main/review-sources'
 import { IN_DIALOG, NOT_RUNNING, type ReviewUpdate } from '../../src/shared/review'
 
@@ -825,6 +825,90 @@ describe('ReviewHub counter does not delay the view', () => {
     h.release()
     await vi.advanceTimersByTimeAsync(0)
     expect(last()).toMatchObject({ view: { kind: 'request' }, counter: { files: 7 } })
+  })
+})
+
+describe('ReviewHub after git failed (a large repository: git took longer than its limit)', () => {
+  const SLOW = 'git diff took longer than 10 s'
+
+  it('a view whose git work failed is computed again soon, while the tab is in front', async () => {
+    let fail = true
+    const git = vi.fn(async () => {
+      if (fail) throw new Error(SLOW)
+      return result(input('a.ts', 'a\n', 'b\n'))
+    })
+    const { hub, last } = setup({ git })
+    hub.activated(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(last()).toMatchObject({ notice: SLOW, counter: null })
+    fail = false
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS)
+    expect(last()).toMatchObject({ notice: null, counter: { files: 1, additions: 1, deletions: 1 } })
+  })
+
+  it('a count that failed is counted again soon', async () => {
+    let fail = true
+    const totals = vi.fn(async () => {
+      if (fail) throw new Error(SLOW)
+      return { files: 7, additions: 70, deletions: 3 }
+    })
+    const { hub, last } = setup({ totals })
+    hub.setScope(TAB, 'last_turn')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(last().counter).toBeNull()
+    fail = false
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS)
+    expect(last().counter).toMatchObject({ files: 7, additions: 70, deletions: 3 })
+  })
+
+  it('a root lookup that failed does not leave the tab on the session view: the next try finds the repository', async () => {
+    let fail = true
+    const { hub, last } = setup({ root: async () => (fail ? { root: null, problem: 'git rev-parse took longer than 10 s' } : { root: ROOT }) })
+    hub.activated(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    fail = false
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS)
+    expect(last()).toMatchObject({ view: { kind: 'scope', scope: 'uncommitted' }, uncommitted: { available: true }, counter: { files: 1 } })
+  })
+
+  it('each try waits twice as long as the last while git keeps failing, and a tab behind waits to come to the front', async () => {
+    const git = vi.fn(async (): Promise<Inputs> => { throw new Error(SLOW) })
+    const { hub, setActive } = setup({ git })
+    hub.activated(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(git).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS)
+    expect(git).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS)
+    expect(git).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS)
+    expect(git).toHaveBeenCalledTimes(3)
+    setActive(null)
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS * 100)
+    expect(git).toHaveBeenCalledTimes(3)
+  })
+
+  it('a repository that is fine again waits the first delay after its next failure', async () => {
+    let fail = true
+    const git = vi.fn(async () => {
+      if (fail) throw new Error(SLOW)
+      return result(input('a.ts', 'a\n', 'b\n'))
+    })
+    const { hub } = setup({ git })
+    hub.activated(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS)
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS * 2)
+    expect(git).toHaveBeenCalledTimes(3)
+    fail = false
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(git).toHaveBeenCalledTimes(4)
+    fail = true
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(REVIEW_RETRY_MS)
+    expect(git).toHaveBeenCalledTimes(6)
   })
 })
 

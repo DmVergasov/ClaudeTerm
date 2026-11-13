@@ -84,6 +84,9 @@ export interface Totals {
   deletions: number
 }
 
+/** the problem of a folder outside any repository: a fact, unlike a git that failed or took too long */
+export const NOT_A_REPOSITORY = 'Not a git repository'
+
 /** where a view's files come from; the hub's tests replace it */
 export interface ReviewSources {
   root(cwd: string): Promise<{ root: string } | { root: null; problem: string }>
@@ -377,7 +380,7 @@ export function createSources(io: SourceIo): ReviewSources {
     root: async (cwd) => {
       try {
         const root = await repoRoot(io.git, cwd)
-        return root ? { root } : { root: null, problem: 'Not a git repository' }
+        return root ? { root } : { root: null, problem: NOT_A_REPOSITORY }
       } catch (e) {
         return { root: null, problem: e instanceof Error ? e.message : String(e) }
       }

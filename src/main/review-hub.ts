@@ -5,7 +5,7 @@ import type { EditLedger } from './edit-ledger'
 import { pathKey } from './path-key'
 import { buildFiles, sliceLines, type DiffInput } from './review-diff'
 import { testMatcher } from '../shared/test-files'
-import { EMPTY_LEDGER, relPathFor, type Inputs, type ReviewSources, type Totals, type TranscriptLog } from './review-sources'
+import { EMPTY_LEDGER, NOT_A_REPOSITORY, relPathFor, type Inputs, type ReviewSources, type Totals, type TranscriptLog } from './review-sources'
 import type { TranscriptEditEvent } from './transcript-edits'
 
 /** a diff Claude asked for with show_diff */
@@ -38,6 +38,13 @@ export interface ReviewHubDeps {
 }
 
 export const TOO_MANY_NOTICE = 'Too many changes to show at once — narrow the view with a smaller scope or paths'
+/**
+ * a view or a count whose git failed (in a large repository, git can take longer than its limit while the disk is cold) is
+ * computed again after this long, while its tab is in front; each next try waits twice as long, up to RETRY_MAX_MS. Without it a
+ * chat tab, which hears of no session before its first message, would show no changes until then
+ */
+export const REVIEW_RETRY_MS = 5000
+const RETRY_MAX_MS = 5 * 60_000
 /** how many outside paths the panel's tooltip lists */
 const OUTSIDE_SAMPLE = 10
 /** how many hidden test paths the panel's tooltip lists */
@@ -76,6 +83,10 @@ interface TabState {
   counting: boolean
   recount: boolean
   timer: ReturnType<typeof setTimeout> | null
+  /** how long the next try after a failed git waits; back to REVIEW_RETRY_MS once a view and its count succeed */
+  retryMs: number
+  /** the git work of the last view failed: its count succeeding does not mean the tab is fine again */
+  viewFailed: boolean
   last: ReviewUpdate | null
   /**
    * pathKey → the new side of a file of `last` whose hunks hide lines, and the hash it has there: the panel's expand buttons
@@ -111,7 +122,7 @@ export class ReviewHub {
     this.tabs.set(tabId, {
       tabId, folder: cwd, claude, sessionId: null, ledger: null, log: { prompts: [], edits: [] }, logIds: new Set(), keptOriginal: new Set(),
       scope: null, request: null, forced: new Set(), viewed: new Map(), running: false,
-      dialogs: new Map(), gen: 0, computing: false, rerun: false, countJob: null, counting: false, recount: false, timer: null, last: null, texts: new Map()
+      dialogs: new Map(), gen: 0, computing: false, rerun: false, countJob: null, counting: false, recount: false, timer: null, retryMs: REVIEW_RETRY_MS, viewFailed: false, last: null, texts: new Map()
     })
   }
 
@@ -145,6 +156,8 @@ export class ReviewHub {
     t.dialogs.clear()
     t.gen++
     t.countJob = null
+    t.retryMs = REVIEW_RETRY_MS
+    t.viewFailed = false
     t.last = null
     // a tab in front computes its new view now; one in the background says so at once, so its counter and last view go
     if (this.inFront(tabId)) this.schedule(t, 0)
@@ -164,6 +177,8 @@ export class ReviewHub {
     t.texts.clear()
     t.gen++
     t.countJob = null
+    t.retryMs = REVIEW_RETRY_MS
+    t.viewFailed = false
     t.last = null
     if (this.inFront(tabId)) this.schedule(t, 0)
     else this.d.publish(this.withState(t, this.emptyUpdate(t)))
@@ -381,7 +396,7 @@ export class ReviewHub {
     if (!t?.claude) return { ok: false, error: 'show_diff works only in a ClaudeTerm Claude tab' }
     if (req.from !== null || (req.scope ?? 'uncommitted') === 'uncommitted') {
       const r = await this.d.sources.root(req.cwd)
-      if (r.root === null) return { ok: false, error: r.problem === 'Not a git repository' ? `not a git repository: ${req.cwd}` : r.problem }
+      if (r.root === null) return { ok: false, error: r.problem === NOT_A_REPOSITORY ? `not a git repository: ${req.cwd}` : r.problem }
       for (const ref of [req.from, req.to]) {
         if (ref === null) continue
         try {
@@ -447,6 +462,18 @@ export class ReviewHub {
     }, ms)
   }
 
+  /** git failed for the view or its count: try again later while the tab is in front (a tab behind computes when it comes to the front), each wait twice the last */
+  private retryLater(t: TabState): void {
+    if (t.timer || !this.inFront(t.tabId)) return
+    const ms = t.retryMs
+    t.retryMs = Math.min(ms * 2, RETRY_MAX_MS)
+    t.timer = setTimeout(() => {
+      t.timer = null
+      if (this.tabs.get(t.tabId) !== t || !this.inFront(t.tabId)) return
+      this.compute(t).catch((e) => this.d.onError(`review: ${message(e)}`))
+    }, ms)
+  }
+
   private async compute(t: TabState): Promise<void> {
     if (t.computing) {
       t.rerun = true
@@ -457,7 +484,7 @@ export class ReviewHub {
       do {
         t.rerun = false
         const gen = t.gen
-        const { update, counting, texts } = await this.build(t, t.request, t.forced)
+        const { update, counting, texts, failed } = await this.build(t, t.request, t.forced)
         if (this.tabs.get(t.tabId) !== t) return
         if (gen !== t.gen) {
           t.rerun = true
@@ -467,6 +494,9 @@ export class ReviewHub {
         this.keepTexts(t, texts)
         this.d.publish(this.withState(t, update))
         this.countLater(t, counting)
+        t.viewFailed = failed
+        if (failed) this.retryLater(t)
+        else if (!counting) t.retryMs = REVIEW_RETRY_MS
       } while (t.rerun)
     } finally {
       t.computing = false
@@ -479,14 +509,16 @@ export class ReviewHub {
    */
   private async build(
     t: TabState, request: ReviewRequest | null, forcedKeys: ReadonlySet<string>
-  ): Promise<{ update: ReviewUpdate; counting: (() => Promise<ReviewCounter | null>) | null; texts: Map<string, string> }> {
+  ): Promise<{ update: ReviewUpdate; counting: (() => Promise<ReviewCounter | null>) | null; texts: Map<string, string>; failed: boolean }> {
     const chosen = t.scope
     const cwd = request?.cwd ?? t.folder
     const r = await this.d.sources.root(cwd)
     const root = r.root
     const problem = r.root === null ? r.problem : ''
+    // a lookup that failed does not say the folder is outside a repository: the tab's scope waits for one that does
+    const lookupFailed = r.root === null && r.problem !== NOT_A_REPOSITORY
     const scope: ReviewScope = chosen ?? (root ? 'uncommitted' : 'session')
-    if (t.scope === null) t.scope = scope
+    if (t.scope === null && !lookupFailed) t.scope = scope
     const base = root ?? cwd
     const forced = (p: string): boolean => forcedKeys.has(pathKey(p))
     // the setting is read once: the view and what it says about the setting agree
@@ -518,7 +550,7 @@ export class ReviewHub {
       counter: own ? this.counterOf(root, totalsOf(files)) : (t.last?.counter ?? null),
       reveal: false
     }
-    return { update, counting: own ? null : () => this.otherCounter(t, root, base), texts }
+    return { update, counting: own ? null : () => this.otherCounter(t, root, base), texts, failed: lookupFailed || view.failed }
   }
 
   /** the texts of the view `t` just published (by path); the texts of the tabs not in front go: a tab in front keeps its own, for its expand buttons */
@@ -556,10 +588,12 @@ export class ReviewHub {
           counter = await job()
         } catch (e) {
           this.d.onError(`review: ${message(e)}`)
+          if (this.tabs.get(t.tabId) === t) this.retryLater(t)
           continue
         }
         // a view with its own counter came meanwhile: this count is not wanted
         if (this.tabs.get(t.tabId) !== t) return
+        if (!t.viewFailed) t.retryMs = REVIEW_RETRY_MS
         if (!t.countJob || !t.last || JSON.stringify(counter) === JSON.stringify(t.last.counter)) continue
         t.last = { ...t.last, counter }
         this.d.publish(this.withState(t, t.last))
@@ -572,7 +606,7 @@ export class ReviewHub {
   private async inputs(
     t: TabState, request: ReviewRequest | null, scope: ReviewScope, root: string | null, problem: string, base: string, forced: (p: string) => boolean,
     patterns: string[] | null
-  ): Promise<{ inputs: DiffInput[]; notice: string | null; ignored: number; outside: number; outsideSample: string[]; tests: string[] }> {
+  ): Promise<{ inputs: DiffInput[]; notice: string | null; ignored: number; outside: number; outsideSample: string[]; tests: string[]; failed: boolean }> {
     const s = this.d.sources
     const wanted: ReviewScope | null = request ? (request.from !== null ? null : request.scope ?? 'uncommitted') : scope
     const paths = request?.paths ?? []
@@ -599,14 +633,15 @@ export class ReviewHub {
         r = s.ledger(ledger, t.log, wanted, base, forced, (p) => hidden.has(pathKey(p)) || outsideKeys.has(pathKey(p)) || testKeys.has(pathKey(p)))
         if (paths.length > 0) r = { ...r, inputs: r.inputs.filter((i) => paths.some((p) => within(p, i.path))) }
       } else {
-        if (!root) return { inputs: [], notice: problem, ignored, outside: 0, outsideSample: [], tests: [] }
+        if (!root) return { inputs: [], notice: problem, ignored, outside: 0, outsideSample: [], tests: [], failed: false }
         const from = request?.from ?? (await s.head(root))
         r = await s.git(root, from, request?.to ?? null, paths, forced, isTest ?? (() => false))
         tests = (r.excluded ?? []).map((p) => relPathFor(root, p))
       }
-      return { inputs: r.inputs, notice: r.tooMany ? TOO_MANY_NOTICE : null, ignored, outside: outside.length, outsideSample: [...outside].sort().slice(0, OUTSIDE_SAMPLE), tests }
+      return { inputs: r.inputs, notice: r.tooMany ? TOO_MANY_NOTICE : null, ignored, outside: outside.length, outsideSample: [...outside].sort().slice(0, OUTSIDE_SAMPLE), tests, failed: false }
     } catch (e) {
-      return { inputs: [], notice: message(e), ignored: 0, outside: 0, outsideSample: [], tests: [] }
+      // git failed or took too long: the view says why, and is computed again later
+      return { inputs: [], notice: message(e), ignored: 0, outside: 0, outsideSample: [], tests: [], failed: true }
     }
   }
 
