@@ -100,8 +100,12 @@ test('Change folder empties the card, Changes, status, note and Docs of the old 
     await expect(page.locator('#statusbar .status-plan')).toHaveCount(1, SLOW)
     const printed = async () => (await bufferText(page, tabId)).split('\n').filter((l) => /^fake-claude\b/.test(l.trim())).length
     await expect.poll(printed, SLOW).toBe(1)
-    // a marker typed into the tab's terminal: a restart clears the terminal, so the marker is gone after the move
-    await typeInTerminal(page, 'echo before-move')
+    // a marker typed into the tab's terminal: a restart clears the terminal, so the marker is gone after the move. The
+    // terminal's input takes the focus without a click: the note card, open over the terminal, covers its middle in a small
+    // window (the macOS runner's)
+    await page.locator('.terminal-host:visible .xterm-helper-textarea').focus()
+    await page.keyboard.type('echo before-move')
+    await page.keyboard.press('Enter')
     await expect.poll(() => bufferText(page, tabId), SLOW).toContain('before-move')
 
     expect(await page.evaluate(([id, dir]) => window.ct.changeFolder(id, dir), [tabId, other] as [string, string])).toEqual({ ok: true })
