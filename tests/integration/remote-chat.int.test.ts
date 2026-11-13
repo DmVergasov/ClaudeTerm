@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { attachmentOf } from '../../src/main/chat/chat-attachments'
 import { ChatHub } from '../../src/main/chat/chat-hub'
-import type { ChatEngine, ChatEngineHandlers } from '../../src/main/chat/chat-engine'
+import type { ChatEngine, ChatEngineHandlers, McpLiveServer } from '../../src/main/chat/chat-engine'
 import { openInTerminal } from '../../src/main/chat/terminal-handoff'
 import { chatBatchPush, forgetCopiedBy, hostHandlers, hostTabs } from '../../src/main/remote-host'
 import { FileReceiver } from '../../src/main/sync/file-receiver'
@@ -87,6 +87,14 @@ class FakeEngine implements ChatEngine {
   async effort(): Promise<string | null | undefined> {
     return undefined
   }
+
+  async mcpStatus(): Promise<McpLiveServer[]> {
+    return []
+  }
+
+  async reconnectMcp(): Promise<void> {}
+
+  async toggleMcp(): Promise<void> {}
 
   close(): void {}
 

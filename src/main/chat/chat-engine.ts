@@ -23,6 +23,12 @@ export interface ChatEngineHandlers {
   exit(code: number | null): void
 }
 
+/** an MCP server the running session loads, as Claude Code reports it: the fields the answer gives, each checked and capped by the engine (null: not given) */
+export interface McpLiveServer {
+  name: string; status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'; error: string | null; version: string | null
+  scope: string | null; source: string | null; transport: string | null; target: string | null; tools: string[]
+}
+
 /** the context fill, as the engine reads it: the percentage, and the token counts when the answer gives them (null: not given) */
 export interface ChatContext { pct: number | null; used: number | null; size: number | null }
 
@@ -40,6 +46,10 @@ export interface ChatEngine {
   context(): Promise<ChatContext>
   /** the effort Claude Code applies to the next message (get_settings, applied.effort): a level, null for none, undefined when it cannot be read */
   effort(): Promise<string | null | undefined>
+  /** the MCP servers the session loads, as Claude Code reports them now */
+  mcpStatus(): Promise<McpLiveServer[]>
+  reconnectMcp(name: string): Promise<void>
+  toggleMcp(name: string, enabled: boolean): Promise<void>
   /** ends the input: Claude Code exits by itself; after `graceMs` (default 2500) the process is killed */
   close(graceMs?: number): void
   kill(): void

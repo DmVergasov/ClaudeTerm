@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { EffortLevel, ModelInfo, PermissionResult, Query, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import type { ChatCommandInfo, ChatModelInfo } from '../../shared/chat'
-import type { ChatEngine, ChatEngineHandlers, ChatEngineStart, StartChatEngine } from './chat-engine'
+import type { ChatEngine, ChatEngineHandlers, ChatEngineStart, McpLiveServer, StartChatEngine } from './chat-engine'
 import { spawnChatProcess, type ChatLaunch } from './claude-spawn'
 
 // One conversation with the user's Claude Code through the Agent SDK's query() in streaming-input mode. The SDK starts
@@ -67,6 +67,52 @@ class PromptQueue {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 /** a string from Claude Code, capped; anything else is empty */
 const text = (v: unknown, cap = TEXT_CAP): string => (typeof v === 'string' ? v.slice(0, cap) : '')
+
+const MCP_STATUSES: McpLiveServer['status'][] = ['connected', 'failed', 'needs-auth', 'pending', 'disabled']
+
+/** a string from Claude Code, capped; null when it is missing, empty or not a string */
+const optText = (v: unknown, cap: number): string | null => (typeof v === 'string' && v !== '' ? v.slice(0, cap) : null)
+
+/** the target of a server: its URL, else its command and arguments joined by spaces; the headers and env are never read */
+function targetOf(config: Record<string, unknown>): string | null {
+  const url = optText(config.url, 2000)
+  if (url !== null) return url
+  const command = optText(config.command, 1000)
+  if (command === null) return null
+  const args = Array.isArray(config.args) ? config.args.filter((a): a is string => typeof a === 'string').slice(0, 50).map(a => a.slice(0, 500)) : []
+  return [command, ...args].join(' ')
+}
+
+/** the tool names of a server: up to 500, each capped; other entries are left out */
+function toolNames(list: unknown): string[] {
+  if (!Array.isArray(list)) return []
+  const names: string[] = []
+  for (const tool of list) {
+    const name = isObj(tool) ? optText(tool.name, 200) : null
+    if (name !== null) names.push(name)
+    if (names.length === 500) break
+  }
+  return names
+}
+
+/** the servers Claude Code reports for the session: an entry without a usable name or a known status is left out; a non-array answer gives none */
+function mcpServersOf(list: unknown): McpLiveServer[] {
+  if (!Array.isArray(list)) return []
+  const servers: McpLiveServer[] = []
+  for (const s of list) {
+    if (!isObj(s)) continue
+    const name = typeof s.name === 'string' && s.name !== '' && s.name.length <= 200 ? s.name : null
+    const status = MCP_STATUSES.find(known => known === s.status)
+    if (name === null || status === undefined) continue
+    const info = isObj(s.serverInfo) ? s.serverInfo : {}
+    const config = isObj(s.config) ? s.config : {}
+    servers.push({
+      name, status, error: optText(s.error, 2000), version: optText(info.version, 100), scope: optText(s.scope, 50), source: optText(s.source, 50),
+      transport: optText(config.type, 50), target: targetOf(config), tools: toolNames(s.tools),
+    })
+  }
+  return servers
+}
 
 function commandInfo(c: SlashCommand, terminal: Set<string>): ChatCommandInfo {
   const name = text(c.name, NAME_CAP)
@@ -362,6 +408,19 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
       } catch {
         return undefined
       }
+    },
+
+    // the servers as the session loads them now; a reconnect or a switch reaches the running session, not the files
+    async mcpStatus() {
+      return mcpServersOf(await (await query).mcpServerStatus())
+    },
+
+    async reconnectMcp(name) {
+      await (await query).reconnectMcpServer(name)
+    },
+
+    async toggleMcp(name, enabled) {
+      await (await query).toggleMcpServer(name, enabled)
     },
 
     close(graceMs = DEFAULT_GRACE_MS) {

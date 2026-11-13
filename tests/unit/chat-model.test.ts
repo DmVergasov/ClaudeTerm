@@ -916,6 +916,22 @@ describe('ChatModel', () => {
     expect(toolSubject('Grep', { pattern: 'TODO' }, '/w')).toBe('TODO')
     expect(toolSubject('Nope', {}, '/w')).toBe('')
   })
+
+  it('put adds an item or sets it in place, and drop removes one while the items after it keep their place', () => {
+    const { m } = model()
+    expect(m.divider('First', 'good one')).toEqual([{ op: 'add', item: expect.objectContaining({ kind: 'divider', text: 'First', good: 'good one' }) }])
+    expect(m.divider('Plain')).toEqual([{ op: 'add', item: expect.not.objectContaining({ good: expect.anything() }) }])
+    const reload = { kind: 'reload' as const, id: 'reload-1', title: 'Restart', text: 'docs was added', action: 'restart' as const }
+    expect(m.put(reload)).toEqual([{ op: 'add', item: reload }])
+    expect(m.divider('Tail')).toHaveLength(1)
+    const tail = m.items()[m.items().length - 1]
+    expect(m.put({ ...reload, text: 'docs was changed' })).toEqual([{ op: 'set', item: { ...reload, text: 'docs was changed' } }])
+    expect(m.drop('reload-1')).toEqual([{ op: 'remove', id: 'reload-1' }])
+    expect(m.drop('reload-1')).toEqual([])
+    // the item after the dropped one keeps its place: a set by its id changes that item, not a new one
+    expect(m.put({ ...tail, text: 'Tail changed' } as typeof tail)).toEqual([{ op: 'set', item: expect.objectContaining({ id: tail.id, text: 'Tail changed' }) }])
+    expect(m.items().map(item => item.kind)).toEqual(['divider', 'divider', 'divider'])
+  })
 })
 
 /** a user-role message as Claude Code sends it: the text, and the origin the SDK names when it names one */

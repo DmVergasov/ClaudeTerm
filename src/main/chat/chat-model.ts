@@ -372,8 +372,24 @@ export class ChatModel {
     return this.add({ kind: 'notice', id: this.o.newId(), tone, text: cap(text, OUTPUT_CAP), action })
   }
 
-  divider(text: string): ChatPatch[] {
-    return this.add({ kind: 'divider', id: this.o.newId(), text })
+  /** a divider line; `good` is its highlighted part, when it has one */
+  divider(text: string, good?: string): ChatPatch[] {
+    return this.add({ kind: 'divider', id: this.o.newId(), text, ...(typeof good === 'string' ? { good } : {}) })
+  }
+
+  /** an item of the chat the hub owns: added, or set in place when an item with its id is there */
+  put(item: ChatItem): ChatPatch[] {
+    return this.at.has(item.id) ? this.set(item) : this.add(item)
+  }
+
+  /** removes an item; the items after it keep their order and their index; [] for an id the chat does not hold */
+  drop(id: string): ChatPatch[] {
+    const i = this.at.get(id)
+    if (i === undefined) return []
+    this.list.splice(i, 1)
+    this.at.delete(id)
+    for (let j = i; j < this.list.length; j++) this.at.set(this.list[j].id, j)
+    return [{ op: 'remove', id }]
   }
 
   /** changes the state the status bar and the chat header show; [] when nothing changed */
@@ -511,7 +527,7 @@ export class ChatModel {
     if (text === null || item?.kind !== 'text') return []
     const piece = cap(text, TEXT_CAP - item.markdown.length)
     if (piece === '') return []
-    this.put({ ...item, markdown: item.markdown + piece })
+    this.store({ ...item, markdown: item.markdown + piece })
     return [{ op: 'append', id: item.id, text: piece }]
   }
 
@@ -988,7 +1004,8 @@ export class ChatModel {
     return i === undefined ? undefined : this.list[i]
   }
 
-  private put(item: ChatItem): void {
+  /** replaces an item in place, without a patch: the caller sends it */
+  private store(item: ChatItem): void {
     const i = this.at.get(item.id)
     if (i !== undefined) this.list[i] = item
   }
@@ -1006,13 +1023,13 @@ export class ChatModel {
   }
 
   private set(item: ChatItem): ChatPatch[] {
-    this.put(item)
+    this.store(item)
     return [{ op: 'set', item }]
   }
 
   /** the calls of a tools item change: the item keeps them, and the window gets the one call that changed */
   private callPatch(item: ToolsItem, calls: ChatToolCall[], call: ChatToolCall): ChatPatch[] {
-    this.put({ ...item, calls })
+    this.store({ ...item, calls })
     return [{ op: 'call', id: item.id, call }]
   }
 }

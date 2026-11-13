@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatHub, type ChatHubDeps } from '../../src/main/chat/chat-hub'
 import { ChatMirror } from '../../src/main/chat/chat-mirror'
 import { attachmentOf } from '../../src/main/chat/chat-attachments'
-import type { ChatEngine, ChatEngineHandlers, ChatEngineStart } from '../../src/main/chat/chat-engine'
-import type { ChatCommandInfo, ChatModelInfo, ChatPatch, ChatPermissionMode } from '../../src/shared/chat'
+import type { ChatEngine, ChatEngineHandlers, ChatEngineStart, McpLiveServer } from '../../src/main/chat/chat-engine'
+import type { ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode } from '../../src/shared/chat'
 import type { ImageCard, TabInfo } from '../../src/shared/types'
 import type { ChatStartRequest } from '../../src/main/tab-manager'
 import { fixtureHistory } from '../fixtures/chat-fixtures'
@@ -102,6 +102,22 @@ class FakeEngine implements ChatEngine {
     return this.applied
   }
 
+  /** the servers the engine reports, and the MCP calls it got, in order */
+  mcp: McpLiveServer[] = []
+  mcpCalls: string[] = []
+
+  async mcpStatus(): Promise<McpLiveServer[]> {
+    return this.mcp
+  }
+
+  async reconnectMcp(name: string): Promise<void> {
+    this.mcpCalls.push(`reconnect ${name}`)
+  }
+
+  async toggleMcp(name: string, enabled: boolean): Promise<void> {
+    this.mcpCalls.push(`toggle ${name} ${enabled}`)
+  }
+
   close(): void {
     this.closes++
   }
@@ -124,7 +140,7 @@ function fakeAttach(files: Map<string, Buffer>): ChatHubDeps['attach'] {
 }
 
 /** a hub with fake dependencies: the engines it started, the window's batches, and what it told the tabs */
-function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history'>> & { attach?: (files: Map<string, Buffer>) => ChatHubDeps['attach'] } = {}) {
+function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessionReady'>> & { attach?: (files: Map<string, Buffer>) => ChatHubDeps['attach'] } = {}) {
   const clock = { t: 1000 }
   const engines: FakeEngine[] = []
   const windows: { tabId: string; fromRev: number; toRev: number; patches: ChatPatch[] }[] = []
@@ -170,6 +186,7 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history'>> & { att
     attach: over.attach ? over.attach(files) : fakeAttach(files),
     now: () => clock.t,
     log: { warn: m => calls.warn.push(m) },
+    ...(over.sessionReady ? { sessionReady: over.sessionReady } : {}),
   }
   return { hub: new ChatHub(deps), engines, windows, remotes, watched, calls, env, cards, files, alive, clock }
 }
@@ -1566,6 +1583,147 @@ describe('ChatHub', () => {
     // a patch's revision is its index from the batch's fromRev: the history's reset comes next, so its fromRev is the starting reset's toRev
     expect(resets[1].i).toBe(resets[0].i + 1)
     expect(resets[1].p).toMatchObject({ op: 'reset', items: expect.arrayContaining([expect.objectContaining({ kind: 'images' })]) })
+  })
+
+  it('MCP calls reach the running engine; with none mcpStatus is null and the others throw', async () => {
+    const { hub, engines } = harness()
+    expect(await hub.mcpStatus(TAB)).toBeNull()
+    await expect(hub.reconnectMcp(TAB, 'docs')).rejects.toThrow('Claude Code is not running in this tab')
+    await expect(hub.toggleMcp(TAB, 'docs', false)).rejects.toThrow('Claude Code is not running in this tab')
+
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].mcp = [{ name: 'docs', status: 'connected', error: null, version: '1.0.0', scope: 'user', source: 'user', transport: 'http', target: 'https://docs.example.test/mcp', tools: ['search'] }]
+    expect(await hub.mcpStatus(TAB)).toEqual(engines[0].mcp)
+    await hub.reconnectMcp(TAB, 'docs')
+    await hub.toggleMcp(TAB, 'docs', false)
+    expect(engines[0].mcpCalls).toEqual(['reconnect docs', 'toggle docs false'])
+  })
+
+  it('idle is false while a turn runs, a card waits, a message waits, a compaction runs or before ready; true after the result', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    expect(hub.idle(TAB)).toBe(false)
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    expect(hub.idle(TAB)).toBe(true)
+
+    await hub.send(TAB, { text: 'one', attachments: [] })
+    await settle()
+    expect(hub.idle(TAB)).toBe(false)
+    engines[0].h.message(result())
+    expect(hub.idle(TAB)).toBe(true)
+
+    const decided = engines[0].h.ask({ toolName: 'Bash', input: { command: 'ls' } }, new AbortController().signal)
+    expect(hub.idle(TAB)).toBe(false)
+    const cardId = last(hub.snapshot(TAB)!.items.filter(item => item.kind === 'card')).id
+    expect(hub.answer(TAB, cardId, { type: 'permission', choice: 'once', suggestion: null, message: null })).toBe(true)
+    await decided
+    expect(hub.idle(TAB)).toBe(true)
+
+    engines[0].h.message({ type: 'system', subtype: 'status', status: 'compacting' })
+    expect(hub.idle(TAB)).toBe(false)
+    engines[0].h.message({ type: 'system', subtype: 'status', status: null })
+    expect(hub.idle(TAB)).toBe(true)
+  })
+
+  it('a Bash call running claude mcp add marks the tab; a Read does not', async () => {
+    const { hub, engines, clock } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    const call = (name: string, input: Record<string, unknown>): Record<string, unknown> => ({
+      type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: `${name}-1`, name, input }] },
+    })
+    expect(hub.configTouchedAt(TAB)).toBeNull()
+    engines[0].h.message(call('Read', { file_path: '/work/acme/.mcp.json' }))
+    expect(hub.configTouchedAt(TAB)).toBeNull()
+    clock.t = 4000
+    engines[0].h.message(call('Bash', { command: 'claude mcp add docs -- npx docs' }))
+    expect(hub.configTouchedAt(TAB)).toBe(4000)
+    // kept across a restart of the tab
+    hub.start(startReq().req)
+    expect(hub.configTouchedAt(TAB)).toBe(4000)
+  })
+
+  it('reloadCard adds one item, updates it in place, and removes it', async () => {
+    const { hub, engines, windows } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    // the start's own patches go out first: the batch they wait in is flushed before the card is counted
+    vi.advanceTimersByTime(16)
+    windows.length = 0
+    const reloads = (): ChatItem[] => hub.snapshot(TAB)!.items.filter(item => item.kind === 'reload')
+    const flushed = (): ChatPatch['op'][] => {
+      vi.advanceTimersByTime(16)
+      return windows.splice(0).flatMap(w => w.patches.map(p => p.op))
+    }
+
+    hub.reloadCard(TAB, { title: 'Restart to load docs', text: 'docs was added', action: 'restart' })
+    expect(flushed()).toEqual(['add'])
+    expect(reloads()).toEqual([expect.objectContaining({ kind: 'reload', title: 'Restart to load docs', text: 'docs was added', action: 'restart' })])
+
+    hub.reloadCard(TAB, { title: 'Restart to load docs', text: 'docs was changed', action: 'not-now' })
+    expect(flushed()).toEqual(['set'])
+    expect(reloads()).toEqual([expect.objectContaining({ text: 'docs was changed', action: 'not-now' })])
+
+    hub.reloadCard(TAB, null)
+    expect(flushed()).toEqual(['remove'])
+    expect(reloads()).toEqual([])
+  })
+
+  it('restartReport rewrites the restart divider and adds notices with the MCP button', async () => {
+    const { hub, engines } = harness()
+    hub.restarting(TAB)
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    hub.restartReport(TAB, { text: 'Session restarted · 2 servers loaded', good: '1 new' }, [{ text: 'docs needs sign-in', tone: 'error' }])
+
+    const items = hub.snapshot(TAB)!.items
+    expect(items.filter(item => item.kind === 'divider')).toEqual([expect.objectContaining({ text: 'Session restarted · 2 servers loaded', good: '1 new' })])
+    expect(last(items)).toMatchObject({ kind: 'notice', tone: 'error', text: 'docs needs sign-in', action: 'open-mcp' })
+
+    // no highlighted part: the divider has no good key
+    hub.restartReport(TAB, { text: 'Session restarted', good: null }, [])
+    const divider = hub.snapshot(TAB)!.items.find(item => item.kind === 'divider')
+    expect(divider).toEqual({ kind: 'divider', id: expect.any(String), text: 'Session restarted' })
+  })
+
+  it("a watched tab's members get the reload card as a plain notice", async () => {
+    const { hub, engines, remotes, watched } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    watched.add(TAB)
+    remotes.length = 0
+    hub.reloadCard(TAB, { title: 'Restart to load docs', text: 'docs was added', action: 'restart' })
+    vi.advanceTimersByTime(50)
+    expect(remotes.flatMap(r => r.patches)).toEqual([
+      { op: 'add', item: { kind: 'notice', id: expect.any(String), tone: 'info', text: 'Restart to load docs — docs was added', action: null } },
+    ])
+    expect(hub.remoteSnapshot(TAB)!.items.some(item => item.kind === 'reload')).toBe(false)
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'reload')).toBe(true)
+  })
+
+  it('sessionReady is told after initialize, once the restart divider is drawn', async () => {
+    let dividerDrawn: boolean | null = null
+    const h = harness({
+      sessionReady: () => {
+        dividerDrawn = h.hub.snapshot(TAB)!.items.some(item => item.kind === 'divider')
+      },
+    })
+    h.hub.restarting(TAB)
+    h.hub.start(startReq().req)
+    await settle()
+    expect(dividerDrawn).toBeNull()
+    h.engines[0].h.ready({ permissionMode: 'default' })
+    expect(dividerDrawn).toBe(true)
   })
 })
 

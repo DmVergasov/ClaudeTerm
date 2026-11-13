@@ -429,4 +429,35 @@ describe('the SDK engine', () => {
     expect(startedArgs(forkLog)[0]).toContain('--fork-session')
     await stop(copy, forked)
   })
+
+  it('mcpStatus lists the servers Claude Code reports, without their headers or env', async () => {
+    writeUserServers({
+      docs: { type: 'http', url: 'https://mcp.example.test/v1', headers: { Authorization: 'Bearer s3cret' } },
+      local: { command: 'node', args: ['server.js'], env: { TOKEN: 's3cret' } },
+    })
+    const h = harness()
+    const engine = start(h, { script: { turns: {} } })
+    const list = await engine.mcpStatus()
+    expect(JSON.stringify(list)).not.toContain('s3cret')
+    expect(list.find(s => s.name === 'docs')).toMatchObject({ status: 'connected', scope: 'user', transport: 'http', target: 'https://mcp.example.test/v1', tools: ['ping'] })
+    expect(list.find(s => s.name === 'local')).toMatchObject({ status: 'connected', transport: 'stdio', target: 'node server.js' })
+    await stop(engine, h)
+  })
+
+  it('reconnectMcp and toggleMcp reach Claude Code', async () => {
+    writeUserServers({ docs: { type: 'http', url: 'https://mcp.example.test/v1' } })
+    const h = harness()
+    const log = join(dir, 'fake-claude.log')
+    const engine = start(h, { log, script: { turns: {} } })
+    await engine.reconnectMcp('docs')
+    await engine.toggleMcp('docs', false)
+    expect(controlRequests(log, 'mcp_reconnect')).toEqual([expect.objectContaining({ serverName: 'docs' })])
+    expect(controlRequests(log, 'mcp_toggle')).toEqual([expect.objectContaining({ serverName: 'docs', enabled: false })])
+    await stop(engine, h)
+  })
 })
+
+// the user's MCP servers in the temp config folder: the stand-in loads them at its start
+function writeUserServers(servers: Record<string, unknown>): void {
+  writeFileSync(join(config, '.claude.json'), JSON.stringify({ mcpServers: servers }))
+}

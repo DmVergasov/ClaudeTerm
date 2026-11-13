@@ -2,14 +2,16 @@ import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ChatAnswer, ChatAttachment, ChatCard, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot } from '../../shared/chat'
+import type { ReloadAction } from '../../shared/mcp'
 import { isUuid } from '../../shared/protocol'
 import { MAX_CHAT_PUSH_BYTES } from '../../shared/remote'
 import type { ImageCard, TabInfo } from '../../shared/types'
 import type { ChatHandle, ChatStartRequest } from '../tab-manager'
+import { touchesConfig } from '../mcp/mcp-config'
 import { AttachedFiles, prepareMessage, type AttachDeps } from './chat-attachments'
-import { capSnapshot } from './chat-mirror'
+import { capSnapshot, itemForMembers, patchForMembers } from './chat-mirror'
 import { answeredLine, cardFor, resultFor, type PermissionAsk, type SdkPermissionResult } from './chat-cards'
-import type { ChatEngine, ChatEngineHandlers, StartChatEngine } from './chat-engine'
+import type { ChatEngine, ChatEngineHandlers, McpLiveServer, StartChatEngine } from './chat-engine'
 import { ChatModel, isPermissionMode } from './chat-model'
 import { sessionFolderOf, startFolderOf } from './chat-folder'
 import type { ChatLaunch } from './claude-spawn'
@@ -76,6 +78,8 @@ export interface ChatHubDeps {
   log: { warn(m: string): void }
   /** a message of a tab's running chat, once the chat has taken it (not its history's): Heads up counts the tool calls in it */
   observe?(tabId: string, msg: unknown): void
+  /** Claude Code answered initialize (after the restart's divider is drawn): not Live.ready, not the engine's handler */
+  sessionReady?(tabId: string): void
 }
 
 type Support = Awaited<ReturnType<ChatHubDeps['support']>>
@@ -145,6 +149,10 @@ interface Live {
   cards: Map<string, PendingCard>
   /** when the context fill was last asked for (the hub's clock); null before the first ask */
   contextAt: number | null
+  /** the chat's one reload card, when it has one: its item's id */
+  reloadId: string | null
+  /** the 'Session restarted' divider of this start, once it is drawn: the restart report rewrites it */
+  restartDivider: string | null
 }
 
 /**
@@ -177,6 +185,8 @@ export class ChatHub {
   private readonly revs = new Map<string, number>()
   /** the tabs whose Claude Code is being restarted: the next chat of each one is a restart's */
   private readonly restarts = new Set<string>()
+  /** the clock time a tool call of the tab last may have changed what Claude Code loads: kept across the tab's restarts, dropped with the tab */
+  private readonly touched = new Map<string, number>()
 
   constructor(private readonly d: ChatHubDeps) {}
 
@@ -215,6 +225,7 @@ export class ChatHub {
       kept: null, restarted: restart,
       queued: new Map(), stopping: false, exitDue: false, working: false,
       rev: this.revs.get(tabId) ?? 0, batch: [], batchFrom: 0, timer: null, remoteBatch: [], remoteFrom: 0, remoteTimer: null, cards: new Map(), contextAt: null,
+      reloadId: null, restartDivider: null,
       model: new ChatModel({ now: () => this.d.now(), newId: () => randomUUID(), folder: () => req.tab.cwd }),
     }
     this.tabs.set(tabId, live)
@@ -271,7 +282,70 @@ export class ChatHub {
   /** the chat as a member's push takes it: the snapshot cut to the push's cap; null for a tab with no chat */
   remoteSnapshot(tabId: string): ChatSnapshot | null {
     const s = this.snapshot(tabId)
-    return s === null ? null : capSnapshot(s, MAX_CHAT_PUSH_BYTES)
+    return s === null ? null : capSnapshot({ ...s, items: s.items.map(itemForMembers) }, MAX_CHAT_PUSH_BYTES)
+  }
+
+  /** whether the chat is idle: its engine runs and is ready, its history is in, and no turn, activity, card, waiting message or send is pending */
+  idle(tabId: string): boolean {
+    const run = this.readyRun(tabId)
+    if (run === null) return false
+    const { live } = run
+    const state = live.model.state()
+    return live.early === null && state.turn === 'idle' && state.activity === undefined && live.waiting.length === 0 && live.cards.size === 0 && !this.sendChain.has(tabId)
+  }
+
+  /** when a tool call of the tab last may have changed what Claude Code loads; null when none has */
+  configTouchedAt(tabId: string): number | null {
+    return this.touched.get(tabId) ?? null
+  }
+
+  /** the MCP servers the tab's running session loads; null when no chat runs yet */
+  async mcpStatus(tabId: string): Promise<McpLiveServer[] | null> {
+    const run = this.readyRun(tabId)
+    return run === null ? null : run.engine.mcpStatus()
+  }
+
+  async reconnectMcp(tabId: string, name: string): Promise<void> {
+    const run = this.readyRun(tabId)
+    if (run === null) throw new Error(NOT_RUNNING)
+    await run.engine.reconnectMcp(name)
+  }
+
+  async toggleMcp(tabId: string, name: string, enabled: boolean): Promise<void> {
+    const run = this.readyRun(tabId)
+    if (run === null) throw new Error(NOT_RUNNING)
+    await run.engine.toggleMcp(name, enabled)
+  }
+
+  /** the tab's one reload card: added, updated in place, or removed (null); a chat that does not run keeps none */
+  reloadCard(tabId: string, card: { title: string; text: string; action: ReloadAction | null } | null): void {
+    const live = this.tabs.get(tabId)
+    if (!live || live.ended) return
+    this.whenLoaded(live, () => {
+      if (card === null) {
+        if (live.reloadId === null) return
+        const id = live.reloadId
+        live.reloadId = null
+        this.publish(live, live.model.drop(id))
+        return
+      }
+      live.reloadId ??= randomUUID()
+      this.publish(live, live.model.put({ kind: 'reload', id: live.reloadId, title: card.title, text: card.text, action: card.action }))
+    })
+  }
+
+  /** the restart is reported: its divider says what the session loaded, and each notice follows it with the MCP button */
+  restartReport(tabId: string, divider: { text: string; good: string | null }, notices: { text: string; tone: 'info' | 'error' }[]): void {
+    const live = this.tabs.get(tabId)
+    if (!live || live.ended) return
+    this.whenLoaded(live, () => {
+      const patches: ChatPatch[] = []
+      if (live.restartDivider !== null) {
+        patches.push(...live.model.put({ kind: 'divider', id: live.restartDivider, text: divider.text, ...(divider.good === null ? {} : { good: divider.good }) }))
+      }
+      for (const notice of notices) patches.push(...live.model.notice(notice.text, notice.tone, 'open-mcp'))
+      this.publish(live, patches)
+    })
   }
 
   /** null: sent, or queued behind the running turn; else why it was not sent */
@@ -464,6 +538,7 @@ export class ChatHub {
     this.autoTabs.delete(tabId)
     this.restarts.delete(tabId)
     this.carried.delete(tabId)
+    this.touched.delete(tabId)
   }
 
   /** the engine's end: its cards and its process are over; a process still running is killed at once (a restart, the app's quit) */
@@ -487,6 +562,12 @@ export class ChatHub {
     const live = this.tabs.get(tabId)
     if (!live || live.ended || live.engine === null) return null
     return { live, engine: live.engine }
+  }
+
+  /** the running engine of a tab once Claude Code has answered initialize; null before that, and with no chat */
+  private readyRun(tabId: string): { live: Live; engine: ChatEngine } | null {
+    const run = this.running(tabId)
+    return run !== null && run.live.ready ? run : null
   }
 
   private begin(live: Live, support: Support): void {
@@ -538,6 +619,7 @@ export class ChatHub {
     const mode = isPermissionMode(info.permissionMode) ? live.model.setState({ mode: info.permissionMode }) : []
     // the state goes out even when nothing in it changed: the window asks for the modes again, now that the models are known
     this.publish(live, [...mode, ...this.restartEnded(live), { op: 'state', state: live.model.state() }])
+    this.d.sessionReady?.(live.tabId)
     this.readEffort(live)
   }
 
@@ -561,7 +643,10 @@ export class ChatHub {
   private restartEnded(live: Live): ChatPatch[] {
     if (!live.restarted) return []
     live.restarted = false
-    return [...live.model.setState({ activity: undefined }), ...live.model.divider('Session restarted')]
+    const divider = live.model.divider('Session restarted')
+    const added = divider[0]
+    live.restartDivider = added?.op === 'add' ? added.item.id : null
+    return [...live.model.setState({ activity: undefined }), ...divider]
   }
 
   /** the process has ended before it ran, or its start was cancelled: the tab gets its exit now */
@@ -622,6 +707,7 @@ export class ChatHub {
     // an image the chat shows may have its card already: the panel does not change again to bring it
     if (patches.some(p => (p.op === 'add' || p.op === 'set') && p.item.kind === 'images')) this.publish(live, live.model.attachCards(this.d.cards(live.tabId)))
     if (!isObj(msg)) return
+    if (msg.type === 'assistant') this.noteConfigTouches(live.tabId, msg)
     // the process starts where the session works (a worktree it entered before a resume); then entering and leaving a worktree move it
     const started = live.inited ? null : startFolderOf(msg)
     if (msg.type === 'system' && msg.subtype === 'init') live.inited = true
@@ -648,6 +734,16 @@ export class ChatHub {
       if (live.contextAt === null || this.d.now() - live.contextAt >= CONTEXT_EVERY_MS) this.readContext(live)
     }
     this.d.observe?.(live.tabId, msg)
+  }
+
+  /** a tool call of the message that may change what Claude Code loads marks the tab, with the clock's time */
+  private noteConfigTouches(tabId: string, msg: Record<string, unknown>): void {
+    const content = isObj(msg.message) && Array.isArray(msg.message.content) ? msg.message.content : []
+    for (const block of content) {
+      if (isObj(block) && block.type === 'tool_use' && typeof block.name === 'string' && touchesConfig(block.name, block.input)) {
+        this.touched.set(tabId, this.d.now())
+      }
+    }
   }
 
   /**
@@ -823,7 +919,7 @@ export class ChatHub {
       return
     }
     if (live.remoteBatch.length === 0) live.remoteFrom = from
-    live.remoteBatch.push(...patches)
+    live.remoteBatch.push(...patches.map(patchForMembers))
     if (live.remoteTimer === null) live.remoteTimer = setTimeout(() => this.flushRemote(live), REMOTE_BATCH_MS)
   }
 
