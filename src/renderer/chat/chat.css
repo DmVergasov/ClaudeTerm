@@ -1534,6 +1534,65 @@
   to { transform: scaleX(1); }
 }
 
+/* the divider's highlighted part: what came up at the restart */
+.chat-divider-good {
+  color: var(--green);
+  font-weight: 500;
+}
+
+/* the reload card: a change outside the chat that the session loads at its restart */
+.chat-reload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: var(--raised);
+  font-size: 12.5px;
+}
+
+.chat-reload-mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: #A78BFA22;
+  color: var(--purple);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chat-reload-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat-reload-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.chat-reload-text {
+  color: var(--text-3);
+}
+
+.chat-reload .chat-button {
+  flex: none;
+  margin-left: auto;
+}
+
+.chat-reload .chat-button.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-3);
+}
+
 /* reduced motion: no sweep and no shimmer; the bar stands still at 40 % */
 @media (prefers-reduced-motion: reduce) {
   .chat-activity-bar {

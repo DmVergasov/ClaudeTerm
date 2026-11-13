@@ -1,5 +1,5 @@
 import { acceptPatches, commandWord, typedMessages, type ChatAnswer, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type ChatState, type ChatSubagent, type HeadsUpAction, type HeadsUpCard } from '../../shared/chat'
-import type { McpSection } from '../../shared/mcp'
+import type { McpSection, ReloadAction } from '../../shared/mcp'
 import type { ImageCard } from '../../shared/types'
 import { spinner } from '../tab-row'
 import { ChatComposer } from './chat-composer'
@@ -39,6 +39,8 @@ export interface ChatViewOptions {
   askSwitch(go: () => void, cancel: () => void): () => void
   answer(cardId: string, a: ChatAnswer): void | Promise<boolean>
   restart(): void
+  /** the reload card's buttons: Not now or Restart for this chat; null for a remote chat, whose card has none */
+  reload: ((action: ReloadAction) => void) | null
   /** the page of items before `beforeId`; null when the chat is gone */
   older(beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null>
   imageCard(cardId: string): ImageCard | null
@@ -194,6 +196,9 @@ export class ChatView {
       restart: () => o.restart(),
       // a notice's button runs its line as the composer runs a command: it waits for the turn, and asks the header first
       openInTerminal: (line) => this.composer.openNoticeLine(line),
+      // a notice's button opens the servers, as /mcp does
+      openMcp: () => { o.openMcp('servers') },
+      reload: o.reload,
       imageCard: (cardId) => o.imageCard(cardId),
       openImages: (cards, index) => o.openImages(cards, index),
       revealChange: (path) => o.revealChange(path),

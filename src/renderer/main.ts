@@ -780,7 +780,7 @@ function makeTerminal(info: TabInfo): TerminalView {
 }
 
 /** a Claude tab's chat: its conversation and composer, hidden until the tab is in its chat view and in front */
-function makeChat(tabId: string): ChatView {
+function makeChat(tabId: string, remote: boolean): ChatView {
   const chat = new ChatView({
     tabId,
     container: document.getElementById('terminals')!,
@@ -808,6 +808,8 @@ function makeChat(tabId: string): ChatView {
     askSwitch: (go, cancel) => sheetHeader.askBeforeSwitch(tabId, backgroundOf(tabId), go, cancel),
     answer: (cardId, a) => ct.chatAnswer(tabId, cardId, a),
     restart: () => ct.restartTab(tabId, false),
+    // the reload card's buttons act on this tab's session; a member's tab has none (its host's Claude Code loads the servers)
+    reload: remote ? null : (action) => { void ct.mcpReload(tabId, action) },
     older: (beforeId) => ct.chatOlder(tabId, beforeId),
     // a card the Media panel marked deleted is no card: its picture is not drawn, as one with no card is not
     imageCard: (cardId) => imageUpdates.get(tabId)?.cards.find((c) => c.id === cardId && !c.deleted) ?? null,
@@ -828,7 +830,7 @@ function makeChat(tabId: string): ChatView {
 }
 
 function addTab(info: TabInfo): void {
-  const chat = hasChat(info) ? makeChat(info.id) : null
+  const chat = hasChat(info) ? makeChat(info.id, info.remote !== undefined) : null
   // a tab in its chat view has no terminal: its process is the chat's, and it gets one when the view changes
   const view = chat !== null && info.view === 'chat' ? null : makeTerminal(info)
   tabs.set(info.id, { info, view, chat, oscTitle: null, sessionTitle: null, bell: false, attention: false, waitReason: null, unread: false, unreadOnLeave: false, images: 0 })

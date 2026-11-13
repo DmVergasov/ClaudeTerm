@@ -1,4 +1,5 @@
 import type { ChatAnswer, ChatAttachment, ChatEventSource, ChatItem, ChatNoticeAction } from '../../shared/chat'
+import type { ReloadAction } from '../../shared/mcp'
 import { icon } from '../icons'
 import type { ImageCard } from '../../shared/types'
 import { imageUrl } from '../image-url'
@@ -12,6 +13,10 @@ export interface ItemCallbacks {
   restart(): void
   /** a notice's line goes to the terminal, typed there; null: a dialog the chat cannot show, the terminal only is switched to */
   openInTerminal(line: string | null): void
+  /** a notice's MCP servers button: the panel opens on the servers */
+  openMcp(): void
+  /** the reload card's buttons: Not now keeps the card, Restart restarts the chat; null: the card has no buttons (a remote chat) */
+  reload: ((action: ReloadAction) => void) | null
   /** the Media card of an image, from the tab's last images update; null when the panel has no such card */
   imageCard(cardId: string): ImageCard | null
   openImages(cards: ImageCard[], index: number): void
@@ -45,8 +50,8 @@ export function renderItem(item: ChatItem, cb: ItemCallbacks, keep: StepKeep | n
     case 'text': return textNode(item, cb)
     case 'tools': return renderSteps(item, cb, keep, settled)
     case 'notice': return noticeItem(item.tone, item.text, item.action, item.line ?? null, cb)
-    case 'divider': return el('div', 'chat-divider', item.text)
-    case 'reload': return el('div', 'chat-reload', item.title)
+    case 'divider': return dividerItem(item.text, item.good ?? null)
+    case 'reload': return reloadItem(item, cb)
     case 'card': return renderCard(item, cb)
     case 'thinking': return thinkingItem(item.ms, item.summary, keep?.open !== false)
     case 'images': return renderImages(item, cb)
@@ -211,5 +216,40 @@ function noticeItem(tone: 'info' | 'error', text: string, action: ChatNoticeActi
   if (action === 'restart') row.append(button('Restart', () => cb.restart()))
   // a notice with a line types it in the terminal; one without only switches to the terminal. Both run as the composer runs a command.
   if (action === 'open-terminal') row.append(button('Open in the terminal', () => cb.openInTerminal(line ?? null)))
+  if (action === 'open-mcp') row.append(button('MCP servers', () => cb.openMcp()))
+  return row
+}
+
+/** the restart report's divider: its first `good` part is drawn in green, the rest as the text is */
+function dividerItem(text: string, good: string | null): HTMLElement {
+  const box = el('div', 'chat-divider')
+  const at = good ? text.indexOf(good) : -1
+  if (good === null || at < 0) {
+    box.textContent = text
+    return box
+  }
+  box.append(text.slice(0, at), el('span', 'chat-divider-good', good), text.slice(at + good.length))
+  return box
+}
+
+/**
+ * A change outside the chat that the session loads at its restart: a row with a ⚡ mark, its title and under it its text, and at
+ * the right Not now (while the answer goes on) or Restart, by the action; no button when the chat cannot act on it.
+ */
+function reloadItem(item: Extract<ChatItem, { kind: 'reload' }>, cb: ItemCallbacks): HTMLElement {
+  const row = el('div', 'chat-reload')
+  const mark = el('span', 'chat-reload-mark', '⚡')
+  const body = el('div', 'chat-reload-body')
+  body.append(el('div', 'chat-reload-title', item.title), el('div', 'chat-reload-text', item.text))
+  row.append(mark, body)
+  if (item.action !== null && cb.reload !== null) {
+    const reload = cb.reload
+    if (item.action === 'restart') row.append(button('Restart', () => reload('restart')))
+    else {
+      const notNow = button('Not now', () => reload('not-now'))
+      notNow.classList.add('ghost')
+      row.append(notNow)
+    }
+  }
   return row
 }
