@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
+  MAIL_KEEP_MS,
   MAIL_TEXT_MAX,
   type MailAddress,
   type MailConversationView,
@@ -8,9 +9,10 @@ import {
   type MailRecord,
   type MailUnread
 } from '../../shared/mail'
-import type { PipeResponse } from '../../shared/protocol'
-import { formatAgentList, resolveAgent, type Agent } from './agent-directory'
-import { checkMailRecord } from './mail-record'
+import { isUuid, type PipeResponse } from '../../shared/protocol'
+import type { PeerMail } from '../transcript-mail'
+import { formatAgentList, replaceControls, resolveAgent, type Agent } from './agent-directory'
+import { checkMailRecord, mailFlags, MAIL_NAME_MAX } from './mail-record'
 import type { MailStore } from './mail-store'
 import { wakeTextWithin } from './wake-text'
 
@@ -70,6 +72,18 @@ interface TabTurns {
 const OFF = 'Agent messages are turned off in ClaudeTerm on this device.'
 
 const fail = (error: string): PipeResponse => ({ ok: false, error })
+
+/**
+ * The session id a session known only by its Claude Code name is kept under (an address needs one): made from the name,
+ * so every message to or from that name is one conversation
+ */
+function peerSession(name: string): string {
+  const h = createHash('sha256').update(`claude-code-peer\n${name}`).digest('hex')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-8${h.slice(13, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`
+}
+
+/** an end known only by its Claude Code name, not a tab's session */
+const isPeerEnd = (end: MailAddress): boolean => end.session === peerSession(end.name)
 
 /** the device name from an address' name when no device name is known: the part after the last " · ", without " #n" */
 function deviceFromName(name: string): string {
@@ -261,6 +275,47 @@ export class MailHub {
     return out.sort((x, y) => y.lastAt - x.lastAt)
   }
 
+  /**
+   * A message of Claude Code's own messaging (SendMessage) that a tab's transcript shows, sent or received: kept as a
+   * delivered message, so the panel shows it beside ClaudeTerm's own, and it never leaves this device. Its id is Claude
+   * Code's, the same at both ends: the other end is known by its Claude Code name until the other tab's transcript shows
+   * the message too, and the record then joins the two tabs.
+   */
+  peerMail(tabId: string, m: PeerMail & { read: boolean }): void {
+    if (!this.deps.enabled() || !isUuid(m.id)) return
+    const caller = this.deps.caller(tabId)
+    const name = replaceControls(m.peer).trim().slice(0, MAIL_NAME_MAX)
+    const sentAt = m.at ?? this.now()
+    if (!caller || name === '' || sentAt < this.now() - MAIL_KEEP_MS) return
+    const mine: MailAddress = { device: null, session: caller.session, name: caller.name }
+    const other: MailAddress = { device: null, session: peerSession(name), name }
+    let r: MailRecord = {
+      v: 1,
+      id: m.id,
+      from: m.kind === 'sent' ? mine : other,
+      to: m.kind === 'sent' ? other : mine,
+      replyTo: null,
+      text: m.text.slice(0, MAIL_TEXT_MAX),
+      sentAt,
+      delivered: true,
+      read: m.read
+    }
+    const known = this.deps.store.get(m.id)
+    if (known) {
+      // each end keeps the address that is a tab's over one known by its name alone
+      r = {
+        ...known,
+        from: isPeerEnd(known.from) ? r.from : known.from,
+        to: isPeerEnd(known.to) ? r.to : known.to,
+        delivered: true,
+        read: known.read || m.read
+      }
+      if (this.sameEnd(r.from, known.from) && this.sameEnd(r.to, known.to) && mailFlags(r) === mailFlags(known)) return
+    }
+    const checked = checkMailRecord(r)
+    if (checked !== null) this.deps.store.add(checked)
+  }
+
   /** the store notifies the listeners of a change, so the panel is redrawn through onUnread */
   markRead(ids: string[]): void {
     this.deps.store.mark(ids, 'read')
@@ -367,7 +422,8 @@ export class MailHub {
     for (const r of newest) {
       if (!this.sameEnd(r.from, caller) && !this.sameEnd(r.to, caller)) continue
       for (const end of [r.from, r.to]) {
-        if (this.sameEnd(end, caller)) continue
+        // a session known only by its Claude Code name is reached with SendMessage, not with message_agent
+        if (this.sameEnd(end, caller) || isPeerEnd(end)) continue
         const key = this.endKey(end)
         if (seen.has(key)) continue
         seen.add(key)

@@ -11,7 +11,7 @@ export interface MailPanelCallbacks {
 /** what the panel shows: the active tab's conversations, or every conversation this device knows */
 type Scope = 'tab' | 'all'
 
-const EMPTY = "No messages yet. Agents write here only when Claude Code's own messaging can't reach each other."
+const EMPTY = 'No messages yet. What agents write to each other shows here.'
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag)

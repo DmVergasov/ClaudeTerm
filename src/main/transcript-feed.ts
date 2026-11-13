@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { assistantInfo, type AgentModelInfo } from './transcript-agent-info'
 import { assistantTime, interruptTime, parseEditEvents, turnReport, type TranscriptEditEvent } from './transcript-edits'
+import { PeerMailParser, type PeerMail } from './transcript-mail'
 import { PlanWorkspaceFinder } from './transcript-plan'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
 import { oneLine } from './session-history'
@@ -135,6 +136,8 @@ export interface TranscriptFeedOptions {
   onPlanWorkspace?(printed: string, at: number): void
   /** the conversation's title in the main transcript (the last custom title, else the last AI one), reported each time it changes */
   onTitle?(title: string): void
+  /** a message the session sent or received with Claude Code's own messaging (SendMessage), from the main transcript, in order */
+  onPeerMail?(mail: PeerMail): void
   /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
   locate?(): Promise<string | null>
   /** how often locate() may run while the transcript cannot be opened */
@@ -213,6 +216,8 @@ export class TranscriptFeed {
   private stopped = false
   private missingReported = false
   private lastLocate = -Infinity
+  /** the main transcript's SendMessage traffic: its calls wait there for their results */
+  private readonly peerMail = new PeerMailParser()
   private customTitle: string | null = null
   private aiTitle: string | null = null
   private reportedTitle: string | null = null
@@ -398,6 +403,7 @@ export class TranscriptFeed {
       this.reportPlan(src, line)
       this.reportTurn(src, line)
       this.reportTitle(src, line)
+      this.reportMail(src, line)
       try {
         for (const img of src.parser.parseLine(line)) {
           if (this.stopped) return
@@ -427,6 +433,16 @@ export class TranscriptFeed {
     try {
       const found = src.plan.parseLine(line)
       if (found !== null) this.o.onPlanWorkspace(found.printed, found.at)
+    } catch (e) {
+      this.report(e)
+    }
+  }
+
+  private reportMail(src: Source, line: string): void {
+    if (!this.o.onPeerMail || src.agentId !== null) return
+    try {
+      const mail = this.peerMail.parseLine(line)
+      if (mail !== null) this.o.onPeerMail(mail)
     } catch (e) {
       this.report(e)
     }

@@ -1,9 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { peerMessageLine, sendMessageLines } from '../fixtures/transcript'
 import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, type Launched } from './helpers'
 import {
   activate, badge, envelopeOf, hasMailWatcher, MAIL_PREFIX, messagesButton, openPanelFocused, refOf, sendText, sessionStartHooks, setSetting, startSession, VERSION_SETTINGS, waitForMail
@@ -165,7 +166,7 @@ test('the tab settings file holds the mail entries only for a Claude command who
   }
 })
 
-const EMPTY = "No messages yet. Agents write here only when Claude Code's own messaging can't reach each other."
+const EMPTY = 'No messages yet. What agents write to each other shows here.'
 const messagesPanel = (page: Page) => page.locator('#image-panel')
 
 /** the last segment of a folder, which is the label of a tab that has no custom title */
@@ -231,12 +232,48 @@ test('All lists the conversations of every tab, newest first', async () => {
   }
 })
 
-test('an empty panel says "No messages yet. Agents write here only when Claude Code\'s own messaging can\'t reach each other."', async () => {
+test('an empty panel says "No messages yet. What agents write to each other shows here."', async () => {
   const { app, page } = await twoClaudeTabs()
   try {
     await messagesButton(page).click()
     await expect(page.locator('.panel-title')).toHaveText('Agent messages')
     await expect(page.locator('.panel-messages .panel-empty')).toHaveText(EMPTY)
+  } finally {
+    await app.close()
+  }
+})
+
+test("what agents write with Claude Code's own SendMessage shows in the panel: once between two tabs, unread, and what the transcript held before as read", async () => {
+  const { app, page, pipeName, tab1, tab2, sid1, sid2, work1, work2 } = await twoClaudeTabs()
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'ct-transcripts-'))
+    const t1 = join(dir, `${sid1}.jsonl`)
+    const t2 = join(dir, `${sid2}.jsonl`)
+    writeFileSync(t1, '')
+    // a message from a session outside ClaudeTerm, an hour before the tab read its transcript
+    const earlier = { kind: 'peer', from: 'uds:outside', msg_id: randomUUID(), name: 'Outside agent', fromMode: 'prompting', body: 'Earlier note' }
+    writeFileSync(t2, peerMessageLine(earlier, { timestamp: new Date(Date.now() - 3600_000).toISOString() }) + '\n')
+    for (const [tabId, sessionId, transcriptPath] of [[tab1, sid1, t1], [tab2, sid2, t2]]) {
+      expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId, source: 'startup', transcriptPath })).toEqual({ ok: true })
+    }
+    // the first tab's agent sends, and the second tab's agent gets the message under the same id
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    appendFileSync(t1, sendMessageLines('t1', { to: labelOf(work2), summary: 'Build', message: 'The build is green' }, { msgId: id, timestamp: now }).join('\n') + '\n')
+    appendFileSync(t2, peerMessageLine({ kind: 'peer', from: 'uds:first', msg_id: id, name: labelOf(work1), fromMode: 'prompting', body: 'The build is green' }, { timestamp: now }) + '\n')
+
+    // one unread of the two: the new message, not the one the transcript held before
+    await activate(page, tab2)
+    await expect(badge(page)).toHaveText('1')
+    await messagesButton(page).click()
+    await expect(page.locator('.mail-head')).toHaveText([
+      new RegExp(`^${labelOf(work1)} · .+ ⇄ ${labelOf(work2)}$`),
+      `Outside agent ⇄ ${labelOf(work2)}`
+    ])
+    await expect(page.locator('.mail-text')).toHaveText(['The build is green', 'Earlier note'])
+    // the sender's tab shows the same message, once
+    await activate(page, tab1)
+    await expect(page.locator('.mail-text')).toHaveText(['The build is green'])
   } finally {
     await app.close()
   }

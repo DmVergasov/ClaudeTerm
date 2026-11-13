@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
-import { assistantLine, bashResultLine, editResultLine, interruptLine, PEER_ORIGIN, PNG_B64, pastedLine, promptLine, textLine, toolResultLine, toolUseLine, turnPromptLine } from '../fixtures/transcript'
+import type { PeerMail } from '../../src/main/transcript-mail'
+import { assistantLine, bashResultLine, editResultLine, interruptLine, PEER_ORIGIN, peerMessageLine, PNG_B64, pastedLine, promptLine, sendMessageLines, textLine, toolResultLine, toolUseLine, turnPromptLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -139,6 +140,28 @@ describe('TranscriptFeed', () => {
     await feed.scanSubagents()
     await feed.poll()
     expect(turns).toEqual([[0, false], [1, true]])
+  })
+
+  it("reports the messages the main transcript sent and received with SendMessage, a call and its result read apart; a subagent's are left out", async () => {
+    const { projectDir, transcriptPath, cacheRoot } = setup()
+    const sentId = '3b9f6a52-7c1d-4e8a-9f20-5d6e7a8b9c0d'
+    const gotId = '4c0a7b63-8d2e-4f9b-8a31-6e7f8a9b0c1e'
+    const [call, result] = sendMessageLines('t1', { to: 'Review agent', message: 'Ready for review' }, { msgId: sentId, timestamp: '2026-10-08T10:00:05.000Z' })
+    writeFileSync(transcriptPath, [promptLine('go'), call].join('\n') + '\n')
+    const subagents = join(projectDir, SID, 'subagents')
+    mkdirSync(subagents, { recursive: true })
+    writeFileSync(join(subagents, 'agent-a1.jsonl'), peerMessageLine({ ...PEER_ORIGIN, msg_id: gotId, body: 'not the session\'s' }) + '\n')
+    const mail: PeerMail[] = []
+    const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, onPeerMail: (m) => mail.push(m) })
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(mail).toEqual([])
+    appendFileSync(transcriptPath, [result, peerMessageLine({ ...PEER_ORIGIN, msg_id: gotId, body: 'Thanks, reviewing' }, { queued: true, timestamp: '2026-10-08T10:00:09.000Z' })].join('\n') + '\n')
+    await feed.poll()
+    expect(mail).toEqual([
+      { kind: 'sent', id: sentId, peer: 'Review agent', text: 'Ready for review', at: Date.parse('2026-10-08T10:00:05.000Z') },
+      { kind: 'received', id: gotId, peer: 'Build session', text: 'Thanks, reviewing', at: Date.parse('2026-10-08T10:00:09.000Z') }
+    ])
   })
 
   it('a poll made while a read is in progress waits for it, then reads the lines written meanwhile', async () => {

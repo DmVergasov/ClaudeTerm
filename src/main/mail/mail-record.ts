@@ -2,7 +2,8 @@ import { isUuid } from '../../shared/protocol'
 import { MAIL_TEXT_MAX, type MailAddress, type MailRecord } from '../../shared/mail'
 import { isDeviceId } from '../ipc-guards'
 
-const NAME_MAX = 200
+/** the longest name of an end of a message, in characters */
+export const MAIL_NAME_MAX = 200
 
 /** A message record from a file or a peer as a checked copy with only its own fields; null when it is not a valid record. */
 export function checkMailRecord(v: unknown): MailRecord | null {
@@ -31,7 +32,7 @@ function checkAddress(v: unknown): MailAddress | null {
   if (!isObject(v)) return null
   if (v.device !== null && !isDeviceId(v.device)) return null
   if (!isUuid(v.session)) return null
-  if (typeof v.name !== 'string' || v.name.length < 1 || v.name.length > NAME_MAX || /\p{Cc}/u.test(v.name)) return null
+  if (typeof v.name !== 'string' || v.name.length < 1 || v.name.length > MAIL_NAME_MAX || /\p{Cc}/u.test(v.name)) return null
   return { device: v.device, session: v.session, name: v.name }
 }
 

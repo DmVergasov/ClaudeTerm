@@ -803,3 +803,98 @@ describe('MailHub unread and conversations', () => {
     expect(end.deviceName).toBe('Laptop')
   })
 })
+
+describe("MailHub messages of Claude Code's own messaging", () => {
+  const MSG = '30000000-0000-4000-8000-000000000001'
+  const sent = (o: Partial<{ id: string; peer: string; text: string; at: number | null; read: boolean }> = {}) =>
+    ({ kind: 'sent' as const, id: MSG, peer: 'Build session', text: 'The build is green', at: NOW - 5000, read: false, ...o })
+  const received = (o: Partial<{ id: string; peer: string; text: string; at: number | null; read: boolean }> = {}) =>
+    ({ ...sent(o), kind: 'received' as const })
+  const tabs = [
+    { tabId: 'tab-1', device: null, session: SES_CALLER },
+    { tabId: 'tab-2', device: null, session: SES_LOCAL }
+  ]
+  const twoTabs = () => {
+    const s = setup()
+    s.world.callers['tab-2'] = { tabId: 'tab-2', device: null, session: SES_LOCAL, name: 'parser · Desktop' }
+    return s
+  }
+
+  it('a message a tab sent is kept as delivered, from the tab to the session it went to, by its name, and is unread', async () => {
+    const { hub, store } = setup()
+    hub.peerMail('tab-1', sent())
+    const [r] = store.all()
+    expect(r).toMatchObject({ id: MSG, text: 'The build is green', sentAt: NOW - 5000, delivered: true, read: false })
+    expect(r.from).toMatchObject({ session: SES_CALLER, name: 'api-server · Desktop' })
+    expect(r.to.name).toBe('Build session')
+    expect(hub.unreadByTab(tabs)).toEqual({ 'tab-1': 1 })
+    const [conv] = hub.conversations({ device: null, session: SES_CALLER })
+    expect(conv.messages.map(m => [m.from.name, m.text])).toEqual([['api-server · Desktop', 'The build is green']])
+    // delivered by Claude Code: a watcher of ClaudeTerm is not handed it again, it keeps waiting
+    const closed = new AbortController()
+    const waiting = settledOf(hub.wait('tab-1', SES_CALLER, closed.signal))
+    await tick()
+    expect(waiting.done).toBe(false)
+    closed.abort()
+  })
+
+  it('the message the other tab received too is one message between the two tabs, whichever transcript shows it first', () => {
+    for (const order of [['tab-1', 'tab-2'], ['tab-2', 'tab-1']]) {
+      const { hub, store } = twoTabs()
+      for (const tabId of order) hub.peerMail(tabId, tabId === 'tab-1' ? sent({ peer: 'parser' }) : received({ peer: 'api-server' }))
+      expect(store.all()).toHaveLength(1)
+      const [r] = store.all()
+      expect([r.from.session, r.to.session]).toEqual([SES_CALLER, SES_LOCAL])
+      expect(hub.unreadByTab(tabs)).toEqual({ 'tab-1': 1, 'tab-2': 1 })
+      const all = hub.conversations(null)
+      expect(all).toHaveLength(1)
+      expect([all[0].a.name, all[0].b.name].sort()).toEqual(['api-server · Desktop', 'parser · Desktop'])
+    }
+  })
+
+  it('messages to and from a session outside ClaudeTerm are one conversation under its name', () => {
+    const { hub } = setup()
+    hub.peerMail('tab-1', received({ id: '30000000-0000-4000-8000-000000000002', text: 'Is the build green?', at: NOW - 9000 }))
+    hub.peerMail('tab-1', sent())
+    const [conv, ...rest] = hub.conversations({ device: null, session: SES_CALLER })
+    expect(rest).toEqual([])
+    expect(conv.messages.map(m => [m.from.name, m.text])).toEqual([['Build session', 'Is the build green?'], ['api-server · Desktop', 'The build is green']])
+  })
+
+  it('a message the transcript held before the tab read it is read; a copy seen unread later does not make it unread', () => {
+    const { hub, store } = twoTabs()
+    hub.peerMail('tab-1', sent({ peer: 'parser', read: true }))
+    hub.peerMail('tab-2', received({ peer: 'api-server' }))
+    expect(store.all()[0].read).toBe(true)
+    expect(hub.unreadByTab(tabs)).toEqual({})
+  })
+
+  it('a message seen again is not written again', () => {
+    const { hub, onUnread } = setup()
+    hub.peerMail('tab-1', sent())
+    onUnread.mockClear()
+    hub.peerMail('tab-1', sent())
+    expect(onUnread).not.toHaveBeenCalled()
+  })
+
+  it('nothing is kept with messages off, for a tab with no session, or for a message older than the keep time; a long text is cut', () => {
+    const { hub, store, world } = setup()
+    world.enabled = false
+    hub.peerMail('tab-1', sent())
+    world.enabled = true
+    hub.peerMail('tab-9', sent())
+    hub.peerMail('tab-1', sent({ at: NOW - 31 * 24 * 60 * 60 * 1000 }))
+    hub.peerMail('tab-1', sent({ id: 'msg-7' }))
+    expect(store.all()).toEqual([])
+    hub.peerMail('tab-1', sent({ text: 'x'.repeat(MAIL_TEXT_MAX + 50), at: null }))
+    const [r] = store.all()
+    expect(r.text).toHaveLength(MAIL_TEXT_MAX)
+    expect(r.sentAt).toBe(NOW)
+  })
+
+  it('a session known only by its Claude Code name is no address for message_agent', () => {
+    const { hub } = setup()
+    hub.peerMail('tab-1', received())
+    expect(hub.send('tab-1', 'Build session', 'hi', null)).toEqual({ ok: false, error: 'No agent named "Build session"; call list_agents.' })
+  })
+})

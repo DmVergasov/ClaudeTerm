@@ -108,3 +108,36 @@ export function bashResultLine(toolUseId: string, stdout: string, timestamp = '2
     toolUseResult: { stdout, stderr: '', interrupted: false, isImage: false, noOutputExpected: false }
   })
 }
+
+/**
+ * A SendMessage call to another session and its result, as Claude Code writes them: the result's text is a JSON object with
+ * the message's id, which Claude Code also keeps in toolUseResult (`mirror`). No msgId: a result without one, as a resumed
+ * subagent's.
+ */
+export function sendMessageLines(toolUseId: string, input: Record<string, unknown>, o: { msgId?: string; timestamp?: string; mirror?: boolean; isError?: boolean } = {}): string[] {
+  const timestamp = o.timestamp ?? '2026-10-08T10:00:00.000Z'
+  const result = { success: o.isError !== true, message: 'sent', ...(o.msgId === undefined ? {} : { msg_id: o.msgId }) }
+  return [
+    toolUseLine(toolUseId, 'SendMessage', input, timestamp),
+    JSON.stringify({
+      type: 'user',
+      timestamp,
+      isSidechain: false,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: JSON.stringify(result), is_error: o.isError === true }] },
+      ...(o.mirror ? { toolUseResult: { ...result, display: 'sent' } } : {})
+    })
+  ]
+}
+
+/**
+ * A message another session sent, as the receiving session's transcript holds it: a user prompt with its origin when it
+ * starts a turn, or a queued_command attachment when the session was busy (`queued`).
+ */
+export function peerMessageLine(origin: Record<string, unknown>, o: { timestamp?: string; queued?: boolean; isSidechain?: boolean } = {}): string {
+  const timestamp = o.timestamp ?? '2026-10-08T10:00:00.000Z'
+  const text = `<cross-session-message from="${String(origin.from)}" name="${String(origin.name)}">\n${String(origin.body ?? '')}\n</cross-session-message>`
+  if (o.queued) {
+    return JSON.stringify({ type: 'attachment', timestamp, isSidechain: o.isSidechain ?? false, attachment: { type: 'queued_command', prompt: text, origin, timestamp, isMeta: false } })
+  }
+  return JSON.stringify({ type: 'user', timestamp, isSidechain: o.isSidechain ?? false, origin, message: { role: 'user', content: text } })
+}

@@ -493,6 +493,8 @@ function bootstrap(): void {
     // a new session has no title until its transcript says so
     setSessionTitle(tabId, null)
     const gen = images.generation(tabId)
+    // the messages the transcript held before it was read are history: they come into the panel read
+    const since = Date.now()
     s.feed = new TranscriptFeed({
       transcriptPath,
       sessionId,
@@ -508,6 +510,7 @@ function bootstrap(): void {
       onTurn: (turnIndex, peer) => turns.report(tabId, turnIndex, peer),
       onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at),
       onTitle: (title) => setSessionTitle(tabId, title),
+      onPeerMail: (mail) => mailHub.peerMail(tabId, { ...mail, read: mail.at !== null && mail.at < since }),
       pollMaxMs: testFeedMaxMs,
       subagentPollMaxMs: testFeedMaxMs,
       subagentScanMaxMs: testFeedMaxMs
