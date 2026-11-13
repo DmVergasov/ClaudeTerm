@@ -713,6 +713,14 @@ describe('ChatModel', () => {
     expect(callsOf(m)[0].agents[1]).toMatchObject({ id: 'a2', type: 'Explore', state: 'running' })
   })
 
+  it('a subagent carries the time it started, so its row can say how long it has run', () => {
+    const { m, clock } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find the config', prompt: 'look' } }] } })
+    clock.t = 5_000
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find the config', subagent_type: 'Explore' })
+    expect(callsOf(m)[0].agents[0]).toMatchObject({ id: 'a1', state: 'running', startedAt: 5_000 })
+  })
+
   it('a finished subagent resumed by a SendMessage call is listed on that call, and ends there', () => {
     const { m } = model()
     m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find the config', prompt: 'look' } }] } })

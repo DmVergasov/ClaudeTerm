@@ -8,7 +8,7 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 
 - **Claude goes on after a usage limit.** When the 5-hour or the weekly limit stops Claude in the middle of its work, that limit's meter at the top of the window counts down to its reset, and a minute after it Claude goes on by itself, in a chat and in the terminal. Text you left in the message box holds it back, and the tab calls you instead. **Settings → Claude Code → Go on after a usage limit** turns it off.
 - **Heads up in the chat.** While Claude works, a side agent reads the conversation now and then and, when it finds something you would likely miss — a decision Claude made in passing, a result that may be off, a concept the work depends on — shows it as a card above the message box. **Explain more** brings a longer explanation, **Not relevant** keeps the topic from coming back, **Got it** closes it. It runs on Sonnet and uses your plan; **Settings → Claude Code → Heads up** turns it off.
-- **What each agent runs on.** The agents at the end of the conversation show the model each one runs on, the effort its call asks for, and how many tokens its context holds; the full model name and count are in the tooltip.
+- **What each agent runs on, and for how long.** The agents at the end of the conversation show the model each one runs on, the effort its call asks for, how many tokens its context holds, and how long it has been running; the full model name and count are in the tooltip.
 
 ### Changes
 

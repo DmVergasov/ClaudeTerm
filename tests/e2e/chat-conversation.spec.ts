@@ -1958,6 +1958,28 @@ test('a running subagent shows a sliding bar in its colour, and two running agen
   }
 })
 
+test('a running subagent\'s row says how long it has run, counting up each second; a done one keeps the time it ran', async () => {
+  const { app, page } = await launchChatTab({
+    turns: {
+      team: [{ task: { description: 'Check the totals', result: 'Checked.', agents: [{ type: 'Explore', description: 'Search the sales folder', ms: 4000 }] } }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await send(page, 'team')
+    const row = page.locator('.chat-agents-dock .chat-agent').first()
+    const time = row.locator('.chat-agent-time')
+    await expect(time).toHaveText(/^\ds$/)
+    const seconds = async (): Promise<number> => Number((await time.textContent())!.slice(0, -1))
+    const first = await seconds()
+    // the time goes on by itself, with nothing new from Claude Code
+    await expect.poll(seconds, { timeout: 5_000 }).toBeGreaterThanOrEqual(first + 2)
+    await expect(row).toContainText('done · 4s', { timeout: 15_000 })
+    await expect(row.locator('.chat-agent-time')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
 test('under reduced motion the subagent ring and bar stand still, and the bar shows full width', async () => {
   const { app, page } = await launchChatTab({
     turns: {

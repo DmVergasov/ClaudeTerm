@@ -31,6 +31,8 @@ export type ChatCallState = 'running' | 'done' | 'failed'
 export interface ChatSubagent {
   id: string; description: string; type: string; state: ChatCallState; ms: number | null
   model?: string; effort?: string; context?: number
+  /** when it started (ms since the epoch, main's clock): a running row counts up from it */
+  startedAt?: number
 }
 export interface ChatToolCall {
   id: string; name: string; subject: string; detail: string | null; state: ChatCallState

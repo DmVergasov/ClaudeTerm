@@ -993,7 +993,7 @@
 
 .chat-agent {
   display: grid;
-  grid-template-columns: 16px 104px minmax(0, 1fr) auto 120px;
+  grid-template-columns: 16px 104px minmax(0, 1fr) auto 136px;
   column-gap: 10px;
   align-items: center;
   padding: 7px 12px;
@@ -1070,6 +1070,18 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
+}
+
+/* a running row: how long it has run, then its bar */
+.chat-agent-state:has(.chat-agent-track) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-agent-state .chat-agent-track {
+  flex: 1;
+  min-width: 32px;
 }
 
 /* a well with no output yet draws no box */

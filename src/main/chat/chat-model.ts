@@ -816,11 +816,12 @@ export class ChatModel {
     if (item?.kind !== 'tools') return []
     const call = item.calls.find(c => c.id === callId)
     if (!call || !['Task', 'Agent', 'SendMessage'].includes(call.name) || call.agents.some(a => a.id === taskId)) return []
+    const start = this.o.now()
     const agent: ChatSubagent = {
       id: taskId, description: cap(str(msg.description) ?? '', SUBJECT_CAP),
-      type: cap(str(msg.subagent_type) ?? str(msg.task_type) ?? 'agent', NAME_CAP), state: 'running', ms: null, ...link?.ask,
+      type: cap(str(msg.subagent_type) ?? str(msg.task_type) ?? 'agent', NAME_CAP), state: 'running', ms: null, ...link?.ask, startedAt: start,
     }
-    this.tasks.set(taskId, { itemId: item.id, callId, start: this.o.now() })
+    this.tasks.set(taskId, { itemId: item.id, callId, start })
     const agents = [...call.agents, agent]
     const next: ChatToolCall = { ...call, agents, detail: agents.length > 1 ? `${agents.length} agents` : call.detail }
     return this.callPatch(item, item.calls.map(c => (c.id === callId ? next : c)), next)

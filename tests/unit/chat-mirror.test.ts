@@ -44,6 +44,13 @@ describe("a subagent's model, effort and context are optional, and checked when 
     expect(parseChatPush(withAgent({ context: -1 }))).toBeNull()
     expect(parseChatPush(withAgent({ context: '32k' }))).toBeNull()
   })
+
+  it('the time an agent started is taken when it is a time, and refused otherwise', () => {
+    expect(parseChatPush(withAgent({ startedAt: 1_791_194_400_000 }))).not.toBeNull()
+    expect(parseChatPush(withAgent({ startedAt: '10:00' }))).toBeNull()
+    expect(parseChatPush(withAgent({ startedAt: -5 }))).toBeNull()
+    expect(parseChatPush(withAgent({ startedAt: Number.NaN }))).toBeNull()
+  })
 })
 
 describe('capSnapshot', () => {

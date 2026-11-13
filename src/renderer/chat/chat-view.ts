@@ -6,7 +6,7 @@ import { QuoteButton, splitQuotes } from './chat-quote'
 import { HeadsUpView } from './heads-up-card'
 import { renderItem, streamText, type ItemCallbacks } from './chat-items'
 import { focusCard, renderCard, waitingCard } from './chat-cards'
-import { elapsedText, fillAgentsCard, setSettled, stepKeep, updateSteps, type StepKeep } from './chat-steps'
+import { elapsedText, fillAgentsCard, setSettled, stepKeep, tickAgentTimes, updateSteps, type StepKeep } from './chat-steps'
 import { chatPalette } from '../themes'
 import './chat.css'
 import type { ITheme } from '@xterm/xterm'
@@ -574,11 +574,13 @@ export class ChatView {
       this.dockRows = agents
       fillAgentsCard(this.dock, agents)
       this.dock.classList.add('shown')
+      this.syncClock()
       return
     }
     if (!this.dockOpen) return
     this.dockRows = this.dockRows.map((row) => this.agentNow(row.id) ?? row)
     fillAgentsCard(this.dock, this.dockRows)
+    this.syncClock()
     if (this.dockTimer === null) this.dockTimer = setTimeout(() => this.closeDock(), DOCK_LINGER_MS)
   }
 
@@ -614,6 +616,7 @@ export class ChatView {
     this.dockOpen = false
     this.dockRows = []
     this.dock.classList.remove('shown')
+    this.syncClock()
   }
 
   private stopDockTimer(): void {
@@ -1007,10 +1010,18 @@ export class ChatView {
     if (shown) this.elapsed.textContent = elapsedText(Date.now() - started)
   }
 
-  /** the elapsed time ticks once a second while the chat is shown and a turn runs */
+  /** the elapsed time ticks once a second while the chat is shown and a turn runs, and so do the times of the agents running in the dock, which outlive their turn */
   private syncClock(): void {
-    const run = this.visible && (this.state.turn !== 'idle' || this.state.activity !== undefined)
-    if (run && this.clock === null) this.clock = setInterval(() => this.tickElapsed(), 1000)
+    const agents = this.dockOpen && this.dockRows.some((agent) => agent.state === 'running')
+    const run = this.visible && (this.state.turn !== 'idle' || this.state.activity !== undefined || agents)
+    if (run && this.clock === null) {
+      // a chat shown again catches up at once
+      tickAgentTimes(this.dock)
+      this.clock = setInterval(() => {
+        this.tickElapsed()
+        tickAgentTimes(this.dock)
+      }, 1000)
+    }
     if (!run) this.stopClock()
   }
 

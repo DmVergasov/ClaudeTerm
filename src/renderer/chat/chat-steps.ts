@@ -423,17 +423,35 @@ function fillAgent(row: HTMLElement, agent: ChatSubagent): void {
   fillAgentMeta(row.querySelector<HTMLElement>('.chat-agent-meta')!, agent)
   const text = row.querySelector<HTMLElement>('.chat-agent-state')!
   if (agent.state === 'running') {
-    // a running row's last column is its bar: a track the bar slides through, in the row's colour
+    // a running row's last column is how long it has run, then its bar: a track the bar slides through, in the row's colour
     if (text.querySelector('.chat-agent-bar') === null) {
       const track = el('span', 'chat-agent-track')
       track.append(el('span', 'chat-agent-bar'))
-      text.replaceChildren(track)
+      text.replaceChildren(el('span', 'chat-agent-time'), track)
     }
+    if (agent.startedAt === undefined) delete row.dataset.started
+    else row.dataset.started = String(agent.startedAt)
+    tickAgentTime(row, Date.now())
     return
   }
+  delete row.dataset.started
   text.replaceChildren()
   if (agent.state === 'failed') text.textContent = 'failed'
-  else text.textContent = agent.ms === null ? 'done' : `done · ${secondsText(agent.ms)}`
+  else text.textContent = agent.ms === null ? 'done' : `done · ${durationText(agent.ms)}`
+}
+
+/** a running row's time since its agent started; none when the start is not known */
+function tickAgentTime(row: HTMLElement, now: number): void {
+  const time = row.querySelector<HTMLElement>('.chat-agent-time')
+  if (time === null) return
+  const started = Number(row.dataset.started)
+  time.hidden = row.dataset.started === undefined || !Number.isFinite(started)
+  if (!time.hidden) setText(time, elapsedText(now - started))
+}
+
+/** the running rows of the dock count on: called once a second while an agent runs */
+export function tickAgentTimes(box: HTMLElement, now = Date.now()): void {
+  for (const row of Array.from(box.querySelectorAll<HTMLElement>('.chat-agent[data-started]'))) tickAgentTime(row, now)
 }
 
 /**
@@ -449,9 +467,9 @@ function fillAgentMeta(node: HTMLElement, agent: ChatSubagent): void {
   else node.title = title
 }
 
-/** a duration in whole seconds, at least one: `14s` */
-function secondsText(ms: number): string {
-  return `${Math.max(1, Math.round(ms / 1000))}s`
+/** a duration in whole seconds, at least one: `14s`, then `2m 30s` as a running agent counts */
+export function durationText(ms: number): string {
+  return elapsedText(Math.max(1, Math.round(ms / 1000)) * 1000)
 }
 
 /** the elapsed time of a turn as the working line shows it: `12s`, then `1m 05s` */
