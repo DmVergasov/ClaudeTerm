@@ -1457,6 +1457,25 @@ test('the pill click with more than 120 items held out ends at the newest item',
   }
 })
 
+test('new items that come before the view is told of a scroll up keep the reader where they are', async () => {
+  const { app, page, tabId, pipeName } = await restoredLong()
+  try {
+    // the view hears of a scroll from its scroll event, which comes with the next frame; a window that draws no frame (one
+    // behind another window) draws new items from a timer before it. The event is held back here, as in such a window
+    await page.evaluate(() => {
+      window.addEventListener('scroll', (e) => {
+        if (e.target instanceof Element && e.target.classList.contains('chat-scroll')) e.stopImmediatePropagation()
+      }, true)
+    })
+    const before = await page.locator(SCROLL).evaluate((el) => { el.scrollTop -= 1500; return el.scrollTop })
+    await sendDividers(pipeName, tabId, 3)
+    await expect(page.locator('.chat-pill')).toBeVisible()
+    expect(Math.abs(await page.locator(SCROLL).evaluate((el) => el.scrollTop) - before)).toBeLessThanOrEqual(2)
+  } finally {
+    await app.close()
+  }
+})
+
 test('a step and a thinking block that leave the window come back with their state, and a call that ends away shows its result', async () => {
   const { app, page, tabId, pipeName } = await launchChatTab({
     turns: { keep: [{ thinking: 'Checking the build first.', ms: 2000 }, { tool: { name: 'Bash', input: { command: 'npm test' }, result: 'ok', ms: 5000 } }, { text: 'Done.' }] }

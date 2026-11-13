@@ -353,6 +353,7 @@ export class ChatView {
     const accept = acceptPatches(this.rev, fromRev, toRev, patches.length)
     if (accept.kind === 'gap') return false
     if (accept.kind === 'ignore') return true
+    this.catchScroll()
     for (const p of patches.slice(accept.skip)) this.apply(p)
     this.rev = toRev
     return true
@@ -662,6 +663,7 @@ export class ChatView {
   private flush(): void {
     performance.mark('chat-frame:start')
     this.cancelFrame()
+    this.catchScroll()
     const ops = [...this.queued.entries()]
     this.queued.clear()
     for (const [key, op] of ops) {
@@ -1088,6 +1090,15 @@ export class ChatView {
 
   private distanceToBottom(): number {
     return this.scroll.scrollHeight - this.scroll.scrollTop - this.scroll.clientHeight
+  }
+
+  /**
+   * A scroll up the view has not heard of yet is taken before new items move the column: the scroll event comes with the next
+   * frame, and a window that draws no frame (one behind another window) draws its queue from the timer before it, so a column
+   * still stuck to its bottom would take the reader back to the end
+   */
+  private catchScroll(): void {
+    if (this.visible && this.stick && this.scroll.scrollTop < this.settledTop) this.onScroll()
   }
 
   private onScroll(): void {
