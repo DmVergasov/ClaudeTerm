@@ -2,6 +2,7 @@ import type { AccountResult, AccountsView } from './accounts'
 import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { MailConversationView, MailUnread } from './mail'
+import type { McpAction, McpAddRequest, McpResult, McpServersView, PluginAction, PluginsView, ReloadAction } from './mcp'
 import type { DeviceResult, DevicesView } from './devices'
 import type { Note, NoteForm, NoteSide, NoteSize, ProjectNote } from './note'
 import type { NoteOp } from './note-items'
@@ -180,7 +181,17 @@ export const IPC = {
   /** the patches of a chat, in order: from the rev the window had to the rev they make */
   evChatPatch: 'ev:chat-patch',
   /** a remote chat's snapshot arrived: the window reloads the chat from ct.chatSnapshot */
-  evChatReload: 'ev:chat-reload'
+  evChatReload: 'ev:chat-reload',
+  /** the MCP · Plugins panel of a Claude tab: its servers, its plugins, and the actions the panel sends */
+  mcpServers: 'mcp:servers',
+  mcpAction: 'mcp:action',
+  mcpAdd: 'mcp:add',
+  mcpPlugins: 'mcp:plugins',
+  mcpPluginAction: 'mcp:plugin-action',
+  /** the reload card's button: restart the session, or not now */
+  mcpReload: 'mcp:reload',
+  /** the tab's servers, plugins or reload card changed: the panel asks again */
+  evMcpChanged: 'ev:mcp-changed'
 } as const
 
 export interface AppInfo {
@@ -530,4 +541,15 @@ export interface CtApi {
   /** a chat's patches: from the rev the window had to the rev they make; a window that is not at fromRev asks for a snapshot */
   onChatPatch(cb: (tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]) => void): Unsubscribe
   onChatReload(cb: (tabId: string) => void): Unsubscribe
+  /** the servers of a local Claude tab as the MCP · Plugins panel shows them; null: not a local Claude tab */
+  mcpServers(tabId: string): Promise<McpServersView | null>
+  mcpAction(tabId: string, a: McpAction): Promise<McpResult>
+  mcpAdd(tabId: string, req: McpAddRequest): Promise<McpResult>
+  /** the plugins of a tab: installed, available and the marketplaces; an error text when the CLI cannot list them; null: not a local Claude tab */
+  mcpPlugins(tabId: string): Promise<PluginsView | { error: string } | null>
+  mcpPluginAction(tabId: string, a: PluginAction): Promise<McpResult>
+  /** the reload card's button; false: no card waits in the tab */
+  mcpReload(tabId: string, action: ReloadAction): Promise<boolean>
+  /** the tab's servers, plugins or card changed: the panel asks again */
+  onMcpChanged(cb: (tabId: string) => void): Unsubscribe
 }

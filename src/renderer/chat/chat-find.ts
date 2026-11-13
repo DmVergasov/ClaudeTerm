@@ -65,6 +65,7 @@ function searchText(item: ChatItem, hasCard: (cardId: string | null) => boolean)
     case 'command': return `${item.command}\n${item.output}`
     case 'notice': return item.text
     case 'divider': return item.text
+    case 'reload': return `${item.title}\n${item.text}`
     // a row shows its title; its folded text is text of the conversation only when it is unfolded, as a thinking block's
     case 'event': return item.title
     case 'card': return item.answered ?? cardText(item.card)

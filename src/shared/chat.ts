@@ -1,5 +1,7 @@
 // The chat view's data, shared by main and the window
 
+import type { ReloadAction } from './mcp'
+
 export type TabView = 'chat' | 'terminal'
 export const TAB_VIEWS: readonly TabView[] = ['chat', 'terminal']
 export const isTabView = (v: unknown): v is TabView => v === 'chat' || v === 'terminal'
@@ -38,7 +40,7 @@ export interface ChatToolCall {
   id: string; name: string; subject: string; detail: string | null; state: ChatCallState
   output: string | null; error: string | null; editPath: string | null; agents: ChatSubagent[]; ms: number | null
 }
-export type ChatNoticeAction = 'restart' | 'open-terminal'
+export type ChatNoticeAction = 'restart' | 'open-terminal' | 'open-mcp'
 
 export type ChatItem =
   | { kind: 'user'; id: string; text: string; attachments: ChatAttachment[]; queued: boolean; from?: ChatSendOrigin }
@@ -48,8 +50,10 @@ export type ChatItem =
   | { kind: 'images'; id: string; images: { path: string; cardId: string | null }[] }
   | { kind: 'command'; id: string; command: string; output: string }
   | { kind: 'notice'; id: string; tone: 'info' | 'error'; text: string; action: ChatNoticeAction | null; line?: string | null }
-  | { kind: 'divider'; id: string; text: string }
+  | { kind: 'divider'; id: string; text: string; good?: string }
   | { kind: 'card'; id: string; card: ChatCard; answered: string | null }
+  // a card that a change outside the chat asks the person to act on (a new MCP server: Restart the session to load it)
+  | { kind: 'reload'; id: string; title: string; text: string; action: ReloadAction | null }
   // a message Claude Code puts in the conversation that is not the person's: a background task's end, another session's message, a channel's
   | { kind: 'event'; id: string; source: ChatEventSource; title: string; status: string | null; body: string }
 

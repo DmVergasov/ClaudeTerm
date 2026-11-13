@@ -271,6 +271,30 @@ function tailOf(s: string, room: number): string {
   return s.slice(start)
 }
 
+/**
+ * An item as a member's device gets it: a reload card is a plain notice (its title and text, no button), a divider loses its
+ * highlighted part, and an open-mcp notice loses its action. Any other item is returned as it is.
+ */
+export function itemForMembers(item: ChatItem): ChatItem {
+  if (item.kind === 'reload') return { kind: 'notice', id: item.id, tone: 'info', text: `${item.title} — ${item.text}`, action: null }
+  if (item.kind === 'divider') return { kind: 'divider', id: item.id, text: item.text }
+  if (item.kind === 'notice' && item.action === 'open-mcp') return { ...item, action: null }
+  return item
+}
+
+/** a patch as a member gets it: the items of add, set and reset go through itemForMembers; any other patch is returned as it is */
+export function patchForMembers(p: ChatPatch): ChatPatch {
+  switch (p.op) {
+    case 'add':
+    case 'set':
+      return { ...p, item: itemForMembers(p.item) }
+    case 'reset':
+      return { ...p, items: p.items.map((item) => itemForMembers(item)) }
+    default:
+      return p
+  }
+}
+
 /** a chat as a member holds it: loaded from a snapshot, moved on by the batches the host sends */
 export class ChatMirror {
   private current: ChatSnapshot | null = null

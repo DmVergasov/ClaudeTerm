@@ -165,7 +165,14 @@ const api: CtApi = {
   chatHeadsUpAction: (tabId, cardId, action) => ipcRenderer.send(IPC.chatHeadsUpAction, tabId, cardId, action),
   onChatHeadsUp: (cb) => on(IPC.evChatHeadsUp, cb),
   onChatPatch: (cb) => on(IPC.evChatPatch, cb),
-  onChatReload: (cb) => on(IPC.evChatReload, cb)
+  onChatReload: (cb) => on(IPC.evChatReload, cb),
+  mcpServers: (tabId) => ipcRenderer.invoke(IPC.mcpServers, tabId),
+  mcpAction: (tabId, a) => ipcRenderer.invoke(IPC.mcpAction, tabId, a),
+  mcpAdd: (tabId, req) => ipcRenderer.invoke(IPC.mcpAdd, tabId, req),
+  mcpPlugins: (tabId) => ipcRenderer.invoke(IPC.mcpPlugins, tabId),
+  mcpPluginAction: (tabId, a) => ipcRenderer.invoke(IPC.mcpPluginAction, tabId, a),
+  mcpReload: (tabId, action) => ipcRenderer.invoke(IPC.mcpReload, tabId, action),
+  onMcpChanged: (cb) => on(IPC.evMcpChanged, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

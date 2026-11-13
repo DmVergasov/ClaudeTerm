@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { capItems, capSnapshot, ChatMirror, MAX_CHAT_ITEMS, parseChatPush } from '../../src/main/chat/chat-mirror'
+import { capItems, capSnapshot, ChatMirror, itemForMembers, MAX_CHAT_ITEMS, parseChatPush, patchForMembers } from '../../src/main/chat/chat-mirror'
 import { SUBJECT_CAP } from '../../src/main/chat/chat-model'
 import type { ChatItem, ChatPatch, ChatSnapshot, ChatState, ChatToolCall } from '../../src/shared/chat'
 import { MAX_CHAT_PUSH_BYTES } from '../../src/shared/remote'
@@ -403,5 +403,55 @@ describe('the field caps match the host, which produces the values', () => {
     const card: ChatItem = { kind: 'card', id: 'k', answered: null, card: { type: 'permission', tool: 'Edit', title: 't', subject: 's',
       description: null, diff: { path: 'p'.repeat(5000), before: '', after: '' }, suggestions: [], defaultToNo: false } }
     expect(parseChatPush(snapshot([card]))).not.toBeNull()
+  })
+})
+
+describe('a chat for the members', () => {
+  const reload = { kind: 'reload' as const, id: 'r', title: 'New MCP server: context7', text: 'Restart the session to load it — the conversation goes on', action: 'restart' as const }
+
+  it('a reload card reaches the members as a plain notice', () => {
+    expect(itemForMembers(reload)).toEqual({
+      kind: 'notice', id: 'r', tone: 'info', text: 'New MCP server: context7 — Restart the session to load it — the conversation goes on', action: null,
+    })
+  })
+
+  it('the members get no divider highlight and no open-mcp action', () => {
+    const divider = { kind: 'divider' as const, id: 'd', text: 'Restarted', good: 'Restarted' }
+    const out = itemForMembers(divider)
+    expect(out).toEqual({ kind: 'divider', id: 'd', text: 'Restarted' })
+    expect('good' in out).toBe(false)
+    expect(itemForMembers({ kind: 'notice', id: 'n', tone: 'info', text: 'Open the panel', action: 'open-mcp' })).toEqual({
+      kind: 'notice', id: 'n', tone: 'info', text: 'Open the panel', action: null,
+    })
+  })
+
+  it('a restart or open-terminal notice, and any other item, is returned as it is', () => {
+    const restart: ChatItem = { kind: 'notice', id: 'n', tone: 'error', text: 'Failed', action: 'restart', line: null }
+    expect(itemForMembers(restart)).toBe(restart)
+    const terminal: ChatItem = { kind: 'notice', id: 'o', tone: 'info', text: 'Open', action: 'open-terminal', line: '/mcp' }
+    expect(itemForMembers(terminal)).toBe(terminal)
+    const text: ChatItem = { kind: 'text', id: 't', markdown: 'Hi', streaming: false }
+    expect(itemForMembers(text)).toBe(text)
+  })
+
+  it('patchForMembers maps the items of add, set and reset and leaves other patches', () => {
+    const divider = { kind: 'divider' as const, id: 'd', text: 'Restarted', good: 'Restarted' }
+    const plain = { kind: 'divider' as const, id: 'd', text: 'Restarted' }
+    expect(patchForMembers({ op: 'add', item: divider })).toEqual({ op: 'add', item: plain })
+    expect(patchForMembers({ op: 'set', item: reload })).toEqual({ op: 'set', item: itemForMembers(reload) })
+    expect(patchForMembers({ op: 'reset', items: [reload, divider], hasOlder: true })).toEqual({
+      op: 'reset', items: [itemForMembers(reload), plain], hasOlder: true,
+    })
+    const append = { op: 'append' as const, id: 't', text: 'more' }
+    expect(patchForMembers(append)).toBe(append)
+    const remove = { op: 'remove' as const, id: 'r' }
+    expect(patchForMembers(remove)).toBe(remove)
+  })
+
+  it('parseChatPush of a snapshot built from patchForMembers output passes', () => {
+    const divider = { kind: 'divider' as const, id: 'd', text: 'Restarted', good: 'Restarted' }
+    const reset = patchForMembers({ op: 'reset', items: [reload, divider], hasOlder: false })
+    if (reset.op !== 'reset') throw new Error('reset expected')
+    expect(parseChatPush(snapshot(reset.items))).not.toBeNull()
   })
 })

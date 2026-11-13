@@ -1,4 +1,4 @@
-import type { ChatAnswer, ChatAttachment, ChatEventSource, ChatItem } from '../../shared/chat'
+import type { ChatAnswer, ChatAttachment, ChatEventSource, ChatItem, ChatNoticeAction } from '../../shared/chat'
 import { icon } from '../icons'
 import type { ImageCard } from '../../shared/types'
 import { imageUrl } from '../image-url'
@@ -46,6 +46,7 @@ export function renderItem(item: ChatItem, cb: ItemCallbacks, keep: StepKeep | n
     case 'tools': return renderSteps(item, cb, keep, settled)
     case 'notice': return noticeItem(item.tone, item.text, item.action, item.line ?? null, cb)
     case 'divider': return el('div', 'chat-divider', item.text)
+    case 'reload': return el('div', 'chat-reload', item.title)
     case 'card': return renderCard(item, cb)
     case 'thinking': return thinkingItem(item.ms, item.summary, keep?.open !== false)
     case 'images': return renderImages(item, cb)
@@ -204,7 +205,7 @@ function commandItem(command: string, output: string): HTMLElement {
   return box
 }
 
-function noticeItem(tone: 'info' | 'error', text: string, action: 'restart' | 'open-terminal' | null, line: string | null, cb: ItemCallbacks): HTMLElement {
+function noticeItem(tone: 'info' | 'error', text: string, action: ChatNoticeAction | null, line: string | null, cb: ItemCallbacks): HTMLElement {
   const row = el('div', `chat-notice ${tone}`)
   row.append(el('span', 'chat-notice-text', text))
   if (action === 'restart') row.append(button('Restart', () => cb.restart()))
