@@ -1160,7 +1160,7 @@ function bootstrap(): void {
         await chatHub.stopTask(tabId, taskId)
         statusHub.dropBackground(tabId, taskId)
       },
-      older: (tabId, beforeId) => chatHub.older(tabId, beforeId),
+      older: (tabId, beforeId) => chatHub.olderForMembers(tabId, beforeId),
       commands: (tabId) => chatHub.commands(tabId),
       models: (tabId) => chatHub.models(tabId),
       modes: (tabId) => chatHub.modes(tabId),

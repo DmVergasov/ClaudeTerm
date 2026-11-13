@@ -291,7 +291,9 @@ export class ChatHub {
     if (run === null) return false
     const { live } = run
     const state = live.model.state()
-    return live.early === null && state.turn === 'idle' && state.activity === undefined && live.waiting.length === 0 && live.cards.size === 0 && !this.sendChain.has(tabId)
+    // a message the model still holds as queued is one Claude Code has not run yet: the chat is not idle while it waits
+    const queued = live.model.items().some(item => item.kind === 'user' && item.queued)
+    return live.early === null && state.turn === 'idle' && state.activity === undefined && live.waiting.length === 0 && live.cards.size === 0 && !queued && !this.sendChain.has(tabId)
   }
 
   /** when a tool call of the tab last may have changed what Claude Code loads; null when none has */
@@ -500,6 +502,12 @@ export class ChatHub {
     const live = this.tabs.get(tabId)
     if (!live) return null
     return live.model.older(beforeId)
+  }
+
+  /** the page before an item as a member gets it: the items through itemForMembers; the local window's own page is `older` */
+  olderForMembers(tabId: string, beforeId: string): { items: ChatItem[]; hasOlder: boolean } | null {
+    const page = this.older(tabId, beforeId)
+    return page === null ? null : { ...page, items: page.items.map(itemForMembers) }
   }
 
   /** the Media-panel cards of a tab changed: the images of its chat that have no card yet take the card of their path */

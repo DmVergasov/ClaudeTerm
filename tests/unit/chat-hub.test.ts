@@ -1627,6 +1627,69 @@ describe('ChatHub', () => {
     expect(hub.idle(TAB)).toBe(false)
     engines[0].h.message({ type: 'system', subtype: 'status', status: null })
     expect(hub.idle(TAB)).toBe(true)
+
+    // a send still in the chain, before the engine has it
+    const sent = hub.send(TAB, { text: 'two', attachments: [] })
+    expect(hub.idle(TAB)).toBe(false)
+    await sent
+    await settle()
+    engines[0].h.message(result())
+    expect(hub.idle(TAB)).toBe(true)
+
+    // the restart's activity
+    hub.restarting(TAB)
+    expect(hub.idle(TAB)).toBe(false)
+  })
+
+  it('idle is false while a message waits for the engine, or the history of a resumed chat still loads', async () => {
+    const starting = harness({ support: () => new Promise(() => {}) })
+    starting.hub.start(startReq().req)
+    await settle()
+    await starting.hub.send(TAB, { text: 'early', attachments: [] })
+    expect(starting.hub.idle(TAB)).toBe(false)
+
+    const loading = harness({ history: () => new Promise(() => {}) })
+    loading.hub.start(startReq(SID).req)
+    await settle()
+    loading.engines[0].h.ready({ permissionMode: 'default' })
+    expect(loading.hub.idle(TAB)).toBe(false)
+  })
+
+  it('idle is false while a queued message is still in the chat, even when the result names no queued turn', async () => {
+    const { hub, engines } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    await hub.send(TAB, { text: 'one', attachments: [] })
+    await hub.send(TAB, { text: 'two', attachments: [] })
+    await settle()
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'user' && item.queued)).toBe(true)
+    engines[0].h.message(result({ queued_turn_count: 0 }))
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'user' && item.queued)).toBe(true)
+    expect(hub.idle(TAB)).toBe(false)
+  })
+
+  it("a member's older page has none of the restart's highlight, the MCP button or the reload card", async () => {
+    const { hub, engines } = harness()
+    hub.restarting(TAB)
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    hub.restartReport(TAB, { text: 'Session restarted · 1 new', good: '1 new' }, [{ text: 'docs needs sign-in', tone: 'error' }])
+    hub.reloadCard(TAB, { title: 'Restart to load docs', text: 'docs was added', action: 'restart' })
+    hub.restartReport(TAB, { text: 'Session restarted · 1 new', good: '1 new' }, [{ text: 'last', tone: 'info' }])
+    const beforeLast = last(hub.snapshot(TAB)!.items).id
+
+    // the window's own page keeps them
+    expect(hub.older(TAB, beforeLast)!.items.some(item => item.kind === 'reload')).toBe(true)
+
+    const members = hub.olderForMembers(TAB, beforeLast)!
+    expect(members.items.some(item => item.kind === 'reload')).toBe(false)
+    expect(members.items.find(item => item.kind === 'divider')).toEqual({ kind: 'divider', id: expect.any(String), text: 'Session restarted · 1 new' })
+    expect(members.items.some(item => item.kind === 'notice' && item.action === 'open-mcp')).toBe(false)
+    expect(members.items).toContainEqual(expect.objectContaining({ kind: 'notice', text: 'docs needs sign-in', action: null }))
+    expect(members.items).toContainEqual(expect.objectContaining({ kind: 'notice', text: 'Restart to load docs — docs was added', action: null }))
   })
 
   it('a Bash call running claude mcp add marks the tab; a Read does not', async () => {
