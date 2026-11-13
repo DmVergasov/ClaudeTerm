@@ -139,6 +139,8 @@ Under the conversation is the composer. **Enter** sends, **Shift+Enter** starts 
 
 Type `/` for Claude Code's commands. **/model** opens the model picker and **/resume** the Recent sessions window, both in the chat. A few commands need Claude Code's own screen — `/config`, `/permissions`, `/agents`, `/login`, `/doctor`, `/rewind` and others — and so does any line that starts with `!`: the tab switches to its terminal and the line is typed into Claude Code's prompt there, because the chat does not draw those dialogs and settings.
 
+**/mcp** and **/plugin** (or the **MCP · Plugins** button in the tab's header) open a panel beside the chat with the session's MCP servers — their state, tools and errors; sign in, reconnect, turn off, remove, or add one by pasting a command, a URL or a JSON config — and your plugins and marketplaces. When the servers or plugins a chat would load change, whether from the panel or because Claude ran `claude mcp add`, the chat restarts its session once the answer has ended and goes on with the same conversation; other chats the change applies to offer **Restart**.
+
 While Claude works, a side agent reads the conversation now and then (after every 6th tool call of a turn) and, when it finds something you would likely miss and should know — a decision Claude made in passing, a result that may be off, a concept the work depends on — shows it as a **Heads up** card above the message box. **Explain more** asks for a longer explanation, **Not relevant** keeps that topic from coming back, **Got it** closes the card. The side agent runs on Sonnet in the tab's account, with no tools and nothing kept in your sessions, and it uses your plan: **Heads up** in Settings → Claude Code turns it off.
 
 A Claude tab on another of your computers shows its chat too, and you can send messages and answer its cards from there.
@@ -238,7 +240,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 
 Right-click in the terminal copies the selection, or pastes when nothing is selected. On macOS `⌥`-drag selects text while Claude Code has the mouse (`Shift`-drag elsewhere). Double-click a tab to rename it.
 
-Right-click a tab → **Restart session** restarts Claude Code in the same tab and resumes the conversation — handy after adding an MCP server, a plugin or a settings change that Claude Code only reads at startup. For a shell tab the item is **Restart shell**. A Claude tab with a conversation also has **Fork session**, which opens a new tab that resumes a copy of that conversation from the same point.
+Right-click a tab → **Restart session** restarts Claude Code in the same tab and resumes the conversation — handy after adding an MCP server, a plugin or a settings change that Claude Code only reads at startup. A chat tab restarts by itself after such a change. For a shell tab the item is **Restart shell**. A Claude tab with a conversation also has **Fork session**, which opens a new tab that resumes a copy of that conversation from the same point.
 
 ## Settings
 
