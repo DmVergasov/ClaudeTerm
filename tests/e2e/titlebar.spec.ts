@@ -100,20 +100,22 @@ test('both limit meters are one line high and equally tall, whatever their reset
   const endOfToday = new Date()
   endOfToday.setHours(23, 59, 0, 0)
   // the 5-hour limit resets today (half an hour on, or the end of the day near midnight); the weekly one resets on another day,
-  // so its reset reads like "Thu 09:00"; 100% is the widest label
+  // so its reset reads like "Thu 09:00", and once the limit ran out it counts down to it ("in 2d 23h") beside 100%, the widest label
   const fiveReset = Math.min(now + 1800, Math.floor(endOfToday.getTime() / 1000))
-  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), fiveHour: { usedPct: 42, resetsAt: fiveReset }, sevenDay: { usedPct: 100, resetsAt: now + 3 * 86400 } })).toEqual({ ok: true })
   const meters = [page.locator('#titlebar .meter-limit'), page.locator('#titlebar .meter-week')]
-  await expect(meters[1]!.locator('.meter-reset')).toHaveText(/^[A-Z][a-z]{2} \d\d:\d\d$/)
-  await expect(meters[0]!.locator('.meter-reset')).toHaveText(/^\d\d:\d\d$/)
-  const boxes = await Promise.all(meters.map((m) => m.boundingBox()))
-  expect(Math.abs(boxes[0]!.height - boxes[1]!.height)).toBeLessThanOrEqual(0.5)
-  for (const m of meters) {
-    const head = m.locator('.meter-head')
-    const lineHeight = await head.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight))
-    expect(Number.isNaN(lineHeight)).toBe(false)
-    expect((await head.boundingBox())!.height).toBeLessThanOrEqual(lineHeight * 1.5)
-    expect(await m.locator('.meter-reset').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+  for (const [usedPct, reset] of [[99, /^[A-Z][a-z]{2} \d\d:\d\d$/], [100, /^in \d+d \d+h$/]] as const) {
+    expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), fiveHour: { usedPct: 42, resetsAt: fiveReset }, sevenDay: { usedPct, resetsAt: now + 3 * 86400 } })).toEqual({ ok: true })
+    await expect(meters[1]!.locator('.meter-reset')).toHaveText(reset)
+    await expect(meters[0]!.locator('.meter-reset')).toHaveText(/^\d\d:\d\d$/)
+    const boxes = await Promise.all(meters.map((m) => m.boundingBox()))
+    expect(Math.abs(boxes[0]!.height - boxes[1]!.height)).toBeLessThanOrEqual(0.5)
+    for (const m of meters) {
+      const head = m.locator('.meter-head')
+      const lineHeight = await head.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight))
+      expect(Number.isNaN(lineHeight)).toBe(false)
+      expect((await head.boundingBox())!.height).toBeLessThanOrEqual(lineHeight * 1.5)
+      expect(await m.locator('.meter-reset').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+    }
   }
   await app.close()
 })
