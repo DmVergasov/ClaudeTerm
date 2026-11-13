@@ -128,6 +128,7 @@ export function openAddDialog(o: AddDialogOptions): void {
       names = parsed?.kind === 'servers' ? parsed.servers.map((s) => s.name) : []
       if (parsed?.kind === 'servers' && parsed.scope !== null) scope = parsed.scope
       error = ''
+      secret.value = ''
     }
     shown = parsed
     field.hidden = held !== null
@@ -187,7 +188,8 @@ export function openAddDialog(o: AddDialogOptions): void {
     })
     const needsSecret = shown?.kind === 'servers' && shown.needsClientSecret
     const valid = servers.length > 0 && names.every((name) => isServerName(name)) && new Set(names).size === names.length && (!needsSecret || secret.value !== '')
-    addButton.disabled = busy || !valid
+    addButton.disabled = !valid
+    addButton.setAttribute('aria-disabled', String(busy))
     addButton.textContent = busy ? 'Adding…' : servers.length > 1 ? `Add ${servers.length} servers and restart` : 'Add and restart'
   }
 
@@ -206,12 +208,13 @@ export function openAddDialog(o: AddDialogOptions): void {
   clear.addEventListener('click', () => {
     held = null
     field.value = ''
+    secret.value = ''
     render()
     field.focus()
   })
   secret.addEventListener('input', () => refreshButtons())
   addButton.addEventListener('click', () => {
-    if (shown?.kind !== 'servers' || addButton.disabled) return
+    if (shown?.kind !== 'servers' || addButton.disabled || busy) return
     const req: McpAddRequest = {
       text: current(),
       names: names.slice(0, shown.servers.length),
@@ -232,12 +235,16 @@ export function openAddDialog(o: AddDialogOptions): void {
         }
         error = result.error
         render()
+        // the dialog stays open with the focus in it: Add is the control to go on with
+        addButton.focus()
       })
   })
   closeButton.addEventListener('click', close)
   cancel.addEventListener('click', close)
   // Esc closes; Tab stays inside the dialog
   scrim.addEventListener('keydown', (e) => {
+    // the dialog is modal: its keys stay in it, so an app shortcut does not run behind it
+    e.stopPropagation()
     if (e.key === 'Escape') {
       e.preventDefault()
       close()

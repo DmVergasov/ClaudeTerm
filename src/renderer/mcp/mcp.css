@@ -63,7 +63,7 @@
 .mcp-btn.mcp-red { color: var(--red); }
 .mcp-ghost { flex: none; padding: 2px 6px; background: none; border: 0; border-radius: 6px; color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer; }
 .mcp-ghost:hover { background: var(--raised); color: var(--text); }
-.mcp-btn:disabled, .mcp-ghost:disabled, .mcp-switch:disabled, .mcp-menu-item:disabled { opacity: 0.5; cursor: default; }
+.mcp-btn:disabled, .mcp-btn[aria-disabled="true"], .mcp-ghost:disabled, .mcp-switch:disabled, .mcp-menu-item:disabled { opacity: 0.5; cursor: default; }
 .mcp-ghost:focus-visible, .mcp-switch:focus-visible, .mcp-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .mcp-switch { position: relative; flex: none; width: 30px; height: 18px; padding: 0; border: 0; border-radius: 999px; background: var(--line-2); cursor: pointer; }

@@ -180,3 +180,139 @@ test('a client secret is asked for and goes to Claude Code in its environment', 
     await app.close()
   }
 })
+
+test('a client secret typed for one server does not carry over to the next paste', async () => {
+  const { app, page } = await launchChatTab({ turns: {} })
+  try {
+    await openDialog(page)
+    await paste(page, 'claude mcp add --transport http sentry https://mcp.example.com/sentry --header "Authorization: Bearer tok-123" --client-id client-abc --client-secret')
+    await page.getByLabel('OAuth client secret').fill('cs-123')
+    await page.getByRole('button', { name: 'Clear' }).click()
+    await paste(page, 'claude mcp add --transport http linear https://mcp.example.com/linear --header "X-Key: key-456" --client-id client-def --client-secret')
+    await expect(page.getByLabel('OAuth client secret')).toHaveValue('')
+    await expect(page.getByRole('button', { name: 'Add and restart' })).toBeDisabled()
+    await page.getByLabel('OAuth client secret').fill('cs-456')
+    await expect(page.getByRole('button', { name: 'Add and restart' })).toBeEnabled()
+  } finally {
+    await app.close()
+  }
+})
+
+test('a failing add keeps the focus in the dialog, and Escape still closes it', async () => {
+  const { app, page } = await launchChatTab({ turns: {}, cliFail: { 'mcp add-json': 'Boom' } })
+  try {
+    await openDialog(page)
+    await paste(page, CONTEXT7_COMMAND)
+    await page.getByRole('button', { name: 'Add and restart' }).click()
+    await expect(page.locator('.mcp-add-error')).toContainText('Boom')
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest('.mcp-add') !== null && document.activeElement !== null)).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(page.locator(DIALOG)).toBeHidden()
+  } finally {
+    await app.close()
+  }
+})
+
+test('the dialog keeps the app shortcuts to itself', async () => {
+  const { app, page } = await launchChatTab({ turns: {} })
+  try {
+    await openDialog(page)
+    await page.evaluate(() => {
+      const seen: string[] = []
+      ;(window as any).__seenKeys = seen
+      document.addEventListener('keydown', (e) => seen.push(e.code))
+    })
+    await page.getByRole('button', { name: 'Cancel' }).focus()
+    await page.keyboard.press('Control+Shift+T')
+    expect(await page.evaluate(() => (window as any).__seenKeys as string[])).not.toContain('KeyT')
+    await expect(page.locator(DIALOG)).toBeVisible()
+  } finally {
+    await app.close()
+  }
+})
+
+test('Escape and the close button close the dialog, and the focus goes back to Add server', async () => {
+  const { app, page } = await launchChatTab({ turns: {} })
+  try {
+    await openDialog(page)
+    await page.keyboard.press('Escape')
+    await expect(page.locator(DIALOG)).toBeHidden()
+    await expect(page.locator(ADD_BUTTON)).toBeFocused()
+    await page.locator(ADD_BUTTON).click()
+    await expect(page.locator(DIALOG)).toBeVisible()
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(page.locator(DIALOG)).toBeHidden()
+    await expect(page.locator(ADD_BUTTON)).toBeFocused()
+  } finally {
+    await app.close()
+  }
+})
+
+test('Tab from the last control wraps to the first, and stays in the dialog', async () => {
+  const { app, page } = await launchChatTab({ turns: {} })
+  try {
+    await openDialog(page)
+    await paste(page, CONTEXT7_COMMAND)
+    const add = page.getByRole('button', { name: 'Add and restart' })
+    await add.focus()
+    await page.keyboard.press('Tab')
+    await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeFocused()
+    await expect(page.locator(DIALOG)).toBeVisible()
+    await page.keyboard.press('Shift+Tab')
+    await expect(add).toBeFocused()
+  } finally {
+    await app.close()
+  }
+})
+
+test('ArrowRight on the Where it works group chooses the next scope', async () => {
+  const { app, page } = await launchChatTab({ turns: {} })
+  try {
+    await openDialog(page)
+    await paste(page, CONTEXT7_COMMAND)
+    const all = page.getByRole('radio', { name: /All my projects/ })
+    const shared = page.getByRole('radio', { name: /This project, shared/ })
+    await expect(all).toHaveAttribute('aria-checked', 'true')
+    await all.focus()
+    await page.keyboard.press('ArrowRight')
+    await expect(shared).toHaveAttribute('aria-checked', 'true')
+    await expect(shared).toBeFocused()
+    await expect(all).toHaveAttribute('aria-checked', 'false')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a command typed with a header secret is masked once the field loses the focus', async () => {
+  const { app, page } = await launchChatTab({ turns: {} })
+  try {
+    await openDialog(page)
+    await page.locator(FIELD).fill(CONTEXT7_COMMAND)
+    await page.locator(FIELD).blur()
+    await expect(page.locator(FIELD)).toBeHidden()
+    await expect(page.locator('.mcp-add-masked-text')).toContainText(/CONTEXT7_API_KEY: •{8}/)
+    const shown = await page.evaluate(() => ({
+      values: [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('textarea, input')].map((field) => field.value),
+      text: document.body.innerText
+    }))
+    expect(shown.values.join('\n')).not.toContain('sk-test-123')
+    expect(shown.text).not.toContain('sk-test-123')
+  } finally {
+    await app.close()
+  }
+})
+
+test('Clear empties the field again', async () => {
+  const { app, page } = await launchChatTab({ turns: {} })
+  try {
+    await openDialog(page)
+    await page.locator(FIELD).fill(CONTEXT7_COMMAND)
+    await page.locator(FIELD).blur()
+    await page.getByRole('button', { name: 'Clear' }).click()
+    await expect(page.locator(FIELD)).toBeVisible()
+    await expect(page.locator(FIELD)).toHaveValue('')
+    await expect(page.locator('.mcp-add-masked')).toBeHidden()
+  } finally {
+    await app.close()
+  }
+})
