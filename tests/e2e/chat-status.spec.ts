@@ -79,7 +79,8 @@ test('the session segments sit in the middle of the chat, under its message box,
 test('the Changes counter stays at the right end of the status bar while a side panel takes the right of the sheet', async () => {
   const repo = gitRepo()
   writeFileSync(join(repo, 'a.ts'), 'one\nTWO\nthree\n')
-  const { app, page } = await launchChatTab({ turns: {} }, { work: repo })
+  // the panel stands beside the chat even where the window cannot grow for it (a small screen): it does not lie over the chat
+  const { app, page } = await launchChatTab({ turns: {} }, { work: repo, sidePanel: { noRoom: 'narrow' } })
   const edges = (): Promise<{ gap: number; left: number; panelLeft: number; panelWidth: number; chatRight: number }> => page.evaluate(() => {
     const bar = document.getElementById('statusbar')!.getBoundingClientRect()
     const seg = document.querySelector('#statusbar .status-seg[data-key="changes"]')!.getBoundingClientRect()

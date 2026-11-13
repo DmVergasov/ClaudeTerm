@@ -43,6 +43,7 @@ test("the Changes panel of a chat tab that followed its session into a worktree 
   const worktree = gitWorktree(repo, 'feat/entered')
   writeFileSync(join(repo, 'a.ts'), 'one\nMAIN\nthree\n')
   writeFileSync(join(worktree, 'a.ts'), 'one\nWORKTREE\nthree\n')
+  // the panel stands beside the chat even where the window cannot grow for it (a small screen), so the message box stays in reach
   const { app, page, tabId } = await launchChatTab({
     turns: {
       enter: [
@@ -50,7 +51,7 @@ test("the Changes panel of a chat tab that followed its session into a worktree 
         { text: 'entered' },
       ],
     },
-  }, { work: repo, tabs: { position: 'left' } })
+  }, { work: repo, tabs: { position: 'left' }, sidePanel: { noRoom: 'narrow' } })
   try {
     const added = page.locator('.review-file[data-path="a.ts"] .review-line.add .review-code')
     await page.locator('#sheet-header .tab-changes-toggle').click()
