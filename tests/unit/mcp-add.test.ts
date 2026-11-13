@@ -152,6 +152,22 @@ describe('parseAddInput', () => {
   })
 })
 
+describe('names of plain commands and URLs', () => {
+  it('a name taken from a plain command or a URL is made valid too', () => {
+    const cases: [string, string][] = [
+      ['node ./server.js', 'server.js'],
+      ['http://[::1]/mcp', 'server'],
+      ['npx @scope/pkg/sub', 'pkgsub'],
+      [`npx ${'a'.repeat(100)}`, 'a'.repeat(64)],
+    ]
+    for (const [text, name] of cases) {
+      const server = serversOf(text).servers[0]
+      expect(server.name).toBe(name)
+      expect(isServerName(server.name)).toBe(true)
+    }
+  })
+})
+
 describe('previewRows', () => {
   it('previewRows masks every header and env value and a URL\'s secret query values', () => {
     const url = serversOf('https://x.dev/mcp?api_key=abc&mode=1').servers[0]
@@ -184,6 +200,30 @@ describe('masking', () => {
     const server = serversOf(CONTEXT7_COMMAND).servers[0]
     expect(maskText(CONTEXT7_COMMAND, secretsOf(server.config)))
       .toBe('claude mcp add --transport http context7 https://mcp.context7.com/mcp --header "CONTEXT7_API_KEY: ••••••••"')
+  })
+
+  it('maskUrl and secretsOf hide the password in the URL userinfo', () => {
+    expect(maskUrl('https://user:pass@host/mcp')).toBe(`https://user:${MASK}@host/mcp`)
+    expect(secretsOf({ type: 'http', url: 'https://user:pass@host/mcp', headers: {} })).toEqual(['pass'])
+    const server = serversOf('https://user:pass@host/mcp').servers[0]
+    expect(previewRows(server)).toContainEqual({ label: 'Address', value: `https://user:${MASK}@host/mcp` })
+    expect(JSON.stringify(previewRows(server))).not.toContain('pass')
+  })
+
+  it('maskText hides a secret written JSON-escaped in a pasted JSON config', () => {
+    const text = '{"mcpServers":{"c":{"type":"http","url":"https://x.dev/mcp","headers":{"X":"ab\\"c"}}}}'
+    const server = serversOf(text).servers[0]
+    expect(secretsOf(server.config)).toEqual(['ab"c'])
+    expect(maskText(text, secretsOf(server.config)))
+      .toBe(`{"mcpServers":{"c":{"type":"http","url":"https://x.dev/mcp","headers":{"X":"${MASK}"}}}}`)
+  })
+
+  it('maskText hides a secret written with \\" inside a double-quoted shell word', () => {
+    const text = 'claude mcp add --transport http ctx https://x.dev/mcp --header "X: ab\\"c"'
+    const server = serversOf(text).servers[0]
+    expect(secretsOf(server.config)).toEqual(['ab"c'])
+    expect(maskText(text, secretsOf(server.config)))
+      .toBe(`claude mcp add --transport http ctx https://x.dev/mcp --header "X: ${MASK}"`)
   })
 
   it('maskText replaces the longest secret first', () => {

@@ -25,6 +25,7 @@ const MANY_REASON = 'At most 20 servers at once'
 const JSON_REASON = 'The JSON does not parse: '
 const RUNNERS = ['npx', 'uvx', 'bunx', 'node', 'python', 'python3', 'docker', 'deno']
 const SECRET_NAME = /key|token|secret|password|auth/i
+const USERINFO_PASSWORD = /^([a-z][a-z0-9+.-]*:\/\/[^/?#@]*:)([^/?#@]+)@/i
 
 /** Thrown inside the parser for text that is refused; parseAddInput turns it into a `none` result */
 class Refusal extends Error {}
@@ -58,7 +59,7 @@ function parseText(text: string): AddParse {
   if (words.length === 1) {
     const github = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\/\S*)?$/i.exec(words[0])
     if (github) return { kind: 'github', source: `${github[1]}/${github[2]}` }
-    if (isHttpUrl(words[0])) return { kind: 'servers', servers: [{ name: nameFromUrl(words[0]), config: { type: 'http', url: words[0], headers: {} } }], scope: null, needsClientSecret: false }
+    if (isHttpUrl(words[0])) return { kind: 'servers', servers: [{ name: cleanName(nameFromUrl(words[0])), config: { type: 'http', url: words[0], headers: {} } }], scope: null, needsClientSecret: false }
     if (hasScheme(words[0])) refuse(HTTP_ONLY_REASON)
   }
 
@@ -71,7 +72,7 @@ function parseText(text: string): AddParse {
 
   // any other command line: a stdio server
   const [command, ...args] = words
-  return { kind: 'servers', servers: [{ name: nameFromCommand(args), config: { type: 'stdio', command, args, env: {} } }], scope: null, needsClientSecret: false }
+  return { kind: 'servers', servers: [{ name: cleanName(nameFromCommand(args)), config: { type: 'stdio', command, args, env: {} } }], scope: null, needsClientSecret: false }
 }
 
 /** splits a command line by POSIX rules: '…' literal, "…" with \" and \\, \ escapes outside quotes; null when a quote is not closed */
@@ -346,22 +347,25 @@ function nameFromCommand(args: string[]): string {
 
 /** a secret-looking query value (key, token, secret, password, auth) → MASK */
 export function maskUrl(url: string): string {
-  return url.replace(/([?&][^=&#]*?)=([^&#]*)/g, (match, name: string, value: string) =>
+  const withoutPassword = url.replace(USERINFO_PASSWORD, (_, head: string) => `${head}${MASK}@`)
+  return withoutPassword.replace(/([?&][^=&#]*?)=([^&#]*)/g, (match, name: string, value: string) =>
     SECRET_NAME.test(name.slice(1)) && value !== '' ? `${name}=${MASK}` : match)
 }
 
 /** every header and env value, non-empty */
 export function secretsOf(config: McpConfig): string[] {
-  const values = config.type === 'stdio' ? Object.values(config.env) : Object.values(config.headers)
-  return values.filter((value) => value !== '')
+  if (config.type === 'stdio') return Object.values(config.env).filter((value) => value !== '')
+  const password = USERINFO_PASSWORD.exec(config.url)?.[2]
+  return [...Object.values(config.headers), ...(password === undefined ? [] : [password])].filter((value) => value !== '')
 }
 
-/** each secret replaced by MASK, longest first */
+/** each secret replaced by MASK, longest first; also where it is written JSON-escaped or as a double-quoted shell word */
 export function maskText(text: string, secrets: string[]): string {
-  return [...secrets]
-    .filter((secret) => secret !== '')
+  const forms = secrets.flatMap((secret) => [secret, JSON.stringify(secret).slice(1, -1), secret.replace(/["\\]/g, '\\$&')])
+  return [...new Set(forms)]
+    .filter((form) => form !== '')
     .sort((a, b) => b.length - a.length)
-    .reduce((masked, secret) => masked.split(secret).join(MASK), text)
+    .reduce((masked, form) => masked.split(form).join(MASK), text)
 }
 
 /** the URL (secret query values masked), or the command and its args joined by spaces (an arg with a space in double quotes) */
