@@ -7,6 +7,8 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 ### New
 
 - **The Agent messages panel shows what agents write to each other with Claude Code's own `SendMessage`** too, not only the messages ClaudeTerm carries. A message between two of your tabs shows once, in their conversation; a session outside ClaudeTerm shows under the name Claude Code gives it. A new message marks its tabs as unread; what a session's transcript already held when the tab opened comes in read.
+- **Project notes, and a note you can shape.** The note card has a **Session | Project** switch: the project note is shared by every Claude tab of the same git project, worktrees included, and stays on this device. A note can hold checkboxes — **Checkbox** in the card's toolbar, or `[ ] ` at the start of a line — ticked with a click or `Ctrl+Enter`, and bullets (**List**). Drag the card's bottom-left corner to make it bigger; each note keeps its size. Collapsed, the label counts the ticked items and shows the next one.
+- **Claude keeps your notes with you.** With the bundled `read_notes`, `add_to_note` and `check_note_item` tools, Claude reads both notes of its tab, adds what you should not lose and ticks what it finished. It never removes or rewrites your text, and an edit it makes while you type is merged with yours.
 
 ### Changes
 

@@ -121,7 +121,7 @@ The panel follows the file: when it changes, the document is drawn again. A Mark
 
 - **Shell profiles detected automatically** — PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and every WSL distribution, plus your own profiles. On macOS and Linux: your login shell, bash, zsh and fish.
 - **Claude tabs** — `claude` runs inside your shell of choice, and you stay in that shell when it exits.
-- **Notes** — a note of your own on each Claude tab (which feature it is, your TODO list), shown over the terminal as a small label you open into a card; it stays with the conversation through `/clear`, a restart and Recent sessions.
+- **Notes** — a note of your own on each Claude tab, and one for each project. The Note button (or `Ctrl+Shift+N` / `⌘N`) opens a card over the terminal or the chat with a **Session | Project** switch: the session note stays with the conversation through `/clear`, a restart and Recent sessions; the project note is shared by every Claude tab of the same git project, its worktrees included, and stays on this device. **Checkbox** (or `[ ] ` typed at a line's start) makes a line a checkbox item, ticked with a click or `Ctrl+Enter`; **List** makes bullets. Drag the card's bottom-left corner to make it bigger. Collapsed, the note is a small label that counts the ticked items and shows the next one. Claude can read both notes, add to them and tick items with the bundled `read_notes`, `add_to_note` and `check_note_item` tools, never erasing your text; what is stored is plain Markdown (`- [ ] item`).
 - **Proper terminal behaviour** — ConPTY on Windows, a real PTY on macOS and Linux, GPU rendering via xterm.js, Unicode, clickable links, search, drag & drop of files, smart `Ctrl+C` / `Ctrl+V` (`⌘C` / `⌘V` on macOS; pasting an image hands it to Claude), `Shift+Enter` for a new line in the prompt.
 - **Font sizes in points**, exactly like Windows Terminal — `12` looks the same in both.
 - **Tabs on the left** — **Tabs** in Settings → Appearance, or the position switch (in the tab bar, or at the bottom of the left column), moves the tabs into a column on the left, grouped by project (No project last), with the branch on every tab and a colored bar for a linked worktree. A **New tab** button sits at the top of the column, and **Recent sessions** at its bottom, over the account of the tab in front (the main account with its plan — Max, Pro, Team — as Claude Code's login names it, or the extra account it runs on), the bell for the notification settings, **Settings** and the position switch. The panel's buttons (Changes, Docs, Media, Note) stay in each tab's header. With the tabs on top, they are grouped by project too, under a label when there are several projects. Click a group's header to fold it; drag tabs or groups to reorder them, and `Ctrl+Tab` and `Ctrl+Alt+1` … `9` follow that order.
@@ -173,7 +173,7 @@ Your normal Claude Code login stays the **Main account**. An extra account is a 
 
 Pair ClaudeTerm on two or more computers, and each one shows the others' tabs in its own tab bar, under the device's chip. With the tabs on the left, they stand under the device's name, grouped by project with their branch, as your own do. In Settings → **Devices**, **Add a device** shows a code and this computer's addresses, valid for five minutes, and **Join a device** on the other computer takes one of the addresses and the code. The devices connect directly, over a network you set up yourself — a home network, Tailscale or a VPN. The first time ClaudeTerm accepts connections, Windows asks to allow it through the firewall, which needs an administrator; on macOS the system may ask to allow incoming connections. A device that the others cannot reach still connects to them, and Settings → **Devices** says **The other devices cannot connect to this one; to pair, show the code on the other device**.
 
-A device's tabs can be typed into, closed, forked and given another folder (**Change folder…**, which this device's own tabs have too) from here, and a Claude tab on another device has its own status bar (the model, the context, the running agents and background tasks, the plan's progress and the changes counter), Media panel and Changes panel. Files pasted or dropped into one of its tabs are copied to that computer. Stars and notes are the same on every device, and **Recent sessions** lists each device's conversations in a section of its own.
+A device's tabs can be typed into, closed, forked and given another folder (**Change folder…**, which this device's own tabs have too) from here, and a Claude tab on another device has its own status bar (the model, the context, the running agents and background tasks, the plan's progress and the changes counter), Media panel and Changes panel. Files pasted or dropped into one of its tabs are copied to that computer. Stars and session notes are the same on every device, and **Recent sessions** lists each device's conversations in a section of its own.
 
 The computer stays awake while another device uses it: another device that types into one of its tabs, or has one of its Claude tabs open while that tab works, keeps it from sleeping (**Keep this computer awake while another device uses it** in Settings → **Devices**). Claude can read the state of your devices and their tabs with the `device_status` tool, and open Settings → **Devices** with `open_device_settings`, where you pair or remove devices yourself.
 
@@ -205,7 +205,7 @@ On macOS ClaudeTerm updates itself as well: it downloads a new release and puts 
 
 From version 0.1.3 on, ClaudeTerm updates itself: it downloads a new release in the background and offers to restart into it, reopening your tabs and Claude conversations. **What's new** in the update banner lists what changed. Earlier versions need a one-time manual install. The ▾ menu next to the tabs has **ClaudeTerm <version> — check for updates** to check right away.
 
-On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff`, `show_document`, `set_task_list`, `get_task_list`, `device_status`, `open_device_settings`, `list_agents` and `message_agent` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
+On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_image`, `show_diff`, `show_document`, `set_task_list`, `get_task_list`, `device_status`, `open_device_settings`, `list_agents`, `message_agent`, `read_notes`, `add_to_note` and `check_note_item` tools) with Claude Code at user scope. Uninstalling on Windows removes the Explorer menu item and the MCP registration. On Linux and macOS, remove the registration yourself after uninstalling (`sudo apt remove claudeterm`, or dragging ClaudeTerm out of Applications): `claude mcp remove --scope user claudeterm`.
 
 **Requirements:** Windows 10 or 11 (x64), macOS 12 or later (Apple Silicon or Intel), or Ubuntu 22.04+ / Debian 12+ or a derivative (x64); and Claude Code (on Windows 2.1.139 or later). The chat view needs Claude Code 2.1.322 or later; with an older one, Claude tabs open in the terminal.
 
@@ -228,6 +228,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Show / hide the Changes panel | `Ctrl+Shift+D` | `⌘D` |
 | Show / hide the Docs panel | `Ctrl+Shift+O` | `⌘O` |
 | Show / hide the note of a Claude tab | `Ctrl+Shift+N` | `⌘N` |
+| Tick the checkbox item under the caret, in the note | `Ctrl+Enter` | `⌘Enter` |
 | Next tab that needs you | `Ctrl+Shift+J` | `⌘J` |
 | Find in the Changes panel | `Ctrl+F` (when the panel has the focus) | `⌘F` (when the panel has the focus) |
 | Recent sessions | `Ctrl+Shift+H` | `⌘⇧H` |
@@ -325,7 +326,7 @@ flowchart LR
     claude["claude --settings claude-tab-settings.json"]
   end
   claude -- "hooks + statusLine" --> hook["session-hook.js"]
-  claude -- "MCP: show_image, show_diff, show_document, set_task_list, get_task_list, device_status, open_device_settings" --> mcp["show-image-server.js"]
+  claude -- "MCP: show_image, show_diff, show_document, set_task_list, get_task_list, device_status, open_device_settings, read_notes, add_to_note, check_note_item" --> mcp["show-image-server.js"]
   hook -- "named pipe" --> main
   mcp -- "named pipe" --> main
   transcript[("session transcript\n+ subagent transcripts")] --> main
