@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONTINUE_PROMPT, LIMIT_PROMPT } from '../../src/main/auto-continue'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
@@ -172,6 +172,30 @@ test('the title bar shows the limits the stream reported', async () => {
     await sendMessage(page, 'hi')
     await expect(page.locator('#titlebar .meter-limit .meter-pct')).toHaveText('42%')
     await expect(page.locator('#titlebar .meter-week .meter-pct')).toHaveText('13%')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a /login to another account clears the limits the title bar shows at once', async () => {
+  const now = Math.floor(Date.now() / 1000)
+  const { app, page, config } = await launchChatTab({
+    turns: {},
+    fallback: [
+      { rateLimit: { type: 'five_hour', utilization: 0.81, resetsAt: now + 4 * 3600, status: 'allowed' } },
+      { rateLimit: { type: 'seven_day', utilization: 0.13, resetsAt: now + 3 * 86400, status: 'allowed' } }
+    ]
+  }, { login: { accountUuid: 'a1f3c2d4-0000-4000-8000-000000000001', organizationUuid: 'b2e4d3c5-0000-4000-8000-000000000001' } })
+  try {
+    await sendMessage(page, 'hi')
+    await expect(page.locator('#titlebar .meter-limit .meter-pct')).toHaveText('81%')
+    await expect(page.locator('#titlebar .meter-week .meter-pct')).toHaveText('13%')
+    // a /login in another tab: Claude Code writes the new login into its .claude.json
+    const file = join(config, '.claude.json')
+    const settings = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    writeFileSync(file, JSON.stringify({ ...settings, oauthAccount: { accountUuid: 'a1f3c2d4-0000-4000-8000-000000000002', organizationUuid: 'b2e4d3c5-0000-4000-8000-000000000002' } }))
+    await expect(page.locator('#titlebar .meter-limit')).toHaveCount(0)
+    await expect(page.locator('#titlebar .meter-week')).toHaveCount(0)
   } finally {
     await app.close()
   }

@@ -12,6 +12,10 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 
 - In a chat question where you can check several answers, what you type in the box is added to the answers you checked, instead of clearing them.
 
+### Fixes
+
+- After a `/login` to another account, the usage meters at the top of the window clear at once, and a limit the new account does not have (the 5-hour one, on some plans) no longer stays from the old account.
+
 ## 0.19.0
 
 ### New

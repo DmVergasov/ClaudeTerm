@@ -29,6 +29,19 @@ const meta = (description: string): AgentMeta => ({ description, toolUseId: null
 const task = (id: string, description: string | null = 'build'): BackgroundTask => ({ id, type: 'shell', description, command: 'make' })
 
 describe('StatusHub', () => {
+  it('forgetting the limits of a tab clears both and keeps the rest of its status; a tab without limits hears of nothing', () => {
+    const { hub, changes } = makeHub()
+    hub.status(status({ fiveHour: { usedPct: 81, resetsAt: 1_895_000_000 }, sevenDay: { usedPct: 1, resetsAt: 1_895_176_000 } }))
+    changes.length = 0
+    hub.forgetLimits(TAB)
+    expect(changes).toEqual([TAB])
+    expect(hub.get(TAB).main).toEqual({ model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null, sevenDay: null })
+    hub.forgetLimits(TAB)
+    hub.forgetLimits(TAB2)
+    expect(changes).toEqual([TAB])
+    expect(hub.get(TAB2).main).toBeNull()
+  })
+
   it('a task dropped after its stop is gone for good: a later status brings no trace of it', () => {
     const { hub, changes } = makeHub()
     hub.background(TAB, SID, [task('a'), task('b')])

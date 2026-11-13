@@ -240,11 +240,10 @@ function reply(requestId: string, body: Msg): void {
   emit({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: body } })
 }
 
-// a rate_limit_event of the stream: the recorded one's fields (tests/fixtures/chat/answer.jsonl), with this limit's window
+// a rate_limit_event of the stream: the recorded one's fields (tests/fixtures/chat/answer.jsonl); unifiedWindows, which names
+// every window the account has, only when the step gives the windows: without it the event names its own window alone
 function emitRateLimit(limit: { type: 'five_hour' | 'seven_day'; utilization: number; resetsAt: number; status?: 'allowed' | 'rejected'; windows?: RateLimitWindows }): void {
   const status = limit.status ?? 'allowed'
-  const window = { utilization: limit.utilization, resetsAt: limit.resetsAt, status }
-  const windows: RateLimitWindows = limit.windows ?? { [limit.type]: window }
   emit({
     type: 'rate_limit_event',
     rate_limit_info: {
@@ -255,7 +254,7 @@ function emitRateLimit(limit: { type: 'five_hour' | 'seven_day'; utilization: nu
       overageStatus: 'rejected',
       overageDisabledReason: 'org_level_disabled',
       isUsingOverage: false,
-      unifiedWindows: windows,
+      ...(limit.windows ? { unifiedWindows: limit.windows } : {}),
       overageEnabled: false
     },
     uuid: randomUUID(),

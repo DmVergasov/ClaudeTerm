@@ -662,6 +662,36 @@ describe('ChatModel', () => {
     expect(m.status()).toMatchObject({ fiveHour: { usedPct: 42, resetsAt: 1767225600 }, sevenDay: null })
   })
 
+  it('forgetting the limits clears both windows, until the stream reports them again', () => {
+    const { m } = model()
+    m.apply({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.81, resetsAt: 1895000000 } })
+    expect(m.forgetLimits()).toBe(true)
+    expect(m.status()).toMatchObject({ fiveHour: null, sevenDay: null })
+    expect(m.forgetLimits()).toBe(false)
+    m.apply({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'seven_day', utilization: 0.02, resetsAt: 1895176000 } })
+    expect(m.status()).toMatchObject({ fiveHour: null, sevenDay: { usedPct: 2, resetsAt: 1895176000 } })
+  })
+
+  it("unifiedWindows names every window the account has: one it no longer lists is gone (another account, without a five-hour limit)", () => {
+    const { m } = model()
+    m.apply({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'allowed', resetsAt: 1893456000, rateLimitType: 'five_hour', utilization: 0.81,
+        unifiedWindows: { five_hour: { utilization: 0.81, resetsAt: 1893456000, status: 'allowed' }, seven_day: { utilization: 0.01, resetsAt: 1893999999, status: 'allowed' } }
+      }
+    })
+    // the account signed in now has only a weekly window, as Claude Code reports it after /login
+    m.apply({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'allowed', resetsAt: 1895176000, rateLimitType: 'seven_day',
+        unifiedWindows: { seven_day: { utilization: 0.02, resetsAt: 1895176000, status: 'allowed' } }
+      }
+    })
+    expect(m.status()).toMatchObject({ fiveHour: null, sevenDay: { usedPct: 2, resetsAt: 1895176000 } })
+  })
+
   it('the context fill comes with its token counts when the answer has them', () => {
     const { m } = model()
     m.setContext({ pct: 74, used: 148000, size: 200000 })

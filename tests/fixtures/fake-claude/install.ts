@@ -24,7 +24,7 @@ export type FakeStep =
   | { lingerMs: number } // sets how long the process runs after its input ends (a slow exit); a step of a turn or of beforeInit
   | { fold: true | 'result' } // true: the next assistant message names the user messages read so far as taken into the turn (user_message_uuids); 'result': the messages still waiting are taken into the turn, named only on its result (user_message_uuids), and no turn of their own runs them
   | { inject: { text: string; origin?: Record<string, unknown> } } // a user-role message Claude Code puts in the conversation itself (a background task's notice, another session's message); origin: the SDK's origin of it, none when not given
-  | { rateLimit: { type: 'five_hour' | 'seven_day'; utilization: number; resetsAt: number; status?: 'allowed' | 'rejected'; windows?: RateLimitWindows } } // a rate_limit_event of the stream, shaped as the recorded one (utilization 0.42 is 42 %); windows: what unifiedWindows carries, both limits when given
+  | { rateLimit: { type: 'five_hour' | 'seven_day'; utilization: number; resetsAt: number; status?: 'allowed' | 'rejected'; windows?: RateLimitWindows } } // a rate_limit_event of the stream, shaped as the recorded one (utilization 0.42 is 42 %); windows: what unifiedWindows carries, every window the account has; left out, the event has no unifiedWindows and names its own window alone
 
 /** a compaction (compact: true is one with the defaults): gate holds it until the file <config folder>/<gate> exists; fail ends it as a failure with this error; the numbers go in its boundary */
 export interface FakeCompact { trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; gate?: string; fail?: string }

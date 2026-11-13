@@ -73,6 +73,7 @@ import { resolveChatLaunch, type ChatLaunchDeps } from './chat/claude-spawn'
 import { askOnce, loadSdk, startSdkEngine } from './chat/sdk-engine'
 import { HEADS_UP_MODEL, HEADS_UP_TIMEOUT_MS, HeadsUp } from './chat/heads-up'
 import { claudeAccountFile, readPlan } from './claude-plan'
+import { LoginWatch } from './login-watch'
 import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
 import { NoteHub } from './note-hub'
@@ -2735,6 +2736,19 @@ function bootstrap(): void {
   // the plan named at the foot of the tabs. Tests read only the .claude.json of a CLAUDE_CONFIG_DIR they set, never the user's
   const claudeAccount = isTest && !process.env.CLAUDE_CONFIG_DIR ? null : claudeAccountFile(process.env, homedir())
   ipcMain.handle(IPC.accountPlan, () => (claudeAccount === null ? null : readPlan(claudeAccount)))
+  // a /login to another account, or a /logout: the usage limits the tabs on the main account show were the old login's,
+  // and go at once; the new login's come with the next report of each tab's Claude Code
+  if (claudeAccount !== null) {
+    const loginWatch = new LoginWatch(claudeAccount, () => {
+      for (const t of tabs.list()) {
+        if (t.kind !== 'claude' || t.account !== null) continue
+        chatHub.forgetLimits(t.id)
+        statusHub.forgetLimits(t.id)
+      }
+    })
+    void loginWatch.start()
+    app.once('will-quit', () => loginWatch.stop())
+  }
   if (process.platform === 'darwin') Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate(app.name, () => settingsWindow.open())))
   ipcMain.handle(IPC.clipboardRead, async (): Promise<ClipboardContent> => ({ text: await clipboard.readText(), hasImage: await clipboard.has('image/png') }))
   ipcMain.on(IPC.clipboardWriteText, (_e, text: string) => { void clipboard.writeText(text) })

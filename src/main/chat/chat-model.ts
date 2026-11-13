@@ -410,6 +410,14 @@ export class ChatModel {
     return { model: this.st.model, effort: this.st.effort, contextPct: this.contextPct, contextUsed: this.contextUsed, contextSize: this.contextSize, fiveHour: this.fiveHour, sevenDay: this.sevenDay }
   }
 
+  /** the login the limits were read under is gone (a /login to another account): none until the stream reports the new one's; true when there were some */
+  forgetLimits(): boolean {
+    if (this.fiveHour === null && this.sevenDay === null) return false
+    this.fiveHour = null
+    this.sevenDay = null
+    return true
+  }
+
   /** the context fill the hub reads from the engine, with its token counts */
   setContext(c: { pct: number | null; used: number | null; size: number | null }): void {
     this.contextPct = c.pct
@@ -960,8 +968,15 @@ export class ChatModel {
     const windows: Obj = isObj(info.unifiedWindows) ? info.unifiedWindows : {}
     const fiveHour = limitOf(windows.five_hour) ?? (info.rateLimitType === 'five_hour' ? limitOf(info) : null)
     const sevenDay = limitOf(windows.seven_day) ?? (info.rateLimitType === 'seven_day' ? limitOf(info) : null)
-    if (fiveHour !== null) this.fiveHour = fiveHour
-    if (sevenDay !== null) this.sevenDay = sevenDay
+    if (isObj(info.unifiedWindows)) {
+      // unifiedWindows lists every window the account has: one it no longer lists is gone, as after a /login to an
+      // account without it. An event without the list names only its own window, and the other one stays
+      this.fiveHour = fiveHour
+      this.sevenDay = sevenDay
+    } else {
+      if (fiveHour !== null) this.fiveHour = fiveHour
+      if (sevenDay !== null) this.sevenDay = sevenDay
+    }
     if (info.status !== 'rejected' || resetsAt === null || this.rejectedAt === resetsAt) return []
     this.rejectedAt = resetsAt
     const at = new Date(resetsAt * 1000)

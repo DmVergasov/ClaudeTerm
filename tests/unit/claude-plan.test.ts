@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { claudeAccountFile, planName } from '../../src/main/claude-plan'
+import { claudeAccountFile, loginOf, planName } from '../../src/main/claude-plan'
 
 const account = (organizationType: unknown): string => JSON.stringify({ numStartups: 3, oauthAccount: { organizationType, organizationName: 'Example Org' } })
 
@@ -20,6 +20,27 @@ describe('planName', () => {
     expect(planName(JSON.stringify([1, 2]))).toBeNull()
     expect(planName('{ not json')).toBeNull()
     expect(planName(null)).toBeNull()
+  })
+})
+
+describe('loginOf', () => {
+  const login = (oauthAccount: unknown, more: object = {}): string => JSON.stringify({ numStartups: 3, ...more, oauthAccount })
+
+  it('changes with the account or the organization of the login, and with nothing else the file holds', () => {
+    const first = loginOf(login({ accountUuid: 'acc-1', organizationUuid: 'org-1', organizationType: 'claude_pro' }))
+    expect(first).toEqual(expect.any(String))
+    expect(loginOf(login({ accountUuid: 'acc-1', organizationUuid: 'org-1', organizationType: 'claude_pro' }, { numStartups: 4, tipsHistory: { a: 1 } }))).toBe(first)
+    expect(loginOf(login({ accountUuid: 'acc-2', organizationUuid: 'org-1' }))).not.toBe(first)
+    expect(loginOf(login({ accountUuid: 'acc-1', organizationUuid: 'org-2' }))).not.toBe(first)
+  })
+
+  it('is null for a file with no login, and undefined for text it cannot read as Claude Code settings', () => {
+    expect(loginOf(JSON.stringify({ numStartups: 3 }))).toBeNull()
+    expect(loginOf(login(null))).toBeNull()
+    expect(loginOf(login({}))).toBeNull()
+    expect(loginOf(login([1, 2]))).toBeNull()
+    expect(loginOf('{ "numStartups": 3, "oauthAcc')).toBeUndefined()
+    expect(loginOf(JSON.stringify([1, 2]))).toBeUndefined()
   })
 })
 

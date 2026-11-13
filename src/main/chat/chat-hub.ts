@@ -187,6 +187,12 @@ export class ChatHub {
     if (live && !live.ended) this.publish(live, live.model.setState({ activity: { kind: 'restarting', since: this.d.now() } }))
   }
 
+  /** the login the tab's usage limits were read under is gone (a /login to another account): its status shows none until the stream reports the new one's */
+  forgetLimits(tabId: string): void {
+    const live = this.tabs.get(tabId)
+    if (live && !live.ended && live.model.forgetLimits()) this.report(live)
+  }
+
   /** the relaunch of a tab starts another conversation or folder, not a restart of its own: the restart said is none, and the chat starts new */
   newConversation(tabId: string): void {
     this.restarts.delete(tabId)

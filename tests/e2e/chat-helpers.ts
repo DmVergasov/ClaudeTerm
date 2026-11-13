@@ -24,11 +24,12 @@ function installCommand(dir: string): string {
 
 /**
  * The app with one Claude tab that opens in its chat. The stand-in Claude Code runs the script; its config folder is a
- * temp folder, whose .claude.json trusts the work folder unless `trusted` is false. `log()` reads what the stand-in logged.
+ * temp folder, whose .claude.json trusts the work folder unless `trusted` is false, and holds the `login` given as Claude
+ * Code's oauthAccount. `log()` reads what the stand-in logged.
  */
 export async function launchChatTab(
   script: FakeScript,
-  o: { trusted?: boolean; version?: string; work?: string; autoContinue?: boolean; headsUp?: boolean; env?: Record<string, string>; tabs?: object; sidePanel?: object } = {}
+  o: { trusted?: boolean; login?: object; version?: string; work?: string; autoContinue?: boolean; headsUp?: boolean; env?: Record<string, string>; tabs?: object; sidePanel?: object } = {}
 ): Promise<Launched & { work: string; config: string; tabId: string; log(): Record<string, unknown>[] }> {
   const root = mkdtempSync(join(tmpdir(), 'ct-chat-'))
   const work = o.work ?? join(root, 'work')
@@ -40,7 +41,11 @@ export async function launchChatTab(
   writeFileSync(scriptFile, JSON.stringify({ ...script, version: o.version ?? script.version }))
   const logFile = join(root, 'fake-claude.log')
   // Claude Code keys the trust by the folder's real path: the key is the canonical one, as the app compares it
-  if (o.trusted !== false) writeFileSync(join(config, '.claude.json'), JSON.stringify({ projects: { [realpathSync.native(work)]: { hasTrustDialogAccepted: true } } }))
+  const claudeJson = {
+    ...(o.trusted !== false ? { projects: { [realpathSync.native(work)]: { hasTrustDialogAccepted: true } } } : {}),
+    ...(o.login ? { oauthAccount: o.login } : {})
+  }
+  if (Object.keys(claudeJson).length > 0) writeFileSync(join(config, '.claude.json'), JSON.stringify(claudeJson))
 
   // Heads up asks a second Claude Code process now and then: off unless the test is about it, so other tests start only theirs
   const settings = { ...FAKE_CLAUDE_SETTINGS, claude: { ...FAKE_CLAUDE_SETTINGS.claude, command, view: 'chat', autoContinue: o.autoContinue ?? false, headsUp: o.headsUp ?? false }, ...(o.tabs ? { tabs: o.tabs } : {}), ...(o.sidePanel ? { sidePanel: o.sidePanel } : {}) }

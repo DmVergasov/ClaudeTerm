@@ -144,6 +144,14 @@ export class StatusHub {
     this.tabs.delete(tabId)
   }
 
+  /** the login the tab's usage limits were read under is gone (a /login to another account): they go until the new one's come */
+  forgetLimits(tabId: string): void {
+    const t = this.tabs.get(tabId)
+    if (!t?.main || (t.main.fiveHour === null && t.main.sevenDay === null)) return
+    t.main = { ...t.main, fiveHour: null, sevenDay: null }
+    this.deps.onChange(tabId)
+  }
+
   /** the tab's turn stopped on a usage limit, and Claude goes on after its reset (`at`, ms); null: it no longer waits */
   continuesAt(tabId: string, at: number | null): void {
     const t = this.tab(tabId)
