@@ -115,7 +115,10 @@ test('the header names the folder only when the title is not the folder\'s name'
 test('the header\'s title element survives a redraw that changes nothing', async () => {
   const { app, page, tabId } = await launchClaudeTab(QUIET)
   const title = page.locator('#sheet-header .sh-title')
-  await expect(title).toHaveText(await page.evaluate((id) => window.__ct!.tabTitle(id)!, tabId))
+  // the tab gets a name of its own: a terminal tab is named by its program's title, which may still change (an elevated PowerShell
+  // adds "Administrator: "), and a new title is a change the header draws
+  await page.evaluate((id) => window.ct.renameTab(id, 'Ledger export'), tabId)
+  await expect(title).toHaveText('Ledger export')
   // the tab's project is known: its answer redraws the header, and a slow git answers after the title shows
   await expect.poll(() => page.evaluate((id) => window.__ct!.placeOf!(id) !== undefined, tabId)).toBe(true)
   await page.evaluate(() => { (window as unknown as Record<string, unknown>).probe = document.querySelector('#sheet-header .sh-title') })
