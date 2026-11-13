@@ -1560,7 +1560,7 @@
   width: 24px;
   height: 24px;
   border-radius: 7px;
-  background: #A78BFA22;
+  background: color-mix(in srgb, var(--purple) 13%, transparent);
   color: var(--purple);
   font-size: 12px;
   font-weight: 700;

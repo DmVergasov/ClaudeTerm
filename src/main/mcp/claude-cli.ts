@@ -137,13 +137,14 @@ function errorMessage(error: unknown): string {
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g
 
 /**
- * what a failed command says: the last 3 non-empty lines of stderr, else of stdout; ANSI codes stripped; at most 500 chars.
+ * what a failed command says: the last 3 non-empty lines of stderr, else of stdout; ANSI codes stripped; at most 500 chars,
+ * the END of them. The callers mask the secrets of the whole output first, so this cut cannot split one.
  */
 export function cliMessage(r: CliRun): string {
   const lines = (text: string): string[] => text.replace(ANSI, '').split(/\r?\n/).filter(line => line.trim() !== '')
   const stderr = lines(r.stderr)
   const source = stderr.length > 0 ? stderr : lines(r.stdout)
-  return source.slice(-3).join('\n').slice(0, MAX_MESSAGE)
+  return source.slice(-3).join('\n').slice(-MAX_MESSAGE)
 }
 
 function parseJson(text: string): { value: unknown } | undefined {

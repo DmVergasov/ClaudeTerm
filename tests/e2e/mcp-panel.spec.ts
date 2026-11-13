@@ -237,6 +237,25 @@ test('Retry reconnects a failed server', async () => {
   }
 })
 
+test('Reconnect in the ··· menu reconnects the server and closes the menu', async () => {
+  const { app, page, log } = await launchChatTab(
+    { turns: {}, mcp: { sentry: { status: 'failed', error: 'spawn uvx ENOENT' } } },
+    { claude: { mcpServers: { sentry: SENTRY } } }
+  )
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('sentry'))
+    await row.getByRole('button', { name: 'More for sentry', exact: true }).click()
+    await page.locator('.panel-mcp .mcp-menu-item', { hasText: 'Reconnect' }).click()
+    await expect.poll(() => JSON.stringify(log())).toContain('mcp_reconnect')
+    await expect(page.locator('.panel-mcp .mcp-menu')).toHaveCount(0)
+    await expect(row.getByRole('button', { name: 'More for sentry', exact: true })).toBeEnabled()
+  } finally {
+    await app.close()
+  }
+})
+
 test('the ↻ button reconnects a connected server', async () => {
   const { app, page, log } = await launchChatTab({ turns: {} }, { claude: { mcpServers: { github: GITHUB } } })
   try {

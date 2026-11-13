@@ -1,4 +1,5 @@
 import type { MarketplaceView, PluginOffer, PluginOption, PluginsView, PluginView } from '../../shared/mcp'
+import { maskUrl } from '../../shared/mcp-add'
 import { folderMatcher } from './mcp-config'
 
 // Reads the JSON that `claude plugin …` prints, and builds the Plugins section for a tab's folder. Everything here is
@@ -133,8 +134,11 @@ function sourceOf(e: Json): string | null {
     case 'github':
       return text(e.repo, MAX_SOURCE) || null
     case 'git':
-    case 'url':
-      return text(e.url, MAX_SOURCE) || null
+    case 'url': {
+      // a private repository's address may carry a token: masked as an address is
+      const url = text(e.url, MAX_SOURCE)
+      return url ? maskUrl(url) : null
+    }
     case 'directory':
     case 'file':
       return text(e.path, MAX_SOURCE) || null

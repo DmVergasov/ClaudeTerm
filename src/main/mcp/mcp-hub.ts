@@ -52,6 +52,8 @@ export class McpHub {
   private readonly queues = new Map<string, Promise<void>>()
   /** the sign-ins running per tab and server name, so cancel-login and a removed tab can end them */
   private readonly logins = new Map<string, Map<string, AbortController>>()
+  /** the Cancels that came before their sign-in registered, per tab and server name: the next sign-in of that name answers Cancelled */
+  private readonly cancels = new Map<string, Set<string>>()
   /** the plugin lists of each config folder, kept LIST_TTL_MS; any plugin action drops them */
   private readonly lists = new Map<string, { at: number; lists: Lists }>()
 
@@ -78,6 +80,9 @@ export class McpHub {
   }
 
   async action(tabId: string, a: McpAction): Promise<McpResult> {
+    // a sign-in and its Cancel do not wait for the tab lookup: a Cancel must always find the sign-in its window shows
+    if (a.kind === 'login') return this.login(tabId, a.name)
+    if (a.kind === 'cancel-login') return this.cancelLogin(tabId, a.name)
     const tab = await this.d.tab(tabId)
     if (tab === null) return fail(NOT_TAB)
     switch (a.kind) {
@@ -91,11 +96,6 @@ export class McpHub {
       }
       case 'remove':
         return this.remove(tabId, tab, a.name, a.scope)
-      case 'login':
-        return this.login(tabId, tab, a.name)
-      case 'cancel-login':
-        this.logins.get(tabId)?.get(a.name)?.abort()
-        return { ok: true }
       case 'logout':
         return this.logout(tabId, tab, a.name)
       case 'copy-config':
@@ -171,6 +171,12 @@ export class McpHub {
   removeTab(tabId: string): void {
     for (const controller of this.logins.get(tabId)?.values() ?? []) controller.abort()
     this.logins.delete(tabId)
+    this.cancels.delete(tabId)
+  }
+
+  /** the app quits: every sign-in ends with Cancelled, so no `claude mcp login` outlives ClaudeTerm */
+  dispose(): void {
+    for (const tabId of [...this.logins.keys()]) this.removeTab(tabId)
   }
 
   private paths(tab: Tab): ConfigPaths {
@@ -226,13 +232,30 @@ export class McpHub {
     })
   }
 
-  /** beside the queue: a sign-in waits for the browser, so it must not hold up the other commands */
-  private async login(tabId: string, tab: Tab, name: string): Promise<McpResult> {
+  /** a Cancel ends the sign-in running for the name; one that finds none is remembered for the next sign-in of that name */
+  private cancelLogin(tabId: string, name: string): McpResult {
+    const running = this.logins.get(tabId)?.get(name)
+    if (running !== undefined) {
+      running.abort()
+    } else {
+      const early = this.cancels.get(tabId) ?? new Set<string>()
+      early.add(name)
+      this.cancels.set(tabId, early)
+    }
+    return { ok: true }
+  }
+
+  /** beside the queue: a sign-in waits for the browser, so it must not hold up the other commands. It registers before its tab lookup. */
+  private async login(tabId: string, name: string): Promise<McpResult> {
     const controller = new AbortController()
     const mine = this.logins.get(tabId) ?? new Map<string, AbortController>()
     mine.set(name, controller)
     this.logins.set(tabId, mine)
+    if (this.cancels.get(tabId)?.delete(name)) controller.abort()
     try {
+      const tab = await this.d.tab(tabId)
+      if (tab === null) return fail(NOT_TAB)
+      if (controller.signal.aborted) return fail('Cancelled')
       const result = await this.cli(tab, ['mcp', 'login', '--', name], { secrets: [], timeoutMs: LOGIN_TIMEOUT_MS, signal: controller.signal })
       if ('error' in result) return fail(result.error)
       await this.reconnectQuietly(tabId, name)
@@ -387,7 +410,9 @@ export class McpHub {
       const run = await this.d.run(launch, args, options)
       if (run.code === 0) return { run }
       this.d.log.warn(`claude ${args[0]} ${args[1]} failed (${run.code})`)
-      return { error: masked(cliMessage(run)) || `Claude Code exited with code ${run.code}` }
+      // the secrets leave the whole output before its message is cut: a cut must not leave the start of a secret in clear
+      const shown = { code: run.code, stdout: maskText(run.stdout, o.secrets), stderr: maskText(run.stderr, o.secrets) }
+      return { error: masked(cliMessage(shown)) || `Claude Code exited with code ${run.code}` }
     } catch (error) {
       this.d.log.warn(`claude ${args[0]} ${args[1]} failed (${error instanceof CliError ? error.reason : 'error'})`)
       return { error: masked(errorText(error)) }
@@ -439,9 +464,14 @@ function liveView(s: McpLiveServer): McpServerView {
     transport: transportOf(s.transport),
     target: /^[a-z][a-z0-9+.-]*:\/\//i.test(target) ? maskUrl(target) : target,
     tools: Array.isArray(s.tools) ? s.tools.filter((t): t is string => typeof t === 'string').slice(0, MAX_TOOLS).map((t) => t.slice(0, MAX_NAME)) : [],
-    error: typeof s.error === 'string' ? s.error.slice(0, MAX_ERROR) : null,
+    error: typeof s.error === 'string' ? maskUrls(s.error).slice(0, MAX_ERROR) : null,
     version: typeof s.version === 'string' ? s.version.slice(0, MAX_NAME) : null
   }
+}
+
+/** a live error names the URLs it failed on: each is masked as an address is (its password and key-like query values) */
+function maskUrls(text: string): string {
+  return text.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, (url) => maskUrl(url))
 }
 
 function configuredView(s: ConfiguredServer, status: McpStatus): McpServerView {

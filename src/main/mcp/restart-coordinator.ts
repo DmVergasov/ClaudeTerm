@@ -93,6 +93,8 @@ export function reportOf(changes: ConfigChange[], servers: McpLiveServer[], fina
 export interface CoordinatorDeps {
   read(tabId: string): Promise<TabConfig | null>
   idle(tabId: string): boolean
+  /** the background tasks the session runs (a dev server, a background agent): a restart would stop them */
+  background(tabId: string): number
   touchedAt(tabId: string): number | null
   restart(tabId: string): void
   card(tabId: string, card: ReloadCardView | null): void
@@ -116,8 +118,10 @@ interface TabState {
   owed: ConfigChange[]
   card: ReloadCardView | null
   mode: ReloadMode | null
-  /** a change made by Claude or in this tab restarts it without asking, until Not now or the next start */
+  /** a change made by Claude or in this tab restarts it without asking, until Not now or the next start, or a comparison with no change */
   auto: boolean
+  /** when the last turn ended (its comparison was made): a configuration touch counts only when later than this; null before the first */
+  turnEnded: number | null
   /** this tab made a change: the next complete comparison of it counts as the maker's, whichever comparison that is */
   makerDue: boolean
   notNow: boolean
@@ -141,6 +145,7 @@ function freshState(owed: ConfigChange[], loadedAt: number): TabState {
     card: null,
     mode: null,
     auto: false,
+    turnEnded: null,
     makerDue: false,
     notNow: false,
     restarting: false,
@@ -210,7 +215,12 @@ export class RestartCoordinator {
 
   /** the turn of the tab ended: compare it, then a restart that waited for the turn may run */
   turnEnded(tab: string): void {
-    void this.compare(tab).then(() => this.attempt(tab))
+    void this.compare(tab).then(() => {
+      // recorded after its comparison, so the touches of this turn counted above are not counted again by the next one
+      const s = this.states.get(tab)
+      if (s !== undefined) s.turnEnded = this.d.now()
+      this.attempt(tab)
+    })
   }
 
   /** a panel action of this tab changed the configuration: every tab is compared, this one as the maker */
@@ -237,7 +247,8 @@ export class RestartCoordinator {
     if (s.mode === 'restarting') return true
     s.notNow = false
     s.auto = true
-    this.attempt(tab)
+    // the person's own Restart: the background tasks it would stop are no reason to wait
+    this.attempt(tab, true)
     return true
   }
 
@@ -316,6 +327,7 @@ export class RestartCoordinator {
     }
     if (changes.length === 0) {
       s.pending = []
+      s.auto = false
       this.clearTimer(s)
       s.mode = null
       this.setCard(tab, s, null)
@@ -324,9 +336,14 @@ export class RestartCoordinator {
 
     const previous = s.pending
     s.pending = changes
+    // a touch of the configuration (Claude's own command or edit) makes this tab automatic for the turn that made it only
     const touched = this.d.touchedAt(tab)
-    const auto = !s.notNow && (maker || s.auto || (touched !== null && touched >= s.loadedAt))
+    const touchCounts = touched !== null && (s.turnEnded === null ? touched >= s.loadedAt : touched > s.turnEnded)
+    // background tasks would be stopped by a restart: the card waits for Restart
+    const busy = this.d.background(tab) > 0
+    const auto = !busy && !s.notNow && (maker || s.auto || touchCounts)
     if (!auto) {
+      if (busy) s.auto = false
       this.clearTimer(s)
       this.setMode(tab, s, 'manual')
       return
@@ -337,12 +354,19 @@ export class RestartCoordinator {
   }
 
   /** an automatic restart that is due runs now when the tab is idle and not held; otherwise the card says auto-later */
-  private attempt(tab: string): void {
+  private attempt(tab: string, byPerson = false): void {
     const s = this.states.get(tab)
     if (s === undefined || s.restarting || !s.auto || s.notNow || s.pending.length === 0) return
     // a comparison in flight may answer incomplete or reject and re-arm nothing: the due restart checks again soon
     if (s.comparing > 0) {
       this.schedule(tab, s, RECHECK_MS)
+      return
+    }
+    // background tasks that started after the change: the card waits for Restart, as the other tabs' cards do
+    if (!byPerson && this.d.background(tab) > 0) {
+      s.auto = false
+      this.clearTimer(s)
+      this.setMode(tab, s, 'manual')
       return
     }
     if ((this.holds.get(tab) ?? 0) > 0) {

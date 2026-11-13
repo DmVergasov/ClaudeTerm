@@ -26,6 +26,8 @@ const JSON_REASON = 'The JSON does not parse: '
 const RUNNERS = ['npx', 'uvx', 'bunx', 'node', 'python', 'python3', 'docker', 'deno']
 const SECRET_NAME = /key|token|secret|password|auth/i
 const USERINFO_PASSWORD = /^([a-z][a-z0-9+.-]*:\/\/[^/?#@]*:)([^/?#@]+)@/i
+/** a query parameter: its name with its leading ? or &, and its raw value */
+const QUERY_PARAM = /([?&][^=&#]*?)=([^&#]*)/g
 
 /** Thrown inside the parser for text that is refused; parseAddInput turns it into a `none` result */
 class Refusal extends Error {}
@@ -348,15 +350,26 @@ function nameFromCommand(args: string[]): string {
 /** a secret-looking query value (key, token, secret, password, auth) → MASK */
 export function maskUrl(url: string): string {
   const withoutPassword = url.replace(USERINFO_PASSWORD, (_, head: string) => `${head}${MASK}@`)
-  return withoutPassword.replace(/([?&][^=&#]*?)=([^&#]*)/g, (match, name: string, value: string) =>
+  return withoutPassword.replace(QUERY_PARAM, (match, name: string, value: string) =>
     SECRET_NAME.test(name.slice(1)) && value !== '' ? `${name}=${MASK}` : match)
 }
 
-/** every header and env value, non-empty */
+/** every header and env value, non-empty; for a URL also its password and its secret-looking query values, raw and decoded */
 export function secretsOf(config: McpConfig): string[] {
   if (config.type === 'stdio') return Object.values(config.env).filter((value) => value !== '')
   const password = USERINFO_PASSWORD.exec(config.url)?.[2]
-  return [...Object.values(config.headers), ...(password === undefined ? [] : [password])].filter((value) => value !== '')
+  const query = [...config.url.matchAll(QUERY_PARAM)]
+    .filter((match) => SECRET_NAME.test(match[1].slice(1)) && match[2] !== '')
+    .flatMap((match) => [match[2], safeDecode(match[2])])
+  return [...new Set([...Object.values(config.headers), ...(password === undefined ? [] : [password]), ...query])].filter((value) => value !== '')
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
 
 /** each secret replaced by MASK, longest first; also where it is written JSON-escaped or as a double-quoted shell word */

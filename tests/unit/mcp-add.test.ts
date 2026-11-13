@@ -235,6 +235,12 @@ describe('masking', () => {
     expect(secretsOf({ type: 'stdio', command: 'npx', args: [], env: { C: '2' } })).toEqual(['2'])
   })
 
+  it('secretsOf lists the secret-looking query values of a URL, raw and decoded, the same ones maskUrl hides', () => {
+    expect(secretsOf({ type: 'http', url: 'https://mcp.example.com/mcp?apiKey=sk-test-123', headers: {} })).toEqual(['sk-test-123'])
+    expect(secretsOf({ type: 'http', url: 'https://x.dev/mcp?token=a%2Bb&mode=1', headers: {} })).toEqual(['a%2Bb', 'a+b'])
+    expect(secretsOf({ type: 'http', url: 'https://x.dev/mcp?mode=1&key=', headers: {} })).toEqual([])
+  })
+
   it('maskUrl masks only secret-looking query values', () => {
     expect(maskUrl('https://x.dev/mcp?api_key=abc&mode=1')).toBe('https://x.dev/mcp?api_key=••••••••&mode=1')
     expect(maskUrl('https://x.dev/mcp?Access_Token=abc')).toBe(`https://x.dev/mcp?Access_Token=${MASK}`)

@@ -7,9 +7,9 @@ import { dirname, join, resolve } from 'node:path'
 
 const STAND_IN = resolve(__dirname, '..', 'fixtures', 'fake-claude', 'fake-claude.ts')
 
-/** the session starts the stand-in logged: its argv holds stream-json, and sessionId when one is given */
-export function chatStarts(log: () => Record<string, unknown>[], sessionId?: string): number {
-  return log().filter((entry) => Array.isArray(entry.argv) && entry.argv.includes('stream-json') && (sessionId === undefined || entry.argv.includes(sessionId))).length
+/** the session starts the stand-in logged: its argv holds stream-json */
+export function chatStarts(log: () => Record<string, unknown>[]): number {
+  return log().filter((entry) => Array.isArray(entry.argv) && entry.argv.includes('stream-json')).length
 }
 
 /** the `claude mcp …` and `claude plugin …` calls the stand-in logged: the arguments, whether a client secret was in its environment, and the stdin's keys */

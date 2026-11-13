@@ -32,6 +32,7 @@ function setup(o: Partial<{
   launchError: string
   openError: string
   json: Record<string, unknown>   // more files, by their full path
+  tabGate: Promise<void>          // the tab lookup waits for this (a realpath still running)
 }> = {}) {
   const paths = configPaths(ENV, HOME, FOLDER)
   const files = new Map<string, unknown>()
@@ -51,7 +52,10 @@ function setup(o: Partial<{
       if (o.launchError !== undefined) throw new Error(o.launchError)
       return o.launch ?? LAUNCH
     },
-    tab: async (id) => (id === TAB ? { env: ENV, folder: FOLDER } : null),
+    tab: async (id) => {
+      await o.tabGate
+      return id === TAB ? { env: ENV, folder: FOLDER } : null
+    },
     home: HOME,
     readJson: async (file) => files.get(file) ?? null,
     run: async (_launch, args, opts) => {
@@ -98,6 +102,13 @@ const live = (over: Partial<McpLiveServer>): McpLiveServer => ({
 })
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve: () => void = () => {}
+  const promise = new Promise<void>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
 
 describe('McpHub', () => {
   it('servers merges the session\'s statuses with the pending project servers of the configuration', async () => {
@@ -127,6 +138,16 @@ describe('McpHub', () => {
         { name: 'blocked', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'node', tools: [], error: null, version: null }
       ]
     })
+  })
+
+  it('a live error that names a URL with a secret query value shows the URL masked', async () => {
+    const { hub } = setup({
+      live: [live({ name: 'hosted', status: 'failed', error: 'connect ECONNREFUSED https://mcp.example.com/mcp?apiKey=sk-live-9 refused' })]
+    })
+
+    const [server] = (await hub.servers(TAB))?.servers ?? []
+    expect(server.error).toBe(`connect ECONNREFUSED https://mcp.example.com/mcp?apiKey=${MASK} refused`)
+    expect(JSON.stringify(server)).not.toContain('sk-live-9')
   })
 
   it('with no running session the configured servers are listed: disabled off, pending waiting for approval, others configured', async () => {
@@ -200,6 +221,49 @@ describe('McpHub', () => {
     expect(cancelled.changed).toEqual([])
   })
 
+  it('a cancel sent while the sign-in still waits for its tab answers at once and ends the sign-in with Cancelled', async () => {
+    const gate = deferred()
+    const cancelled = setup({
+      live: [live({})],
+      tabGate: gate.promise,
+      reply: (_args, o) => new Promise((_resolve, reject) => {
+        const cancel = (): void => reject(new CliError('cancelled', 'Cancelled'))
+        if (o.signal?.aborted) cancel()
+        o.signal?.addEventListener('abort', cancel)
+      })
+    })
+    const login = cancelled.hub.action(TAB, { kind: 'login', name: 'github' })
+    const answer = cancelled.hub.action(TAB, { kind: 'cancel-login', name: 'github' })
+    expect(await Promise.race([answer, sleep(50).then(() => 'waits for the tab')])).toEqual({ ok: true })
+    gate.resolve()
+    expect(await login).toEqual({ ok: false, error: 'Cancelled' })
+    expect(cancelled.runs).toHaveLength(0)
+    expect(cancelled.reconnects).toEqual([])
+    expect(cancelled.changed).toEqual([])
+  })
+
+  it('a cancel that comes before its sign-in is remembered, and that sign-in answers Cancelled', async () => {
+    const { hub, runs, changed } = setup({ live: [live({})] })
+    expect(await hub.action(TAB, { kind: 'cancel-login', name: 'github' })).toEqual({ ok: true })
+    expect(await hub.action(TAB, { kind: 'login', name: 'github' })).toEqual({ ok: false, error: 'Cancelled' })
+    expect(runs).toHaveLength(0)
+    expect(changed).toEqual([])
+  })
+
+  it('dispose ends every running sign-in with Cancelled', async () => {
+    const running = setup({
+      live: [live({})],
+      reply: (_args, o) => new Promise((_resolve, reject) => {
+        o.signal?.addEventListener('abort', () => reject(new CliError('cancelled', 'Cancelled')))
+      })
+    })
+    const login = running.hub.action(TAB, { kind: 'login', name: 'github' })
+    while (running.runs.length === 0) await sleep(1)
+    running.hub.dispose()
+    expect(await login).toEqual({ ok: false, error: 'Cancelled' })
+    expect(running.reconnects).toEqual([])
+  })
+
   it('logout runs, then reconnects', async () => {
     const { hub, runs, reconnects, changed } = setup({ live: [live({})] })
 
@@ -255,6 +319,19 @@ describe('McpHub', () => {
     expect(changed).toEqual([[TAB, true]])
     expect(warns).toEqual(['claude mcp add-json failed (1)'])
     expect(JSON.stringify(result)).not.toContain('sk-test-123')
+  })
+
+  it('a failed add masks a secret that straddles the message cut, and keeps the end of the message', async () => {
+    // the echoed config puts the header value at character 495: a cut before the masking would leave its start in clear
+    const secret = 'sk-test-123456'
+    const reply: Reply = async () => ({ code: 1, stdout: '', stderr: `${'a'.repeat(495)}${secret}END` })
+    const { hub } = setup({ reply })
+    const text = JSON.stringify({ mcpServers: { one: { type: 'http', url: 'https://one.example.com/mcp', headers: { Authorization: secret } } } })
+
+    const result = await hub.add(TAB, { text, names: ['one'], scope: 'user', clientSecret: null })
+    expect(result.ok).toBe(false)
+    expect(JSON.stringify(result)).not.toContain('sk-')
+    expect(result.ok === false && result.error.endsWith(`${MASK}END`)).toBe(true)
   })
 
   it('commands of one config folder run one after the other', async () => {

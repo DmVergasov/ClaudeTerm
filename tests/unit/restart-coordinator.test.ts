@@ -32,6 +32,7 @@ function harness() {
   const h = {
     files: new Map<string, TabConfig>(),
     idle: new Map<string, boolean>(),
+    background: new Map<string, number>(),
     touched: new Map<string, number | null>(),
     servers: new Map<string, () => Promise<McpLiveServer[] | null>>(),
     readFn: (tab: string): Promise<TabConfig | null> => Promise.resolve(h.files.get(tab) ?? cfg()),
@@ -43,6 +44,7 @@ function harness() {
   const deps: CoordinatorDeps = {
     read: (tab) => h.readFn(tab),
     idle: (tab) => h.idle.get(tab) ?? true,
+    background: (tab) => h.background.get(tab) ?? 0,
     touchedAt: (tab) => h.touched.get(tab) ?? null,
     restart: (tab) => {
       h.restarts.push(tab)
@@ -121,6 +123,50 @@ describe('RestartCoordinator', () => {
     await flush()
     expect(h.restarts).toEqual(['t1'])
     await vi.advanceTimersByTimeAsync(10_000)
+    expect(h.restarts).toEqual(['t1'])
+  })
+
+  it('a touch of the configuration counts for the turn that made it only: a later change from outside gets the card with Restart', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    await flush()
+    await vi.advanceTimersByTimeAsync(100)
+    // Claude ran `claude mcp list` in this turn; the turn ends with no change of the configuration
+    h.touched.set('t1', Date.now())
+    c.turnEnded('t1')
+    await flush()
+    expect(h.restarts).toEqual([])
+    await vi.advanceTimersByTimeAsync(100)
+    // later, another chat's panel adds a server: this tab did not make it and no turn of its made it
+    h.files.set('t1', cfg([srv('context7')]))
+    await c.compareAll()
+    await flush()
+    expect(lastCard(h, 't1')).toEqual({ title: 'New MCP server: context7', text: 'Restart the session to load it — the conversation goes on', action: 'restart' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.restarts).toEqual([])
+  })
+
+  it('a tab with background tasks running gets the card with Restart and is not restarted by itself; Restart still restarts it', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    await flush()
+    h.background.set('t1', 1)
+    h.files.set('t1', cfg([srv('context7')]))
+    c.madeHere('t1')
+    await flush()
+    expect(lastCard(h, 't1')).toEqual({ title: 'New MCP server: context7', text: 'Restart the session to load it — the conversation goes on', action: 'restart' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.restarts).toEqual([])
+
+    // the tasks end: the tab still waits for Restart
+    h.background.set('t1', 0)
+    c.turnEnded('t1')
+    await flush()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.restarts).toEqual([])
+
+    expect(c.restartNow('t1')).toBe(true)
+    await flush()
     expect(h.restarts).toEqual(['t1'])
   })
 

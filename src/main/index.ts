@@ -919,6 +919,7 @@ function bootstrap(): void {
       return files === null ? null : readTabConfig(files.paths, files.folder, readJson)
     },
     idle: (id) => chatHub.idle(id),
+    background: (id) => statusHub.get(id).background.length,
     touchedAt: (id) => chatHub.configTouchedAt(id),
     restart: (id) => {
       // a restart that did not start the chat (busy, refused or failed) leaves its card with Restart again
@@ -3088,6 +3089,7 @@ function bootstrap(): void {
     remote = null
     keepAwake.dispose()
     configWatch.close()
+    mcpHub.dispose()
     presence.dispose()
     earlyPeers.clear()
     updater.stop()

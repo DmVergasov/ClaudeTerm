@@ -9,6 +9,7 @@ import {
   type InstalledEntry,
   type MarketplaceEntry
 } from '../../src/main/mcp/plugin-cli'
+import { MASK } from '../../src/shared/mcp-add'
 
 const FOLDER = 'C:\\Work\\Acme'
 
@@ -122,6 +123,19 @@ describe('plugin-cli', () => {
       { name: 'local', source: 'C:\\Work\\plugins', installLocation: 'C:\\Work\\plugins' },
       { name: 'file', source: '/home/dev/marketplace.json', installLocation: null }
     ])
+  })
+
+  it('parseMarketplaces masks the secrets of a git or URL source: its userinfo password and key-like query values', () => {
+    const markets = parseMarketplaces([
+      { name: 'private', source: 'git', url: 'https://dev:tok-9@git.example.test/mirror.git?token=tok-9', installLocation: null },
+      { name: 'web', source: 'url', url: 'https://plugins.example.test/marketplace.json?apiKey=key-7', installLocation: null }
+    ])
+    expect(markets.map((m) => m.source)).toEqual([
+      `https://dev:${MASK}@git.example.test/mirror.git?token=${MASK}`,
+      `https://plugins.example.test/marketplace.json?apiKey=${MASK}`
+    ])
+    expect(JSON.stringify(markets)).not.toContain('tok-9')
+    expect(JSON.stringify(markets)).not.toContain('key-7')
   })
 
   it('parseCatalog reads a marketplace.json plugins by name', () => {

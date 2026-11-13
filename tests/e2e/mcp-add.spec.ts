@@ -92,6 +92,25 @@ test('the key never shows once recognised, nor in the log', async () => {
   }
 })
 
+test('a pasted URL whose query holds a key is masked once recognised, the key never shown', async () => {
+  const { app, page } = await launchChatTab({ turns: {} })
+  try {
+    await openDialog(page)
+    await paste(page, 'https://mcp.example.com/mcp?apiKey=sk-test-123')
+    await expect(page.locator('.mcp-add-masked-text')).toBeVisible()
+    await expect(page.locator('.mcp-add-field')).toBeHidden()
+    const shown = await page.evaluate(() => ({
+      values: [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('textarea, input')].map((field) => field.value),
+      text: document.body.innerText
+    }))
+    expect(shown.values.join('\n')).not.toContain('sk-test-123')
+    expect(shown.text).not.toContain('sk-test-123')
+    await expect(page.locator('.mcp-add-masked-text')).toContainText(`apiKey=${'••••••••'}`)
+  } finally {
+    await app.close()
+  }
+})
+
 test('a JSON with two servers adds both to .mcp.json', async () => {
   const { app, page, work } = await launchChatTab({ turns: {} })
   try {

@@ -233,6 +233,7 @@ export class McpPanel {
         void this.request(tabId, { kind: 'cancel-login', name: s.name })
         return
       case 'reconnect':
+        this.menuOf = null
         this.run(tabId, row, { kind: 'reconnect', name: s.name })
         return
       case 'toggle':

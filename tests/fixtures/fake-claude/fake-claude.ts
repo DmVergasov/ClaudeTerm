@@ -69,6 +69,15 @@ function alive(pid: number): boolean {
   }
 }
 
+// a gate of a CLI call waits for its file; the process ends when the parent that started it is gone, so a call the app
+// abandoned (a sign-in at quit) does not outlive the app
+async function waitForGate(file: string): Promise<void> {
+  while (!existsSync(file)) {
+    if (!alive(process.ppid)) exit(1)
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+}
+
 // the session: a process per session id holds a lock file; a second one that starts on a live lock logs an overlap.
 // Both views take it when the start names a session (--session-id or --resume)
 const sessionArg = flag('--session-id')
@@ -1028,7 +1037,7 @@ async function mcpCommand(verb: string | undefined, args: string[], call: CliCal
       const plan = script.mcpLogin?.[name]
       const gate = plan?.gate
       if (gate !== undefined) {
-        while (!existsSync(join(configDir, gate))) await new Promise(resolve => setTimeout(resolve, 20))
+        await waitForGate(join(configDir, gate))
       }
       if (plan?.fail !== undefined) return bad(plan.fail)
       editJson(authFile(), value => { value[name] = true })
@@ -1255,7 +1264,7 @@ async function runCli(args: string[], input: () => Promise<string>): Promise<Cli
   const joined = args.filter(arg => arg !== '--').join(' ')
   const held = Object.entries(script.cliGate ?? {}).find(([key]) => joined.startsWith(key))
   if (held !== undefined) {
-    while (!existsSync(join(configDir, held[1]))) await new Promise(resolve => setTimeout(resolve, 20))
+    await waitForGate(join(configDir, held[1]))
   }
   const failure = Object.entries(script.cliFail ?? {}).find(([key]) => joined.startsWith(key))
   if (failure !== undefined) return bad(failure[1])
