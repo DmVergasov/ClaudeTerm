@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path'
 import { DOC_ACTIONS, type DocAction } from '../shared/docs'
 import type { ImageAction } from '../shared/ipc'
 import { MAX_ADDRESS_LENGTH } from '../shared/devices'
-import { MAX_NOTE_LENGTH, NOTE_FORMS, type NoteForm } from '../shared/note'
+import { MAX_NOTE_LENGTH, NOTE_FORMS, NOTE_SIDES, isNoteSize, isProjectKey, type NoteForm, type NoteSide, type NoteSize } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 import { MAX_HASH, REVIEW_SCOPES, type ReviewScope } from '../shared/review'
 import { MAX_FOLDED_GROUPS, type OpenTabRequest, type TabLayout } from '../shared/types'
@@ -61,6 +61,14 @@ export const isReviewScope = (v: unknown): v is ReviewScope => typeof v === 'str
 export const isNoteText = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_NOTE_LENGTH
 
 export const isNoteForm = (v: unknown): v is NoteForm => typeof v === 'string' && (NOTE_FORMS as readonly string[]).includes(v)
+
+export const isNoteSide = (v: unknown): v is NoteSide => typeof v === 'string' && (NOTE_SIDES as readonly string[]).includes(v)
+
+/** a note's card size, or null: the default size */
+export const isNoteSizeArg = (v: unknown): v is NoteSize | null => v === null || isNoteSize(v)
+
+/** a project's key, as TabPlace.project.key gives it */
+export const isProjectKeyArg = (v: unknown): v is string => isProjectKey(v)
 
 /** how many tabs need the user, for the app icon's badge */
 export const isTabCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000

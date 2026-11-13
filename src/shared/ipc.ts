@@ -3,7 +3,8 @@ import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelIn
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { MailConversationView, MailUnread } from './mail'
 import type { DeviceResult, DevicesView } from './devices'
-import type { Note, NoteForm } from './note'
+import type { Note, NoteForm, NoteSide, NoteSize, ProjectNote } from './note'
+import type { NoteOp } from './note-items'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { DeviceAnswer, DeviceChoices, FolderResult, RemoteDeviceView } from './remote'
 import type { SettingKey, SettingValue } from './settings-keys'
@@ -64,6 +65,10 @@ export const IPC = {
   sessionsStarred: 'sessions:starred',
   notesSetText: 'notes:set-text',
   notesSetView: 'notes:set-view',
+  notesSetSide: 'notes:set-side',
+  notesSetSize: 'notes:set-size',
+  projectNotesSetText: 'project-notes:set-text',
+  projectNotesSetSize: 'project-notes:set-size',
   tasksClear: 'tasks:clear',
   updateCheck: 'update:check',
   updateInstall: 'update:install',
@@ -128,6 +133,9 @@ export const IPC = {
   evPanelMode: 'ev:panel-mode',
   evAccounts: 'ev:accounts',
   evNote: 'ev:note',
+  evNoteOp: 'ev:note-op',
+  evProjectNote: 'ev:project-note',
+  evProjectNoteOp: 'ev:project-note-op',
   evPromptQuery: 'ev:prompt-query',
   evDocs: 'ev:docs',
   evDevices: 'ev:devices',
@@ -339,6 +347,14 @@ export interface CtApi {
   setNoteText(tabId: string, text: string, generation: number): void
   /** whether a Claude tab's note is on show, and how it is drawn; `generation` as for setNoteText */
   setNoteView(tabId: string, shown: boolean, form: NoteForm, generation: number): void
+  /** which note a Claude tab's card shows in front; `generation` as for setNoteText */
+  setNoteSide(tabId: string, side: NoteSide, generation: number): void
+  /** the card size of a Claude tab's session note; null: the default size; `generation` as for setNoteText */
+  setNoteSize(tabId: string, size: NoteSize | null, generation: number): void
+  /** the text of the tab's project note; key: TabPlace.project.key; generation: the number of the project's note it was typed against (onProjectNote, onProjectNoteOp) */
+  setProjectNoteText(tabId: string, key: string, text: string, generation: number): void
+  /** the card size of the tab's project note; null: the default size */
+  setProjectNoteSize(tabId: string, key: string, size: NoteSize | null): void
   /** removes the task list Claude keeps in a Claude tab with set_task_list (the one the task box can clear) */
   clearTaskList(tabId: string): void
   checkForUpdates(): void
@@ -444,6 +460,12 @@ export interface CtApi {
    * for the tab's own edits
    */
   onNote(cb: (tabId: string, note: Note | null, generation: number) => void): Unsubscribe
+  /** one of Claude's edits of a tab's session note, with the number it makes: the window applies it to its text with applyNoteOp */
+  onNoteOp(cb: (tabId: string, op: NoteOp, generation: number) => void): Unsubscribe
+  /** a project's note (null: none yet) with its number, the first time a Claude tab of the project shows up in this run */
+  onProjectNote(cb: (key: string, note: ProjectNote | null, generation: number) => void): Unsubscribe
+  /** one of Claude's edits of a project's note, with the number it makes */
+  onProjectNoteOp(cb: (key: string, op: NoteOp, generation: number) => void): Unsubscribe
   /** the extra accounts changed: every window gets the new list */
   onAccounts(cb: (view: AccountsView) => void): Unsubscribe
   /** main asks what Claude Code's prompt in the tab holds, from the terminal's screen; answer with answerPrompt */

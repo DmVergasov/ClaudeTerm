@@ -3,7 +3,7 @@ import { MAX_ADDRESS_LENGTH } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
-import { isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
+import { isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -155,6 +155,28 @@ describe('review guards', () => {
     expect(isNoteForm('card')).toBe(true)
     expect(isNoteForm('hidden')).toBe(false)
     expect(isNoteForm(null)).toBe(false)
+  })
+
+  it('isNoteSide takes session and project only', () => {
+    expect(isNoteSide('session')).toBe(true)
+    expect(isNoteSide('project')).toBe(true)
+    expect(isNoteSide('left')).toBe(false)
+    expect(isNoteSide('')).toBe(false)
+    expect(isNoteSide(null)).toBe(false)
+  })
+
+  it('isNoteSizeArg takes a size within the bounds, or null', () => {
+    expect(isNoteSizeArg(null)).toBe(true)
+    expect(isNoteSizeArg({ width: 340, height: 240 })).toBe(true)
+    expect(isNoteSizeArg(undefined)).toBe(false)
+    expect(isNoteSizeArg({ width: 10, height: 10 })).toBe(false)
+    expect(isNoteSizeArg({ width: 340 })).toBe(false)
+  })
+
+  it('isProjectKeyArg takes a project key', () => {
+    expect(isProjectKeyArg('c:\\work\\acme')).toBe(true)
+    expect(isProjectKeyArg('')).toBe(false)
+    expect(isProjectKeyArg('a\0b')).toBe(false)
   })
 
   it('isTabCount accepts a whole number of tabs from 0 to 10000', () => {
