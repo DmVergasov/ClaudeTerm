@@ -28,7 +28,8 @@ function resultText(block: Obj, line: Obj): string {
 /** the workspace a line of script output names: the one sdd-workspace printed, or the one holding the file task-brief or review-package wrote */
 function printedWorkspace(line: string): string | null {
   const m = WHOLE.exec(line) ?? WORKSPACE.exec(line)
-  if (m) return m[1]
+  // a plan or a design kept right in .superpowers/sdd, beside the workspaces: a workspace is named after its plan without the .md
+  if (m) return /\.md$/i.test(m[1]) ? null : m[1]
   const w = WROTE.exec(line)
   return w ? (IN_WORKSPACE.exec(w[1])?.[1] ?? null) : null
 }
@@ -60,7 +61,9 @@ export class PlanWorkspaceFinder {
     } catch {
       return null
     }
-    if (!isObj(o) || !isObj(o.message) || !Array.isArray(o.message.content)) return null
+    // only the conversation's own entries: Claude Code also files copies of the requests it sent (api-request-blob),
+    // which repeat old calls and their results with no time, so a replay would take an old workspace for the newest
+    if (!isObj(o) || (o.type !== 'user' && o.type !== 'assistant') || !isObj(o.message) || !Array.isArray(o.message.content)) return null
     for (const b of o.message.content) {
       if (!isObj(b)) continue
       if (b.type === 'tool_use') {

@@ -122,6 +122,13 @@ describe('PlanWorkspaceFinder', () => {
     expect(run('s3', `WS="${SP}/"\n`)).toBe(SP)
     expect(run('s4', 'C:\\Users\\Jane Doe\\acme-shop\\.superpowers\\sdd\\y\n')).toBe('C:\\Users\\Jane Doe\\acme-shop\\.superpowers\\sdd\\y')
   })
+  it('a plan or a design kept right in .superpowers/sdd, beside the workspaces, is no workspace', () => {
+    const f = new PlanWorkspaceFinder()
+    f.parseLine(toolUseLine('k', 'Bash', { command: `wc -l ${WS}/task-1-review-package.diff /w/acme-shop/.superpowers/sdd/2026-10-20-csv-export.md` }))
+    expect(f.parseLine(bashResultLine('k', `  80 ${WS}/task-1-review-package.diff\n 530 /w/acme-shop/.superpowers/sdd/2026-10-20-csv-export.md\n 610 total\n`))).toBeNull()
+    f.parseLine(toolUseLine('k2', 'Bash', { command: RUN }))
+    expect(f.parseLine(bashResultLine('k2', 'D:\\Work\\acme-shop\\.superpowers\\sdd\\2026-10-20-csv-export-design.MD\n'))).toBeNull()
+  })
   it('a line that merely mentions a path in the middle gives nothing', () => {
     const f = new PlanWorkspaceFinder()
     f.parseLine(toolUseLine('q', 'Bash', { command: RUN }))

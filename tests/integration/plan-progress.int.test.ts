@@ -150,4 +150,24 @@ describe('plan progress', () => {
     await hub.refresh()
     expect(hub.get('t').plan?.title).toBe('CSV Export')
   })
+
+  it("Claude Code's copies of the requests it sent (api-request-blob, with no time) are not calls: an old run they repeat in a subagent transcript leaves the current plan", async () => {
+    const { root, ws, old, transcriptPath } = layout()
+    // a copy carries the message of an entry, without its time
+    const copy = (line: string): string => JSON.stringify({ type: 'api-request-blob', sessionId: SID, agentId: 'o1', hash: 'c0ffee', message: JSON.parse(line).message })
+    const oldRun = toolUseLine('s1', 'Bash', { command: 'bash /p/scripts/sdd-workspace docs/superpowers/plans/2026-09-01-old.md' }, '2026-09-01T10:00:00.000Z')
+    const oldResult = bashResultLine('s1', old + '\n', '2026-09-01T10:00:01.000Z')
+    writeFileSync(join(dirname(transcriptPath), SID, 'subagents', 'agent-o1.jsonl'), [oldRun, oldResult, copy(oldRun), copy(oldResult)].join('\n') + '\n')
+    writeFileSync(transcriptPath, [
+      toolUseLine('m2', 'Bash', { command: 'bash /p/scripts/sdd-workspace docs/superpowers/plans/2026-10-20-csv-export.md' }, '2026-10-20T10:00:00.000Z'),
+      bashResultLine('m2', ws + '\n', '2026-10-20T10:00:01.000Z')
+    ].join('\n') + '\n')
+    const { hub, feed } = wire(root, transcriptPath)
+    await feed.scanSubagents()
+    await feed.poll()
+    await expect.poll(() => hub.get('t').plan?.title, { timeout: 5000 }).toBe('CSV Export')
+    await feed.poll()
+    await hub.refresh()
+    expect(hub.get('t').plan?.title).toBe('CSV Export')
+  })
 })
