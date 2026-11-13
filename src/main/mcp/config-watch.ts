@@ -18,7 +18,7 @@ export class ConfigWatch {
   private closed = false
   private readonly debounceMs: number
 
-  constructor(private readonly onChange: () => void, o: { debounceMs?: number } = {}) {
+  constructor(private readonly onChange: () => unknown, o: { debounceMs?: number } = {}) {
     this.debounceMs = o.debounceMs ?? DEFAULT_DEBOUNCE_MS
   }
 
@@ -42,7 +42,9 @@ export class ConfigWatch {
     for (const [key, entry] of wanted) {
       const folder = this.folders.get(key)
       if (folder) {
-        folder.names = entry.names
+        // the watch callback holds this Set: update it in place so a file added to the folder is seen at once
+        folder.names.clear()
+        for (const name of entry.names) folder.names.add(name)
       } else {
         this.watchFolder(key, entry.dir, entry.names)
       }
@@ -89,7 +91,14 @@ export class ConfigWatch {
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.timer = null
-      if (!this.closed) this.onChange()
+      if (this.closed) return
+      // a timer callback has no caller to throw to: a failure here must not reach the main process
+      try {
+        const done: unknown = this.onChange()
+        if (done instanceof Promise) done.catch(() => {})
+      } catch {
+        // the next change arms the callback again
+      }
     }, this.debounceMs)
   }
 }

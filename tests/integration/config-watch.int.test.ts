@@ -97,4 +97,45 @@ describe('ConfigWatch', () => {
     await settle(400)
     expect(calls).toBe(0)
   })
+  it('a setFiles that adds a file of an already watched folder arms the callback for it', async () => {
+    const dir = tempRoot()
+    const file = join(dir, 'settings.json')
+    const other = join(dir, 'settings.local.json')
+    writeFileSync(file, '{}')
+    writeFileSync(other, '{}')
+    let calls = 0
+    watch = new ConfigWatch(() => calls++, { debounceMs: 50 })
+    watch.setFiles([file])
+    watch.setFiles([file, other])
+
+    writeFileSync(other, '{"a":1}')
+    await waitFor(() => calls >= 1)
+    await settle(200)
+    expect(calls).toBe(1)
+  })
+
+  it('a callback that throws or rejects does not stop the later callbacks', async () => {
+    const dir = tempRoot()
+    const file = join(dir, 'settings.json')
+    writeFileSync(file, '{}')
+    let calls = 0
+    watch = new ConfigWatch(
+      () => {
+        calls++
+        if (calls === 1) throw new Error('first call fails')
+        if (calls === 2) return Promise.reject(new Error('second call rejects'))
+      },
+      { debounceMs: 50 },
+    )
+    watch.setFiles([file])
+
+    writeFileSync(file, '{"a":1}')
+    await waitFor(() => calls === 1)
+    await settle(200)
+    writeFileSync(file, '{"a":2}')
+    await waitFor(() => calls === 2)
+    await settle(200)
+    writeFileSync(file, '{"a":3}')
+    await waitFor(() => calls === 3)
+  })
 })
