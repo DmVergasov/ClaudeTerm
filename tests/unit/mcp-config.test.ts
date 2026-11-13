@@ -256,6 +256,22 @@ describe('mcp-config', () => {
     expect(await load(file)).toBeNull()
   })
 
+  it('jsonFileCache shares a read in flight: callers that ask at once for one version read the file once', async () => {
+    const reads: string[] = []
+    const load = jsonFileCache({
+      stat: async () => ({ mtimeMs: 1, size: 7 }),
+      read: async (file) => {
+        reads.push(file)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return '{"a":1}'
+      }
+    })
+    const file = join('/cfg', '.claude.json')
+    const results = await Promise.all([load(file), load(file), load(file)])
+    expect(results).toEqual([{ a: 1 }, { a: 1 }, { a: 1 }])
+    expect(reads).toHaveLength(1)
+  })
+
   it('touchesConfig', () => {
     // calls that may change what Claude Code loads
     expect(touchesConfig('Bash', { command: 'cd x\nclaude mcp add-json srv "{}"' })).toBe(true)

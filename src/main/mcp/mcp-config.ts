@@ -183,13 +183,30 @@ export async function readTabConfig(paths: ConfigPaths, folder: string, readJson
 
 /**
  * a reader that stats the file each call and reads and parses it again only when its mtime or size changed; null for missing, unreadable,
- * over MAX_CONFIG_BYTES or not JSON
+ * over MAX_CONFIG_BYTES or not JSON. A read in flight is shared: callers that ask for the same file version at once read it once.
  */
 export function jsonFileCache(fs: {
   stat(f: string): Promise<{ mtimeMs: number; size: number } | null>
   read(f: string): Promise<string | null>
 }): (file: string) => Promise<unknown> {
-  const cache = new Map<string, { mtimeMs: number; size: number; data: unknown }>()
+  const cache = new Map<string, { mtimeMs: number; size: number; data: Promise<unknown> }>()
+
+  /** the parsed file, or null: a read that fails is not kept, a text that is not JSON is */
+  const load = async (file: string): Promise<unknown> => {
+    let text: string | null
+    try {
+      text = await fs.read(file)
+    } catch {
+      return null
+    }
+    if (text === null) return null
+    try {
+      return JSON.parse(text)
+    } catch {
+      return null
+    }
+  }
+
   return async (file) => {
     let stat: { mtimeMs: number; size: number } | null
     try {
@@ -204,20 +221,10 @@ export function jsonFileCache(fs: {
     const hit = cache.get(file)
     if (hit !== undefined && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.data
 
-    let text: string | null
-    try {
-      text = await fs.read(file)
-    } catch {
-      return null
-    }
-    if (text === null) return null
-    let data: unknown = null
-    try {
-      data = JSON.parse(text)
-    } catch {
-      data = null
-    }
-    cache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, data })
+    const entry = { mtimeMs: stat.mtimeMs, size: stat.size, data: load(file) }
+    cache.set(file, entry)
+    const data = await entry.data
+    if (data === null && cache.get(file) === entry) cache.delete(file)
     return data
   }
 }
