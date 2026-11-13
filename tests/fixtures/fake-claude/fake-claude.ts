@@ -1389,6 +1389,16 @@ function mcpControl(requestId: string, request: Msg): void {
 
 logLine({ argv, pid: process.pid })
 
+// the stand-in ends when the process that started it is gone, whatever it waits for (a gate, a stdin): on POSIX its parent
+// changes to init or a subreaper when the parent dies, on Windows the parent's pid stays and must be checked alive
+const startParent = process.ppid
+const parentWatch = setInterval(() => {
+  if (process.ppid === startParent && alive(startParent)) return
+  clearInterval(parentWatch)
+  exit(1)
+}, 1000)
+parentWatch.unref()
+
 if (argv[0] === 'mcp' || argv[0] === 'plugin') {
   void cliMode()
 } else if (has('--version')) {

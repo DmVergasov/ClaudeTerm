@@ -123,6 +123,15 @@ function lockFile(id: string): string {
   return join(config, `fake-claude-${id}.lock`)
 }
 
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
 // on Windows the command is a cmd wrapper: taskkill /T ends the node process under it too
 function killTree(child: ChildProcess): void {
   if (child.pid === undefined) return
@@ -600,6 +609,28 @@ describe('the stand-in\'s claude mcp, claude plugin and the session\'s MCP reque
     const broken = start(['mcp', 'login', '--', 'broken'], { turns: {}, mcpLogin: { broken: { fail: 'Invalid client secret' } } })
     expect(await broken.exit).toBe(1)
     expect(broken.stderr).toContain('Invalid client secret')
+  })
+
+  it('a stand-in whose parent is killed exits by itself, so a gate that never opens cannot orphan it', async () => {
+    // a parent process starts `claude mcp login` (its gate never opens) and is killed: the stand-in must end on its own
+    const file = writeScript({ turns: {}, mcpLogin: { sentry: { gate: 'never-released.txt' } } })
+    const args = ['--experimental-strip-types', '--no-warnings', STAND_IN, 'mcp', 'login', '--', 'sentry']
+    const parentCode = "const { spawn } = require('node:child_process'); spawn(process.execPath, JSON.parse(process.argv[1]), { stdio: 'ignore', windowsHide: true }); setInterval(() => {}, 1000)"
+    const parent = track(spawn(process.execPath, ['-e', parentCode, JSON.stringify(args)], { cwd: work, env: env(file), stdio: 'ignore', windowsHide: true }))
+    const started = (): Msg | undefined => logEntries().find(entry => Array.isArray(entry.argv) && entry.argv.includes('login'))
+    await until(() => started() !== undefined, 'the stand-in to start its login')
+    const pid = started()?.pid as number
+    try {
+      parent.child.kill('SIGKILL')
+      // it ends by its own exit (logged) or is gone; a process that is only a zombie still answers to a signal 0, so the log counts too
+      await until(() => logEntries().some(entry => entry.exit !== undefined && entry.pid === pid) || !processExists(pid), 'the stand-in to exit after its parent', 10_000)
+    } finally {
+      try {
+        process.kill(pid)
+      } catch {
+        // already gone
+      }
+    }
   })
 
   it('plugin marketplace add, install, list --json and configure answer as Claude Code does', () => {

@@ -354,6 +354,11 @@ export function maskUrl(url: string): string {
     SECRET_NAME.test(name.slice(1)) && value !== '' ? `${name}=${MASK}` : match)
 }
 
+/** a live error names the URLs it failed on: each is masked as an address is (its password and key-like query values) */
+export function maskUrls(text: string): string {
+  return text.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, (url) => maskUrl(url))
+}
+
 /** every header and env value, non-empty; for a URL also its password and its secret-looking query values, raw and decoded */
 export function secretsOf(config: McpConfig): string[] {
   if (config.type === 'stdio') return Object.values(config.env).filter((value) => value !== '')

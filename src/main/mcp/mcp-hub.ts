@@ -4,7 +4,7 @@ import type { ChatHub } from '../chat/chat-hub'
 import type { ChatLaunch } from '../chat/claude-spawn'
 import type { McpAction, McpAddRequest, McpEditScope, McpResult, McpScope, McpServerView, McpServersView, McpStatus, McpTransport, PluginAction, PluginOffer, PluginOption, PluginsView } from '../../shared/mcp'
 import { marketplaceSource } from '../../shared/mcp'
-import { isServerName, maskedConfig, maskText, maskUrl, parseAddInput, secretsOf, targetOf, type McpConfig, type McpOauth } from '../../shared/mcp-add'
+import { isServerName, maskedConfig, maskText, maskUrl, maskUrls, parseAddInput, secretsOf, targetOf, type McpConfig, type McpOauth } from '../../shared/mcp-add'
 import { isWindowsPath, nativePath, pathKey } from '../path-key'
 import { CliError, cliMessage, jsonOutput, LOGIN_TIMEOUT_MS, runClaudeCli, type CliOptions, type CliRun } from './claude-cli'
 import { parseAvailable, parseCatalog, parseConfigure, parseInstalled, parseMarketplaces, pluginsView, type InstalledEntry, type MarketplaceEntry } from './plugin-cli'
@@ -467,11 +467,6 @@ function liveView(s: McpLiveServer): McpServerView {
     error: typeof s.error === 'string' ? maskUrls(s.error).slice(0, MAX_ERROR) : null,
     version: typeof s.version === 'string' ? s.version.slice(0, MAX_NAME) : null
   }
-}
-
-/** a live error names the URLs it failed on: each is masked as an address is (its password and key-like query values) */
-function maskUrls(text: string): string {
-  return text.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, (url) => maskUrl(url))
 }
 
 function configuredView(s: ConfiguredServer, status: McpStatus): McpServerView {

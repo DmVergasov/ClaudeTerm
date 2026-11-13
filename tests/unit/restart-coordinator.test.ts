@@ -170,6 +170,53 @@ describe('RestartCoordinator', () => {
     expect(h.restarts).toEqual(['t1'])
   })
 
+  it('a Restart pressed while background tasks run and Claude answers restarts the chat once the answer ends, without a second press', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    await flush()
+    h.background.set('t1', 1)
+    h.idle.set('t1', false)
+    h.files.set('t1', cfg([srv('context7')]))
+    c.madeHere('t1')
+    await flush()
+    expect(lastCard(h, 't1')?.action).toBe('restart')
+
+    expect(c.restartNow('t1')).toBe(true)
+    await flush()
+    expect(h.restarts).toEqual([])
+    expect(lastCard(h, 't1')?.text).toBe('The session restarts to load it when Claude finishes — the conversation goes on')
+
+    // the answer ends; the background task still runs, and the person's press still counts
+    h.idle.set('t1', true)
+    c.turnEnded('t1')
+    await flush()
+    expect(h.restarts).toEqual(['t1'])
+  })
+
+  it('a server error with a secret in a URL reaches the restart notice without the secret', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    await flush()
+    h.files.set('t1', cfg([srv('docs')]))
+    h.servers.set('t1', () => Promise.resolve([live('docs', 'failed', [], 'connect failed at https://user:pa55@example.invalid/mcp?token=abc123 (refused)')]))
+    c.madeHere('t1')
+    await flush()
+    await vi.advanceTimersByTimeAsync(SETTLE_MS)
+    expect(h.restarts).toEqual(['t1'])
+
+    c.started('t1')
+    await flush()
+    c.ready('t1')
+    await vi.advanceTimersByTimeAsync(REPORT_POLL_MS)
+    expect(h.reports).toHaveLength(1)
+    const [notice] = h.reports[0].notices
+    expect(notice.tone).toBe('error')
+    expect(notice.text).toContain('docs failed to start: connect failed at https://user:')
+    expect(notice.text).toContain('@example.invalid/mcp?token=')
+    expect(notice.text).not.toContain('pa55')
+    expect(notice.text).not.toContain('abc123')
+  })
+
   it('several changes close together make one restart', async () => {
     const { h, c } = harness()
     c.started('t1')

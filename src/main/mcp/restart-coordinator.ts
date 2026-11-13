@@ -1,5 +1,6 @@
 import type { ReloadAction } from '../../shared/mcp'
 import type { McpLiveServer } from '../chat/chat-engine'
+import { maskUrls } from '../../shared/mcp-add'
 import { diffConfig, type ConfigChange, type ConfigChangeKind, type TabConfig } from './mcp-config'
 
 /** an automatic restart waits this long after the last change, so several changes close together make one restart */
@@ -79,7 +80,7 @@ export function reportOf(changes: ConfigChange[], servers: McpLiveServer[], fina
       parts.push(connected, `${server.tools.length} ${server.tools.length === 1 ? 'tool' : 'tools'}`)
       if (good === null) good = connected
     } else if (server.status === 'failed') {
-      notices.push({ text: server.error ? `${name} failed to start: ${server.error}` : `${name} failed to start`, tone: 'error' })
+      notices.push({ text: server.error ? `${name} failed to start: ${maskUrls(server.error)}` : `${name} failed to start`, tone: 'error' })
     } else if (server.status === 'needs-auth') {
       notices.push({ text: `${name} needs sign-in`, tone: 'info' })
     } else if (server.status === 'pending') {
@@ -120,6 +121,8 @@ interface TabState {
   mode: ReloadMode | null
   /** a change made by Claude or in this tab restarts it without asking, until Not now or the next start, or a comparison with no change */
   auto: boolean
+  /** the person pressed Restart for the pending changes: the background tasks are no reason to wait, until the restart, a comparison with no change or Not now */
+  restartAsked: boolean
   /** when the last turn ended (its comparison was made): a configuration touch counts only when later than this; null before the first */
   turnEnded: number | null
   /** this tab made a change: the next complete comparison of it counts as the maker's, whichever comparison that is */
@@ -145,6 +148,7 @@ function freshState(owed: ConfigChange[], loadedAt: number): TabState {
     card: null,
     mode: null,
     auto: false,
+    restartAsked: false,
     turnEnded: null,
     makerDue: false,
     notNow: false,
@@ -235,6 +239,7 @@ export class RestartCoordinator {
     const s = this.states.get(tab)
     if (s === undefined || s.mode === null || s.mode === 'restarting') return false
     s.notNow = true
+    s.restartAsked = false
     this.clearTimer(s)
     this.setMode(tab, s, 'manual')
     return true
@@ -247,8 +252,9 @@ export class RestartCoordinator {
     if (s.mode === 'restarting') return true
     s.notNow = false
     s.auto = true
-    // the person's own Restart: the background tasks it would stop are no reason to wait
-    this.attempt(tab, true)
+    // the person's own Restart: the background tasks it would stop are no reason to wait, now or when the answer ends
+    s.restartAsked = true
+    this.attempt(tab)
     return true
   }
 
@@ -261,6 +267,7 @@ export class RestartCoordinator {
     if (s === undefined || !s.restarting) return
     s.restarting = false
     s.auto = false
+    s.restartAsked = false
     if (s.pending.length === 0) {
       s.mode = null
       this.setCard(tab, s, null)
@@ -328,6 +335,7 @@ export class RestartCoordinator {
     if (changes.length === 0) {
       s.pending = []
       s.auto = false
+      s.restartAsked = false
       this.clearTimer(s)
       s.mode = null
       this.setCard(tab, s, null)
@@ -340,7 +348,7 @@ export class RestartCoordinator {
     const touched = this.d.touchedAt(tab)
     const touchCounts = touched !== null && (s.turnEnded === null ? touched >= s.loadedAt : touched > s.turnEnded)
     // background tasks would be stopped by a restart: the card waits for Restart
-    const busy = this.d.background(tab) > 0
+    const busy = this.d.background(tab) > 0 && !s.restartAsked
     const auto = !busy && !s.notNow && (maker || s.auto || touchCounts)
     if (!auto) {
       if (busy) s.auto = false
@@ -354,7 +362,7 @@ export class RestartCoordinator {
   }
 
   /** an automatic restart that is due runs now when the tab is idle and not held; otherwise the card says auto-later */
-  private attempt(tab: string, byPerson = false): void {
+  private attempt(tab: string): void {
     const s = this.states.get(tab)
     if (s === undefined || s.restarting || !s.auto || s.notNow || s.pending.length === 0) return
     // a comparison in flight may answer incomplete or reject and re-arm nothing: the due restart checks again soon
@@ -363,7 +371,7 @@ export class RestartCoordinator {
       return
     }
     // background tasks that started after the change: the card waits for Restart, as the other tabs' cards do
-    if (!byPerson && this.d.background(tab) > 0) {
+    if (!s.restartAsked && this.d.background(tab) > 0) {
       s.auto = false
       this.clearTimer(s)
       this.setMode(tab, s, 'manual')
@@ -385,6 +393,7 @@ export class RestartCoordinator {
   private restartTab(tab: string, s: TabState): void {
     this.clearTimer(s)
     s.restarting = true
+    s.restartAsked = false
     this.setMode(tab, s, 'restarting')
     // the pending changes stay until the chat starts or the restart is settled: the card of a restart that did not start says them
     s.owed = union(s.owed, s.pending)
