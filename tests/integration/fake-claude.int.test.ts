@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { fixtureLines } from '../fixtures/chat-fixtures'
@@ -83,6 +83,18 @@ function start(args: string[], script?: FakeScript): Run {
 
 function send(run: Run, message: unknown): void {
   run.child.stdin?.write(JSON.stringify(message) + '\n')
+}
+
+const STAND_IN = resolve(import.meta.dirname, '..', 'fixtures', 'fake-claude', 'fake-claude.ts')
+
+// a CLI call (claude mcp …, claude plugin …): node runs the stand-in file itself, so the arguments reach it as given
+function cli(args: string[], script?: string, input = ''): { code: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', STAND_IN, ...args], { cwd: work, env: env(script), input, encoding: 'utf8', windowsHide: true })
+  return { code: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+function readJson(file: string): Msg {
+  return JSON.parse(readFileSync(file, 'utf8')) as Msg
 }
 
 function finish(run: Run): Promise<number | null> {
@@ -537,5 +549,165 @@ describe('the stand-in Claude Code', () => {
       if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR
       else process.env.CLAUDE_CONFIG_DIR = before
     }
+  })
+})
+
+describe('the stand-in\'s claude mcp, claude plugin and the session\'s MCP requests', () => {
+  const MARKET: FakeScript['marketplaces'] = [{
+    name: 'fake-tools',
+    source: 'acme/fake-tools',
+    plugins: [{
+      name: 'fake-docs',
+      description: 'Docs for the fake project',
+      version: '1.2.0',
+      installs: 7,
+      mcpServers: ['docs'],
+      options: [{ key: 'API_TOKEN', title: 'API token', description: 'Token for the docs API', required: true, sensitive: true }]
+    }]
+  }]
+
+  it('claude mcp add-json writes the server where Claude Code keeps it, per scope', () => {
+    writeFileSync(join(config, '.claude.json'), JSON.stringify({ numStartups: 3 }))
+    expect(cli(['mcp', 'add-json', '--scope', 'user', '--', 'docs', '{"type":"http","url":"https://docs.example/mcp"}'])).toMatchObject({ code: 0, stdout: 'Added http MCP server docs to user config\n' })
+    expect(cli(['mcp', 'add-json', '--', 'tool', '{"command":"node","args":["tool.js"]}'])).toMatchObject({ code: 0, stdout: 'Added stdio MCP server tool to local config\n' })
+    expect(cli(['mcp', 'add-json', '--scope', 'project', '--', 'repo', '{"command":"npx","args":["repo-mcp"]}'])).toMatchObject({ code: 0, stdout: 'Added stdio MCP server repo to project config\n' })
+
+    const claudeJson = readJson(join(config, '.claude.json'))
+    expect(claudeJson.numStartups).toBe(3)
+    expect(claudeJson.mcpServers).toEqual({ docs: { type: 'http', url: 'https://docs.example/mcp' } })
+    expect(claudeJson.projects[realpathSync.native(work)].mcpServers).toEqual({ tool: { command: 'node', args: ['tool.js'] } })
+    expect(readJson(join(work, '.mcp.json')).mcpServers).toEqual({ repo: { command: 'npx', args: ['repo-mcp'] } })
+    expect(cli(['mcp', 'add-json', '--scope', 'user', '--', 'docs', '{"command":"node"}'])).toMatchObject({ code: 1, stderr: 'MCP server docs already exists in user config\n' })
+    expect(cli(['mcp', 'add-json', '--', 'bad', '{not json'])).toMatchObject({ code: 1, stderr: 'Invalid JSON\n' })
+  })
+
+  it('claude mcp remove takes it out, and an unknown name fails with its message', () => {
+    cli(['mcp', 'add-json', '--scope', 'user', '--', 'docs', '{"type":"http","url":"https://docs.example/mcp"}'])
+    expect(cli(['mcp', 'remove', '--scope', 'user', '--', 'docs'])).toMatchObject({ code: 0 })
+    expect(readJson(join(config, '.claude.json')).mcpServers).toEqual({})
+    expect(cli(['mcp', 'remove', '--', 'docs'])).toMatchObject({ code: 1, stderr: 'No MCP server found with name: docs\n' })
+  })
+
+  it('claude mcp login waits for its gate; a scripted failure exits 1 with the message', async () => {
+    const login = start(['mcp', 'login', '--', 'sentry'], { turns: {}, mcpLogin: { sentry: { gate: 'release-login.txt' } } })
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(login.child.exitCode).toBeNull()
+    writeFileSync(join(config, 'release-login.txt'), '')
+    expect(await login.exit).toBe(0)
+    expect(login.stdout).toBe('Authentication successful\n')
+    expect(readJson(join(config, 'fake-mcp-auth.json'))).toEqual({ sentry: true })
+
+    const broken = start(['mcp', 'login', '--', 'broken'], { turns: {}, mcpLogin: { broken: { fail: 'Invalid client secret' } } })
+    expect(await broken.exit).toBe(1)
+    expect(broken.stderr).toContain('Invalid client secret')
+  })
+
+  it('plugin marketplace add, install, list --json and configure answer as Claude Code does', () => {
+    const script = writeScript({ turns: {}, marketplaces: MARKET })
+    expect(cli(['plugin', 'marketplace', 'add', '--', 'acme/fake-tools'], script)).toMatchObject({ code: 0, stdout: 'Successfully added marketplace: fake-tools\n' })
+    expect(cli(['plugin', 'install', '--', 'fake-docs@fake-tools'], script)).toMatchObject({ code: 0 })
+
+    expect(readJson(join(config, 'plugins', 'installed_plugins.json'))).toMatchObject({ version: 2, plugins: { 'fake-docs@fake-tools': [{ scope: 'user', version: '1.2.0' }] } })
+    expect(readJson(join(config, 'settings.json'))).toEqual({ enabledPlugins: { 'fake-docs@fake-tools': true } })
+    const list = JSON.parse(cli(['plugin', 'list', '--json'], script).stdout) as Msg[]
+    expect(list).toEqual([{
+      id: 'fake-docs@fake-tools', version: '1.2.0', scope: 'user', enabled: true, installPath: expect.any(String),
+      installedAt: expect.any(String), lastUpdated: expect.any(String), mcpServers: { docs: {} }
+    }])
+
+    const before = JSON.parse(cli(['plugin', 'configure', '--json', '--', 'fake-docs@fake-tools'], script).stdout) as Msg
+    expect(before).toMatchObject({
+      pluginId: 'fake-docs@fake-tools',
+      schema: { API_TOKEN: { type: 'string', title: 'API token', description: 'Token for the docs API', required: true, sensitive: true } },
+      configured: [],
+      unconfigured: ['API_TOKEN']
+    })
+    expect(cli(['plugin', 'configure', '--values-stdin', '--', 'fake-docs@fake-tools'], script, JSON.stringify({ API_TOKEN: 's3cret-value' }))).toMatchObject({ code: 0 })
+    const calls = logEntries().filter(entry => Array.isArray(entry.cli))
+    expect(calls.at(-1)).toMatchObject({ stdinKeys: ['API_TOKEN'], secretEnv: false })
+    expect(readFileSync(log, 'utf8')).not.toContain('s3cret-value')
+    expect(JSON.parse(cli(['plugin', 'configure', '--json', '--', 'fake-docs@fake-tools'], script).stdout)).toMatchObject({ configured: ['API_TOKEN'], unconfigured: [] })
+  })
+
+  it('cliFail fails a matching call with its message', () => {
+    const script = writeScript({ turns: {}, marketplaces: MARKET, cliFail: { 'plugin install': 'Network unreachable' } })
+    expect(cli(['plugin', 'install', '--scope', 'user', '--', 'fake-docs@fake-tools'], script)).toMatchObject({ code: 1, stderr: 'Network unreachable\n' })
+    expect(cli(['plugin', 'list', '--json'], script)).toMatchObject({ code: 0 })
+  })
+
+  it('mcp_status lists what the session loaded with the scripted statuses; mcp_reconnect and mcp_toggle change them', async () => {
+    const real = realpathSync.native(work)
+    writeFileSync(join(config, '.claude.json'), JSON.stringify({
+      mcpServers: {
+        docs: { type: 'http', url: 'https://docs.example/mcp', headers: { Authorization: 'Bearer t' } },
+        sentry: { type: 'http', url: 'https://sentry.example/mcp' },
+        flaky: { command: 'node', args: ['flaky.js'] },
+        slow: { command: 'node', args: ['slow.js'] }
+      },
+      projects: { [real]: { mcpServers: { tool: { command: 'node', args: ['tool.js'] } }, enabledMcpjsonServers: ['repo'] } }
+    }))
+    writeFileSync(join(work, '.mcp.json'), JSON.stringify({ mcpServers: { repo: { command: 'npx', args: ['repo-mcp'] }, unapproved: { command: 'npx', args: ['x'] } } }))
+    const script: FakeScript = {
+      turns: {},
+      mcp: { sentry: { status: 'needs-auth' }, flaky: { status: 'failed', error: 'spawn node ENOENT' }, slow: { pendingMs: 60_000 } },
+      mcpLogin: {}
+    }
+    const scriptFile = writeScript(script)
+    const run = start([...STREAM, '--session-id', randomUUID()], script)
+    send(run, initLine)
+    await until(() => run.out.some(m => m.type === 'control_response'), 'the initialize reply')
+
+    const answer = async (request: Msg): Promise<Msg> => {
+      const id = `req_${randomUUID()}`
+      send(run, { type: 'control_request', request_id: id, request })
+      await until(() => run.out.some(m => m.type === 'control_response' && m.response?.request_id === id), `the answer to ${request.subtype}`)
+      return run.out.find(m => m.type === 'control_response' && m.response?.request_id === id)!.response as Msg
+    }
+    const statuses = async (): Promise<Record<string, Msg>> => {
+      const reply = await answer({ subtype: 'mcp_status' })
+      return Object.fromEntries((reply.response.mcpServers as Msg[]).map(server => [server.name, server]))
+    }
+
+    const first = await statuses()
+    expect(Object.keys(first).sort()).toEqual(['docs', 'flaky', 'repo', 'sentry', 'slow', 'tool'])
+    expect(first.docs).toMatchObject({
+      status: 'connected', scope: 'user', source: 'user', serverInfo: { name: 'docs', version: '1.0.0' }, tools: [{ name: 'ping' }],
+      config: { type: 'http', url: 'https://docs.example/mcp', headers: { Authorization: 'Bearer t' } }
+    })
+    expect(first.tool).toMatchObject({ status: 'connected', scope: 'local', source: 'local' })
+    expect(first.repo).toMatchObject({ status: 'connected', scope: 'project', source: 'project' })
+    expect(first.sentry.status).toBe('needs-auth')
+    expect(first.flaky).toMatchObject({ status: 'failed', error: 'spawn node ENOENT' })
+    expect(first.slow.status).toBe('pending')
+
+    // a reconnect of a server that needs login does nothing until the login is stored
+    expect(await answer({ subtype: 'mcp_reconnect', serverName: 'sentry' })).toMatchObject({ subtype: 'success', response: {} })
+    expect((await statuses()).sentry.status).toBe('needs-auth')
+    expect(await answer({ subtype: 'mcp_reconnect', serverName: 'nope' })).toMatchObject({ subtype: 'error', error: 'Server not found: nope' })
+    expect(cli(['mcp', 'login', '--', 'sentry'], scriptFile)).toMatchObject({ code: 0 })
+    await answer({ subtype: 'mcp_reconnect', serverName: 'sentry' })
+    expect((await statuses()).sentry.status).toBe('connected')
+
+    expect(await answer({ subtype: 'mcp_toggle', serverName: 'docs', enabled: false })).toMatchObject({ subtype: 'success' })
+    expect((await statuses()).docs.status).toBe('disabled')
+    expect(readJson(join(config, '.claude.json')).projects[real].disabledMcpServers).toEqual(['docs'])
+    await answer({ subtype: 'mcp_toggle', serverName: 'docs', enabled: true })
+    expect((await statuses()).docs.status).toBe('connected')
+    expect(readJson(join(config, '.claude.json')).projects[real].disabledMcpServers).toEqual([])
+    await finish(run)
+  })
+
+  it('a cli step is a Bash call whose result is the CLI\'s output', async () => {
+    const args = ['mcp', 'add-json', '--scope', 'user', '--', 'docs', '{"type":"http","url":"https://docs.example/mcp"}']
+    const run = start([...STREAM, '--session-id', randomUUID()], { turns: { 'Add docs': [{ cli: args }, { text: 'Added.' }] } })
+    send(run, initLine)
+    send(run, user('Add docs'))
+    await until(() => run.out.some(m => m.type === 'result'), 'the result')
+    const call = run.out.find(m => m.type === 'assistant' && m.message?.content?.[0]?.type === 'tool_use')!.message.content[0] as Msg
+    expect(call).toMatchObject({ name: 'Bash', input: { command: `claude ${args.join(' ')}` } })
+    const result = run.out.find(m => m.type === 'user' && m.message?.content?.[0]?.type === 'tool_result')!.message.content[0] as Msg
+    expect(result).toMatchObject({ tool_use_id: call.id, content: 'Added http MCP server docs to user config', is_error: false })
+    expect(readJson(join(config, '.claude.json')).mcpServers).toEqual({ docs: { type: 'http', url: 'https://docs.example/mcp' } })
+    await finish(run)
   })
 })

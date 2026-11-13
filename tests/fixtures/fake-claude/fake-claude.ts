@@ -659,6 +659,7 @@ async function runStep(step: FakeStep, turn: Turn): Promise<Outcome> {
     await waitFor(undefined, requestId)
     return aborted ? 'interrupted' : 'done'
   }
+  if ('cli' in step) return cliStep(step.cli)
   throw new Error(`unknown step in the script: ${JSON.stringify(step)}`)
 }
 
@@ -819,6 +820,10 @@ function onControl(msg: Msg): void {
       reply(requestId, {})
       return
     case 'mcp_status':
+    case 'mcp_reconnect':
+    case 'mcp_toggle':
+      mcpControl(requestId, request)
+      return
     case 'stop_task':
       reply(requestId, {})
       return
@@ -847,6 +852,7 @@ function onControl(msg: Msg): void {
 
 function streamMode(): void {
   loadRecorded()
+  mcpSession() // the MCP servers the session loads, as they are at its start
   const rl = createInterface({ input: process.stdin })
   rl.on('line', line => {
     let msg: Msg
@@ -873,11 +879,506 @@ function streamMode(): void {
   })
 }
 
+// ---- the MCP servers, the plugins and the CLI (claude mcp …, claude plugin …) ----
+
+type Scope = 'user' | 'local' | 'project'
+type Market = NonNullable<FakeScript['marketplaces']>[number]
+type Plugin = Market['plugins'][number]
+type McpOptions = NonNullable<FakeScript['mcp']>[string]
+interface CliResult { code: number; stdout: string; stderr: string }
+interface CliCall { words: string[]; flags: Map<string, string>; scope?: Scope; values?: Record<string, string> | null }
+interface McpServer { name: string; config: Msg; scope?: string; source: string }
+interface SessionMcp { servers: McpServer[]; disabled: Set<string>; reconnected: Set<string>; startedAt: number }
+
+let mcpState: SessionMcp | undefined
+
+const claudeJsonFile = (): string => join(configDir, '.claude.json')
+const settingsFile = (): string => join(configDir, 'settings.json')
+const pluginsDir = (): string => join(configDir, 'plugins')
+const installedFile = (): string => join(pluginsDir(), 'installed_plugins.json')
+const marketsFile = (): string => join(pluginsDir(), 'known_marketplaces.json')
+const optionsFile = (): string => join(pluginsDir(), 'fake-options.json')
+const authFile = (): string => join(configDir, 'fake-mcp-auth.json')
+const catalogFile = (market: string): string => join(pluginsDir(), 'marketplaces', market, '.claude-plugin', 'marketplace.json')
+const cacheDir = (market: string, name: string, version: string): string => join(pluginsDir(), 'cache', market, name, version)
+
+// a configuration file read as an object: {} when it is missing or is not one
+function readJsonFile(file: string): Msg {
+  if (!existsSync(file)) return {}
+  try {
+    const value = JSON.parse(readFileSync(file, 'utf8')) as unknown
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Msg) : {}
+  } catch {
+    return {}
+  }
+}
+
+// changes a configuration file in place: the keys it edits leave the others as they are
+function editJson(file: string, edit: (value: Msg) => void): void {
+  const value = readJsonFile(file)
+  edit(value)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, JSON.stringify(value, null, 2) + '\n')
+}
+
+// the key of this folder in .claude.json's projects: an existing key equal to its real path (case and slashes ignored), else the real path
+function folderKey(config: Msg, folder: string): string {
+  const real = realpathSync.native(folder)
+  const fold = (path: string): string => path.replace(/\\/g, '/').toLowerCase()
+  return Object.keys(config.projects ?? {}).find(key => fold(key) === fold(real)) ?? real
+}
+
+function isScope(value: string | undefined): value is Scope {
+  return value === 'user' || value === 'local' || value === 'project'
+}
+
+// the servers a scope holds
+function scopeServers(scope: Scope): Msg {
+  if (scope === 'project') return readJsonFile(join(process.cwd(), '.mcp.json')).mcpServers ?? {}
+  const config = readJsonFile(claudeJsonFile())
+  if (scope === 'user') return config.mcpServers ?? {}
+  return config.projects?.[folderKey(config, process.cwd())]?.mcpServers ?? {}
+}
+
+function saveScopeServers(scope: Scope, servers: Msg): void {
+  if (scope === 'project') {
+    editJson(join(process.cwd(), '.mcp.json'), value => { value.mcpServers = servers })
+  } else if (scope === 'user') {
+    editJson(claudeJsonFile(), value => { value.mcpServers = servers })
+  } else {
+    editJson(claudeJsonFile(), value => {
+      const key = folderKey(value, process.cwd())
+      value.projects = { ...(value.projects ?? {}), [key]: { ...(value.projects?.[key] ?? {}), mcpServers: servers } }
+    })
+  }
+}
+
+const out = (text: string): CliResult => ({ code: 0, stdout: `${text}\n`, stderr: '' })
+const bad = (text: string): CliResult => ({ code: 1, stdout: '', stderr: `${text}\n` })
+
+// the words of a CLI call and its options: options are read up to '--', everything after it is a word (commander takes both ways)
+function parseCliArgs(args: string[]): { words: string[]; flags: Map<string, string> } {
+  const words: string[] = []
+  const flags = new Map<string, string>()
+  let positional = false
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (positional) words.push(arg)
+    else if (arg === '--') positional = true
+    else if (arg.startsWith('--')) {
+      const eq = arg.indexOf('=')
+      if (eq >= 0) flags.set(arg.slice(0, eq), arg.slice(eq + 1))
+      else if (arg === '--scope') flags.set(arg, args[++i] ?? '')
+      else flags.set(arg, '')
+    } else words.push(arg)
+  }
+  return { words, flags }
+}
+
+// the values --values-stdin reads: a JSON object of strings, or null
+function parseValues(text: string): Record<string, string> | null {
+  try {
+    const value = JSON.parse(text) as unknown
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+    return Object.values(value).every(v => typeof v === 'string') ? (value as Record<string, string>) : null
+  } catch {
+    return null
+  }
+}
+
+// the stdin of a CLI call, read to its end
+function readStdin(): Promise<string> {
+  return new Promise(resolve => {
+    let text = ''
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', chunk => { text += chunk })
+    process.stdin.on('end', () => resolve(text))
+    process.stdin.on('error', () => resolve(text))
+  })
+}
+
+async function mcpCommand(verb: string | undefined, args: string[], call: CliCall): Promise<CliResult> {
+  const [name, json] = args
+  switch (verb) {
+    case 'add-json': {
+      let entry: unknown
+      try {
+        entry = JSON.parse(json ?? '')
+      } catch {
+        return bad('Invalid JSON')
+      }
+      if (name === undefined || entry === null || typeof entry !== 'object' || Array.isArray(entry)) return bad('Invalid JSON')
+      const scope = call.scope ?? 'local'
+      const servers = scopeServers(scope)
+      if (Object.hasOwn(servers, name)) return bad(`MCP server ${name} already exists in ${scope} config`)
+      saveScopeServers(scope, { ...servers, [name]: entry })
+      return out(`Added ${(entry as Msg).type ?? 'stdio'} MCP server ${name} to ${scope} config`)
+    }
+    case 'remove': {
+      const scopes: Scope[] = call.scope === undefined ? ['local', 'project', 'user'] : [call.scope]
+      const from = scopes.find(scope => name !== undefined && Object.hasOwn(scopeServers(scope), name))
+      if (from === undefined || name === undefined) return bad(`No MCP server found with name: ${name}`)
+      const servers = { ...scopeServers(from) }
+      delete servers[name]
+      saveScopeServers(from, servers)
+      return out(`Removed MCP server ${name} from ${from} config`)
+    }
+    case 'login': {
+      if (name === undefined) return bad('Missing server name')
+      const plan = script.mcpLogin?.[name]
+      const gate = plan?.gate
+      if (gate !== undefined) {
+        while (!existsSync(join(configDir, gate))) await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      if (plan?.fail !== undefined) return bad(plan.fail)
+      editJson(authFile(), value => { value[name] = true })
+      return out('Authentication successful')
+    }
+    case 'logout': {
+      if (name === undefined) return bad('Missing server name')
+      editJson(authFile(), value => { delete value[name] })
+      return out('Logged out')
+    }
+    default:
+      return bad(`Unknown command: mcp ${verb ?? ''}`)
+  }
+}
+
+function markets(): Market[] {
+  return script.marketplaces ?? []
+}
+
+// the added marketplaces, as known_marketplaces.json keeps them
+function knownMarkets(): Msg {
+  return readJsonFile(marketsFile())
+}
+
+function writeCatalog(market: Market): void {
+  editJson(catalogFile(market.name), value => {
+    value.name = market.name
+    value.plugins = market.plugins.map(plugin => ({ name: plugin.name, description: plugin.description, version: plugin.version }))
+  })
+}
+
+// the plugin an id (name@market) or a bare name means, in an added marketplace
+function findPlugin(ref: string): { market: string; plugin: Plugin } | undefined {
+  const at = ref.indexOf('@')
+  const name = at < 0 ? ref : ref.slice(0, at)
+  const only = at < 0 ? undefined : ref.slice(at + 1)
+  for (const market of Object.keys(knownMarkets())) {
+    if (only !== undefined && market !== only) continue
+    const plugin = markets().find(m => m.name === market)?.plugins.find(p => p.name === name)
+    if (plugin !== undefined) return { market, plugin }
+  }
+  return undefined
+}
+
+function installedPlugins(): Msg {
+  return readJsonFile(installedFile()).plugins ?? {}
+}
+
+function saveInstalled(edit: (plugins: Msg) => void): void {
+  editJson(installedFile(), value => {
+    const plugins: Msg = value.plugins ?? {}
+    edit(plugins)
+    value.version = 2
+    value.plugins = plugins
+  })
+}
+
+// the MCP servers a plugin installed at this folder ships (its .mcp.json)
+function pluginServers(installPath: string): Msg {
+  return readJsonFile(join(installPath, '.mcp.json')).mcpServers ?? {}
+}
+
+function writePluginServers(installPath: string, plugin: Plugin | undefined): void {
+  editJson(join(installPath, '.mcp.json'), value => {
+    value.mcpServers = Object.fromEntries((plugin?.mcpServers ?? []).map(name => [name, { command: 'fake-mcp', args: [name] }]))
+  })
+}
+
+function installedList(): Msg[] {
+  const enabled: Msg = readJsonFile(settingsFile()).enabledPlugins ?? {}
+  return Object.entries(installedPlugins()).flatMap(([id, entries]) => (entries as Msg[]).map(entry => ({
+    id,
+    version: entry.version,
+    scope: entry.scope,
+    enabled: enabled[id] === true,
+    installPath: entry.installPath,
+    installedAt: entry.installedAt,
+    lastUpdated: entry.lastUpdated,
+    projectPath: entry.projectPath,
+    mcpServers: Object.fromEntries(Object.keys(pluginServers(entry.installPath)).map(name => [name, {}]))
+  })))
+}
+
+async function pluginCommand(verb: string | undefined, args: string[], call: CliCall): Promise<CliResult> {
+  const [ref] = args
+  switch (verb) {
+    case 'marketplace':
+      return marketplaceCommand(args[0], args.slice(1))
+    case 'list': {
+      const installed = installedList()
+      if (!call.flags.has('--available')) return out(JSON.stringify(installed))
+      const ids = new Set(installed.map(entry => String(entry.id)))
+      const available = Object.keys(knownMarkets()).flatMap(market => ((readJsonFile(catalogFile(market)).plugins ?? []) as Msg[])
+        .map(plugin => ({ pluginId: `${plugin.name}@${market}`, name: plugin.name, description: plugin.description, marketplaceName: market, version: plugin.version, source: 'fake', installCount: findPlugin(`${plugin.name}@${market}`)?.plugin.installs ?? 0 }))
+        .filter(plugin => !ids.has(plugin.pluginId)))
+      return out(JSON.stringify({ installed, available }))
+    }
+    case 'install': {
+      const found = ref === undefined ? undefined : findPlugin(ref)
+      if (found === undefined) return bad(`Plugin "${ref}" not found in any marketplace`)
+      const { market, plugin } = found
+      const id = `${plugin.name}@${market}`
+      const version = plugin.installVersion ?? plugin.version
+      const installPath = cacheDir(market, plugin.name, version)
+      writePluginServers(installPath, plugin)
+      const scope = call.scope ?? 'user'
+      const now = new Date().toISOString()
+      saveInstalled(plugins => {
+        const others = ((plugins[id] ?? []) as Msg[]).filter(entry => entry.scope !== scope)
+        plugins[id] = [...others, { scope, installPath, version, installedAt: now, lastUpdated: now, ...(scope === 'user' ? {} : { projectPath: process.cwd() }) }]
+      })
+      editJson(settingsFile(), value => { value.enabledPlugins = { ...(value.enabledPlugins ?? {}), [id]: true } })
+      return out(`Successfully installed plugin: ${id}`)
+    }
+    case 'uninstall': {
+      const id = ref ?? ''
+      const entries = (installedPlugins()[id] ?? []) as Msg[]
+      const removed = entries.filter(entry => call.scope === undefined || entry.scope === call.scope)
+      if (removed.length === 0) return bad(`Plugin "${id}" is not installed`)
+      const kept = entries.filter(entry => !removed.includes(entry))
+      saveInstalled(plugins => {
+        if (kept.length === 0) delete plugins[id]
+        else plugins[id] = kept
+      })
+      if (kept.length === 0) editJson(settingsFile(), value => { if (value.enabledPlugins) delete value.enabledPlugins[id] })
+      return out(`Successfully uninstalled plugin: ${id}`)
+    }
+    case 'enable':
+    case 'disable': {
+      const id = ref ?? ''
+      if (!Object.hasOwn(installedPlugins(), id)) return bad(`Plugin "${id}" is not installed`)
+      editJson(settingsFile(), value => { value.enabledPlugins = { ...(value.enabledPlugins ?? {}), [id]: verb === 'enable' } })
+      return out(`Successfully ${verb}d plugin: ${id}`)
+    }
+    case 'update': {
+      const id = ref ?? ''
+      const [name = '', market = ''] = id.split('@')
+      const entries = (installedPlugins()[id] ?? []) as Msg[]
+      if (entries.length === 0) return bad(`Plugin "${id}" is not installed`)
+      const catalog = ((readJsonFile(catalogFile(market)).plugins ?? []) as Msg[]).find(plugin => plugin.name === name)
+      if (catalog === undefined) return bad(`Plugin "${id}" not found in any marketplace`)
+      const version = String(catalog.version)
+      if (entries.every(entry => entry.version === version)) return out(`Plugin "${id}" is already at version ${version}`)
+      const installPath = cacheDir(market, name, version)
+      writePluginServers(installPath, findPlugin(id)?.plugin)
+      const now = new Date().toISOString()
+      saveInstalled(plugins => {
+        plugins[id] = entries.map(entry => ({ ...entry, version, installPath, lastUpdated: now }))
+      })
+      return out(`Successfully updated plugin: ${id} to version ${version}`)
+    }
+    case 'configure': {
+      const found = ref === undefined ? undefined : findPlugin(ref)
+      if (found === undefined) return bad(`Plugin "${ref}" not found`)
+      const id = `${found.plugin.name}@${found.market}`
+      const stored = (readJsonFile(optionsFile())[id] ?? []) as string[]
+      if (call.flags.has('--values-stdin')) {
+        if (call.values === null || call.values === undefined) return bad('Invalid JSON')
+        const keys = Object.keys(call.values)
+        editJson(optionsFile(), value => { value[id] = [...new Set([...stored, ...keys])] })
+        return out(`Configured plugin: ${id}`)
+      }
+      if (call.flags.has('--json')) {
+        const options = found.plugin.options ?? []
+        return out(JSON.stringify({
+          pluginId: id,
+          displayName: found.plugin.name,
+          schema: Object.fromEntries(options.map(option => [option.key, { type: 'string', title: option.title, description: option.description, required: option.required, sensitive: option.sensitive }])),
+          configured: options.filter(option => stored.includes(option.key)).map(option => option.key),
+          unconfigured: options.filter(option => !stored.includes(option.key)).map(option => option.key)
+        }))
+      }
+      return bad('configure needs --json or --values-stdin')
+    }
+    default:
+      return bad(`Unknown command: plugin ${verb ?? ''}`)
+  }
+}
+
+async function marketplaceCommand(action: string | undefined, args: string[]): Promise<CliResult> {
+  const known = knownMarkets()
+  const name = args[0] ?? ''
+  switch (action) {
+    case 'add': {
+      const market = markets().find(m => m.source === args[0])
+      if (market === undefined) return bad(`Failed to add marketplace: no marketplace manifest found at ${args[0]}`)
+      writeCatalog(market)
+      editJson(marketsFile(), value => {
+        value[market.name] = { source: { source: 'github', repo: market.source }, installLocation: join(pluginsDir(), 'marketplaces', market.name), lastUpdated: new Date().toISOString() }
+      })
+      return out(`Successfully added marketplace: ${market.name}`)
+    }
+    case 'remove': {
+      if (!Object.hasOwn(known, name)) return bad(`Marketplace not found: ${name}`)
+      editJson(marketsFile(), value => { delete value[name] })
+      rmSync(join(pluginsDir(), 'marketplaces', name), { recursive: true, force: true })
+      return out(`Successfully removed marketplace: ${name}`)
+    }
+    case 'update': {
+      const names = args.length > 0 ? args : Object.keys(known)
+      const lines: string[] = []
+      for (const updated of names) {
+        if (!Object.hasOwn(known, updated)) return bad(`Marketplace not found: ${updated}`)
+        const market = markets().find(m => m.source === known[updated]?.source?.repo)
+        if (market === undefined) return bad(`Failed to update marketplace: ${updated}`)
+        writeCatalog(market)
+        lines.push(`Successfully updated marketplace: ${updated}`)
+      }
+      return out(lines.join('\n'))
+    }
+    case 'list':
+      return out(JSON.stringify(Object.entries(known).map(([market, value]) => ({ name: market, source: 'github', repo: value?.source?.repo, installLocation: value?.installLocation }))))
+    default:
+      return bad(`Unknown command: plugin marketplace ${action ?? ''}`)
+  }
+}
+
+// a CLI call: its words and options are read, logged (the keys of --values-stdin, never its values), then answered: a cliFail
+// first, then the subcommand
+async function runCli(args: string[], input: () => Promise<string>): Promise<CliResult> {
+  const { words, flags } = parseCliArgs(args)
+  const values = flags.has('--values-stdin') ? parseValues(await input()) : undefined
+  logLine({ cli: args, secretEnv: process.env.MCP_CLIENT_SECRET !== undefined, stdinKeys: values ? Object.keys(values) : null })
+  const joined = args.filter(arg => arg !== '--').join(' ')
+  const failure = Object.entries(script.cliFail ?? {}).find(([key]) => joined.startsWith(key))
+  if (failure !== undefined) return bad(failure[1])
+  const scopeArg = flags.get('--scope')
+  if (scopeArg !== undefined && !isScope(scopeArg)) return bad(`Invalid scope: ${scopeArg}`)
+  const call: CliCall = { words, flags, scope: isScope(scopeArg) ? scopeArg : undefined, values }
+  const [group, verb, ...rest] = words
+  if (group === 'mcp') return mcpCommand(verb, rest, call)
+  if (group === 'plugin') return pluginCommand(verb, rest, call)
+  return bad(`Unknown command: ${joined}`)
+}
+
+// the CLI mode (argv starts with mcp or plugin): answers, prints and exits; the stdin is read for --values-stdin only
+async function cliMode(): Promise<void> {
+  try {
+    const result = await runCli(argv, readStdin)
+    process.stdout.write(result.stdout, () => process.stderr.write(result.stderr, () => exit(result.code)))
+  } catch (error) {
+    fail(error)
+  }
+}
+
+// a CLI call the model makes with Bash: its tool_use, the CLI run in this process, then the result with its stdout
+async function cliStep(args: string[]): Promise<Outcome> {
+  const toolId = emitToolUse('Bash', { command: `claude ${args.join(' ')}` })
+  const result = await runCli(args, async () => '')
+  emitToolResult(toolId, result.stdout.trimEnd(), result.code !== 0)
+  return 'done'
+}
+
+// the servers the session loads at its start, as Claude Code loads them: the user's, the folder's (local), the project's approved
+// in .mcp.json, and those of the installed plugins that are enabled; the folder's disabledMcpServers switch some off
+function loadSessionMcp(): SessionMcp {
+  const cwd = process.cwd()
+  const config = readJsonFile(claudeJsonFile())
+  const settings = readJsonFile(settingsFile())
+  const folder: Msg = config.projects?.[folderKey(config, cwd)] ?? {}
+  // a server's config as Claude Code sends it: its type (stdio when none is written) and every field of its entry
+  const serverConfig = (entry: unknown): Msg => ({ type: 'stdio', ...(entry as Msg) })
+  const servers: McpServer[] = []
+  for (const [name, entry] of Object.entries(config.mcpServers ?? {})) servers.push({ name, config: serverConfig(entry), scope: 'user', source: 'user' })
+  for (const [name, entry] of Object.entries(folder.mcpServers ?? {})) servers.push({ name, config: serverConfig(entry), scope: 'local', source: 'local' })
+  const approved = (name: string): boolean => {
+    const all = folder.enableAllProjectMcpServers === true || settings.enableAllProjectMcpServers === true
+    const enabled = [...(folder.enabledMcpjsonServers ?? []), ...(settings.enabledMcpjsonServers ?? [])]
+    const disabled = [...(folder.disabledMcpjsonServers ?? []), ...(settings.disabledMcpjsonServers ?? [])]
+    return (all || enabled.includes(name)) && !disabled.includes(name)
+  }
+  for (const [name, entry] of Object.entries(readJsonFile(join(cwd, '.mcp.json')).mcpServers ?? {})) {
+    if (approved(name)) servers.push({ name, config: serverConfig(entry), scope: 'project', source: 'project' })
+  }
+  const enabledPlugins: Msg = settings.enabledPlugins ?? {}
+  for (const [id, entries] of Object.entries(installedPlugins())) {
+    const first = (entries as Msg[])[0]
+    if (enabledPlugins[id] !== true || first === undefined) continue
+    for (const [name, entry] of Object.entries(pluginServers(first.installPath))) {
+      servers.push({ name: `plugin:${id.split('@')[0]}:${name}`, config: serverConfig(entry), source: 'plugin' })
+    }
+  }
+  return { servers, disabled: new Set<string>(folder.disabledMcpServers ?? []), reconnected: new Set<string>(), startedAt: Date.now() }
+}
+
+// the session's MCP state: loaded at its start, changed by its control requests
+function mcpSession(): SessionMcp {
+  mcpState ??= loadSessionMcp()
+  return mcpState
+}
+
+function loggedIn(name: string): boolean {
+  return readJsonFile(authFile())[name] === true
+}
+
+// the status of each server the session loaded, from the script's options (every one connected with the tool ping by default)
+function mcpStatuses(state: SessionMcp): Msg[] {
+  return state.servers.map(server => {
+    const options: McpOptions = script.mcp?.[server.name] ?? {}
+    let status: string = options.status ?? 'connected'
+    if (state.disabled.has(server.name)) status = 'disabled'
+    else if (options.pendingMs !== undefined && Date.now() - state.startedAt < options.pendingMs) status = 'pending'
+    else if (status === 'needs-auth' && state.reconnected.has(server.name)) status = 'connected'
+    const connected = status === 'connected'
+    return {
+      name: server.name,
+      status,
+      ...(connected ? { serverInfo: { name: server.name, version: options.version ?? '1.0.0' }, tools: (options.tools ?? ['ping']).map(name => ({ name })) } : {}),
+      ...(options.error === undefined ? {} : { error: options.error }),
+      config: server.config,
+      scope: server.scope,
+      source: server.source
+    }
+  })
+}
+
+// the session's MCP requests: mcp_status lists its servers; mcp_reconnect brings a server that needs login up once it is logged in;
+// mcp_toggle switches a server on or off, and the folder's disabledMcpServers keeps it. An unknown name is an error reply
+function mcpControl(requestId: string, request: Msg): void {
+  const state = mcpSession()
+  if (request.subtype === 'mcp_status') {
+    reply(requestId, { mcpServers: mcpStatuses(state) })
+    return
+  }
+  const name = String(request.serverName ?? '')
+  if (!state.servers.some(server => server.name === name)) {
+    emit({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: `Server not found: ${name}` } })
+    return
+  }
+  if (request.subtype === 'mcp_reconnect') {
+    if (script.mcp?.[name]?.status === 'needs-auth' && loggedIn(name)) state.reconnected.add(name)
+    reply(requestId, {})
+    return
+  }
+  if (request.enabled === true) state.disabled.delete(name)
+  else state.disabled.add(name)
+  editJson(claudeJsonFile(), value => {
+    const key = folderKey(value, process.cwd())
+    value.projects = { ...(value.projects ?? {}), [key]: { ...(value.projects?.[key] ?? {}), disabledMcpServers: [...state.disabled] } }
+  })
+  reply(requestId, {})
+}
+
 // ---- start ----
 
 logLine({ argv, pid: process.pid })
 
-if (has('--version')) {
+if (argv[0] === 'mcp' || argv[0] === 'plugin') {
+  void cliMode()
+} else if (has('--version')) {
   process.stdout.write(`${script.version ?? VERSION} (Claude Code)\n`)
   exit(0)
 } else if (flag('--input-format') !== 'stream-json') {

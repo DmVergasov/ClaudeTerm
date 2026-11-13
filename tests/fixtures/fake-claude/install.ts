@@ -25,6 +25,7 @@ export type FakeStep =
   | { fold: true | 'result' } // true: the next assistant message names the user messages read so far as taken into the turn (user_message_uuids); 'result': the messages still waiting are taken into the turn, named only on its result (user_message_uuids), and no turn of their own runs them
   | { inject: { text: string; origin?: Record<string, unknown> } } // a user-role message Claude Code puts in the conversation itself (a background task's notice, another session's message); origin: the SDK's origin of it, none when not given
   | { rateLimit: { type: 'five_hour' | 'seven_day'; utilization: number; resetsAt: number; status?: 'allowed' | 'rejected'; windows?: RateLimitWindows } } // a rate_limit_event of the stream, shaped as the recorded one (utilization 0.42 is 42 %); windows: what unifiedWindows carries, every window the account has; left out, the event has no unifiedWindows and names its own window alone
+  | { cli: string[] } // Claude runs `claude <args>` with Bash: a Bash tool_use (input.command = 'claude ' + args joined by spaces), then the stand-in's own CLI runs in-process, then the tool_result with its stdout
 
 /** a compaction (compact: true is one with the defaults): gate holds it until the file <config folder>/<gate> exists; fail ends it as a failure with this error; the numbers go in its boundary */
 export interface FakeCompact { trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; gate?: string; fail?: string }
@@ -65,6 +66,26 @@ export interface FakeScript {
   cwd?: string
   /** the answers to ClaudeTerm's Heads up questions (src/main/chat/heads-up.ts): a check's, and Explain more's */
   headsUp?: { check?: string; explain?: string }
+  /** the MCP servers the session loaded, by name: every one is connected with the tool `ping` unless given here (a status, a failure's error, its tools, its version); pendingMs: 'pending' that long after the start */
+  mcp?: Record<string, { status?: 'connected' | 'failed' | 'needs-auth'; error?: string; tools?: string[]; version?: string; pendingMs?: number }>
+  /** `claude mcp login <name>`: waits for <config folder>/<gate>; fail: that message on stderr, exit 1. A name not given logs in at once */
+  mcpLogin?: Record<string, { gate?: string; fail?: string }>
+  /** what `claude plugin marketplace add <source>` can add, by its exact source */
+  marketplaces?: FakeMarketplace[]
+  /** a CLI call whose arguments (joined by spaces, `--` left out) start with the key fails with that message, exit 1 */
+  cliFail?: Record<string, string>
+}
+
+export interface FakeMarketplace { name: string; source: string; plugins: FakePlugin[] }
+export interface FakePlugin {
+  name: string
+  description: string
+  version: string
+  installVersion?: string
+  installs?: number
+  /** the MCP servers the plugin ships (its .mcp.json), each started as `fake-mcp <name>` */
+  mcpServers?: string[]
+  options?: { key: string; title: string; description?: string; required: boolean; sensitive: boolean }[]
 }
 
 const STAND_IN = resolve(import.meta.dirname, 'fake-claude.ts')

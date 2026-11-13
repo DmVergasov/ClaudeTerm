@@ -156,3 +156,15 @@ Also seen:
   `plan` and `planFilePath`.
 
 **Version floor:** `2.1.322` (the lower of 2.1.322 and the recorded 2.1.322).
+
+## MCP and plugins: scripted, not recorded
+
+The `claude mcp …` and `claude plugin …` calls, and the session's MCP requests (`mcp_status`, `mcp_reconnect`,
+`mcp_toggle`), are scripted from the SDK's `McpServerStatus` type and the CLI's code, version 2.1.322; nothing recorded.
+The script options (tests/fixtures/fake-claude/install.ts):
+
+- `mcp`: the servers the session loads, by name: a `status`, an `error`, its `tools` (`ping` by default), a `version`, or `pendingMs` ('pending' that long).
+- `mcpLogin`: `claude mcp login <name>` waits for its `gate` file in the config folder, or fails with its `fail` message.
+- `marketplaces`: the marketplaces `claude plugin marketplace add <source>` can add, each with its plugins.
+- `cliFail`: a CLI call whose arguments start with the key fails with its message.
+- the `{ cli: [...] }` step: a Bash call `claude <args>` whose result is the stand-in's CLI output.
