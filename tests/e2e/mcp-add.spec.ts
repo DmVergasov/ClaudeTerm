@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ChatItem } from '../../src/shared/chat'
 import { chatReady, launchChatTab } from './chat-helpers'
@@ -312,6 +312,58 @@ test('Clear empties the field again', async () => {
     await expect(page.locator(FIELD)).toBeVisible()
     await expect(page.locator(FIELD)).toHaveValue('')
     await expect(page.locator('.mcp-add-masked')).toBeHidden()
+  } finally {
+    await app.close()
+  }
+})
+
+test('a failed plugin marketplace add shows its error in Marketplaces, and Add keeps the focus', async () => {
+  const { app, page } = await launchChatTab({ turns: {}, cliFail: { 'plugin marketplace add': 'Failed to add marketplace: no marketplace manifest found at acme/missing' } })
+  try {
+    await openDialog(page)
+    await paste(page, 'https://github.com/acme/missing')
+    await expect(page.locator('.mcp-add-found')).toContainText('This is a GitHub repository: acme/missing')
+    await page.getByRole('button', { name: 'Add as a plugin marketplace' }).click()
+    await expect(page.locator(DIALOG)).toBeHidden()
+    await expect(page.locator('.panel-mcp [data-section="plugins"]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.panel-mcp [data-sub="marketplaces"]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.panel-mcp .mcp-market-box .mcp-error')).toContainText('Failed to add marketplace: no marketplace manifest found at acme/missing')
+    // the link stays in the field: Add again fails the same way, and the focus is back on the Add button
+    await expect(page.locator('.panel-mcp .mcp-market-input')).toHaveValue('acme/missing')
+    await page.locator('.panel-mcp [data-focus-key="market-add"]').click()
+    await expect(page.locator('.panel-mcp [data-focus-key="market-add"]')).toBeFocused()
+    await expect(page.locator('.panel-mcp .mcp-market-box .mcp-error')).toContainText('Failed to add marketplace: no marketplace manifest found at acme/missing')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a GitHub link that comes while another add runs waits in the add field', async () => {
+  const { app, page, config, log } = await launchChatTab({ turns: {}, marketplaces: ACME_TOOLS, cliGate: { 'plugin marketplace add': 'add-ok' } })
+  // the dialog adds the repository it found in the link, so the field shows acme/tools-two
+  const link = 'https://github.com/acme/tools-two'
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    await page.locator('.panel-mcp [data-section="plugins"]').click()
+    await page.locator('.panel-mcp [data-sub="marketplaces"]').click()
+    await page.locator('.panel-mcp .mcp-market-add').click()
+    await page.locator('.panel-mcp .mcp-market-input').fill('acme/tools')
+    // the add is held by the gate: its CLI call runs while the link comes from the dialog
+    await page.locator('.panel-mcp [data-focus-key="market-add"]').click()
+    await expect.poll(() => cliCalls(log).filter((c) => c.argv[1] === 'marketplace' && c.argv[2] === 'add').length).toBe(1)
+    await page.locator(ADD_BUTTON).click()
+    await expect(page.locator(DIALOG)).toBeVisible()
+    await paste(page, link)
+    await page.getByRole('button', { name: 'Add as a plugin marketplace' }).click()
+    await expect(page.locator(DIALOG)).toBeHidden()
+    await expect(page.locator('.panel-mcp .mcp-market-input')).toHaveValue('acme/tools-two')
+    writeFileSync(join(config, 'add-ok'), '')
+    await expect(page.locator('.panel-mcp [data-name="acme-tools"]')).toHaveCount(1)
+    // the first add is done: the link is still in the field, neither added nor cleared
+    await expect(page.locator('.panel-mcp [data-sub="marketplaces"]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.panel-mcp .mcp-market-input')).toHaveValue('acme/tools-two')
+    expect(cliCalls(log).filter((c) => c.argv[1] === 'marketplace' && c.argv[2] === 'add')).toHaveLength(1)
   } finally {
     await app.close()
   }

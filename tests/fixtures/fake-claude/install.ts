@@ -74,6 +74,8 @@ export interface FakeScript {
   marketplaces?: FakeMarketplace[]
   /** a CLI call whose arguments (joined by spaces, `--` left out) start with the key fails with that message, exit 1 */
   cliFail?: Record<string, string>
+  /** a CLI call whose arguments start with the key waits, after it is logged, until the file <config folder>/<gate> exists: a test holds it while it does something else */
+  cliGate?: Record<string, string>
 }
 
 export interface FakeMarketplace { name: string; source: string; plugins: FakePlugin[] }

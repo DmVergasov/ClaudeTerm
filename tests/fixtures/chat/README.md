@@ -167,4 +167,5 @@ The script options (tests/fixtures/fake-claude/install.ts):
 - `mcpLogin`: `claude mcp login <name>` waits for its `gate` file in the config folder, or fails with its `fail` message.
 - `marketplaces`: the marketplaces `claude plugin marketplace add <source>` can add, each with its plugins.
 - `cliFail`: a CLI call whose arguments start with the key fails with its message.
+- `cliGate`: a CLI call whose arguments start with the key waits, once logged, for its file in the config folder.
 - the `{ cli: [...] }` step: a Bash call `claude <args>` whose result is the stand-in's CLI output.

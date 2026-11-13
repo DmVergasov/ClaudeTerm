@@ -186,7 +186,8 @@ test('Marketplaces updates and removes one', async () => {
     const row = page.locator(`${PANEL} [data-name="acme-tools"]`)
     await expect(row).toContainText('acme/tools')
     await row.locator('[data-focus-key="update"]').click()
-    await expect.poll(() => cliCalls(log).at(-1)?.argv.join(' ') ?? '').toBe('plugin marketplace update -- acme-tools')
+    // main asks the list again after the update, so the update is found among the calls, not taken as the last one
+    await expect.poll(() => cliCalls(log).find((c) => c.argv[1] === 'marketplace' && c.argv[2] === 'update')?.argv.join(' ') ?? '').toBe('plugin marketplace update -- acme-tools')
     await row.locator('[data-focus-key="remove"]').click()
     await expect(row).toContainText('Remove acme-tools?')
     await row.locator('[data-focus-key="confirm-remove"]').click()
@@ -209,6 +210,41 @@ test('a failed install shows its message on its card', async () => {
     await card.locator('[data-focus-key="install"]').click()
     await expect(card.locator('.mcp-error')).toContainText('Plugin "x" not found in any marketplace')
     expect(chatStarts(log)).toBe(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a switch keeps the focus after Space, once the plugin is off', async () => {
+  const { app, page, tabId, log, config, work } = await launchChatTab({ turns: {}, marketplaces: ACME })
+  try {
+    await chatReady(page)
+    standIn(config, work, ['plugin', 'marketplace', 'add', 'acme/tools'])
+    await page.evaluate((id) => window.ct.mcpPluginAction(id, { kind: 'install', id: 'code-review-kit@acme-tools' }), tabId)
+    await expect.poll(() => chatStarts(log), { timeout: 30_000 }).toBe(2)
+    await openPlugins(page)
+    const sw = page.locator(`${PANEL} [data-name="${KIT}"]`).getByRole('switch')
+    await sw.focus()
+    await page.keyboard.press('Space')
+    await expect(sw).toHaveAttribute('aria-checked', 'false')
+    // the answer is in and the list is drawn again: the switch that was used still has the focus
+    await expect(sw).toBeFocused()
+    await expect.poll(() => chatStarts(log), { timeout: 30_000 }).toBe(3)
+  } finally {
+    await app.close()
+  }
+})
+
+test('after an install with a required option the first input of its form has the focus', async () => {
+  const { app, page, config, work } = await launchChatTab({ turns: {}, marketplaces: ACME })
+  try {
+    await chatReady(page)
+    standIn(config, work, ['plugin', 'marketplace', 'add', 'acme/tools'])
+    await openPlugins(page)
+    await subTab(page, 'discover').click()
+    await page.locator(`${PANEL} [data-name="${CI_WATCH}"] [data-focus-key="install"]`).click()
+    await expect(page.locator(`${PANEL} .mcp-options`)).toContainText('ci-watch needs a few settings')
+    await expect(page.locator(`${PANEL} .mcp-options`).getByLabel('API token')).toBeFocused()
   } finally {
     await app.close()
   }

@@ -1253,6 +1253,10 @@ async function runCli(args: string[], input: () => Promise<string>): Promise<Cli
   const values = flags.has('--values-stdin') ? parseValues(await input()) : undefined
   logLine({ cli: args, secretEnv: process.env.MCP_CLIENT_SECRET !== undefined, stdinKeys: values ? Object.keys(values) : null })
   const joined = args.filter(arg => arg !== '--').join(' ')
+  const held = Object.entries(script.cliGate ?? {}).find(([key]) => joined.startsWith(key))
+  if (held !== undefined) {
+    while (!existsSync(join(configDir, held[1]))) await new Promise(resolve => setTimeout(resolve, 20))
+  }
   const failure = Object.entries(script.cliFail ?? {}).find(([key]) => joined.startsWith(key))
   if (failure !== undefined) return bad(failure[1])
   const scopeArg = flags.get('--scope')

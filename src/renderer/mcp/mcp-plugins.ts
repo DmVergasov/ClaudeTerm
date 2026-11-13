@@ -13,6 +13,8 @@ export interface PluginsCallbacks {
   tab(): string | null
   /** an action changed the plugins: the panel asks the list again */
   changed(): void
+  /** the control that has the focus gets it back once the list is drawn again after its action's answer */
+  keepFocus(): void
   /** the section is drawn again from its state */
   repaint(): void
   /** the plugins section of this tab is on screen: a settings form that is not may not hold the session's restart */
@@ -117,6 +119,11 @@ export class PluginsSection {
     this.sub = 'marketplaces'
     this.addOpen = true
     this.addField.value = source
+    // an add that runs takes no second one: the link waits in the field, where the person sees it, until Add
+    if (this.addBusy) {
+      this.cb.repaint()
+      return
+    }
     this.addSubmit(source)
   }
 
@@ -150,6 +157,7 @@ export class PluginsSection {
     const state = this.item(tabId, key)
     state.busy = true
     state.error = null
+    this.cb.keepFocus()
     this.cb.repaint()
     void this.cb.run(tabId, a).then((result) => {
       state.busy = false
@@ -270,6 +278,7 @@ export class PluginsSection {
     const state = this.item(tabId, o.id)
     state.busy = true
     state.error = null
+    this.cb.keepFocus()
     this.cb.repaint()
     void this.cb.run(tabId, { kind: 'install', id: o.id }).then((result) => {
       state.busy = false
@@ -278,9 +287,12 @@ export class PluginsSection {
         this.cb.repaint()
         return
       }
-      if (result.options !== undefined && result.options.length > 0) this.askOptions(tabId, o, result.options)
+      const options = result.options ?? []
+      if (options.length > 0) this.askOptions(tabId, o, options)
       this.cb.changed()
       this.cb.repaint()
+      // the form asks for its values: the focus goes to its first input
+      if (options.length > 0) this.form?.inputs[0]?.[1].focus()
     })
   }
 
@@ -391,6 +403,8 @@ export class PluginsSection {
     const tabId = this.cb.tab()
     const text = source.trim()
     if (tabId === null || text === '' || this.addBusy) return
+    // the Add button is off while the add runs: a failure gives the focus back to it
+    const onButton = document.activeElement === this.addButton
     this.addBusy = true
     this.addError = ''
     this.cb.repaint()
@@ -399,14 +413,19 @@ export class PluginsSection {
       if (!result.ok) {
         this.addError = result.error
       } else {
-        // the added marketplace's plugins are the Discover list; an unnamed one shows them all
-        this.addOpen = false
-        this.addField.value = ''
-        this.sub = 'discover'
-        this.only = result.marketplace ?? null
+        // a link that came while this add ran waits in the field: then the section stays, and the link is not cleared
+        const typed = this.addField.value.trim()
+        if (typed === '' || typed === text) {
+          // the added marketplace's plugins are the Discover list; an unnamed one shows them all
+          this.addOpen = false
+          this.addField.value = ''
+          this.sub = 'discover'
+          this.only = result.marketplace ?? null
+        }
         this.cb.changed()
       }
       this.cb.repaint()
+      if (onButton && this.addOpen) this.addButton.focus()
     })
   }
 

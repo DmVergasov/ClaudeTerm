@@ -78,6 +78,9 @@ export class McpPanel {
       run: (tabId, a) => this.cb.pluginAction(tabId, a).catch((): McpResult => FAILED),
       tab: () => this.tabId,
       changed: () => this.refresh(),
+      keepFocus: () => {
+        this.wanted = this.focusedControl()
+      },
       repaint: () => this.paint(),
       live: (tabId) => this.panel.isShowing('mcp') && this.section === 'plugins' && this.tabId === tabId
     })
@@ -427,9 +430,12 @@ export class McpPanel {
   /** the list is drawn again: the control that had the focus is drawn again too, found by its row and its focus key */
   private setList(...nodes: Node[]): void {
     const kept = this.focusedControl()
+    // what has the focus and is not a row's control (an option form's input, say) keeps it when its node is drawn again
+    const focused = document.activeElement
     this.list.replaceChildren(...nodes)
     if (this.wanted !== null) this.takeWanted()
     else if (kept !== null) this.focusKept(kept)
+    else if (focused instanceof HTMLElement && this.list.contains(focused)) focused.focus()
   }
 
   /** the control with the focus, as the list finds it again; null when the focus is not on a row's control */
