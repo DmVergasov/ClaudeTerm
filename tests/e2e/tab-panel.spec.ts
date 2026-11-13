@@ -1046,6 +1046,9 @@ test('a waiting row\'s word stands at the row\'s right end whatever marks come b
     await expect(row(page, id).locator('.tab-status')).toHaveText('Question')
   }
   await expect(row(page, muted).locator('.tab-muted')).toHaveCount(1)
+  // the pointer is off the rows: a row pointed at shows its × in its word's place (where the runner's cursor lies is not the test's)
+  await page.mouse.move(1, 1)
+  for (const id of [plain, muted]) await expect(row(page, id).locator('.tab-status')).toBeVisible()
   const right = (id: string): Promise<number> => row(page, id).locator('.tab-status').evaluate((el) => el.getBoundingClientRect().right)
   expect(Math.abs((await right(plain)) - (await right(muted)))).toBeLessThanOrEqual(0.5)
   // the pulse is a layer under the row's content: the row's own background is a row's like any other, so a hover still shows
