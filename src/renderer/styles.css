@@ -354,7 +354,8 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 /* the account at the start, the session in the middle of the bar whatever the sides hold, the changes at the end; the middle gives way first */
 #statusbar .status-zone { display: flex; align-items: center; gap: 18px; min-width: 0; overflow: hidden; }
 #statusbar .status-zone-middle { justify-content: center; }
-#statusbar .status-zone-end { justify-content: flex-end; }
+/* the room beside a side panel keeps the middle under the chat; the changes still end at the bar's right end, under the panel */
+#statusbar .status-zone-end { justify-content: flex-end; margin-right: calc(-1 * var(--status-room, 0px)); }
 #statusbar .status-seg { display: inline-flex; align-items: center; min-width: 0; color: var(--text-2); }
 /* the text is the only part that gives way: the pill and the bar keep their size, and the cut shows as an ellipsis */
 #statusbar .status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

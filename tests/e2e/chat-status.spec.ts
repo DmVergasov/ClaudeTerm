@@ -1,7 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { CONTINUE_PROMPT, LIMIT_PROMPT } from '../../src/main/auto-continue'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { launchChatTab, sendMessage, userMessages } from './chat-helpers'
+import { gitRepo } from './helpers'
 
 const STATUS_BACKGROUND = '#statusbar .status-background'
 const TASK = { id: 'b1', type: 'shell', description: 'Run the e2e suite', command: 'npx playwright test' }
@@ -68,6 +71,33 @@ test('the session segments sit in the middle of the chat, under its message box,
     await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
     await expect.poll(async () => { const c = await centers(); return c.panelLeft >= c.fieldRight }).toBe(true)
     await expect.poll(async () => { const c = await centers(); return Math.abs(c.status - c.field) }).toBeLessThanOrEqual(2)
+  } finally {
+    await app.close()
+  }
+})
+
+test('the Changes counter stays at the right end of the status bar while a side panel takes the right of the sheet', async () => {
+  const repo = gitRepo()
+  writeFileSync(join(repo, 'a.ts'), 'one\nTWO\nthree\n')
+  const { app, page } = await launchChatTab({ turns: {} }, { work: repo })
+  const edges = (): Promise<{ gap: number; left: number; panelLeft: number; panelWidth: number; chatRight: number }> => page.evaluate(() => {
+    const bar = document.getElementById('statusbar')!.getBoundingClientRect()
+    const seg = document.querySelector('#statusbar .status-seg[data-key="changes"]')!.getBoundingClientRect()
+    const chat = document.getElementById('terminals')!.getBoundingClientRect()
+    const panel = document.getElementById('image-panel')!.getBoundingClientRect()
+    return { gap: bar.right - seg.right, left: seg.left, panelLeft: panel.left, panelWidth: panel.width, chatRight: chat.right }
+  })
+  try {
+    await expect(page.locator('#statusbar .status-seg[data-key="changes"]')).toContainText('1 file')
+    const alone = (await edges()).gap
+    await page.locator('#sheet-header .tab-images-toggle').click()
+    await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
+    // the panel has slid in all the way: it stands beside the chat, at its full width
+    await expect.poll(async () => { const e = await edges(); return e.panelWidth > 200 && e.panelLeft >= e.chatRight - 1 }).toBe(true)
+    // the session's segments follow the chat's middle, the counter keeps the bar's right end: under the panel, not beside the chat
+    await expect.poll(async () => Math.abs((await edges()).gap - alone)).toBeLessThanOrEqual(1)
+    const e = await edges()
+    expect(e.left).toBeGreaterThanOrEqual(e.panelLeft)
   } finally {
     await app.close()
   }
