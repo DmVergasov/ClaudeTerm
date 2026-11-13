@@ -84,7 +84,7 @@ function normaliseAddition(addition: string): string {
   return addition
     .replace(/\r\n?/g, '\n')
     .replace(/^(?:[ \t]*\n)+/, '')
-    .replace(/\s+$/, '')
+    .trimEnd()
 }
 
 /** the text with the addition after one blank line; no limit check */

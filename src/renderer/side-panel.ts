@@ -26,6 +26,8 @@ export class SidePanel {
   readonly tools: Record<PanelTab, HTMLElement>
   /** shown, hidden, switched or expanded */
   onChange: () => void = () => {}
+  /** the part of the terminal the panel covers may have changed: the note sits left of it */
+  onCover: () => void = () => {}
   private shownTab: PanelTab | null = null
   private currentTab: PanelTab = 'images'
   private isExpanded = false
@@ -324,6 +326,7 @@ export class SidePanel {
     const width = this.widths[this.currentTab]
     // what the panel covers of the terminal's right, for the note to sit left of it; the expanded panel covers the note too
     this.terminals.style.setProperty('--panel-cover', `${shown && this.mode === 'overlay' && !this.isExpanded ? width : 0}px`)
+    this.onCover()
     if (this.moving) {
       // expanded in the middle of a slide: the panel takes the whole sheet at once, the slide's width animation ends
       if (this.isExpanded) {

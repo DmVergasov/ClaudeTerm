@@ -1292,7 +1292,6 @@ async function boot(): Promise<void> {
       // a closed Find leaves no highlight on any chat, whichever tab its search was in
       for (const t of tabs.values()) if (t.chat) chatFinds.get(t.chat)?.clearDecorations()
       // the card moves back up under the top right corner, where Find's box was
-      // the card moves back up under the top right corner, where Find's box was
       noteOverlay.relayout()
       if (activeId) focusTab(activeId)
     }
@@ -1512,6 +1511,7 @@ async function boot(): Promise<void> {
     conversations: (tabId) => ct.getMailConversations(tabId),
     markRead: (ids) => ct.markMailRead(ids)
   })
+  sidePanel.onCover = () => noteOverlay.relayout()
   sidePanel.onChange = () => {
     imagePanel.panelChanged()
     reviewPanel.panelChanged()

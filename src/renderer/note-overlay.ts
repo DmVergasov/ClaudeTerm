@@ -56,12 +56,13 @@ function keepSize(note: { size?: NoteSize }, size: NoteSize | null): void {
   else delete note.size
 }
 
-/** the key of a note in the editor: its tab and its side */
-const noteKey = (tabId: string, side: NoteSide): string => `${side}:${tabId}`
+/** the key of a note in the editor: its tab and its side; a project's note is keyed by its project too, so another project's note gets a new history */
+const noteKey = (tabId: string, side: NoteSide, project: string | null): string =>
+  side === 'project' ? `project:${project}:${tabId}` : `session:${tabId}`
 
 /**
- * The note of the Claude tab in front, over the top right of the terminal: a label with its first line, or a card with
- * the whole text to edit. It lies over the terminal, which keeps its size. Every change of a note goes to main.
+ * The note of the Claude tab in front, over the top right of the terminal: a label with the count of its ticked items and
+ * the first unticked one (its first line when it has no items), or a card with the whole text to edit. It lies over the terminal, which keeps its size. Every change of a note goes to main.
  * A tab has two notes: its session's, and its project's, which the Claude tabs of the project share.
  */
 export class NoteOverlay {
@@ -129,6 +130,8 @@ export class NoteOverlay {
     if (note) this.notes.set(tabId, { ...note })
     else this.notes.delete(tabId)
     this.generations.set(tabId, generation)
+    // the note in the editor is replaced: an equal text still gets a new history, the old note's undo steps are not its own
+    if (this.loaded === noteKey(tabId, 'session', null)) this.loaded = null
     if (tabId === this.active) this.redraw()
   }
 
@@ -139,6 +142,9 @@ export class NoteOverlay {
   setProjectNote(key: string, note: ProjectNote | null, generation: number): void {
     if ((this.projects.get(key)?.generation ?? -1) >= generation) return
     this.projects.set(key, { ...note, text: note?.text ?? '', generation })
+    // the editor holds this project's note: it is replaced, with a new history even when its text is equal
+    const active = this.active
+    if (active !== null && this.loaded === noteKey(active, 'project', key)) this.loaded = null
     this.redraw()
   }
 
@@ -148,7 +154,7 @@ export class NoteOverlay {
     const had = noteHasText(note)
     note.text = applyNoteOp(note.text, op)
     this.generations.set(tabId, generation)
-    if (this.loaded === noteKey(tabId, 'session')) this.editor.update(note.text)
+    if (this.loaded === noteKey(tabId, 'session', null)) this.editor.update(note.text)
     if (noteHasText(note) !== had) this.cb.changed()
     this.redraw()
   }
@@ -159,7 +165,7 @@ export class NoteOverlay {
     entry.text = applyNoteOp(entry.text, op)
     entry.generation = generation
     const active = this.active
-    if (active !== null && this.loaded === noteKey(active, 'project') && this.projectOf(active).key === key) this.editor.update(entry.text)
+    if (active !== null && this.loaded === noteKey(active, 'project', key)) this.editor.update(entry.text)
     this.redraw()
   }
 
@@ -431,9 +437,10 @@ export class NoteOverlay {
     this.labelCount.textContent = label.count ?? ''
     this.labelText.textContent = label.text
     this.drawSides(tabId, side)
-    // the editor holds one note. Another tab's, side's or text's note is loaded (new text, new history); Claude's edits come
-    // through applyOp and applyProjectOp, which update the editor first, so the text is equal here and nothing reloads
-    const key = tabId === null ? null : noteKey(tabId, side)
+    // the editor holds one note. Another tab's, side's or project's note is loaded (new text, new history), and so is a note main
+    // gave that replaces the one held (set, setProjectNote); Claude's edits come through applyOp and applyProjectOp, which update
+    // the editor first, so the text is equal here and nothing reloads
+    const key = tabId === null ? null : noteKey(tabId, side, this.projectOf(tabId).key)
     if (key !== this.loaded || this.editor.text !== text) {
       this.editor.load(text, side === 'project' ? PROJECT_PLACEHOLDER : PLACEHOLDER)
       this.loaded = key
