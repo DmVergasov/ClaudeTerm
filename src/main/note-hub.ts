@@ -310,6 +310,8 @@ export class NoteHub {
       this.deps.store.set(before.left, { ...(this.deps.store.get(before.left) ?? EMPTY), text: replayed })
       return
     }
+    // only while the joined note is the one given just before the current one: a note another device gave since is never overwritten
+    if (before.span.last !== tab.givenAt - 1) return
     // the tab's part of the merged note, with Claude's edits made since the note was given on top of it
     const ops = opsSince(tab.ops, tab.generation, tab.givenAt)
     if (!ops) return

@@ -546,4 +546,32 @@ describe("NoteHub.apply (Claude's edits)", () => {
     hub.setText('t1', 'early!', 0)
     expect(store.get(B)?.text).toBe('alpha\n\nearly!\n\n- [ ] x')
   })
+  it("a text typed before the first id, arriving after another device replaced the note, changes nothing", () => {
+    const theirs: Note = { text: 'theirs', shown: false, form: 'card' }
+    const { hub, store, published, sets } = setup({ [A]: alpha })
+    hub.addTab('t1', null)
+    hub.setText('t1', 'mine', 0)
+    hub.session('t1', A)
+    store.set(A, theirs)
+    hub.external(A, theirs, 'v1')
+    const counts = [sets.length, published.length]
+    hub.setText('t1', 'mine more', 0)
+    expect(store.get(A)).toEqual(theirs)
+    expect(hub.get('t1')).toEqual(theirs)
+    expect([sets.length, published.length]).toEqual(counts)
+  })
+  it("a text typed before the adoption, arriving after another device replaced the adopted note, changes nothing", () => {
+    const theirs: Note = { text: 'theirs', shown: false, form: 'card' }
+    const { hub, store, published, sets } = setup({ [B]: alpha })
+    hub.addTab('t1', null)
+    hub.setText('t1', 'early', 0)
+    hub.adopt('t1', B)
+    store.set(B, theirs)
+    hub.external(B, theirs, 'v1')
+    const counts = [sets.length, published.length]
+    hub.setText('t1', 'early!', 0)
+    expect(store.get(B)).toEqual(theirs)
+    expect(hub.get('t1')).toEqual(theirs)
+    expect([sets.length, published.length]).toEqual(counts)
+  })
 })
