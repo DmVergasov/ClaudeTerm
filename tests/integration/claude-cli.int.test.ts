@@ -137,9 +137,15 @@ describe('runClaudeCli', () => {
     expect(error).toBeInstanceOf(CliError)
     expect((error as CliError).reason).toBe('timeout')
     expect((error as CliError).message).toBe('Claude Code did not answer in 1.5 s')
-    const pid = started()?.pid as number
-    expect(pid).toBeGreaterThan(0)
-    await until(() => !alive(pid), 'the stand-in to end')
+    // the stand-in may not have logged its start before the limit fired: if it did, its process must be gone; if it did not,
+    // it must not start late either (an orphan no kill reached)
+    const pid = started()?.pid as number | undefined
+    if (pid !== undefined) {
+      await until(() => !alive(pid), 'the stand-in to end', 3000)
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      expect(started()).toBeUndefined()
+    }
   })
 
   it('an abort ends the command', async () => {
