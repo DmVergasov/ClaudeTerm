@@ -1,8 +1,8 @@
-import type { McpAction, McpAddRequest, McpResult, McpSection, McpServersView, PluginAction, PluginsView } from '../../shared/mcp'
+import type { McpAction, McpAddRequest, McpResult, McpSection, McpServersView, McpServerView, PluginAction, PluginsView } from '../../shared/mcp'
 import { el } from '../dom'
 import type { SidePanel } from '../side-panel'
-import { serverList } from './mcp-servers'
-import { serverStats } from './mcp-view-model'
+import { serverList, type RowCommand, type RowState } from './mcp-servers'
+import { editScope, serverStats } from './mcp-view-model'
 import './mcp.css'
 
 export interface McpPanelCallbacks {
@@ -20,6 +20,8 @@ export interface McpPanelCallbacks {
 const PENDING_MS = 2000
 const NOT_CLAUDE = 'Not a Claude tab of this computer'
 const NOT_RUNNING = 'Claude Code is not running in this tab: statuses show once it runs'
+/** the answer when the call itself failed: the row shows it like any other error */
+const FAILED: McpResult = { ok: false, error: 'The action did not finish' }
 const SECTIONS: Record<McpSection, { label: string; hint: string }> = {
   servers: { label: 'MCP servers', hint: 'Changes restart the session' },
   plugins: { label: 'Plugins', hint: 'Installs and changes restart the session' }
@@ -37,6 +39,10 @@ export class McpPanel {
   private filter = ''
   /** the rows whose tools are open */
   private readonly unfolded = new Set<string>()
+  /** what each row keeps, per tab and server: a sign-in waiting, an action running, its error, a removal asked for */
+  private readonly rows = new Map<string, RowState>()
+  /** the server whose ··· menu is open */
+  private menuOf: string | null = null
   /** undefined while the answer is asked for: the panel says Loading */
   private servers: McpServersView | null | undefined = undefined
   private plugins: Plugins | undefined = undefined
@@ -76,6 +82,13 @@ export class McpPanel {
       this.filterBox.value = ''
       this.paint()
     })
+    // a click outside the open ··· menu closes it; the ··· button of a row toggles its own menu, so it is not a click outside
+    document.addEventListener('pointerdown', (e) => {
+      if (this.menuOf === null) return
+      const target = e.target instanceof Element ? e.target : null
+      if (target?.closest('.mcp-menu, [data-focus-key="more"]')) return
+      this.closeMenu(false)
+    })
     this.body.replaceChildren(this.top, this.list, this.footer)
     // a panel that opens is collapsed until its slide starts: the body's first size is when the filter can take the focus
     new ResizeObserver(() => this.takeFocus()).observe(this.body)
@@ -88,6 +101,7 @@ export class McpPanel {
       this.tabId = tabId
       this.servers = undefined
       this.plugins = undefined
+      this.menuOf = null
     }
     this.refresh()
   }
@@ -158,6 +172,132 @@ export class McpPanel {
     this.timer = null
   }
 
+  /** a control of a row was used: the panel runs it, and the row shows the wait and the answer */
+  private command(s: McpServerView, c: RowCommand): void {
+    const tabId = this.tabId
+    if (tabId === null) return
+    const row = this.rowOf(s.name)
+    switch (c) {
+      case 'sign-in':
+        this.signIn(tabId, s.name, row)
+        return
+      case 'cancel-sign-in':
+        row.cancelled = true
+        void this.request(tabId, { kind: 'cancel-login', name: s.name })
+        return
+      case 'reconnect':
+        this.run(tabId, row, { kind: 'reconnect', name: s.name })
+        return
+      case 'toggle':
+        this.run(tabId, row, { kind: 'toggle', name: s.name, enabled: s.status === 'disabled' })
+        return
+      case 'approve':
+        this.cb.approve(tabId)
+        return
+      case 'menu':
+        this.menuOf = this.menuOf === s.name ? null : s.name
+        this.paint()
+        if (this.menuOf !== null) this.rowNode(s.name)?.querySelector<HTMLElement>('.mcp-menu-item')?.focus()
+        return
+      case 'close-menu':
+        this.closeMenu(true)
+        return
+      case 'sign-out':
+        this.menuOf = null
+        this.run(tabId, row, { kind: 'logout', name: s.name })
+        return
+      case 'tools':
+        this.menuOf = null
+        this.fold(s.name)
+        this.focusControl(s.name, 'more')
+        return
+      case 'copy-config': {
+        const scope = editScope(s)
+        this.menuOf = null
+        if (scope !== null) this.run(tabId, row, { kind: 'copy-config', name: s.name, scope })
+        return
+      }
+      case 'open-config': {
+        const scope = editScope(s)
+        this.menuOf = null
+        if (scope !== null) this.run(tabId, row, { kind: 'open-config', scope })
+        return
+      }
+      case 'ask-remove':
+        this.menuOf = null
+        row.asking = true
+        this.paint()
+        return
+      case 'cancel-remove':
+        row.asking = false
+        this.paint()
+        return
+      case 'remove': {
+        const scope = editScope(s)
+        if (scope === null) return
+        row.asking = false
+        this.run(tabId, row, { kind: 'remove', name: s.name, scope })
+        return
+      }
+    }
+  }
+
+  /** the browser sign-in: the row waits for it, and Cancel ends it; its Cancelled answer is no error */
+  private signIn(tabId: string, name: string, row: RowState): void {
+    row.signingIn = true
+    row.cancelled = false
+    row.error = null
+    this.paint()
+    void this.request(tabId, { kind: 'login', name }).then((result) => {
+      row.signingIn = false
+      if (!result.ok && !row.cancelled) row.error = result.error
+      else row.error = null
+      row.cancelled = false
+      this.settled(tabId)
+    })
+  }
+
+  /** an action of a row: its controls wait for the answer, and a failure is the row's error until its next action */
+  private run(tabId: string, row: RowState, a: McpAction): void {
+    row.busy = true
+    row.error = null
+    this.paint()
+    void this.request(tabId, a).then((result) => {
+      row.busy = false
+      row.error = result.ok ? null : result.error
+      this.settled(tabId)
+    })
+  }
+
+  private request(tabId: string, a: McpAction): Promise<McpResult> {
+    return this.cb.action(tabId, a).catch((): McpResult => FAILED)
+  }
+
+  /** an answer came: the row shows it and the list is asked again; a tab that is no longer in front keeps its rows as they are */
+  private settled(tabId: string): void {
+    if (this.tabId !== tabId) return
+    this.paint()
+    void this.load()
+  }
+
+  /** what a row keeps for the tab in front */
+  private rowOf(name: string): RowState {
+    const key = JSON.stringify([this.tabId ?? '', name])
+    const kept = this.rows.get(key)
+    if (kept !== undefined) return kept
+    const row: RowState = { busy: false, signingIn: false, cancelled: false, asking: false, error: null }
+    this.rows.set(key, row)
+    return row
+  }
+
+  /** the ··· menu closes; its ··· button gets the focus back when the close is asked for by the keyboard */
+  private closeMenu(focusMore: boolean): void {
+    const name = this.menuOf
+    this.menuOf = null
+    this.paint()
+    if (focusMore && name !== null) this.focusControl(name, 'more')
+  }
+
   /** the panel as its state says: the segments with their counts, the stats or the note, the filter, the list and the footer */
   private paint(): void {
     const servers = this.section === 'servers'
@@ -207,7 +347,14 @@ export class McpPanel {
       this.note.classList.remove('mcp-note-error')
       this.setShown(this.note, true)
     }
-    this.setList(...serverList(view, { filter: this.filter, unfolded: this.unfolded, fold: (name) => this.fold(name) }))
+    this.setList(...serverList(view, {
+      filter: this.filter,
+      unfolded: this.unfolded,
+      fold: (name) => this.fold(name),
+      state: (name) => this.rowOf(name),
+      menu: this.menuOf,
+      command: (s, c) => this.command(s, c)
+    }))
   }
 
   /** the plugins: the section is filled by the plugin list; until then it says Loading, and a failed read says why */
@@ -233,6 +380,16 @@ export class McpPanel {
     this.list.replaceChildren(...nodes)
     if (kept === null) return
     Array.from(this.list.querySelectorAll<HTMLElement>('[data-focus-key]')).find((c) => focusKeyOf(c) === kept)?.focus()
+  }
+
+  /** the control of a row with this focus key gets the focus, once the list is drawn */
+  private focusControl(name: string, key: string): void {
+    const wanted = JSON.stringify([name, key])
+    Array.from(this.list.querySelectorAll<HTMLElement>('[data-focus-key]')).find((c) => focusKeyOf(c) === wanted)?.focus()
+  }
+
+  private rowNode(name: string): HTMLElement | null {
+    return Array.from(this.list.querySelectorAll<HTMLElement>('.mcp-item')).find((n) => n.dataset.name === name) ?? null
   }
 
   private fold(name: string): void {

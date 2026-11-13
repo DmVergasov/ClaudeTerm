@@ -1552,8 +1552,11 @@ async function boot(): Promise<void> {
     add: (tabId, req) => ct.mcpAdd(tabId, req),
     plugins: (tabId) => ct.mcpPlugins(tabId),
     pluginAction: (tabId, a) => ct.mcpPluginAction(tabId, a),
-    // the Approve button of a waiting server is one of the row actions, not in this panel yet
-    approve: () => undefined
+    // Approve in the terminal: the chat's terminal gets /mcp, where Claude Code asks the person to approve the server
+    approve: (tabId) => {
+      const t = tabs.get(tabId)
+      if (t && isChatView(t)) t.chat?.runInTerminal('/mcp')
+    }
   })
   sidePanel.onChange = () => {
     imagePanel.panelChanged()

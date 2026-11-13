@@ -56,3 +56,25 @@
 .mcp-hint { margin-left: auto; font-size: 11.5px; color: var(--text-3); text-align: right; }
 .mcp-btn { flex: none; padding: 5px 10px; background: var(--raised-2); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; font: inherit; font-size: 12px; cursor: pointer; }
 .mcp-btn.primary { background: var(--accent); border-color: var(--accent); color: #1A1A1A; font-weight: 600; }
+
+/* a row's controls: the primary button, the ↻ ghost, the switch, the ··· button */
+.mcp-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+.mcp-btn.warn { border-color: #E5B56755; color: var(--amber); background: #E5B5670F; }
+.mcp-btn.mcp-red { color: var(--red); }
+.mcp-ghost { flex: none; padding: 2px 6px; background: none; border: 0; border-radius: 6px; color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer; }
+.mcp-ghost:hover { background: var(--raised); color: var(--text); }
+.mcp-btn:disabled, .mcp-ghost:disabled, .mcp-switch:disabled, .mcp-menu-item:disabled { opacity: 0.5; cursor: default; }
+.mcp-ghost:focus-visible, .mcp-switch:focus-visible, .mcp-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.mcp-switch { position: relative; flex: none; width: 30px; height: 18px; padding: 0; border: 0; border-radius: 999px; background: var(--line-2); cursor: pointer; }
+.mcp-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #9A9AA3; transition: transform 0.15s ease; }
+.mcp-switch[aria-checked="true"] { background: var(--green); }
+.mcp-switch[aria-checked="true"]::after { background: #fff; transform: translateX(12px); }
+@media (prefers-reduced-motion: reduce) { .mcp-switch::after { transition: none; } }
+
+.mcp-confirm { display: flex; align-items: center; gap: 6px; margin: 2px 8px 6px 46px; font-size: 12px; color: var(--text-2); }
+.mcp-confirm-text { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mcp-menu { display: flex; flex-direction: column; gap: 1px; margin: 0 8px 6px 46px; padding: 4px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 9px; }
+.mcp-menu-item { padding: 6px 8px; background: none; border: 0; border-radius: 6px; color: var(--text-2); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.mcp-menu-item:hover { background: var(--raised-2); color: var(--text); }

@@ -477,6 +477,11 @@ export class ChatView {
     this.composer.focus()
   }
 
+  /** a line goes to the terminal as a notice's line does: it waits for the turn, and asks first when background tasks would stop */
+  runInTerminal(line: string): void {
+    this.composer.openNoticeLine(line)
+  }
+
   /** whether the composer holds a draft, text or attachments: a draft holds back AutoContinue's "continue" */
   hasDraft(): boolean {
     return this.composer.hasDraft()
