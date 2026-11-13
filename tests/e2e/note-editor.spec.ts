@@ -130,7 +130,9 @@ test('copy carries the Markdown, and pasted Markdown shows its boxes', { tag: '@
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe('- [ ] Write the tests')
 
     await app.evaluate(({ clipboard }) => clipboard.writeText('- [x] Done'))
+    // the line is an item: the first Enter continues the list, the second one (on the empty item) ends it
     await page.keyboard.press('End')
+    await page.keyboard.press('Enter')
     await page.keyboard.press('Enter')
     await page.keyboard.press('ControlOrMeta+KeyV')
     await expect.poll(() => noteText(page)).toBe('- [ ] Write the tests\n- [x] Done')
@@ -152,4 +154,41 @@ test('what is typed is kept with the conversation as Markdown', async () => {
   await closeWindow(app)
   const saved = JSON.parse(readFileSync(join(dataDir, 'session-notes.json'), 'utf8')) as Record<string, Note>
   expect(saved[SID_A]?.text).toBe('- [ ] Write the tests')
+})
+
+/** opens a second Claude tab and waits until it is in front; resolves to its id */
+async function openSecondTab(page: Page, work: string, first: string): Promise<string> {
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'claude', cwd }), work)
+  await page.waitForFunction((id) => window.__ct!.tabIds().length === 2 && window.__ct!.activeTabId() !== id, first)
+  return (await page.evaluate(() => window.__ct!.activeTabId()))!
+}
+
+async function activate(page: Page, tabId: string): Promise<void> {
+  await page.evaluate((id) => window.ct.activateTab(id), tabId)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, tabId)
+}
+
+test('undo in one tab\'s note does not take back the typing of another tab\'s note with the same text', async () => {
+  const { app, page, tabId, work } = await launchClaudeTab()
+  const { text, button } = note(page)
+  await button.click()
+  await expect(text).toBeFocused()
+  await page.keyboard.type('same')
+
+  const second = await openSecondTab(page, work, tabId)
+  await button.click()
+  await expect(text).toBeFocused()
+  await page.keyboard.type('same')
+  await expect.poll(() => noteText(page)).toBe('same')
+
+  // the first tab's note is the same text: switching to it must not keep the second tab's history
+  await activate(page, tabId)
+  await expect.poll(() => noteText(page)).toBe('same')
+  await text.click()
+  await page.keyboard.press('ControlOrMeta+KeyZ')
+  await expect.poll(() => noteText(page)).toBe('same')
+
+  await activate(page, second)
+  await expect.poll(() => noteText(page)).toBe('same')
+  await app.close()
 })

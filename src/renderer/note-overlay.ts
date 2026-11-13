@@ -209,12 +209,11 @@ export class NoteOverlay {
     this.labelText.textContent = firstLine(note?.text ?? '')
     // the typed text is the note's already; another tab's note replaces the editor's text, and a change of the same tab's
     // note (one of Claude's edits, which main never echoes as typed) is applied as a change: the caret and the history stay
+    // `loaded` always names the tab whose note the editor holds: another tab's note is loaded even when its text is the same
     const text = note?.text ?? ''
-    if (this.editor.text === text) return
-    if (this.active !== null && this.loaded === this.active) this.editor.update(text)
-    else {
+    if (this.loaded !== this.active) {
       this.editor.load(text, PLACEHOLDER)
       this.loaded = this.active
-    }
+    } else if (this.editor.text !== text) this.editor.update(text)
   }
 }
