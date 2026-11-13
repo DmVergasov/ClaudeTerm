@@ -242,11 +242,11 @@ export class McpHub {
 
   /** one `claude` call: the answer, or the masked error text. Nothing is logged but the first two arguments and the exit code */
   private async cli(tab: Tab, args: string[], o: { secrets: string[]; env?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal }): Promise<Outcome> {
-    const launch = await this.d.launch()
-    if (launch.how === 'none') return { error: launch.reason }
     const masked = (text: string): string => maskText(text, o.secrets).slice(0, MAX_ERROR)
-    const options: CliOptions = { cwd: tab.folder, env: o.env ?? tab.env, timeoutMs: o.timeoutMs, signal: o.signal }
     try {
+      const launch = await this.d.launch()
+      if (launch.how === 'none') return { error: launch.reason }
+      const options: CliOptions = { cwd: tab.folder, env: o.env ?? tab.env, timeoutMs: o.timeoutMs, signal: o.signal }
       const run = await this.d.run(launch, args, options)
       if (run.code === 0) return { run }
       this.d.log.warn(`claude ${args[0]} ${args[1]} failed (${run.code})`)
@@ -300,7 +300,7 @@ function liveView(s: McpLiveServer): McpServerView {
     scope,
     plugin: scope === 'plugin' ? (/^plugin:([^:]+):/.exec(name)?.[1] ?? null) : null,
     transport: transportOf(s.transport),
-    target: /^https?:\/\//i.test(target) ? maskUrl(target) : target,
+    target: /^[a-z][a-z0-9+.-]*:\/\//i.test(target) ? maskUrl(target) : target,
     tools: Array.isArray(s.tools) ? s.tools.filter((t): t is string => typeof t === 'string').slice(0, MAX_TOOLS).map((t) => t.slice(0, MAX_NAME)) : [],
     error: typeof s.error === 'string' ? s.error.slice(0, MAX_ERROR) : null,
     version: typeof s.version === 'string' ? s.version.slice(0, MAX_NAME) : null

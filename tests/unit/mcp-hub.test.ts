@@ -23,6 +23,7 @@ function setup(o: Partial<{
   files: Partial<Record<keyof ConfigPaths, unknown>>
   reply: Reply
   launch: ChatLaunch
+  launchError: string
   openError: string
 }> = {}) {
   const paths = configPaths(ENV, HOME, FOLDER)
@@ -37,7 +38,10 @@ function setup(o: Partial<{
   const warns: string[] = []
   const reply: Reply = o.reply ?? (async () => ({ code: 0, stdout: '', stderr: '' }))
   const hub = new McpHub({
-    launch: async () => o.launch ?? LAUNCH,
+    launch: async () => {
+      if (o.launchError !== undefined) throw new Error(o.launchError)
+      return o.launch ?? LAUNCH
+    },
     tab: async (id) => (id === TAB ? { env: ENV, folder: FOLDER } : null),
     home: HOME,
     readJson: async (file) => files.get(file) ?? null,
@@ -305,6 +309,27 @@ describe('McpHub', () => {
     expect(await hub.servers('remote-tab')).toBeNull()
     expect(await hub.action('remote-tab', { kind: 'remove', name: 'github', scope: 'user' })).toEqual({ ok: false, error: NOT_TAB })
     expect(await hub.add('remote-tab', { text: '{}', names: [], scope: 'user', clientSecret: null })).toEqual({ ok: false, error: NOT_TAB })
+    expect(runs).toEqual([])
+  })
+
+  it('a live target of any URL scheme is masked, not only http', async () => {
+    const { hub } = setup({
+      live: [
+        live({ name: 'socket', transport: 'ws', target: 'wss://h/x?token=abc' }),
+        live({ name: 'basic', transport: 'http', target: 'https://u:pw@h/mcp' })
+      ]
+    })
+
+    const view = await hub.servers(TAB)
+    expect(view?.servers.map((s) => s.target)).toEqual([`wss://h/x?token=${MASK}`, `https://u:${MASK}@h/mcp`])
+  })
+
+  it('a launch that rejects answers its error for remove and add, and never throws', async () => {
+    const { hub, runs } = setup({ launchError: 'spawn EPERM' })
+    const text = JSON.stringify({ mcpServers: { a: { command: 'node' } } })
+
+    expect(await hub.action(TAB, { kind: 'remove', name: 'github', scope: 'user' })).toEqual({ ok: false, error: 'spawn EPERM' })
+    expect(await hub.add(TAB, { text, names: ['a'], scope: 'user', clientSecret: null })).toEqual({ ok: false, error: 'Could not add a: spawn EPERM' })
     expect(runs).toEqual([])
   })
 
