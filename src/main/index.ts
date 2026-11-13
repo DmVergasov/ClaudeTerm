@@ -77,6 +77,7 @@ import { LoginWatch } from './login-watch'
 import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
 import { NoteHub } from './note-hub'
+import { addToNoteReply, checkNoteItemReply, type NoteReplyDeps, readNotesReply } from './note-replies'
 import { ProjectNoteHub } from './project-note-hub'
 import { ProjectNotes } from './project-notes'
 import { SessionNotes } from './session-notes'
@@ -780,6 +781,7 @@ function bootstrap(): void {
     }
   })
   const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
+  const noteReplies: NoteReplyDeps = { isClaudeTab, session: noteHub, project: projectNotes }
 
   // the first bytes of a picture: its header gives its size, which is read without a decode (a picture over the budget is no decode)
   const headOf = async (p: string): Promise<Buffer | null> => {
@@ -1940,6 +1942,17 @@ function bootstrap(): void {
     },
     agentList: (msg) => mailHub.list(msg.tabId),
     agentSend: (msg) => mailHub.send(msg.tabId, msg.to, msg.text, msg.replyTo),
+    noteRead: (msg) => readNotesReply(noteReplies, msg),
+    noteAdd: (msg) => {
+      const reply = addToNoteReply(noteReplies, msg)
+      remote?.host.changed()
+      return reply
+    },
+    noteCheck: (msg) => {
+      const reply = checkNoteItemReply(noteReplies, msg)
+      remote?.host.changed()
+      return reply
+    },
     mailWait: (msg, closed) => mailHub.wait(msg.tabId, msg.sessionId, closed)
   })
     .then((h) => { pipe = h })

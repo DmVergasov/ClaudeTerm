@@ -331,3 +331,37 @@ describe('parsePipeMessage: the agent messages', () => {
     expect(send({ replyTo: 'not-a-uuid' }).ok).toBe(false)
   })
 })
+
+describe('parsePipeMessage: the note messages', () => {
+  it('accepts note_read, note_add and note_check', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'note_read', tabId: TAB }))).toEqual({ ok: true, message: { v: 1, type: 'note_read', tabId: TAB } })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'note_add', tabId: TAB, note: 'project', text: '- [ ] Tag' }))).toEqual({
+      ok: true,
+      message: { v: 1, type: 'note_add', tabId: TAB, note: 'project', text: '- [ ] Tag' }
+    })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'note_check', tabId: TAB, note: 'session', item: 'Tag', checked: true }))).toEqual({
+      ok: true,
+      message: { v: 1, type: 'note_check', tabId: TAB, note: 'session', item: 'Tag', checked: true }
+    })
+  })
+
+  it('refuses a note_add with another note name, an empty text or one over 10000 characters', () => {
+    const add = (fields: object) => parsePipeMessage(JSON.stringify({ v: 1, type: 'note_add', tabId: TAB, note: 'session', text: 'x', ...fields }))
+    expect(add({ note: 'both' })).toEqual({ ok: false, error: 'note must be "session" or "project"' })
+    expect(add({ text: '' })).toEqual({ ok: false, error: 'text must be 1 to 10000 characters' })
+    expect(add({ text: 'x'.repeat(10_001) })).toEqual({ ok: false, error: 'text must be 1 to 10000 characters' })
+    expect(add({ text: 'x'.repeat(10_000) }).ok).toBe(true)
+  })
+
+  it('refuses a note_check whose checked is not a boolean, or whose item is over 2000 characters', () => {
+    const check = (fields: object) => parsePipeMessage(JSON.stringify({ v: 1, type: 'note_check', tabId: TAB, note: 'project', item: 'Tag', checked: true, ...fields }))
+    expect(check({ checked: 'yes' })).toEqual({ ok: false, error: 'checked must be a boolean' })
+    expect(check({ item: 'x'.repeat(2001) })).toEqual({ ok: false, error: 'item must be 1 to 2000 characters' })
+    expect(check({ item: '' })).toEqual({ ok: false, error: 'item must be 1 to 2000 characters' })
+  })
+
+  it('requires a UUID tabId for the note messages', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'note_read', tabId: 'x' }))).toEqual({ ok: false, error: 'tabId must be a UUID' })
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'note_add', note: 'session', text: 'x' }))).toEqual({ ok: false, error: 'tabId must be a UUID' })
+  })
+})

@@ -1,5 +1,6 @@
 import { isAbsolute, posix } from 'node:path'
 import { MAIL_TEXT_MAX, MAIL_TO_MAX } from './mail'
+import { NOTE_ADD_MAX, NOTE_ITEM_MAX, NOTE_SIDES, type NoteSide } from './note'
 import { REVIEW_SCOPES, type ReviewScope } from './review'
 import { normalizeTaskList, type TaskList } from './task-list'
 import type { BackgroundTask, MainStatus } from './types'
@@ -173,11 +174,38 @@ export interface MailWaitMessage {
   sessionId: string
 }
 
+/** read_notes from the MCP server: both notes of the tab, as text */
+export interface NoteReadMessage {
+  v: 1
+  type: 'note_read'
+  tabId: string
+}
+
+/** add_to_note from the MCP server: text added at the end of one of the tab's notes */
+export interface NoteAddMessage {
+  v: 1
+  type: 'note_add'
+  tabId: string
+  note: NoteSide
+  text: string
+}
+
+/** check_note_item from the MCP server: one checkbox item of one of the tab's notes ticked or unticked */
+export interface NoteCheckMessage {
+  v: 1
+  type: 'note_check'
+  tabId: string
+  note: NoteSide
+  item: string
+  checked: boolean
+}
+
 export type PipeMessage =
   | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
   | TurnMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
   | TaskListMessage | TaskListGetMessage | DeviceStatusMessage | OpenDeviceSettingsMessage
   | AgentListMessage | AgentSendMessage | MailWaitMessage
+  | NoteReadMessage | NoteAddMessage | NoteCheckMessage
 export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
@@ -316,6 +344,19 @@ export function parsePipeMessage(line: string): ParseResult {
     const list = normalizeTaskList(m.list)
     if (!list.ok) return { ok: false, error: list.error }
     return { ok: true, message: { v: 1, type: 'task_list', tabId: m.tabId, list: list.list } }
+  }
+  if (m.type === 'note_read' || m.type === 'note_add' || m.type === 'note_check') {
+    if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
+    if (m.type === 'note_read') return { ok: true, message: { v: 1, type: 'note_read', tabId: m.tabId } }
+    const note = NOTE_SIDES.find((s) => s === m.note)
+    if (note === undefined) return { ok: false, error: 'note must be "session" or "project"' }
+    if (m.type === 'note_add') {
+      if (typeof m.text !== 'string' || m.text.length < 1 || m.text.length > NOTE_ADD_MAX) return { ok: false, error: `text must be 1 to ${NOTE_ADD_MAX} characters` }
+      return { ok: true, message: { v: 1, type: 'note_add', tabId: m.tabId, note, text: m.text } }
+    }
+    if (typeof m.item !== 'string' || m.item.length < 1 || m.item.length > NOTE_ITEM_MAX) return { ok: false, error: `item must be 1 to ${NOTE_ITEM_MAX} characters` }
+    if (typeof m.checked !== 'boolean') return { ok: false, error: 'checked must be a boolean' }
+    return { ok: true, message: { v: 1, type: 'note_check', tabId: m.tabId, note, item: m.item, checked: m.checked } }
   }
   if (m.type === 'device_status') return { ok: true, message: { v: 1, type: 'device_status' } }
   if (m.type === 'open_device_settings') return { ok: true, message: { v: 1, type: 'open_device_settings' } }

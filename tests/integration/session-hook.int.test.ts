@@ -75,6 +75,7 @@ async function listen(mailAnswer: PipeResponse = { ok: true }): Promise<{ pipe: 
     turn: take, editBefore: take, showDiff: async (m) => take(m),
     showDocument: async () => ({ ok: true }), taskList: take, taskListGet: take, deviceStatus: take, openDeviceSettings: take,
     agentList: take, agentSend: take,
+    noteRead: () => ({ ok: true }), noteAdd: () => ({ ok: true }), noteCheck: () => ({ ok: true }),
     mailWait: async (m) => {
       got.push(m)
       return mailAnswer
