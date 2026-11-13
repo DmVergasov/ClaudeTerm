@@ -40,16 +40,36 @@ function merge(stored: Note, own: Note): Note {
 /** the stored note the tab takes with its first id, with the tab's own text joined to it, if it has any */
 const joined = (stored: Note, own: Note | null): Note => (own && hasText(own) ? merge(stored, own) : stored)
 
-/** where the note the tab had before main gave it the current one lives */
-type Before =
+/** a note's numbers: its first, its last (the number it had when main gave the tab another), and Claude's edits made to it */
+interface Span {
+  from: number
+  last: number
+  ops: KeptOp[]
+}
+
+/** the span of the note the tab holds now, before main gives it another */
+const spanOf = (tab: TabNote): Span => ({ from: tab.givenAt, last: tab.generation, ops: tab.ops.slice() })
+
+/**
+ * the text typed against `generation` in a note's span, with the edits Claude made to the note after that number
+ * replayed onto it; null when the number is outside the span or the kept edits do not reach back to it
+ */
+function replaySpan(span: Span, generation: number, text: string): string | null {
+  if (generation < span.from || generation > span.last) return null
+  const ops = opsSince(span.ops, span.last, generation)
+  return ops ? replayNoteOps(text, ops) : null
+}
+
+/** where the note the tab had before main gave it the current one lives, with the span it had */
+type Before = (
   /** stored under the conversation the tab left */
   | { left: string }
   /** held in the tab, without a conversation: it joined this stored note */
   | { joined: Note }
+) & { span: Span }
 
-/** a note another device replaced: the number the tab showed it under, and the store version it was based on */
-interface Replaced {
-  generation: number
+/** a note another device replaced: the store version it was based on, with the span it had */
+interface Replaced extends Span {
   sessionId: string
   base: unknown
 }
@@ -109,6 +129,7 @@ export class NoteHub {
     if (!stored) return
     const note = joined(stored, tab.note)
     if (note !== stored) this.deps.store.set(fromSessionId, note)
+    tab.before = { joined: stored, span: spanOf(tab) }
     tab.sessionId = fromSessionId
     this.give(tabId, tab, note)
   }
@@ -124,7 +145,7 @@ export class NoteHub {
     const old = tab.sessionId
     tab.sessionId = null
     tab.replaced = []
-    tab.before = old ? { left: old } : null
+    tab.before = old ? { left: old, span: spanOf(tab) } : null
     this.give(tabId, tab, null)
   }
 
@@ -143,7 +164,7 @@ export class NoteHub {
     const stored = this.deps.store.get(sessionId)
     if (tab.remote) {
       // a remote tab takes only what is stored under its new conversation (or nothing) and never writes the store
-      tab.before = old ? { left: old } : stored ? { joined: stored } : null
+      tab.before = old ? { left: old, span: spanOf(tab) } : stored ? { joined: stored, span: spanOf(tab) } : null
       this.give(tabId, tab, stored)
       return
     }
@@ -151,7 +172,7 @@ export class NoteHub {
       // A note written before the first id arrived has nothing stored to stay in: it joins the stored one.
       const note = old ? stored : joined(stored, tab.note)
       if (note !== stored) this.deps.store.set(sessionId, note)
-      tab.before = old ? { left: old } : { joined: stored }
+      tab.before = old ? { left: old, span: spanOf(tab) } : { joined: stored, span: spanOf(tab) }
       this.give(tabId, tab, note)
       return
     }
@@ -183,8 +204,10 @@ export class NoteHub {
       return
     }
     const replaced = this.replacedFor(tab, generation)
-    if (replaced) this.lateReplaced(tab, replaced, text)
-    else if (generation === tab.givenAt - 1 && tab.before) this.late(tabId, tab, tab.before, text)
+    if (replaced) this.lateReplaced(tab, replaced, generation, text)
+    else if (tab.before && generation >= tab.before.span.from && generation <= tab.givenAt - 1) {
+      this.late(tabId, tab, tab.before, generation, text)
+    }
   }
 
   /** a change made against a note the tab no longer has is dropped: it is no text, and nothing is lost */
@@ -233,7 +256,7 @@ export class NoteHub {
   external(sessionId: string, note: Note | null, before: unknown): void {
     for (const [tabId, tab] of this.tabs) {
       if (tab.sessionId !== sessionId) continue
-      tab.replaced.push({ generation: tab.generation, sessionId, base: before })
+      tab.replaced.push({ ...spanOf(tab), sessionId, base: before })
       if (tab.replaced.length > REPLACED_KEPT) tab.replaced.shift()
       this.give(tabId, tab, note)
     }
@@ -245,8 +268,9 @@ export class NoteHub {
    */
   private replacedFor(tab: TabNote, generation: number): Replaced | null {
     const first = tab.replaced[0]
-    if (!first || generation < first.generation || generation >= tab.generation) return null
-    return tab.replaced.find((r) => r.generation >= generation) ?? null
+    if (!first || generation < first.from || generation >= tab.generation) return null
+    // the spans of the replaced notes follow one another, so the first one that ends at or after the number holds it
+    return tab.replaced.find((r) => r.last >= generation) ?? null
   }
 
   /** main gives the tab a note: it gets the next number, and the renderer gets the note; Claude's edits of the old one end */
@@ -268,21 +292,29 @@ export class NoteHub {
     if (tab.sessionId) this.deps.store.set(tab.sessionId, tab.note)
   }
 
-  /** text typed against a note another device replaced: stored on that note's base, the store joins it with the note there */
-  private lateReplaced(tab: TabNote, replaced: Replaced, text: string): void {
-    // the tab keeps the text it has now
-    tab.note = { ...(tab.note ?? EMPTY), text }
-    this.deps.store.set(replaced.sessionId, { ...tab.note }, replaced.base)
+  /**
+   * text typed against a note another device replaced: stored on that note's base, the store joins it with the note there.
+   * The tab keeps the note it shows, so Claude's next edit applies to that text.
+   */
+  private lateReplaced(tab: TabNote, replaced: Replaced, generation: number, text: string): void {
+    const replayed = replaySpan(replaced, generation, text)
+    if (replayed === null) return
+    this.deps.store.set(replaced.sessionId, { ...(tab.note ?? EMPTY), text: replayed }, replaced.base)
   }
 
-  /** text typed against the note the tab had before: it goes where that note lives */
-  private late(tabId: string, tab: TabNote, before: Before, text: string): void {
+  /** text typed against the note the tab had before: it goes where that note lives, with Claude's edits kept */
+  private late(tabId: string, tab: TabNote, before: Before, generation: number, text: string): void {
+    const replayed = replaySpan(before.span, generation, text)
+    if (replayed === null) return
     if ('left' in before) {
-      this.deps.store.set(before.left, { ...(this.deps.store.get(before.left) ?? EMPTY), text })
+      this.deps.store.set(before.left, { ...(this.deps.store.get(before.left) ?? EMPTY), text: replayed })
       return
     }
-    // the tab's part of the merged note
-    tab.note = { ...(tab.note ?? before.joined), text: joined(before.joined, { ...EMPTY, text }).text }
+    // the tab's part of the merged note, with Claude's edits made since the note was given on top of it
+    const ops = opsSince(tab.ops, tab.generation, tab.givenAt)
+    if (!ops) return
+    const merged = joined(before.joined, { ...EMPTY, text: replayed }).text
+    tab.note = { ...(tab.note ?? before.joined), text: replayNoteOps(merged, ops) }
     if (tab.sessionId) this.deps.store.set(tab.sessionId, tab.note)
     this.deps.publish(tabId, { ...tab.note }, tab.generation)
   }
