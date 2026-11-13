@@ -292,7 +292,11 @@ function bootstrap(): void {
   const starred = new StarredSessions(dataDir, toast)
   const tabLayout = new TabLayoutStore(dataDir, toast)
   const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
-  const noteHub = new NoteHub({ store: notes, publish: (tabId, note, generation) => send(IPC.evNote, tabId, note, generation) })
+  const noteHub = new NoteHub({
+    store: notes,
+    publish: (tabId, note, generation) => send(IPC.evNote, tabId, note, generation),
+    publishOp: (tabId, op, generation) => send(IPC.evNoteOp, tabId, op, generation)
+  })
   const taskListStore = new TaskListStore(dataDir, { onError: (m) => log.warn(m), warn: toast })
   // the side of a tab's plan and list that changed last: with both finished, the one that finished later shows
   const newerSide = new Map<string, 'plan' | 'list'>()

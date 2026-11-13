@@ -1,4 +1,5 @@
 import { hasText, MAX_NOTE_LENGTH, type Note, type NoteForm, type NoteSide, type NoteSize } from '../shared/note'
+import { type NoteOp, type OpResult, replayNoteOps, tryNoteOp } from '../shared/note-items'
 import type { SessionNotes } from './session-notes'
 
 export interface NoteHubDeps {
@@ -8,9 +9,28 @@ export interface NoteHubDeps {
    * number: the renderer's edits carry the number of the note they were typed against.
    */
   publish(tabId: string, note: Note | null, generation: number): void
+  /** one of Claude's edits of the tab's note, with the number it makes; never for the renderer's own edits */
+  publishOp(tabId: string, op: NoteOp, generation: number): void
 }
 
 const EMPTY: Note = { text: '', shown: false, form: 'card' }
+
+/** an edit Claude made, with the number it made the note */
+export interface KeptOp {
+  generation: number
+  op: NoteOp
+}
+
+/** how many of Claude's edits a note keeps: a text typed against an older number is dropped */
+export const OPS_KEPT = 64
+
+/** the edits made after `generation` when they are exactly the numbers generation+1 … current; else null */
+export function opsSince(kept: readonly KeptOp[], current: number, generation: number): NoteOp[] | null {
+  const since = kept.filter((k) => k.generation > generation)
+  // kept edits are consecutive and end at the current number, so as many as there are numbers in between means none is missing
+  if (since.length !== current - generation) return null
+  return since.map((k) => k.op)
+}
 
 /** The tab's text after the stored note's, an empty line between; the stored note's state, cut at the length limit. */
 function merge(stored: Note, own: Note): Note {
@@ -44,6 +64,10 @@ interface TabNote {
   note: Note | null
   /** the number of the note main gave the tab last; 0 until it gives one */
   generation: number
+  /** the number main gave the note last: the edits Claude made came after it */
+  givenAt: number
+  /** Claude's edits of the note since it was given, oldest first */
+  ops: KeptOp[]
   /** the note of the number before; null when the tab had none (its first note came with it) */
   before: Before | null
   /** the notes another device replaced since the tab's conversation last changed, oldest first */
@@ -58,7 +82,16 @@ export class NoteHub {
 
   addTab(tabId: string, sessionId: string | null, opts: { remote?: boolean } = {}): void {
     const stored = sessionId ? this.deps.store.get(sessionId) : null
-    const tab: TabNote = { sessionId, remote: opts.remote === true, note: null, generation: 0, before: null, replaced: [] }
+    const tab: TabNote = {
+      sessionId,
+      remote: opts.remote === true,
+      note: null,
+      generation: 0,
+      givenAt: 0,
+      ops: [],
+      before: null,
+      replaced: []
+    }
     this.tabs.set(tabId, tab)
     if (stored) this.give(tabId, tab, stored)
   }
@@ -133,38 +166,64 @@ export class NoteHub {
     return note ? { ...note } : null
   }
 
-  /** `generation`: the number of the note the text was typed against */
+  /**
+   * `generation`: the number of the note the text was typed against. Against the current number the text replaces the
+   * note; against an older one that Claude's edits came after, the edits are replayed onto the text.
+   */
   setText(tabId: string, text: string, generation: number): void {
     const tab = this.tabs.get(tabId)
     if (!tab) return
+    if (generation === tab.generation) {
+      this.change(tab, (n) => ({ ...n, text }))
+      return
+    }
+    const ops = opsSince(tab.ops, tab.generation, generation)
+    if (ops) {
+      this.change(tab, (n) => ({ ...n, text: replayNoteOps(text, ops) }))
+      return
+    }
     const replaced = this.replacedFor(tab, generation)
-    if (generation === tab.generation) this.change(tab, (n) => ({ ...n, text }))
-    else if (replaced) this.lateReplaced(tab, replaced, text)
-    else if (generation === tab.generation - 1 && tab.before) this.late(tabId, tab, tab.before, text)
+    if (replaced) this.lateReplaced(tab, replaced, text)
+    else if (generation === tab.givenAt - 1 && tab.before) this.late(tabId, tab, tab.before, text)
   }
 
   /** a change made against a note the tab no longer has is dropped: it is no text, and nothing is lost */
   setView(tabId: string, shown: boolean, form: NoteForm, generation: number): void {
     const tab = this.tabs.get(tabId)
-    if (tab && generation === tab.generation) this.change(tab, (n) => ({ ...n, shown, form }))
+    if (tab && this.takes(tab, generation)) this.change(tab, (n) => ({ ...n, shown, form }))
   }
 
   /** the card a note is drawn on; dropped against a note the tab no longer has, as setView */
   setSide(tabId: string, side: NoteSide, generation: number): void {
     const tab = this.tabs.get(tabId)
-    if (tab && generation === tab.generation) this.change(tab, (n) => ({ ...n, side }))
+    if (tab && this.takes(tab, generation)) this.change(tab, (n) => ({ ...n, side }))
   }
 
   /** the card size of a note; null removes it, so the default size is drawn; dropped against a note the tab no longer has */
   setSize(tabId: string, size: NoteSize | null, generation: number): void {
     const tab = this.tabs.get(tabId)
-    if (!tab || generation !== tab.generation) return
+    if (!tab || !this.takes(tab, generation)) return
     this.change(tab, (n) => {
       const next: Note = { ...n }
       if (size) next.size = { width: size.width, height: size.height }
       else delete next.size
       return next
     })
+  }
+
+  /** one of Claude's edits of the tab's session note; null for an unknown or a remote tab */
+  apply(tabId: string, op: NoteOp): OpResult | null {
+    const tab = this.tabs.get(tabId)
+    if (!tab || tab.remote) return null
+    const result = tryNoteOp(tab.note?.text ?? '', op)
+    if (!result.ok || !result.changed) return result
+    const text = result.text
+    this.change(tab, (n) => ({ ...n, text }))
+    tab.generation++
+    tab.ops.push({ generation: tab.generation, op })
+    if (tab.ops.length > OPS_KEPT) tab.ops.shift()
+    this.deps.publishOp(tabId, op, tab.generation)
+    return result
   }
 
   /**
@@ -190,11 +249,18 @@ export class NoteHub {
     return tab.replaced.find((r) => r.generation >= generation) ?? null
   }
 
-  /** main gives the tab a note: it gets the next number, and the renderer gets the note */
+  /** main gives the tab a note: it gets the next number, and the renderer gets the note; Claude's edits of the old one end */
   private give(tabId: string, tab: TabNote, note: Note | null): void {
     tab.note = note
     tab.generation++
+    tab.givenAt = tab.generation
+    tab.ops = []
     this.deps.publish(tabId, note && { ...note }, tab.generation)
+  }
+
+  /** a change of a side, a size or a view is taken against the current number or against one Claude's edits came after */
+  private takes(tab: TabNote, generation: number): boolean {
+    return generation === tab.generation || opsSince(tab.ops, tab.generation, generation) !== null
   }
 
   private change(tab: TabNote, edit: (note: Note) => Note): void {

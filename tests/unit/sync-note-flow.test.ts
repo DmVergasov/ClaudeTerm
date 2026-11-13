@@ -58,7 +58,8 @@ function device() {
       generation = g
       rendered = n?.text ?? ''
       sent.push(`${g}:${rendered}`)
-    }
+    },
+    publishOp: () => {}
   })
   notes.onExternal((id, n, before) => hub.external(id, n, before))
   const bridge = new StoreBridge(starred, notes, group, { debounceMs: 10_000 })

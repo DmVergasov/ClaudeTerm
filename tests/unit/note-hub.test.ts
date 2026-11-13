@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { NoteHub } from '../../src/main/note-hub'
 import { hasText, MAX_NOTE_LENGTH, type Note } from '../../src/shared/note'
+import type { NoteOp } from '../../src/shared/note-items'
 
 const A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -8,6 +9,7 @@ const C = 'a3c2cf68-2929-4166-9a00-000000000001'
 function setup(stored: Record<string, Note> = {}) {
   const store = new Map(Object.entries(stored))
   const published: [string, Note | null, number][] = []
+  const ops: [string, NoteOp, number][] = []
   const sets: [string, Note | null, unknown][] = []
   const hub = new NoteHub({
     store: {
@@ -18,9 +20,10 @@ function setup(stored: Record<string, Note> = {}) {
         else store.delete(id)
       }
     },
-    publish: (tabId, n, generation) => published.push([tabId, n, generation])
+    publish: (tabId, n, generation) => published.push([tabId, n, generation]),
+    publishOp: (tabId, op, generation) => ops.push([tabId, op, generation])
   })
-  return { hub, store, published, sets }
+  return { hub, store, published, ops, sets }
 }
 const alpha: Note = { text: 'alpha', shown: true, form: 'label' }
 
@@ -427,5 +430,68 @@ describe('NoteHub.resetTab (fix 1, I3)', () => {
     hub.resetTab('t1')
     hub.setText('t1', 'late', 1)
     expect(store.get(A)?.text).toBe('late')
+  })
+})
+
+describe("NoteHub.apply (Claude's edits)", () => {
+  const tag: NoteOp = { kind: 'append', text: '- [ ] Tag the release' }
+
+  it("Claude's edit of the session note is stored under the conversation and published as an op with the next number", () => {
+    const { hub, store, ops } = setup({ [A]: alpha })
+    hub.addTab('t1', A)
+    hub.apply('t1', tag)
+    expect(store.get(A)?.text).toBe('alpha\n\n- [ ] Tag the release')
+    expect(ops).toEqual([['t1', tag, 2]])
+  })
+  it("Claude's edit of a tab without a conversation stays in the hub, and is stored once when the conversation comes", () => {
+    const { hub, store } = setup()
+    hub.addTab('t1', null)
+    hub.apply('t1', { kind: 'append', text: 'early' })
+    expect(store.size).toBe(0)
+    expect(hub.get('t1')?.text).toBe('early')
+    hub.session('t1', A)
+    expect(store.get(A)?.text).toBe('early')
+  })
+  it('a text typed against the number before Claude\'s edit keeps the edit, as the window makes it', () => {
+    const { hub, store } = setup({ [A]: alpha })
+    hub.addTab('t1', A)
+    hub.apply('t1', tag)
+    hub.setText('t1', 'alpha, typed', 1)
+    expect(store.get(A)?.text).toBe('alpha, typed\n\n- [ ] Tag the release')
+    hub.setText('t1', 'alpha, typed again\n\n- [ ] Tag the release', 2)
+    expect(store.get(A)?.text).toBe('alpha, typed again\n\n- [ ] Tag the release')
+  })
+  it('a view, a side or a size sent against the number before Claude\'s edit is still taken', () => {
+    const { hub, store } = setup({ [A]: alpha })
+    hub.addTab('t1', A)
+    hub.apply('t1', tag)
+    hub.setView('t1', false, 'label', 1)
+    hub.setSide('t1', 'project', 1)
+    hub.setSize('t1', { width: 480, height: 320 }, 1)
+    expect(store.get(A)).toEqual({
+      text: 'alpha\n\n- [ ] Tag the release',
+      shown: false,
+      form: 'label',
+      side: 'project',
+      size: { width: 480, height: 320 }
+    })
+  })
+  it('text typed against the note before a conversation change still goes to the conversation it left, when Claude edited the new one in between', () => {
+    const { hub, store } = setup({ [B]: { ...alpha, text: 'beta' } })
+    hub.addTab('t1', A)
+    hub.setText('t1', 'mine', 0)
+    hub.session('t1', B)
+    hub.apply('t1', { kind: 'append', text: 'x' })
+    hub.setText('t1', 'mine more', 0)
+    expect(store.get(A)?.text).toBe('mine more')
+    expect(store.get(B)?.text).toBe('beta\n\nx')
+  })
+  it('a remote tab takes no edit from Claude', () => {
+    const { hub, store, ops } = setup({ [A]: alpha })
+    hub.addTab('t1', A, { remote: true })
+    expect(hub.apply('t1', tag)).toBeNull()
+    expect(hub.apply('shell', tag)).toBeNull()
+    expect(store.get(A)).toEqual(alpha)
+    expect(ops).toEqual([])
   })
 })
