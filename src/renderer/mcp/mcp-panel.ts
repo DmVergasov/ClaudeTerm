@@ -2,6 +2,7 @@ import type { McpAction, McpAddRequest, McpResult, McpSection, McpServersView, M
 import { el } from '../dom'
 import type { SidePanel } from '../side-panel'
 import { serverList, type RowCommand, type RowState } from './mcp-servers'
+import { openAddDialog } from './mcp-add-dialog'
 import { editScope, serverStats } from './mcp-view-model'
 import './mcp.css'
 
@@ -67,7 +68,8 @@ export class McpPanel {
   private readonly filterBox = el('input', { className: 'mcp-filter', type: 'text', placeholder: 'Filter servers and tools' })
   private readonly list = el('div', { className: 'mcp-list' })
   private readonly hint = el('span', { className: 'mcp-hint' })
-  private readonly footer = el('div', { className: 'mcp-footer' }, el('button', { className: 'mcp-btn primary', type: 'button', textContent: '＋ Add server' }), this.hint)
+  private readonly addButton = el('button', { className: 'mcp-btn primary', type: 'button', textContent: '＋ Add server' })
+  private readonly footer = el('div', { className: 'mcp-footer' }, this.addButton, this.hint)
 
   constructor(private readonly body: HTMLElement, private readonly panel: SidePanel, private readonly cb: McpPanelCallbacks) {
     for (const section of ['servers', 'plugins'] as const) {
@@ -82,6 +84,7 @@ export class McpPanel {
       this.filter = this.filterBox.value
       this.paint()
     })
+    this.addButton.addEventListener('click', () => this.addServer())
     // Esc clears the filter; with no filter it is left to the rest of the window
     this.filterBox.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || this.filter === '') return
@@ -129,6 +132,21 @@ export class McpPanel {
       return
     }
     void this.load()
+  }
+
+  /** the Add server dialog for the tab in front: a server is added and the list asked again; a GitHub link opens the Plugins section */
+  private addServer(): void {
+    const tabId = this.tabId
+    if (tabId === null) return
+    openAddDialog({
+      tabId,
+      add: (req) => this.cb.add(tabId, req),
+      addMarketplace: (source) => {
+        this.open('plugins')
+        void this.cb.pluginAction(tabId, { kind: 'marketplace-add', source }).catch((): McpResult => FAILED).finally(() => this.refresh())
+      },
+      done: () => this.refresh()
+    })
   }
 
   /** the filter takes the focus: only the servers have one (the plugins section hides it) */
