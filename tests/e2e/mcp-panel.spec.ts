@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHAT_INPUT, chatReady, launchChatTab, userMessages } from './chat-helpers'
 import { bufferText, keepingClipboard } from './helpers'
-import { chatStarts } from './mcp-helpers'
+import { chatStarts, cliCalls } from './mcp-helpers'
 
 // The MCP · Plugins panel of a Claude tab's chat: its button, the /mcp and /plugin commands, the servers grouped by what they need,
 // and the filter. The stand-in Claude Code answers for the session and the configuration folder holds the servers.
@@ -380,6 +380,134 @@ test('Open config file opens the scope\'s file', async () => {
     await page.locator(ROW('github')).getByRole('button', { name: 'More for github', exact: true }).click()
     await page.getByRole('button', { name: 'Open config file', exact: true }).click()
     await expect.poll(() => app.evaluate(() => (globalThis as Record<string, unknown>).__openCalls as string[])).toEqual([join(config, '.claude.json')])
+  } finally {
+    await app.close()
+  }
+})
+
+test('the focus stays on the switch after it turns a server off', async () => {
+  const { app, page } = await launchChatTab({ turns: {} }, { claude: { mcpServers: { github: GITHUB } } })
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    await page.getByRole('switch', { name: 'Turn github off' }).focus()
+    await page.keyboard.press('Space')
+    // the answer redraws the row in the OFF group: its switch, now labelled to turn on, has the focus
+    await expect(page.getByRole('switch', { name: 'Turn github on' })).toHaveAttribute('aria-checked', 'false')
+    await expect(page.getByRole('switch', { name: 'Turn github on' })).toBeFocused()
+  } finally {
+    await app.close()
+  }
+})
+
+test('Sign in moves the focus to Cancel, and back to Sign in when the sign-in is cancelled', async () => {
+  const { app, page } = await launchChatTab(
+    { turns: {}, mcp: { sentry: { status: 'needs-auth' } }, ...LOGIN_GATE },
+    { claude: { mcpServers: { sentry: SENTRY } } }
+  )
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('sentry'))
+    await row.getByRole('button', { name: 'Sign in', exact: true }).focus()
+    await page.keyboard.press('Enter')
+    await expect(row).toContainText('Waiting for the browser…')
+    await expect(row.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
+    await row.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(row.getByRole('button', { name: 'Sign in', exact: true })).toBeFocused()
+  } finally {
+    await app.close()
+  }
+})
+
+test('Sign out logs the server out through Claude Code', async () => {
+  const { app, page, log } = await launchChatTab({ turns: {} }, { claude: { mcpServers: { github: GITHUB } } })
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    await page.locator(ROW('github')).getByRole('button', { name: 'More for github', exact: true }).click()
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await expect.poll(() => cliCalls(log).some((c) => c.argv.includes('logout') && c.argv.includes('github'))).toBe(true)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Show tools lists the tools under the row, and Hide tools folds them again', async () => {
+  const { app, page } = await launchChatTab({ turns: {}, mcp: { github: { tools: ['search', 'read'] } } }, { claude: { mcpServers: { github: GITHUB } } })
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('github'))
+    await row.getByRole('button', { name: 'More for github', exact: true }).click()
+    await page.getByRole('button', { name: 'Show tools', exact: true }).click()
+    await expect(row.locator('.mcp-chip')).toHaveText(['search', 'read'])
+    await row.getByRole('button', { name: 'More for github', exact: true }).click()
+    await page.getByRole('button', { name: 'Hide tools', exact: true }).click()
+    await expect(row.locator('.mcp-chip')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Remove, then Cancel, keeps the server and runs no CLI call', async () => {
+  const { app, page, log } = await launchChatTab({ turns: {} }, { claude: { mcpServers: { github: GITHUB } } })
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('github'))
+    await row.getByRole('button', { name: 'More for github', exact: true }).click()
+    await page.getByRole('button', { name: 'Remove', exact: true }).click()
+    await expect(row).toContainText('Remove github?')
+    await row.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(row).not.toContainText('Remove github?')
+    await expect(row.getByRole('button', { name: 'More for github', exact: true })).toBeEnabled()
+    expect(cliCalls(log).some((c) => c.argv.includes('remove'))).toBe(false)
+    await expect(row).toBeVisible()
+  } finally {
+    await app.close()
+  }
+})
+
+test('while a sign-in runs the row\'s other buttons are off and Cancel stays on', async () => {
+  const { app, page } = await launchChatTab(
+    { turns: {}, mcp: { sentry: { status: 'needs-auth' } }, ...LOGIN_GATE },
+    { claude: { mcpServers: { sentry: SENTRY } } }
+  )
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('sentry'))
+    await row.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(row).toContainText('Waiting for the browser…')
+    await expect(row.getByRole('switch')).toBeDisabled()
+    await expect(row.getByRole('button', { name: 'More for sentry', exact: true })).toBeDisabled()
+    await expect(row.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled()
+    await row.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(row.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
+  } finally {
+    await app.close()
+  }
+})
+
+test('a sign-in still waits after the list is loaded again', async () => {
+  const { app, page, config } = await launchChatTab(
+    { turns: {}, mcp: { sentry: { status: 'needs-auth' } }, ...LOGIN_GATE },
+    { claude: { mcpServers: { sentry: SENTRY } } }
+  )
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('sentry'))
+    await row.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(row).toContainText('Waiting for the browser…')
+    // switching sections and back asks the servers again: the row keeps its wait
+    await page.locator('.panel-mcp .mcp-seg-btn[data-section="plugins"]').click()
+    await page.locator('.panel-mcp .mcp-seg-btn[data-section="servers"]').click()
+    await expect(page.locator('.panel-mcp .mcp-seg-btn[data-section="servers"]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(row).toContainText('Waiting for the browser…')
+    writeFileSync(join(config, 'sentry-ok'), '')
+    await expect(row.locator('.mcp-row')).toHaveAttribute('data-status', 'connected')
   } finally {
     await app.close()
   }

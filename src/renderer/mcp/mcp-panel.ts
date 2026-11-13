@@ -29,6 +29,12 @@ const SECTIONS: Record<McpSection, { label: string; hint: string }> = {
 
 type Plugins = PluginsView | { error: string } | null
 
+/** a row's control as the list finds it again: the row's name and the control's focus key */
+interface ControlKey {
+  name: string
+  key: string
+}
+
 /**
  * The MCP · Plugins panel: the servers the chat's Claude Code loads, and the plugins. It shows the tab in front's servers; the
  * servers are asked of main when the panel shows them, and again every few seconds while one connects.
@@ -43,6 +49,8 @@ export class McpPanel {
   private readonly rows = new Map<string, RowState>()
   /** the server whose ··· menu is open */
   private menuOf: string | null = null
+  /** the control that gets the focus once the list is drawn and the control is on: a row's controls are off while its action runs */
+  private wanted: ControlKey | null = null
   /** undefined while the answer is asked for: the panel says Loading */
   private servers: McpServersView | null | undefined = undefined
   private plugins: Plugins | undefined = undefined
@@ -102,6 +110,7 @@ export class McpPanel {
       this.servers = undefined
       this.plugins = undefined
       this.menuOf = null
+      this.wanted = null
     }
     this.refresh()
   }
@@ -247,12 +256,16 @@ export class McpPanel {
     row.signingIn = true
     row.cancelled = false
     row.error = null
+    // Cancel replaces Sign in while the browser is waited for: Cancel takes the focus
+    this.wanted = { name, key: 'cancel' }
     this.paint()
     void this.request(tabId, { kind: 'login', name }).then((result) => {
       row.signingIn = false
       if (!result.ok && !row.cancelled) row.error = result.error
       else row.error = null
       row.cancelled = false
+      // the answer brings Sign in back, or the row's name once the server is connected: that gets the focus
+      this.wanted = { name, key: 'sign-in' }
       this.settled(tabId)
     })
   }
@@ -261,6 +274,8 @@ export class McpPanel {
   private run(tabId: string, row: RowState, a: McpAction): void {
     row.busy = true
     row.error = null
+    // the control that has the focus keeps it: it is off while the action runs, and gets the focus back when the answer is in
+    this.wanted = this.focusedControl()
     this.paint()
     void this.request(tabId, a).then((result) => {
       row.busy = false
@@ -375,17 +390,60 @@ export class McpPanel {
 
   /** the list is drawn again: the control that had the focus is drawn again too, found by its row and its focus key */
   private setList(...nodes: Node[]): void {
-    const active = document.activeElement
-    const kept = active instanceof HTMLElement && this.list.contains(active) ? focusKeyOf(active) : null
+    const kept = this.focusedControl()
     this.list.replaceChildren(...nodes)
-    if (kept === null) return
-    Array.from(this.list.querySelectorAll<HTMLElement>('[data-focus-key]')).find((c) => focusKeyOf(c) === kept)?.focus()
+    if (this.wanted !== null) this.takeWanted()
+    else if (kept !== null) this.focusKept(kept)
+  }
+
+  /** the control with the focus, as the list finds it again; null when the focus is not on a row's control */
+  private focusedControl(): ControlKey | null {
+    const active = document.activeElement
+    return active instanceof HTMLElement && this.list.contains(active) ? controlKey(active) : null
+  }
+
+  /**
+   * The wanted focus goes to its control once the control is on. A control that is gone gives the focus to its row's name, and a
+   * focus that has moved out of the list (the filter, say) drops it. A control that is still off waits for the answer.
+   */
+  private takeWanted(): void {
+    const want = this.wanted
+    if (want === null) return
+    const active = document.activeElement
+    if (active !== null && active !== document.body && !this.list.contains(active)) {
+      this.wanted = null
+      return
+    }
+    const row = this.rowNode(want.name)
+    if (row === null) {
+      this.wanted = null
+      return
+    }
+    const control = findControl(row, want.key)
+    if (control === null) {
+      this.wanted = null
+      findControl(row, 'name')?.focus()
+      return
+    }
+    if (control.disabled) return
+    this.wanted = null
+    control.focus()
+  }
+
+  /** the control kept its focus over a redraw; once it is gone, its row's name has it */
+  private focusKept(c: ControlKey): void {
+    const control = this.controlNode(c)
+    if (control !== null) control.focus()
+    else findControl(this.rowNode(c.name), 'name')?.focus()
   }
 
   /** the control of a row with this focus key gets the focus, once the list is drawn */
   private focusControl(name: string, key: string): void {
-    const wanted = JSON.stringify([name, key])
-    Array.from(this.list.querySelectorAll<HTMLElement>('[data-focus-key]')).find((c) => focusKeyOf(c) === wanted)?.focus()
+    this.controlNode({ name, key })?.focus()
+  }
+
+  private controlNode(c: ControlKey): HTMLButtonElement | null {
+    return findControl(this.rowNode(c.name), c.key)
   }
 
   private rowNode(name: string): HTMLElement | null {
@@ -404,10 +462,16 @@ export class McpPanel {
 }
 
 /** a row's control as a key a repaint finds again: its row's name and its focus key; null for an element that has neither */
-function focusKeyOf(control: HTMLElement): string | null {
+function controlKey(control: HTMLElement): ControlKey | null {
   const row = control.closest<HTMLElement>('[data-name]')
   const key = control.dataset.focusKey
-  return row && key ? JSON.stringify([row.dataset.name, key]) : null
+  return row && key ? { name: row.dataset.name ?? '', key } : null
+}
+
+/** the control of a row with this focus key */
+function findControl(row: HTMLElement | null, key: string): HTMLButtonElement | null {
+  if (row === null) return null
+  return Array.from(row.querySelectorAll<HTMLButtonElement>('[data-focus-key]')).find((c) => c.dataset.focusKey === key) ?? null
 }
 
 function isView(p: PluginsView | { error: string }): p is PluginsView {
