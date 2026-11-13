@@ -3,6 +3,7 @@ import { el } from '../dom'
 import type { SidePanel } from '../side-panel'
 import { serverList, type RowCommand, type RowState } from './mcp-servers'
 import { openAddDialog } from './mcp-add-dialog'
+import { PluginsSection } from './mcp-plugins'
 import { editScope, serverStats } from './mcp-view-model'
 import './mcp.css'
 
@@ -70,8 +71,16 @@ export class McpPanel {
   private readonly hint = el('span', { className: 'mcp-hint' })
   private readonly addButton = el('button', { className: 'mcp-btn primary', type: 'button', textContent: '＋ Add server' })
   private readonly footer = el('div', { className: 'mcp-footer' }, this.addButton, this.hint)
+  private readonly pluginsSection: PluginsSection
 
   constructor(private readonly body: HTMLElement, private readonly panel: SidePanel, private readonly cb: McpPanelCallbacks) {
+    this.pluginsSection = new PluginsSection({
+      run: (tabId, a) => this.cb.pluginAction(tabId, a).catch((): McpResult => FAILED),
+      tab: () => this.tabId,
+      changed: () => this.refresh(),
+      repaint: () => this.paint(),
+      live: (tabId) => this.panel.isShowing('mcp') && this.section === 'plugins' && this.tabId === tabId
+    })
     for (const section of ['servers', 'plugins'] as const) {
       const b = el('button', { className: 'mcp-seg-btn', type: 'button', textContent: SECTIONS[section].label })
       b.dataset.section = section
@@ -109,6 +118,7 @@ export class McpPanel {
   /** the tab in front: its servers and plugins are the ones the panel shows */
   show(tabId: string | null): void {
     if (tabId !== this.tabId) {
+      this.pluginsSection.release()
       this.tabId = tabId
       this.servers = undefined
       this.plugins = undefined
@@ -120,7 +130,7 @@ export class McpPanel {
 
   /** the panel opens on a section: the servers, or the plugins (the /mcp and /plugin commands) */
   open(section: McpSection): void {
-    this.section = section
+    this.setSection(section)
     this.paint()
     void this.load()
   }
@@ -128,6 +138,7 @@ export class McpPanel {
   /** asks again while the panel shows the tab's servers or plugins: after a change of the servers, a tab switch or the panel's opening */
   refresh(): void {
     if (!this.panel.isShowing('mcp')) {
+      this.pluginsSection.release()
       this.clearTimer()
       return
     }
@@ -143,7 +154,7 @@ export class McpPanel {
       add: (req) => this.cb.add(tabId, req),
       addMarketplace: (source) => {
         this.open('plugins')
-        void this.cb.pluginAction(tabId, { kind: 'marketplace-add', source }).catch((): McpResult => FAILED).finally(() => this.refresh())
+        this.pluginsSection.addMarketplace(source)
       },
       done: () => this.refresh()
     })
@@ -164,9 +175,15 @@ export class McpPanel {
 
   private select(section: McpSection): void {
     if (section === this.section) return
-    this.section = section
+    this.setSection(section)
     this.paint()
     void this.load()
+  }
+
+  /** the section shown: a settings form of the plugins goes away when another section is shown */
+  private setSection(section: McpSection): void {
+    if (this.section === 'plugins' && section !== 'plugins') this.pluginsSection.release()
+    this.section = section
   }
 
   private async load(): Promise<void> {
@@ -390,20 +407,21 @@ export class McpPanel {
     }))
   }
 
-  /** the plugins: the section is filled by the plugin list; until then it says Loading, and a failed read says why */
+  /** the plugins: the section's sub-tabs and rows; until the read answers it says Loading, and a failed read says why in an error box */
   private paintPlugins(): void {
     const view = this.plugins
+    this.setShown(this.note, false)
     if (view === undefined) {
       this.note.textContent = 'Loading plugins…'
       this.setShown(this.note, true)
-    } else if (view !== null && !isView(view)) {
-      this.note.textContent = view.error
-      this.note.classList.add('mcp-note-error')
-      this.setShown(this.note, true)
+      this.setList()
+    } else if (view === null || this.tabId === null) {
+      this.setList()
+    } else if (!isView(view)) {
+      this.setList(el('div', { className: 'mcp-error mcp-error-box', textContent: view.error }))
     } else {
-      this.setShown(this.note, false)
+      this.setList(...this.pluginsSection.nodes(this.tabId, view))
     }
-    this.setList()
   }
 
   /** the list is drawn again: the control that had the focus is drawn again too, found by its row and its focus key */

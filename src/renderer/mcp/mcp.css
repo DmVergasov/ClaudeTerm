@@ -123,3 +123,46 @@
 .mcp-add-error { font-size: 12px; color: var(--red); }
 .mcp-add-error:empty { display: none; }
 .mcp-btn.ghost { background: none; border-color: transparent; color: var(--text-3); }
+
+/* the Plugins section: its sub-tabs, the installed rows, the Discover cards, the marketplaces and the settings form of an install */
+.mcp-subtabs { display: flex; gap: 2px; margin: 4px 0 8px; padding: 3px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 10px; }
+.mcp-subtab { flex: 1; min-width: 0; padding: 5px 12px; border: 0; border-radius: 7px; background: none; color: var(--text-3); font-family: inherit; font-weight: 500; font-size: 12px; cursor: pointer; }
+.mcp-subtab[aria-pressed="true"] { background: var(--raised-2); color: var(--text); box-shadow: 0 1px 0 #ffffff08 inset; }
+.mcp-subtab:focus-visible, .mcp-market-add:focus-visible, .mcp-filter-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mcp-empty { padding: 12px 8px; color: var(--text-3); font-size: 12px; line-height: 1.5; }
+.mcp-error-box { margin: 6px 8px; }
+.mcp-plugin-sub { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; font-size: 11.5px; color: var(--text-3); }
+.mcp-plugin-sub .mcp-detail { max-width: 100%; }
+.mcp-badge-update { color: var(--blue); border-color: #7FA7F555; background: #7FA7F50F; }
+.mcp-btn.small { padding: 3px 9px; font-size: 11.5px; }
+.mcp-plugin-details { display: flex; flex-direction: column; gap: 6px; margin: 2px 8px 6px 46px; font-size: 12px; color: var(--text-2); }
+.mcp-plugin-desc { margin: 0; line-height: 1.5; }
+.mcp-plugin-scope { font-size: 11.5px; color: var(--text-3); }
+.mcp-plugin-details .mcp-error, .mcp-card .mcp-error { margin: 0; }
+.mcp-plugin-details .mcp-confirm { margin: 0; }
+.mcp-market > .mcp-confirm, .mcp-market > .mcp-error { margin-left: 8px; }
+.mcp-market-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mcp-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-3); }
+.mcp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 4px 8px; }
+.mcp-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 11px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 11px; }
+.mcp-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mcp-icon-sm { width: 22px; height: 22px; border-radius: 6px; font-size: 10px; }
+.mcp-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; font-size: 12.5px; color: var(--text); }
+.mcp-card-desc { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-3); }
+.mcp-card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; font-size: 11px; color: var(--text-3); }
+.mcp-card-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-filter-chip { align-self: flex-start; margin: 4px 8px 6px; padding: 2px 9px; background: var(--raised); color: var(--text-2); border: 1px solid var(--line-2); border-radius: 999px; font: inherit; font-size: 11.5px; cursor: pointer; }
+.mcp-market-box { display: flex; flex-direction: column; gap: 6px; margin: 10px 8px 0; }
+.mcp-market-add { box-sizing: border-box; width: 100%; padding: 10px 12px; background: none; color: var(--text-3); border: 1px dashed var(--line-2); border-radius: 10px; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.mcp-market-form { display: flex; align-items: center; gap: 8px; }
+.mcp-market-input { flex: 1; min-width: 0; box-sizing: border-box; padding: 7px 10px; background: var(--term); color: var(--text); border: 1px solid var(--line-2); border-radius: 9px; font: inherit; font-size: 12.5px; }
+.mcp-market-input:focus { outline: none; border-color: var(--accent); }
+.mcp-options { display: flex; flex-direction: column; gap: 10px; margin: 6px 8px 10px; padding: 12px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 11px; }
+.mcp-options-head { font-weight: 600; font-size: 12.5px; color: var(--text); }
+.mcp-option { display: flex; flex-direction: column; gap: 3px; }
+.mcp-option-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
+.mcp-option-input { box-sizing: border-box; width: 100%; padding: 7px 10px; background: var(--term); color: var(--text); border: 1px solid var(--line-2); border-radius: 9px; font: inherit; font-size: 12.5px; }
+.mcp-option-input:focus { outline: none; border-color: var(--accent); }
+.mcp-option-hint { font-size: 11.5px; color: var(--text-3); }
+.mcp-options-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.mcp-options .mcp-error { margin: 0; }
