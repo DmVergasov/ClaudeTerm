@@ -101,6 +101,15 @@ async function hideAndShowDocs(page: Page): Promise<void> {
   await expect(panel(page)).toHaveClass(/collapsed/)
   await page.keyboard.press(KEYS.docs)
   await expect(panel(page)).not.toHaveClass(/collapsed/)
+  await slidIn(page)
+}
+
+/**
+ * the panel has slid in all the way: while it slides, its left part is still behind its edge, and a click there lands on the chat
+ * beside it, though the document in its frame says the link is there
+ */
+async function slidIn(page: Page): Promise<void> {
+  await expect(panel(page)).not.toHaveClass(/sliding/)
 }
 
 test('show_document opens Docs with the formatted document; the button and Ctrl+Shift+O toggle it', async () => {
@@ -397,6 +406,7 @@ test('an HTML report runs its script in a sandboxed frame; its own links work, a
   await expect(page.locator('iframe.doc-frame')).toHaveAttribute('sandbox', 'allow-scripts')
   const frame = page.frameLocator('iframe.doc-frame')
   await expect(frame.locator('#t')).toHaveText('Report ready · parent blocked')
+  await slidIn(page)
   await frame.locator('#next').click()
   await expect(frame.locator('h1')).toHaveText('Page 2')
   // Docs hidden and shown again draws the report afresh
