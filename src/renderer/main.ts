@@ -4,6 +4,7 @@ import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import type { MailUnread } from '../shared/mail'
+import { noteProjectOf } from '../shared/note'
 import type { TabView } from '../shared/chat'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import { deviceColor, MAX_SNAPSHOT_BYTES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type RemoteDeviceView } from '../shared/remote'
@@ -1257,6 +1258,9 @@ async function boot(): Promise<void> {
   noteOverlay = new NoteOverlay(document.getElementById('note')!, {
     setText: (id, text, generation) => ct.setNoteText(id, text, generation),
     setView: (id, shown, form, generation) => ct.setNoteView(id, shown, form, generation),
+    setSide: (id, side, generation) => ct.setNoteSide(id, side, generation),
+    setProjectText: (id, key, text, generation) => ct.setProjectNoteText(id, key, text, generation),
+    projectOf: (id) => noteProjectOf(tabs.get(id)?.info.remote !== undefined, places.get(id)),
     focusTerminal: () => { if (activeId) focusTab(activeId) },
     copyText: (text) => ct.writeClipboardText(text),
     changed: () => renderTabs()
@@ -1274,6 +1278,7 @@ async function boot(): Promise<void> {
     places.set(id, place)
     if (appInfo.test) placeLog.set(id, [...placeLog.get(id) ?? [], place])
     renderTabs()
+    noteOverlay.placeChanged(id)
     // a new active tab unfolds its group once its place is known: until then it is in No project, which must stay folded;
     // a group the user folded in the meantime stays folded
     if (first && id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id, true)
@@ -1553,6 +1558,12 @@ async function boot(): Promise<void> {
     noteOverlay.set(id, note, generation)
     renderTabs()
   })
+  ct.onNoteOp((id, op, generation) => {
+    noteOverlay.applyOp(id, op, generation)
+    renderTabs()
+  })
+  ct.onProjectNote((key, note, generation) => noteOverlay.setProjectNote(key, note, generation))
+  ct.onProjectNoteOp((key, op, generation) => noteOverlay.applyProjectOp(key, op, generation))
   ct.onTabOpened((info) => {
     addTab(info)
     // a window that lists no tab of its own, and whose front closed with no other tab to ask for (a batch of closes from a

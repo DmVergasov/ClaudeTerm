@@ -72,7 +72,7 @@ test('â€“ collapses the note to a label with its first line, a click opens it, Ã
 
   await button.click()
   await expect(card).toBeVisible()
-  await expect(card.locator('.note-title')).toHaveText('Note')
+  await expect(card.locator('.note-side[data-side="session"]')).toHaveClass(/active/)
   await expect(collapse).toHaveAttribute('title', 'Collapse to a label')
   await expect(hide).toHaveAttribute('title', 'Hide the note')
   await collapse.click() // an empty note has no label to collapse to
