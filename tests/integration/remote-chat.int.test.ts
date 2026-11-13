@@ -586,7 +586,13 @@ describe('the calls a member makes about a chat', () => {
     // 460 messages of 15 KiB: the newest 200 make the snapshot, and the page before the newest item is 3 MiB of JSON
     const body = 'x'.repeat(15 * 1024)
     for (let i = 0; i < 460; i++) await hub.send(T1, { text: `${i} ${body}`, attachments: [] })
-    await settleSends()
+    // the member is where the host is. Not the same as a whole: the host's snapshot is cut to the push limit, while the member's
+    // copy, moved on by batches, keeps the older items it had; which of the two came last depends on how the sends were batched
+    await until(() => {
+      const member = viewerB.chatSnapshot(T1)
+      const host = hub.remoteSnapshot(T1)
+      return member !== null && host !== null && member.rev === host.rev && member.items.at(-1)?.id === host.items.at(-1)?.id
+    })
     const beforeId = hub.remoteSnapshot(T1)!.items.at(-1)!.id
     const expectedEnd = hub.older(T1, beforeId)!.items.at(-1)!.id
 
