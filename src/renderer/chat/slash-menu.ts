@@ -1,6 +1,6 @@
 import type { ChatCommandInfo } from '../../shared/chat'
 
-export type SlashRoute = { to: 'native'; name: 'model' | 'resume' } | { to: 'terminal'; line: string } | { to: 'send'; text: string }
+export type SlashRoute = { to: 'native'; name: 'model' | 'resume' | 'mcp' | 'plugin' } | { to: 'terminal'; line: string } | { to: 'send'; text: string }
 
 /** the built-ins that need the terminal: Claude Code's own dialogs and settings, which the chat does not draw */
 const TERMINAL_BUILTINS = new Set(['config', 'permissions', 'agents', 'login', 'logout', 'doctor', 'rewind', 'terminal-setup', 'ide', 'vim', 'statusline', 'exit'])
@@ -14,9 +14,9 @@ const TAG = 'Opens in the terminal'
 const HINT = '↑↓ move · Tab complete · Enter run'
 
 /**
- * Where a composer text that starts with / or ! goes: /model and /resume without arguments are answered by the app, the
- * terminal's commands, the commands answered "not available" before (`unavailable`, their names) and a ! line go to the
- * terminal with the whole text, and everything else is sent to Claude Code.
+ * Where a composer text that starts with / or ! goes: /model, /resume, /mcp and /plugin (or /plugins) without arguments are answered
+ * by the app, the terminal's commands, the commands answered "not available" before (`unavailable`, their names) and a ! line go
+ * to the terminal with the whole text, and everything else is sent to Claude Code.
  */
 export function routeSlash(text: string, commands: ChatCommandInfo[], unavailable: readonly string[] = []): SlashRoute {
   if (text.startsWith('!')) return { to: 'terminal', line: text }
@@ -24,7 +24,8 @@ export function routeSlash(text: string, commands: ChatCommandInfo[], unavailabl
   const space = text.search(/\s/)
   const name = text.slice(1, space === -1 ? undefined : space)
   const args = space === -1 ? '' : text.slice(space).trim()
-  if (args === '' && (name === 'model' || name === 'resume')) return { to: 'native', name }
+  if (args === '' && (name === 'model' || name === 'resume' || name === 'mcp')) return { to: 'native', name }
+  if (args === '' && (name === 'plugin' || name === 'plugins')) return { to: 'native', name: 'plugin' }
   const terminal = TERMINAL_BUILTINS.has(name) || unavailable.includes(name) || commands.some((c) => c.name === name && c.terminal)
   if (terminal) return { to: 'terminal', line: text }
   return { to: 'send', text }
@@ -35,6 +36,8 @@ export interface SlashMenuOptions {
   commands(): Promise<ChatCommandInfo[]>
   /** whether a command goes to the terminal, tagged in the menu */
   terminal(name: string): boolean
+  /** whether the app answers a command without arguments (/model, /resume, /mcp, /plugin): Enter runs it even when the command takes arguments */
+  native(name: string): boolean
   /** Tab, or Enter on a command that takes arguments: the composer's text becomes this, and waits for the rest */
   complete(text: string): void
   /** Enter on a command that takes no arguments, or a click on it: the command runs */
@@ -148,6 +151,12 @@ export class SlashMenu {
       if (this.shown.length > 0) this.move(e.key === 'ArrowDown' ? 1 : -1)
       return this.shown.length > 0
     }
+    // a name typed in full that the app answers (/mcp, /plugin) runs as typed: the menu's first match is not the command typed
+    if (e.key === 'Enter' && !e.shiftKey && this.query !== '' && this.o.native(this.query)) {
+      this.close()
+      this.o.run(this.query)
+      return true
+    }
     const chosen = this.shown[this.selected]
     // Enter with no command to run closes the menu: the text goes on as a message, with no menu over the field
     if (chosen === undefined) {
@@ -167,7 +176,7 @@ export class SlashMenu {
 
   /** a command: completed with its name when it takes arguments, else run */
   private choose(command: ChatCommandInfo): void {
-    if (command.argumentHint !== '') this.complete(command)
+    if (command.argumentHint !== '' && !this.o.native(command.name)) this.complete(command)
     else {
       this.close()
       this.o.run(command.name)

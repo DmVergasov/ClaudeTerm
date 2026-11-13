@@ -1,12 +1,12 @@
 import type { PanelMode } from '../shared/types'
 import { icon } from './icons'
 
-export type PanelTab = 'images' | 'changes' | 'docs' | 'messages'
+export type PanelTab = 'images' | 'changes' | 'docs' | 'messages' | 'mcp'
 
-const TABS: readonly PanelTab[] = ['images', 'changes', 'docs', 'messages']
-const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs', messages: 'Agent messages' }
+const TABS: readonly PanelTab[] = ['images', 'changes', 'docs', 'messages', 'mcp']
+const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs', messages: 'Agent messages', mcp: 'MCP · Plugins' }
 /** how wide a drag may make each tab, as a share of the workspace (the window less the left tab panel) */
-const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85, messages: 0.85 }
+const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85, messages: 0.85, mcp: 0.7 }
 const MIN_WIDTH = 180
 /** how long a panel takes to slide in or out, and its content to fade out */
 const MOTION_MS = 180
@@ -33,7 +33,7 @@ export class SidePanel {
   private isExpanded = false
   private readonly title: HTMLElement
   private readonly toolsBox: HTMLElement
-  private readonly available: Record<PanelTab, boolean> = { images: true, changes: false, docs: false, messages: false }
+  private readonly available: Record<PanelTab, boolean> = { images: true, changes: false, docs: false, messages: false, mcp: false }
   private mode: PanelMode = 'beside'
   /** the width main was last asked to make room for */
   private asked = 0
@@ -60,8 +60,8 @@ export class SidePanel {
       el.className = 'panel-tool-group'
       return el
     }
-    this.tools = { images: group(), changes: group(), docs: group(), messages: group() }
-    this.toolsBox.append(this.tools.images, this.tools.changes, this.tools.docs, this.tools.messages)
+    this.tools = { images: group(), changes: group(), docs: group(), messages: group(), mcp: group() }
+    this.toolsBox.append(this.tools.images, this.tools.changes, this.tools.docs, this.tools.messages, this.tools.mcp)
     const hide = document.createElement('button')
     hide.className = 'panel-hide'
     hide.innerHTML = icon('x', 14)
@@ -73,8 +73,8 @@ export class SidePanel {
       el.className = `panel-body panel-${tab}`
       return el
     }
-    this.bodies = { images: body('images'), changes: body('changes'), docs: body('docs'), messages: body('messages') }
-    root.replaceChildren(handle, header, this.bodies.images, this.bodies.changes, this.bodies.docs, this.bodies.messages)
+    this.bodies = { images: body('images'), changes: body('changes'), docs: body('docs'), messages: body('messages'), mcp: body('mcp') }
+    root.replaceChildren(handle, header, this.bodies.images, this.bodies.changes, this.bodies.docs, this.bodies.messages, this.bodies.mcp)
     this.setupResize(handle)
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.isExpanded && !e.defaultPrevented) this.setExpanded(false)

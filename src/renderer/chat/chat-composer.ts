@@ -1,4 +1,5 @@
 import { commandWord, type ChatAttachment, type ChatCommandInfo, type ChatModelInfo, type ChatPermissionMode, type ChatSend, type ChatState } from '../../shared/chat'
+import type { McpSection } from '../../shared/mcp'
 import type { ImageCard } from '../../shared/types'
 import { icon } from '../icons'
 import { imageUrl } from '../image-url'
@@ -55,6 +56,11 @@ export interface ComposerOptions {
   setModel(model: string, effort: string | null): void
   /** /resume: the window of recent sessions, whose pick resumes the session in this chat; `refused` when the chat cannot take it */
   resume(refused: () => void): void
+  /**
+   * /mcp and /plugin: the MCP · Plugins panel opens on the section. null: nothing is sent and the draft is cleared; a string: the
+   * text is sent to Claude Code as typed, and the composer's note shows the string (a member's tab: its host manages MCP)
+   */
+  openMcp(section: McpSection): string | null
   /** a command for the terminal: switched to it and typed there; false when the switch is refused. Null: the switch only */
   openInTerminal(line: string | null): Promise<boolean>
   /**
@@ -223,6 +229,7 @@ export class ChatComposer {
     this.slash = new SlashMenu(this.field, {
       commands: () => this.fetchCommands(),
       terminal: (name) => routeSlash(`/${name}`, this.commands, this.o.unavailable()).to === 'terminal',
+      native: (name) => routeSlash(`/${name}`, this.commands, this.o.unavailable()).to === 'native',
       complete: (text) => this.setDraft(text),
       run: (name) => {
         this.setDraft(`/${name}`)
@@ -685,6 +692,8 @@ export class ChatComposer {
     }
     const text = this.input.value.trim()
     if (text === '' && this.attached.length === 0) return
+    // the note a /mcp or /plugin leaves when its text is sent on (a member's tab): shown once the draft is cleared
+    let sentNote: string | null = null
     // a command the app answers, or the terminal runs; with files attached the text is a message, a command included: the
     // files go with it, and a command the app would answer is then sent to Claude Code as the text it is
     // a message with quotes is text, not a command: the quotes come first in it
@@ -700,7 +709,15 @@ export class ChatComposer {
         this.modelPicker.open(this.modelChip)
         return
       }
-      if (route.to === 'native') {
+      // /mcp and /plugin open the panel at once, a turn may run: nothing is sent when the app answers with null
+      if (route.to === 'native' && (route.name === 'mcp' || route.name === 'plugin')) {
+        const line = this.o.openMcp(route.name === 'mcp' ? 'servers' : 'plugins')
+        if (line === null) {
+          this.reset()
+          return
+        }
+        sentNote = line
+      } else if (route.to === 'native') {
         // /resume takes the sessions window: it opens once the turn is over, as the terminal commands run then
         this.pendingRun = { text, route: 'resume', line: text, what: '/resume', notice: false, busy: false }
         this.runPending()
@@ -715,6 +732,7 @@ export class ChatComposer {
     const quotes = this.quotes
     const sent: ChatSend = { text: quoteMarkdown(quotes, text), attachments: this.attached }
     this.reset()
+    if (sentNote !== null) this.showNote(sentNote)
     void this.o.send(sent).then(
       (refusal) => { if (refusal !== null) this.giveBack(sent, text, quotes, refusal) },
       (e: unknown) => this.giveBack(sent, text, quotes, `Could not send: ${errorText(e)}`)

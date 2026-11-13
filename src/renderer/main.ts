@@ -7,11 +7,13 @@ import type { MailUnread } from '../shared/mail'
 import { noteProjectOf } from '../shared/note'
 import type { TabView } from '../shared/chat'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
+import type { McpSection } from '../shared/mcp'
 import { deviceColor, MAX_SNAPSHOT_BYTES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type RemoteDeviceView } from '../shared/remote'
 import type { NotificationCase, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, switchChoices } from './account-items'
 import { DocPanel } from './doc-panel'
 import { MailPanel } from './mail-panel'
+import { McpPanel } from './mcp/mcp-panel'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
 import { SheetHeader } from './sheet-header'
@@ -91,6 +93,9 @@ const reviewUpdates = new Map<string, ReviewUpdate>()
 const pendingReveal = new Set<string>()
 let docPanel: DocPanel
 let mailPanel: MailPanel
+let mcpPanel: McpPanel
+/** the MCP · Plugins panel's width when it opens: a fixed size, not a setting */
+const MCP_PANEL_WIDTH = 420
 /** the unread agent messages per tab, as main last counted them */
 let mailUnread: MailUnread = {}
 const docUpdates = new Map<string, DocsUpdate>()
@@ -319,6 +324,26 @@ function refreshPanelButtons(): void {
   sheetHeader.setDocs(docs, sidePanel.isShowing('docs'))
   sheetHeader.setMessages(settings.agentMessages.enabled, sidePanel.isShowing('messages'), unreadMail, activeId)
   sheetHeader.setNote(claude, claude && noteOverlay.isShown())
+  sheetHeader.setMcp(mcpAvailable(activeId ? tabs.get(activeId) : undefined), sidePanel.isShowing('mcp'))
+}
+
+/** the MCP · Plugins panel is the chat's: a local Claude tab in its chat view. The terminal view keeps Claude Code's own /mcp, and a member's tab has its host's servers */
+const mcpAvailable = (t: TabState | undefined): boolean => t !== undefined && t.info.kind === 'claude' && !t.info.remote && isChatView(t)
+
+/** the panel is offered for the tab in front, as its header button is */
+function syncMcpPanel(): void {
+  sidePanel.setAvailable('mcp', mcpAvailable(activeId ? tabs.get(activeId) : undefined))
+}
+
+/** /mcp and /plugin in a chat: the panel opens on the section; a member's tab names its host, whose Claude Code keeps the servers */
+function openMcpFor(tabId: string, section: McpSection): string | null {
+  const remote = tabs.get(tabId)?.info.remote
+  if (remote) return `Manage MCP on ${remoteDeviceOf(remote.device)?.name ?? 'another device'}`
+  mcpPanel.show(tabId)
+  mcpPanel.open(section)
+  sidePanel.open('mcp')
+  mcpPanel.focusFilter()
+  return null
 }
 
 function logInput(tabId: string, data: string): void {
@@ -778,6 +803,7 @@ function makeChat(tabId: string): ChatView {
     resume: (refused) => { void sessionsWindow.open((s) => resumePicked(tabId, s, refused)) },
     // a notice's line, or null for a dialog: the terminal is switched to, and nothing typed
     openInTerminal: (line) => ct.chatOpenInTerminal(tabId, line),
+    openMcp: (section) => openMcpFor(tabId, section),
     // a view switch that would stop the tab's background tasks asks in the sheet header first, with this tab's own count
     askSwitch: (go, cancel) => sheetHeader.askBeforeSwitch(tabId, backgroundOf(tabId), go, cancel),
     answer: (cardId, a) => ct.chatAnswer(tabId, cardId, a),
@@ -836,6 +862,8 @@ function applyView(t: TabState): void {
   } else if (t.info.view === 'terminal') {
     ensureTerminal(t)
   }
+  // the MCP · Plugins panel is the chat view's: a switch of the view changes whether it is offered
+  syncMcpPanel()
   if (t.info.id !== activeId) return
   showTab(t, true, true)
   if (isChatView(t)) loadChat(t.info.id)
@@ -977,9 +1005,11 @@ function activate(tabId: string): void {
   // the images first: setAvailable can switch a shown Changes panel to Images and fire onChange, which must find this tab's images
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
   sidePanel.setAvailable('changes', claude)
+  syncMcpPanel()
   if (pendingReveal.delete(tabId)) sidePanel.open('changes')
   showDocs(tabId, claude)
   mailPanel.show(tabId)
+  mcpPanel.show(tabId)
   renderStatus(tabId)
 }
 
@@ -1245,6 +1275,10 @@ async function boot(): Promise<void> {
   tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
   sheetHeader = new SheetHeader(document.getElementById('sheet-header')!, {
     ...tabCallbacks,
+    toggleMcp: () => {
+      sidePanel.toggle('mcp')
+      if (activeId) focusTab(activeId)
+    },
     switchView: (view) => { if (activeId) switchTo(activeId, view) },
     // files dropped on the header go to the chat in front, as a drop on the sheet does
     drop: (files) => {
@@ -1432,7 +1466,7 @@ async function boot(): Promise<void> {
     const text = t?.view ? promptText(t.view.screen().rows) : null
     ct.answerPrompt(queryId, text === null ? 'none' : text === '' ? 'empty' : 'draft')
   })
-  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width, messages: settings.review.width }, (width, resize) => ct.setPanel(width, resize))
+  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width, messages: settings.review.width, mcp: MCP_PANEL_WIDTH }, (width, resize) => ct.setPanel(width, resize))
   sidePanel.setAvailable('messages', settings.agentMessages.enabled)
   ct.onPanelMode((mode) => sidePanel.setMode(mode))
   imagePanel = new ImagePanel(
@@ -1512,13 +1546,27 @@ async function boot(): Promise<void> {
     markRead: (ids) => ct.markMailRead(ids)
   })
   sidePanel.onCover = () => noteOverlay.relayout()
+  mcpPanel = new McpPanel(sidePanel.bodies.mcp, sidePanel, {
+    servers: (tabId) => ct.mcpServers(tabId),
+    action: (tabId, a) => ct.mcpAction(tabId, a),
+    add: (tabId, req) => ct.mcpAdd(tabId, req),
+    plugins: (tabId) => ct.mcpPlugins(tabId),
+    pluginAction: (tabId, a) => ct.mcpPluginAction(tabId, a),
+    // the Approve button of a waiting server is one of the row actions, not in this panel yet
+    approve: () => undefined
+  })
   sidePanel.onChange = () => {
     imagePanel.panelChanged()
     reviewPanel.panelChanged()
     docPanel.panelChanged()
     mailPanel.refresh()
+    mcpPanel.refresh()
     refreshPanelButtons()
   }
+  // the servers change under the panel: a restart, a sign-in, a change Claude made to the configuration
+  ct.onMcpChanged((tabId) => {
+    if (tabId === activeId) mcpPanel.refresh()
+  })
   // the unread counts change with the mail: the badges, and the panel when it shows the messages
   ct.onMail((unread) => {
     const marksBefore = mailMarks()
@@ -1634,6 +1682,7 @@ async function boot(): Promise<void> {
       titleBar.render([])
       // the Docs panel has no tab's documents to show: it falls back to another panel
       sidePanel.setAvailable('docs', false)
+      sidePanel.setAvailable('mcp', false)
     }
     renderTabs()
     // main activates the neighbor of a closed local tab that was in front; in the other cases it activates none, and the

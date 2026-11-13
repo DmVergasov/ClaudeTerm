@@ -41,10 +41,13 @@ export async function launchChatTab(
   writeFileSync(scriptFile, JSON.stringify({ ...script, version: o.version ?? script.version }))
   const logFile = join(root, 'fake-claude.log')
   // Claude Code keys the trust by the folder's real path: the key is the canonical one, as the app compares it
-  // o.claude: more of the account's configuration (its user-scope mcpServers), written before the stand-in starts
+  // o.claude: more of the account's configuration (its user-scope mcpServers), written before the stand-in starts. Its
+  // projects are kept: a test may approve or disable a project's servers, the trust entry is added to them
+  const claudeProjects = (o.claude as { projects?: Record<string, object> } | undefined)?.projects ?? {}
+  const workKey = realpathSync.native(work)
   const claudeJson = {
     ...o.claude,
-    ...(o.trusted !== false ? { projects: { [realpathSync.native(work)]: { hasTrustDialogAccepted: true } } } : o.claude ? { projects: {} } : {}),
+    ...(o.trusted !== false ? { projects: { ...claudeProjects, [workKey]: { hasTrustDialogAccepted: true, ...claudeProjects[workKey] } } } : o.claude ? { projects: claudeProjects } : {}),
     ...(o.login ? { oauthAccount: o.login } : {})
   }
   if (Object.keys(claudeJson).length > 0) writeFileSync(join(config, '.claude.json'), JSON.stringify(claudeJson))

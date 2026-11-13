@@ -3,13 +3,14 @@
 export const ICON_NAMES = [
   'search', 'plus', 'chevron-down', 'chevron-right', 'branch', 'terminal', 'image', 'file-diff',
   'file-text', 'note', 'mail', 'history', 'settings', 'panel-left', 'panel-top', 'x', 'bell',
-  'check', 'play', 'volume', 'music', 'message-square', 'paperclip', 'arrow-up', 'users'
+  'check', 'play', 'volume', 'music', 'message-square', 'paperclip', 'arrow-up', 'users', 'plug'
 ] as const
 
 export type IconName = (typeof ICON_NAMES)[number]
 
 // the inner shapes of each icon on a 24 x 24 grid
 const SHAPES: Record<IconName, string> = {
+  plug: '<path d="M12 22v-5"></path><path d="M9 8V2"></path><path d="M15 8V2"></path><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"></path>',
   search: '<circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>',
   plus: '<path d="M5 12h14"></path><path d="M12 5v14"></path>',
   'chevron-down': '<path d="m6 9 6 6 6-6"></path>',

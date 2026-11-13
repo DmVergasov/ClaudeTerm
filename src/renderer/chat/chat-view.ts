@@ -1,4 +1,5 @@
 import { acceptPatches, commandWord, typedMessages, type ChatAnswer, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type ChatState, type ChatSubagent, type HeadsUpAction, type HeadsUpCard } from '../../shared/chat'
+import type { McpSection } from '../../shared/mcp'
 import type { ImageCard } from '../../shared/types'
 import { spinner } from '../tab-row'
 import { ChatComposer } from './chat-composer'
@@ -31,6 +32,8 @@ export interface ChatViewOptions {
   files(query: string): Promise<string[]>
   setModel(model: string, effort: string | null): void
   resume(refused: () => void): void
+  /** /mcp and /plugin: the MCP · Plugins panel opens on the section; null: nothing is sent, a string: the line the composer shows and the text goes as typed */
+  openMcp(section: McpSection): string | null
   /** a notice's line, or null for a dialog the chat cannot show (the terminal is switched to only) */
   openInTerminal(line: string | null): Promise<boolean>
   askSwitch(go: () => void, cancel: () => void): () => void
@@ -212,6 +215,7 @@ export class ChatView {
       files: (query) => o.files(query),
       setModel: (model, effort) => o.setModel(model, effort),
       resume: (refused) => o.resume(refused),
+      openMcp: (section) => o.openMcp(section),
       openInTerminal: (line) => o.openInTerminal(line),
       askSwitch: (go, cancel) => o.askSwitch(go, cancel),
       // ↑ recalls the typed text of a message; its quotes stay out of the field, as they are shown in their bars, and a message of quotes alone has none

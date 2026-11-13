@@ -25,6 +25,20 @@ describe('routeSlash', () => {
     expect(routeSlash('/resume', [])).toEqual({ to: 'native', name: 'resume' })
   })
 
+  it('/mcp with no arguments is answered natively', () => {
+    expect(routeSlash('/mcp', [])).toEqual({ to: 'native', name: 'mcp' })
+  })
+
+  it('/plugin and /plugins with no arguments are answered natively as plugin', () => {
+    expect(routeSlash('/plugin', [])).toEqual({ to: 'native', name: 'plugin' })
+    expect(routeSlash('/plugins', [])).toEqual({ to: 'native', name: 'plugin' })
+  })
+
+  it('/mcp and /plugin with arguments are sent to Claude Code as they are', () => {
+    expect(routeSlash('/mcp enable x', [])).toEqual({ to: 'send', text: '/mcp enable x' })
+    expect(routeSlash('/plugin install x', [])).toEqual({ to: 'send', text: '/plugin install x' })
+  })
+
   it('the built-ins that need the terminal go there, with the whole text as the line', () => {
     for (const name of ['config', 'permissions', 'agents', 'login', 'logout', 'doctor', 'rewind', 'terminal-setup', 'ide', 'vim', 'statusline', 'exit']) {
       expect(routeSlash(`/${name}`, [])).toEqual({ to: 'terminal', line: `/${name}` })

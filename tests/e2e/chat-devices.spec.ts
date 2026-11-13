@@ -4,7 +4,7 @@ import { createServer, connect, type AddressInfo, type Server, type Socket } fro
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { FakeScript } from '../fixtures/fake-claude/install'
-import { chatStandIn, CHAT_INPUT, controlResponses, sendMessage, userMessages } from './chat-helpers'
+import { chatReady, chatStandIn, CHAT_INPUT, controlResponses, sendMessage, userMessages } from './chat-helpers'
 import { closePaired, type Device, pairedApps, SLOW, startApps } from './device-pair'
 import { bufferText, launchApp, writeTranscript } from './helpers'
 
@@ -24,6 +24,7 @@ const MODEL_PICKER = '.chat-host:visible .chat-model-picker'
 const ATTACHED = '.chat-host:visible .chat-attached'
 const REFUSAL = '.chat-host:visible .chat-refusal'
 const SESSIONS = '#sessions'
+const COMPOSER_NOTE = '.chat-host:visible .chat-note'
 const BASH = { command: 'ls' }
 /** the pieces of a streamed answer, then its last word: the member sees the first pieces before the end */
 const STREAM = `${Array.from({ length: 100 }, (_, i) => `part${i}`).join(' ')} end-of-stream`
@@ -425,4 +426,17 @@ test("a member's composer runs the host's calls: its commands, files, models, an
   await expect.poll(() => bufferText(a.page, tabId), { timeout: 25_000 }).toContain('you said: /config')
   // not covered here: a background task's Stop from the member. The stand-in shows no task a member can stop, and the
   // call's argument checks are in tests/unit/sync-remote-shapes.test.ts
+})
+
+test("a member's /mcp goes to the host's Claude Code and says where to manage MCP", async () => {
+  const { stand, a, b, tabId } = await chatTab({ turns: { hello: [{ text: 'Hi there' }] } })
+  await chatReady(a.page)
+  await frontOnMember(b, tabId)
+  await b.page.locator(CHAT_INPUT).click()
+  await b.page.keyboard.type('/mcp')
+  await b.page.keyboard.press('Enter')
+  // the member's panel does not open: the host's servers are the host's, and the line says where they are managed
+  await expect(b.page.locator(COMPOSER_NOTE)).toHaveText(`Manage MCP on ${a.name}`, SLOW)
+  await expect.poll(() => userMessages(stand.log).includes('/mcp'), SLOW).toBe(true)
+  await expect(b.page.locator('.tab-mcp-toggle')).toBeHidden()
 })
