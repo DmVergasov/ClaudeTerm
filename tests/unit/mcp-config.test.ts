@@ -274,6 +274,22 @@ describe('mcp-config', () => {
     expect(reads).toHaveLength(1)
   })
 
+  it('jsonFileCache: a version whose read failed is read again on the next call', async () => {
+    const file = join('/cfg', '.mcp.json')
+    let reads = 0
+    const load = jsonFileCache({
+      stat: async () => ({ mtimeMs: 1, size: 7 }),
+      read: async () => {
+        reads++
+        if (reads === 1) throw new Error('EBUSY')
+        return '{"a":1}'
+      }
+    })
+    expect(await load(file)).toBe(UNREADABLE)
+    expect(await load(file)).toEqual({ a: 1 })
+    expect(reads).toBe(2)
+  })
+
   it('jsonFileCache: a file that exists but cannot be stat-ed, read or parsed is UNREADABLE; a missing one is null', async () => {
     const file = join('/cfg', '.claude.json')
     const stats: Array<{ label: string; stat: () => Promise<{ mtimeMs: number; size: number } | null>; read: () => Promise<string | null> }> = [

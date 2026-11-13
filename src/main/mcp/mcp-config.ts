@@ -190,11 +190,14 @@ export async function readTabConfig(paths: ConfigPaths, folder: string, readJson
   return tabConfig({ userConfig, userSettings, installedPlugins, projectMcp, projectSettings, localSettings }, folder)
 }
 
+/** what a load gives: the parsed file or UNREADABLE, and whether the read itself failed (so the version is not kept) */
+type Loaded = { data: unknown; readFailed: boolean }
+
 /**
  * a reader that stats the file each call and reads and parses it again only when its mtime or size changed. The result is null for a file
  * that does not exist and for one over MAX_CONFIG_BYTES (not read); UNREADABLE for one that exists but whose stat throws (not kept, the next
- * call asks again), or whose read fails or whose text is not JSON (kept for that version, like a parse). A read in flight is shared: callers
- * that ask for the same file version at once read it once.
+ * call asks again), whose read fails (not kept, the next call reads again) or whose text is not JSON (kept for that version, like a parse).
+ * A read in flight is shared: callers that ask for the same file version at once read it once, even when that read fails.
  */
 export function jsonFileCache(fs: {
   /** null when the file is missing; throws when it cannot be stat-ed */
@@ -202,21 +205,21 @@ export function jsonFileCache(fs: {
   /** the text, null or a throw when it cannot be read */
   read(f: string): Promise<string | null>
 }): (file: string) => Promise<unknown> {
-  const cache = new Map<string, { mtimeMs: number; size: number; data: Promise<unknown> }>()
+  const cache = new Map<string, { mtimeMs: number; size: number; data: Promise<Loaded> }>()
 
   /** the parsed file, or UNREADABLE when the read fails or the text is not JSON */
-  const load = async (file: string): Promise<unknown> => {
+  const load = async (file: string): Promise<Loaded> => {
     let text: string | null
     try {
       text = await fs.read(file)
     } catch {
-      return UNREADABLE
+      return { data: UNREADABLE, readFailed: true }
     }
-    if (text === null) return UNREADABLE
+    if (text === null) return { data: UNREADABLE, readFailed: true }
     try {
-      return JSON.parse(text)
+      return { data: JSON.parse(text), readFailed: false }
     } catch {
-      return UNREADABLE
+      return { data: UNREADABLE, readFailed: false }
     }
   }
 
@@ -232,11 +235,14 @@ export function jsonFileCache(fs: {
       return null
     }
     const hit = cache.get(file)
-    if (hit !== undefined && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.data
+    if (hit !== undefined && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return (await hit.data).data
 
-    const data = load(file)
-    cache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, data })
-    return data
+    const loaded = load(file)
+    cache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, data: loaded })
+    const result = await loaded
+    // a failed read is not kept, so the next call reads the file again; a newer version that took the entry stays
+    if (result.readFailed && cache.get(file)?.data === loaded) cache.delete(file)
+    return result.data
   }
 }
 
