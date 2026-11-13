@@ -572,6 +572,8 @@ function bootstrap(): void {
     // the tab's group and branch are those of the folder Claude works in
     onFolderChanged: (tabId, folder) => {
       places.moveTab(tabId, folder)
+      // the Changes panel shows the folder Claude works in: a worktree it entered has changes of its own
+      review.moveTab(tabId, folder)
       // the folder moves the tab's place, and its directory entry goes out again to the members, as other tab changes do
       remote?.host.changed()
     },

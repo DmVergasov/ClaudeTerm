@@ -151,6 +151,24 @@ export class ReviewHub {
     else this.d.publish(this.withState(t, this.emptyUpdate(t)))
   }
 
+  /**
+   * Claude moved the tab to another folder (a worktree it entered or left): the view is that folder's now. The conversation
+   * goes on, so its session, ledger, scope and marks stay; what was computed for the old folder goes, as resetTab does.
+   */
+  moveTab(tabId: string, folder: string): void {
+    const t = this.tabs.get(tabId)
+    if (!t) return
+    if (t.timer) clearTimeout(t.timer)
+    t.timer = null
+    t.folder = folder
+    t.texts.clear()
+    t.gen++
+    t.countJob = null
+    t.last = null
+    if (this.inFront(tabId)) this.schedule(t, 0)
+    else this.d.publish(this.withState(t, this.emptyUpdate(t)))
+  }
+
   /** the view of a tab with nothing computed in it: no files and no counter, in the tab's folder */
   private emptyUpdate(t: TabState): ReviewUpdate {
     return {

@@ -20,6 +20,7 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 - A Media or Changes panel you close goes at once: it no longer shows again for a moment, half closed.
 - The first Media or Changes panel you open after starting ClaudeTerm opens at once, not a second later (Windows).
 - A chat whose conversation works in a git worktree shows that worktree's branch in the tab list again after a restart or a resume, not the branch of the folder the tab was opened in.
+- When Claude enters a git worktree, the Changes panel shows the worktree's changes, not those of the folder the tab was opened in.
 - The progress of a plan Claude carries out no longer disappears from the status bar while a task runs: an old plan a subagent once looked at, or a plan file kept beside the plans' working folders, no longer takes its place.
 ## 0.18.0
 

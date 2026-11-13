@@ -206,6 +206,35 @@ describe('ReviewHub views', () => {
     expect(last().files[0]!.viewed).toBe(false)
   })
 
+  it('moveTab: a tab Claude moved into another folder (a worktree it entered) shows that folder, in the scope it had', async () => {
+    const roots: string[] = []
+    const { hub, last } = setup({ root: async (cwd) => { roots.push(cwd); return { root: cwd } } })
+    hub.setScope(TAB, 'session')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(last()).toMatchObject({ folder: ROOT, view: { kind: 'scope', scope: 'session' } })
+    hub.moveTab(TAB, '/wt')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(roots.at(-1)).toBe('/wt')
+    expect(last()).toMatchObject({ folder: '/wt', view: { kind: 'scope', scope: 'session' } })
+  })
+
+  it('moveTab of a tab that is not in front publishes an empty review in the new folder, and computes it when the tab comes to the front', async () => {
+    const { hub, published, git, setActive } = setup()
+    hub.refresh(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    setActive('other')
+    git.mockClear()
+    hub.moveTab(TAB, '/wt')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(git).not.toHaveBeenCalled()
+    expect(published.at(-1)).toMatchObject({ tabId: TAB, folder: '/wt', files: [], counter: null })
+    setActive(TAB)
+    hub.activated(TAB)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(git).toHaveBeenCalled()
+    expect(published.at(-1)?.files.length).toBeGreaterThan(0)
+  })
+
   it('resetTab of a tab that is not in front computes nothing until it comes to the front', async () => {
     const { hub, published, git, setActive } = setup()
     setActive('other')

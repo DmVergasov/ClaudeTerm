@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { gitRepo, gitWorktree } from './helpers'
 import { launchChatTab, sendMessage } from './chat-helpers'
 
@@ -31,6 +33,31 @@ test("a chat tab follows its session into a worktree Claude entered, and back ou
     await sendMessage(page, 'leave')
     await expect(page.locator('.chat-column')).toContainText('left', { timeout: 30_000 })
     await expect(row(page, tabId).locator('.tp-branch')).toHaveText(branch, { timeout: 15_000 })
+  } finally {
+    await app.close()
+  }
+})
+
+test("the Changes panel of a chat tab that followed its session into a worktree shows the worktree's changes, not the main checkout's", async () => {
+  const repo = gitRepo()
+  const worktree = gitWorktree(repo, 'feat/entered')
+  writeFileSync(join(repo, 'a.ts'), 'one\nMAIN\nthree\n')
+  writeFileSync(join(worktree, 'a.ts'), 'one\nWORKTREE\nthree\n')
+  const { app, page, tabId } = await launchChatTab({
+    turns: {
+      enter: [
+        { tool: { name: 'EnterWorktree', input: { path: worktree }, result: `Switched to worktree ${worktree}`, output: { worktreePath: worktree, worktreeBranch: 'feat/entered', message: 'switched' } } },
+        { text: 'entered' },
+      ],
+    },
+  }, { work: repo, tabs: { position: 'left' } })
+  try {
+    const added = page.locator('.review-file[data-path="a.ts"] .review-line.add .review-code')
+    await page.locator('#sheet-header .tab-changes-toggle').click()
+    await expect(added).toHaveText('MAIN', { timeout: 15_000 })
+    await sendMessage(page, 'enter')
+    await expect(row(page, tabId).locator('.tp-branch')).toHaveText('feat/entered', { timeout: 30_000 })
+    await expect(added).toHaveText('WORKTREE', { timeout: 15_000 })
   } finally {
     await app.close()
   }
