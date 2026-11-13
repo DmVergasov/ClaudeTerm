@@ -1,6 +1,6 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { hasText, MAX_NOTE_LENGTH, NOTE_FORMS, type Note } from '../shared/note'
+import { hasText, isNoteSize, MAX_NOTE_LENGTH, NOTE_FORMS, NOTE_SIDES, type Note, type NoteSize } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 
 /** Reads the notes file: valid entries by session id; null when the text is not a JSON object. */
@@ -35,15 +35,23 @@ function noteEntry(id: string, value: unknown): Note | null {
   if (typeof v.shown !== 'boolean') return null
   if (!NOTE_FORMS.some((f) => f === v.form)) return null
   const note: Note = { text: v.text, shown: v.shown, form: v.form as Note['form'] }
+  if (NOTE_SIDES.some((s) => s === v.side)) note.side = v.side as Note['side']
+  const size = v.size
+  if (isNoteSize(size)) note.size = { width: size.width, height: size.height }
   return hasText(note) ? note : null
 }
 
-/** Whether two notes show the same: the same text, shown and form. A note without text is the same as none. */
+/** Whether two notes show the same: the same text, shown, form, side and size. A note without text is the same as none; no side is the session's. */
 export function sameNote(a: Note | null, b: Note | null): boolean {
   const x = a && hasText(a) ? a : null
   const y = b && hasText(b) ? b : null
   if (x === null || y === null) return x === y
-  return x.text === y.text && x.shown === y.shown && x.form === y.form
+  return x.text === y.text && x.shown === y.shown && x.form === y.form && (x.side ?? 'session') === (y.side ?? 'session') && sameSize(x.size, y.size)
+}
+
+function sameSize(a?: NoteSize, b?: NoteSize): boolean {
+  if (a === undefined || b === undefined) return a === b
+  return a.width === b.width && a.height === b.height
 }
 
 /** What the device sync hears of: a note this device set, and the version the edit started from. */

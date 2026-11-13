@@ -1,5 +1,5 @@
 import { DEVICE_PLATFORMS, MAX_ADDRESS_LENGTH, MAX_DEVICE_NAME, type DevicePlatform } from '../../shared/devices'
-import { MAX_NOTE_LENGTH, NOTE_FORMS, type Note } from '../../shared/note'
+import { isNoteSize, MAX_NOTE_LENGTH, NOTE_FORMS, NOTE_SIDES, type Note } from '../../shared/note'
 import { isUuid } from '../../shared/protocol'
 import { compareStamps } from './clock'
 import type { Collection, KeyState, Sibling } from './replica'
@@ -25,7 +25,11 @@ export function noteOf(s?: KeyState): Note | null {
   }
   if (texts.length === 0) return null
   const latest = live[0].value as Note
-  return { text: texts.join('\n\n').slice(0, MAX_NOTE_LENGTH), shown: latest.shown, form: latest.form }
+  const note: Note = { text: texts.join('\n\n').slice(0, MAX_NOTE_LENGTH), shown: latest.shown, form: latest.form }
+  if (NOTE_SIDES.some((s) => s === latest.side)) note.side = latest.side
+  const size = latest.size
+  if (isNoteSize(size)) note.size = { width: size.width, height: size.height }
+  return note
 }
 
 export interface Admission {

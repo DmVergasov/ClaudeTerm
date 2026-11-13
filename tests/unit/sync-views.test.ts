@@ -71,6 +71,16 @@ describe('sync views', () => {
     expect(joined!.text).toBe(long)
   })
 
+  it('noteOf takes the side and the size of the latest write, when they are valid', () => {
+    const big = { width: 480, height: 320 }
+    expect(noteOf(state(sib({ ...note('one', 'card'), side: 'project', size: big }, t1, A), sib(note('two', 'label'), t2, B))))
+      .toStrictEqual({ text: 'two\n\none', shown: true, form: 'label' })
+    expect(noteOf(state(sib({ ...note('one', 'card'), side: 'project', size: big }, t2, A))))
+      .toStrictEqual({ text: 'one', shown: true, form: 'card', side: 'project', size: big })
+    expect(noteOf(state(sib({ ...note('one', 'card'), side: 'left', size: { width: 10, height: 10 } }, t2, A))))
+      .toStrictEqual({ text: 'one', shown: true, form: 'card' })
+  })
+
   it('admissionOf: the earliest sibling; isRemoved: any sibling; removalOf: the earliest removal; memberOf: the latest sibling', () => {
     const fp = (c: string) => c.repeat(64)
     expect(admissionOf(undefined)).toBeNull()

@@ -1,4 +1,4 @@
-import { hasText, MAX_NOTE_LENGTH, type Note, type NoteForm } from '../shared/note'
+import { hasText, MAX_NOTE_LENGTH, type Note, type NoteForm, type NoteSide, type NoteSize } from '../shared/note'
 import type { SessionNotes } from './session-notes'
 
 export interface NoteHubDeps {
@@ -147,6 +147,24 @@ export class NoteHub {
   setView(tabId: string, shown: boolean, form: NoteForm, generation: number): void {
     const tab = this.tabs.get(tabId)
     if (tab && generation === tab.generation) this.change(tab, (n) => ({ ...n, shown, form }))
+  }
+
+  /** the card a note is drawn on; dropped against a note the tab no longer has, as setView */
+  setSide(tabId: string, side: NoteSide, generation: number): void {
+    const tab = this.tabs.get(tabId)
+    if (tab && generation === tab.generation) this.change(tab, (n) => ({ ...n, side }))
+  }
+
+  /** the card size of a note; null removes it, so the default size is drawn; dropped against a note the tab no longer has */
+  setSize(tabId: string, size: NoteSize | null, generation: number): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab || generation !== tab.generation) return
+    this.change(tab, (n) => {
+      const next: Note = { ...n }
+      if (size) next.size = { width: size.width, height: size.height }
+      else delete next.size
+      return next
+    })
   }
 
   /**

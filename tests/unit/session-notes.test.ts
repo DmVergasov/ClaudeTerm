@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { parseNotes, SessionNotes } from '../../src/main/session-notes'
+import { parseNotes, sameNote, SessionNotes } from '../../src/main/session-notes'
 import { MAX_NOTE_LENGTH, type Note, type NoteForm } from '../../src/shared/note'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -40,6 +40,25 @@ describe('session notes', () => {
     expect(parseNotes('{')).toBeNull()
     expect(parseNotes('[]')).toBeNull()
     expect(parseNotes('null')).toBeNull()
+  })
+  it('parseNotes keeps a valid side and size and drops a bad one, not the note', () => {
+    const raw = {
+      [SID]: { ...note('Goal: payments'), side: 'project', size: { width: 480, height: 320 } },
+      [SID2]: { ...note('Goal: payments'), side: 'left' },
+      'a3c2cf68-2929-4166-9a00-000000000001': { ...note('Goal: payments'), size: { width: 10, height: 10 } }
+    }
+    const notes = parseNotes(JSON.stringify(raw))!
+    expect(notes.get(SID)).toStrictEqual({ ...note('Goal: payments'), side: 'project', size: { width: 480, height: 320 } })
+    expect(notes.get(SID2)).toStrictEqual(note('Goal: payments'))
+    expect(notes.get('a3c2cf68-2929-4166-9a00-000000000001')).toStrictEqual(note('Goal: payments'))
+  })
+  it('sameNote tells notes apart by side and size; no side is the session side', () => {
+    const big = { width: 480, height: 320 }
+    expect(sameNote(note('Goal'), { ...note('Goal'), side: 'session' })).toBe(true)
+    expect(sameNote(note('Goal'), { ...note('Goal'), side: 'project' })).toBe(false)
+    expect(sameNote({ ...note('Goal'), size: big }, { ...note('Goal'), size: { ...big } })).toBe(true)
+    expect(sameNote({ ...note('Goal'), size: big }, note('Goal'))).toBe(false)
+    expect(sameNote({ ...note('Goal'), size: big }, { ...note('Goal'), size: { width: 480, height: 321 } })).toBe(false)
   })
   it('set and flush write the file; a new store reads it back', () => {
     const dir = newDir()

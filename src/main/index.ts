@@ -25,7 +25,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
 import { NOT_RUNNING, type ReviewUpdate } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -2172,6 +2172,18 @@ function bootstrap(): void {
   ipcMain.on(IPC.notesSetView, (_e, id: unknown, shown: unknown, form: unknown, generation: unknown) => {
     if (isId(id) && isFlag(shown) && isNoteForm(form) && isGeneration(generation)) {
       noteHub.setView(id, shown, form, generation)
+      remote?.host.changed()
+    }
+  })
+  ipcMain.on(IPC.notesSetSide, (_e, id: unknown, side: unknown, generation: unknown) => {
+    if (isId(id) && isNoteSide(side) && isGeneration(generation)) {
+      noteHub.setSide(id, side, generation)
+      remote?.host.changed()
+    }
+  })
+  ipcMain.on(IPC.notesSetSize, (_e, id: unknown, size: unknown, generation: unknown) => {
+    if (isId(id) && isNoteSizeArg(size) && isGeneration(generation)) {
+      noteHub.setSize(id, size, generation)
       remote?.host.changed()
     }
   })

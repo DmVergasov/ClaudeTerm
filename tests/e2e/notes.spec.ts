@@ -142,6 +142,20 @@ test('a notes file that cannot be read is kept aside, and the window says so', a
   await app.close()
 })
 
+test('the side in front and the card size are kept with the conversation; a size out of bounds is not taken', async () => {
+  const { app, page, tabId, dataDir, pipeName } = await launchClaudeTab()
+  expect(await session(pipeName, tabId, SID_A, 'startup')).toEqual({ ok: true })
+  await page.evaluate((id) => {
+    window.ct.setNoteText(id, 'Goal', 0)
+    window.ct.setNoteView(id, true, 'card', 0)
+    window.ct.setNoteSide(id, 'project', 0)
+    window.ct.setNoteSize(id, { width: 480, height: 320 }, 0)
+    window.ct.setNoteSize(id, { width: 10, height: 10 }, 0)
+  }, tabId)
+  await closeWindow(app)
+  expect(notesFile(dataDir)).toEqual({ [SID_A]: { text: 'Goal', shown: true, form: 'card', side: 'project', size: { width: 480, height: 320 } } })
+})
+
 test('what is sent for a shell tab is not kept', async () => {
   const { app, page, dataDir } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
