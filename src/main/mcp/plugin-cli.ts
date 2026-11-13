@@ -1,6 +1,5 @@
-import { win32, type PlatformPath } from 'node:path'
 import type { MarketplaceView, PluginOffer, PluginOption, PluginsView, PluginView } from '../../shared/mcp'
-import { isWindowsPath, nativePath, pathKey } from '../path-key'
+import { folderMatcher } from './mcp-config'
 
 // Reads the JSON that `claude plugin …` prints, and builds the Plugins section for a tab's folder. Everything here is
 // untrusted CLI output: each field is checked and capped, a malformed entry is skipped, and nothing throws.
@@ -62,14 +61,6 @@ function splitId(id: string): { name: string; marketplace: string } {
 function errorsOf(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.filter((error): error is string => typeof error === 'string').slice(0, MAX_ERRORS).map((error) => error.slice(0, MAX_ERROR))
-}
-
-/** the folder as Claude Code wrote it: pathKey, with win32 rules for a Windows folder, and a trailing separator dropped (as mcp-config's folder matcher) */
-function folderMatcher(folder: string): (other: string) => boolean {
-  const path: PlatformPath = isWindowsPath(folder) ? win32 : nativePath
-  const key = (p: string): string => pathKey(p.replace(/[\\/]+$/, '') || p, path)
-  const own = key(folder)
-  return (other) => key(other) === own
 }
 
 function compare(a: string, b: string): number {

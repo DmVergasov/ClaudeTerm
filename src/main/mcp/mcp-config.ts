@@ -84,7 +84,7 @@ function listHas(list: unknown, name: string): boolean {
 }
 
 /** the folder as Claude Code wrote it: pathKey, with win32 rules for a Windows folder, and a trailing separator dropped */
-function folderMatcher(folder: string): (other: string) => boolean {
+export function folderMatcher(folder: string): (other: string) => boolean {
   const path: PlatformPath = isWindowsPath(folder) ? win32 : nativePath
   const key = (p: string): string => pathKey(p.replace(/[\\/]+$/, '') || p, path)
   const own = key(folder)
