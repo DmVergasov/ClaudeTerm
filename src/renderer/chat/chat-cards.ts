@@ -100,14 +100,18 @@ function questionCard(card: QuestionCard, send: Send): HTMLElement {
   const typed: string[] = card.questions.map(() => '')
   let index = 0
 
-  // what a question holds now: the typed text, else the picked labels; null when it holds none
+  // what a question holds now, null when it holds none: a multi-select's picked labels with the typed text after them;
+  // a single-select's typed text, else its picked label
   const valueOf = (i: number): string | string[] | null => {
     const q = card.questions[i]!
     const text = typed[i]!.trim()
-    if (text !== '') return text
     const labels = [...picks[i]!].sort((a, b) => a - b).map((o) => q.options[o]!.label)
-    if (labels.length === 0) return null
-    return q.multiSelect ? labels : labels[0]!
+    if (q.multiSelect) {
+      const all = text === '' ? labels : [...labels, text]
+      return all.length === 0 ? null : all
+    }
+    if (text !== '') return text
+    return labels.length === 0 ? null : labels[0]!
   }
 
   const submit = (): void => {
@@ -141,7 +145,8 @@ function questionCard(card: QuestionCard, send: Send): HTMLElement {
       if (!q.multiSelect) set.clear()
       set.add(o)
     }
-    typed[index] = ''
+    // a multi-select keeps the typed answer beside the picks; a single-select's pick replaces it
+    if (!q.multiSelect) typed[index] = ''
     layout()
   }
 
@@ -204,13 +209,13 @@ function questionCard(card: QuestionCard, send: Send): HTMLElement {
     const own = document.createElement('input')
     own.type = 'text'
     own.className = 'chat-card-own'
-    own.placeholder = 'Or type your own answer…'
+    own.placeholder = q.multiSelect ? 'Add your own answer…' : 'Or type your own answer…'
     own.value = typed[index]!
     own.dataset.key = 'own'
     own.addEventListener('input', () => {
       typed[index] = own.value
-      // a typed answer replaces the picks
-      if (own.value.trim() !== '' && picks[index]!.size > 0) {
+      // a typed answer replaces a single-select's pick, and joins a multi-select's
+      if (!q.multiSelect && own.value.trim() !== '' && picks[index]!.size > 0) {
         picks[index]!.clear()
         paintPicks()
       }

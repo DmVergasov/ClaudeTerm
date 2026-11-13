@@ -78,6 +78,30 @@ test('a multi-select question sends every picked label', async () => {
   }
 })
 
+test('in a multi-select question a typed answer joins the picks, and a pick keeps the typed answer', async () => {
+  const input = { questions: [{ ...COLORS.questions[0], multiSelect: true }] }
+  const { app, page, log } = await launchChatTab({
+    turns: { pick: [{ ask: { tool: 'AskUserQuestion', input }, allowed: [{ text: 'Red, green and violet.' }], denied: [] }] }
+  })
+  try {
+    await sendMessage(page, 'pick')
+    await expect(page.locator(QUESTION)).toHaveCount(1)
+    await page.keyboard.press('1')
+    const own = page.locator(`${QUESTION} .chat-card-own`)
+    await own.click()
+    await page.keyboard.type('Violet')
+    await expect(page.locator(`${QUESTION} .chat-card-option.picked`)).toHaveCount(1)
+    await expect(own).toBeFocused()
+    await page.locator(`${QUESTION} .chat-card-option`).nth(2).click()
+    await expect(page.locator(`${QUESTION} .chat-card-option.picked`)).toHaveCount(2)
+    await expect(own).toHaveValue('Violet')
+    await page.keyboard.press('Enter')
+    await expect.poll(() => answersSent(log)).toEqual([{ [COLOR]: 'Red, Green, Violet' }])
+  } finally {
+    await app.close()
+  }
+})
+
 test('Esc dismisses a question', async () => {
   const { app, page, log } = await launchChatTab({
     turns: { pick: [{ ask: { tool: 'AskUserQuestion', input: COLORS }, allowed: [], denied: [{ text: 'No answer.' }] }] }
@@ -414,7 +438,7 @@ test('a plan card is at most half the height of the conversation', async () => {
   }
 })
 
-test('a typed answer clears the picks in place: the own-answer box keeps its focus and its text', async () => {
+test('in a single-select question a typed answer clears the pick in place: the own-answer box keeps its focus and its text', async () => {
   const { app, page, log } = await launchChatTab({
     turns: { pick: [{ ask: { tool: 'AskUserQuestion', input: COLORS }, allowed: [{ text: 'Typed.' }], denied: [] }] }
   })

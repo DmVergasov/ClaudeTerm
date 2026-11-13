@@ -8,6 +8,10 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 
 - **The Agent messages panel shows what agents write to each other with Claude Code's own `SendMessage`** too, not only the messages ClaudeTerm carries. A message between two of your tabs shows once, in their conversation; a session outside ClaudeTerm shows under the name Claude Code gives it. A new message marks its tabs as unread; what a session's transcript already held when the tab opened comes in read.
 
+### Changes
+
+- In a chat question where you can check several answers, what you type in the box is added to the answers you checked, instead of clearing them.
+
 ## 0.19.0
 
 ### New
