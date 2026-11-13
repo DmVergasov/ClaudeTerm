@@ -1,4 +1,4 @@
-import { hasText as noteHasText, type Note, type NoteForm, type NoteProject, type NoteSide, type ProjectNote } from '../shared/note'
+import { hasText as noteHasText, MAX_NOTE_SIZE, MIN_NOTE_SIZE, type Note, type NoteForm, NOTE_SIZE, type NoteProject, type NoteSide, type NoteSize, type ProjectNote } from '../shared/note'
 import { applyNoteOp, itemCount, type NoteOp, noteLabel } from '../shared/note-items'
 import { el } from './dom'
 import { icon as iconSvg } from './icons'
@@ -21,6 +21,10 @@ export interface NoteOverlayCallbacks {
   /** the tab's project, or why it has none */
   projectOf(tabId: string): NoteProject
   focusTerminal(): void
+  /** the size of the tab's session note; null for the default size. `generation` as for setText */
+  setSize(tabId: string, size: NoteSize | null, generation: number): void
+  /** the size of the tab's project note; null for the default size */
+  setProjectSize(tabId: string, key: string, size: NoteSize | null): void
   /** the text the person copied from the note's editor */
   copyText(text: string): void
   /** a note got or lost its text, or was shown or hidden */
@@ -39,10 +43,18 @@ const NO_PROJECT: Record<'remote' | 'outside' | 'unknown', string> = {
   unknown: "No project note yet: looking for this tab's project"
 }
 const UNKNOWN_PROJECT: NoteProject = { key: null, why: 'unknown' }
+/** the card keeps this many pixels from the left and the bottom edge of the terminal's area */
+const ROOM = 10
 
 const icon = (size: number): HTMLElement => el('span', { className: 'note-icon', innerHTML: noteIcon(size) })
 
 const filled = (text: string): boolean => text.trim() !== ''
+
+/** a note's size as the window keeps it: null removes it, so the default size is drawn */
+function keepSize(note: { size?: NoteSize }, size: NoteSize | null): void {
+  if (size) note.size = { width: size.width, height: size.height }
+  else delete note.size
+}
 
 /** the key of a note in the editor: its tab and its side */
 const noteKey = (tabId: string, side: NoteSide): string => `${side}:${tabId}`
@@ -94,8 +106,13 @@ export class NoteOverlay {
     this.sides = { session: this.sideButton('session', 'Session'), project: this.sideButton('project', 'Project') }
     const switcher = el('div', { className: 'note-switch' }, this.sides.session.button, this.sides.project.button)
     const head = el('div', { className: 'note-head' }, icon(14), switcher, collapse, hide)
-    this.card = el('div', { className: 'note-card' }, head, body, foot)
+    const grip = el('div', { className: 'note-grip', title: 'Drag to resize; double-click for the default size' })
+    grip.addEventListener('pointerdown', (e) => this.startResize(e, grip))
+    grip.addEventListener('dblclick', () => this.resize(null))
+    this.card = el('div', { className: 'note-card' }, head, body, foot, grip)
     root.replaceChildren(this.label, this.card)
+    // the terminal's area changes size: the card is drawn within its room again
+    new ResizeObserver(() => this.relayout()).observe(root.parentElement!)
     this.draw()
   }
 
@@ -149,6 +166,13 @@ export class NoteOverlay {
   /** the tab's project may have changed: the card is drawn again when the tab is in front */
   placeChanged(tabId: string): void {
     if (tabId === this.active) this.redraw()
+  }
+
+  /** the room of the card changed (the terminal's area, or Find's box): the card is drawn within it again */
+  relayout(): void {
+    const tabId = this.active
+    if (tabId === null || this.card.hidden) return
+    this.showSize(this.fit(this.sizeOf(tabId, this.sideOf(tabId)) ?? NOTE_SIZE))
   }
 
   /** the tab in front changed; only a Claude tab has a note. A shown note without text goes once its tab is left */
@@ -232,6 +256,13 @@ export class NoteOverlay {
     return (key === null ? undefined : this.projects.get(key)?.text) ?? ''
   }
 
+  /** the size of a tab's note on a side; undefined for the default size */
+  private sizeOf(tabId: string, side: NoteSide): NoteSize | undefined {
+    if (side === 'session') return this.notes.get(tabId)?.size
+    const key = this.projectOf(tabId).key
+    return key === null ? undefined : this.projects.get(key)?.size
+  }
+
   private frontText(tabId: string): string {
     return this.textOf(tabId, this.sideOf(tabId))
   }
@@ -262,6 +293,62 @@ export class NoteOverlay {
     this.cb.setSide(tabId, side, this.generationOf(tabId))
     this.redraw()
     if (keyboard) this.focusText()
+  }
+
+  /** a drag of the grip: the card follows the pointer, and the size goes to the note when the pointer is let go */
+  private startResize(e: PointerEvent, grip: HTMLElement): void {
+    if (this.active === null || e.button !== 0) return
+    e.preventDefault()
+    grip.setPointerCapture(e.pointerId)
+    const start = this.card.getBoundingClientRect()
+    const drawn = { width: Math.round(start.width), height: Math.round(start.height) }
+    let size = drawn
+    const move = (m: PointerEvent): void => {
+      size = this.fit({ width: start.width + (e.clientX - m.clientX), height: start.height + (m.clientY - e.clientY) })
+      this.showSize(size)
+    }
+    const up = (): void => {
+      grip.removeEventListener('pointermove', move)
+      grip.removeEventListener('pointerup', up)
+      grip.removeEventListener('pointercancel', up)
+      if (size.width !== drawn.width || size.height !== drawn.height) this.resize(size)
+    }
+    grip.addEventListener('pointermove', move)
+    grip.addEventListener('pointerup', up)
+    grip.addEventListener('pointercancel', up)
+  }
+
+  /** the size of the note in front: the window keeps it and main is told; null is the default size */
+  private resize(size: NoteSize | null): void {
+    const tabId = this.active
+    if (tabId === null) return
+    const side = this.sideOf(tabId)
+    const key = this.projectOf(tabId).key
+    if (side === 'project' && key !== null) {
+      keepSize(this.projectEntry(key), size)
+      this.cb.setProjectSize(tabId, key, size)
+    } else {
+      keepSize(this.noteOf(tabId), size)
+      this.cb.setSize(tabId, size, this.generationOf(tabId))
+    }
+    this.draw()
+  }
+
+  /** a size within the minimum and the card's room in its area; the room wins over the minimum */
+  private fit(size: NoteSize): NoteSize {
+    const area = this.root.parentElement!.getBoundingClientRect()
+    const card = this.card.getBoundingClientRect()
+    const maxWidth = card.right - (area.left + ROOM)
+    const maxHeight = area.bottom - ROOM - card.top
+    return {
+      width: Math.round(Math.min(Math.max(size.width, MIN_NOTE_SIZE.width), MAX_NOTE_SIZE.width, maxWidth)),
+      height: Math.round(Math.min(Math.max(size.height, MIN_NOTE_SIZE.height), MAX_NOTE_SIZE.height, maxHeight))
+    }
+  }
+
+  private showSize(size: NoteSize): void {
+    this.card.style.width = `${size.width}px`
+    this.card.style.height = `${size.height}px`
   }
 
   /** the keys of the editor that the card handles first: Escape leaves it, the note shortcut hides or shows the card */
@@ -351,6 +438,7 @@ export class NoteOverlay {
       this.editor.load(text, side === 'project' ? PROJECT_PLACEHOLDER : PLACEHOLDER)
       this.loaded = key
     }
+    this.relayout()
   }
 
   /** the switch: the side in front, each side's count and the Project side's reason when it has no project */

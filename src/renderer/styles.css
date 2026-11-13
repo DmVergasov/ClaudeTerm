@@ -333,7 +333,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .card-caption { margin-top: 4px; color: var(--text-2); font-size: 12px; }
 /* The note lies over the top right of the terminal, which keeps its size, and left of a panel lying over the terminal.
    The card grows with its text up to 40% of the terminal's height, then its text scrolls. */
-#note { position: absolute; top: 10px; right: calc(14px + var(--panel-cover, 0px)); z-index: 5; display: flex; flex-direction: column; align-items: flex-end; max-height: 40%; }
+#note { position: absolute; top: 10px; right: calc(14px + var(--panel-cover, 0px)); z-index: 5; display: flex; flex-direction: column; align-items: flex-end; }
 /* while Find is open, its box takes the top right corner, and the note sits below it */
 #terminals:has(> #search:not([hidden])) #note { top: 56px; }
 .note-label, .note-card { background: color-mix(in srgb, var(--raised) 85%, transparent); backdrop-filter: blur(3px); border: 1px solid var(--line-2); opacity: 0.8; }
@@ -341,7 +341,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .note-label { display: flex; align-items: center; gap: 6px; max-width: 280px; padding: 4px 10px; border-radius: 12px; color: var(--text-2); cursor: pointer; }
 .note-label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-icon { display: flex; flex: none; color: var(--text-3); }
-.note-card { width: 300px; min-height: 0; display: flex; flex-direction: column; border-radius: 10px; color: var(--text); }
+.note-card { position: relative; min-height: 0; display: flex; flex-direction: column; border-radius: 10px; color: var(--text); }
 .note-head { display: flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; height: 34px; border-bottom: 1px solid var(--line-2); color: var(--text-3); }
 .note-switch { display: inline-flex; flex: 1; min-width: 0; border: 1px solid var(--line-2); border-radius: 7px; padding: 1px }
 .note-side { height: 22px; padding: 0 8px; border-radius: 5px; background: none; border: 0; color: var(--text-3); font-size: 11.5px; cursor: pointer }
@@ -362,6 +362,9 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .note-foot { display: flex; gap: 4px; padding: 3px 6px; border-top: 1px solid var(--line-2); }
 .note-tool { height: 22px; padding: 0 8px; background: none; border: 0; border-radius: 6px; color: var(--text-3); font-size: 11.5px; cursor: pointer; }
 .note-tool:hover { background: var(--raised-2); color: var(--text); }
+/* the grip in the card's bottom-left corner: two diagonal lines, brighter on hover */
+.note-grip { position: absolute; left: 0; bottom: 0; width: 14px; height: 14px; color: var(--text-3); background: linear-gradient(-45deg, transparent 0 22%, currentColor 22% 28%, transparent 28% 47%, currentColor 47% 53%, transparent 53%); cursor: nesw-resize; touch-action: none; }
+.note-grip:hover { color: var(--text-2); }
 #lightbox { position: fixed; inset: 0; z-index: 70; background: #000d; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #lightbox img { max-width: 92vw; max-height: 88vh; cursor: grab; transform-origin: center; }
 .lightbox-caption { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: var(--text-2); }

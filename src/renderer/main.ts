@@ -653,7 +653,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'copyOrInterrupt': break
     case 'send': if (tabId) handleInput(tabId, a.data); break
     // an expanded panel covers the terminal: a find box would open under it, taking keys nobody sees
-    case 'find': if (!sidePanel.expanded) searchBar.open(); break
+    case 'find': if (!sidePanel.expanded) { searchBar.open(); noteOverlay.relayout() } break
     case 'toggleImages': toggleImagePanel(); break
     case 'toggleChanges': if (t?.info.kind === 'claude') sidePanel.toggle('changes'); break
     case 'toggleDocs': sidePanel.toggle('docs'); break
@@ -1260,6 +1260,8 @@ async function boot(): Promise<void> {
     setView: (id, shown, form, generation) => ct.setNoteView(id, shown, form, generation),
     setSide: (id, side, generation) => ct.setNoteSide(id, side, generation),
     setProjectText: (id, key, text, generation) => ct.setProjectNoteText(id, key, text, generation),
+    setSize: (id, size, generation) => ct.setNoteSize(id, size, generation),
+    setProjectSize: (id, key, size) => ct.setProjectNoteSize(id, key, size),
     projectOf: (id) => noteProjectOf(tabs.get(id)?.info.remote !== undefined, places.get(id)),
     focusTerminal: () => { if (activeId) focusTab(activeId) },
     copyText: (text) => ct.writeClipboardText(text),
@@ -1289,6 +1291,9 @@ async function boot(): Promise<void> {
     () => {
       // a closed Find leaves no highlight on any chat, whichever tab its search was in
       for (const t of tabs.values()) if (t.chat) chatFinds.get(t.chat)?.clearDecorations()
+      // the card moves back up under the top right corner, where Find's box was
+      // the card moves back up under the top right corner, where Find's box was
+      noteOverlay.relayout()
       if (activeId) focusTab(activeId)
     }
   )
