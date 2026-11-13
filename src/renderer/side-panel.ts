@@ -195,14 +195,14 @@ export class SidePanel {
       this.pin(box)
       this.unhold()
       if (want > from) {
-        await this.settled(box + want)
+        await this.settled(box + want, true)
         this.terminals.style.marginRight = `${want}px`
         await this.slide(from, want, ms)
       } else {
         this.terminals.style.marginRight = `${want}px`
         await this.slide(from, want, ms)
         this.mode = await this.room(want)
-        await this.settled(box + want)
+        await this.settled(box + want, false)
       }
     } else {
       this.unpin()
@@ -235,7 +235,11 @@ export class SidePanel {
   private slide(from: number, to: number, ms: number): Promise<void> {
     if (to > 0) this.root.classList.remove('collapsed')
     this.root.style.width = `${to}px`
-    if (ms === 0 || from === to) return Promise.resolve()
+    if (ms === 0 || from === to) {
+      // closed at once: its minimum width would draw it again until the window has given its room back
+      if (to === 0) this.root.classList.add('collapsed')
+      return Promise.resolve()
+    }
     // the content keeps the wider of the two widths while the panel's edge moves: it is clipped, not laid out again, so a document keeps its scroll position
     this.root.style.setProperty('--slide-w', `${Math.max(from, to)}px`)
     this.root.classList.add('sliding')
@@ -246,6 +250,9 @@ export class SidePanel {
     const fade = to < from ? this.root.animate([{ opacity: 1 }, { opacity: 0 }], timing) : null
     if (fade) this.anims.push(fade)
     return Promise.all([width.finished, fade?.finished]).then(() => undefined, () => undefined).then(() => {
+      // closed: hidden in the frame the slide ends, before `sliding` goes. Without it the panel's minimum width and the
+      // fade's end would draw it again, at 180 px and fully opaque, until the room for it has changed
+      if (to === 0) this.root.classList.add('collapsed')
       this.root.classList.remove('sliding')
       this.root.style.removeProperty('--slide-w')
     })
@@ -260,10 +267,14 @@ export class SidePanel {
     }
   }
 
-  /** resolves once the workspace is `width` px wide, or after SETTLE_MS when the window did not get that size */
-  private settled(width: number): Promise<void> {
+  /**
+   * resolves once the workspace is `width` px wide, or past it the way it `grows` or shrinks, or after SETTLE_MS when the window
+   * did not get that size. Past it: on Windows the app's first resize of the window gives the page the width of the window's
+   * frame borders on top of what main asked for (16 px at 100 %), so the exact width never comes
+   */
+  private settled(width: number, grows: boolean): Promise<void> {
     const workspace = this.root.parentElement!
-    const fits = (): boolean => Math.abs(workspace.clientWidth - width) <= 1
+    const fits = (): boolean => (grows ? workspace.clientWidth >= width - 1 : workspace.clientWidth <= width + 1)
     if (fits()) return Promise.resolve()
     return new Promise((resolve) => {
       const done = (): void => {

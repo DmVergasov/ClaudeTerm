@@ -1,8 +1,8 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { WIN } from '../fixtures/platform'
-import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, KEYS, showSettingsTab } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, KEYS, makeDataDir, panelSettled, showSettingsTab } from './helpers'
 import { setSetting } from './agent-mail'
 
 const panel = (page: Page) => page.locator('#image-panel')
@@ -450,5 +450,74 @@ test('switching from Media to Changes keeps the terminal at its width through th
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 400)
   await expect(page.locator('.panel-title')).toHaveText('Changes')
   expect(Math.max(...frames.map((f) => f.sizes)) - sizes, log).toBe(0)
+  await app.close()
+})
+
+for (const tab of ['images', 'changes'] as const) {
+  test(`a ${tab === 'images' ? 'Media' : 'Changes'} panel that closes only narrows until it is gone: no frame draws it wider again`, async () => {
+    const { app, page } = tab === 'images'
+      ? await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false } } })
+      : await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false }, review: { width: 300 } })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    await setWidth(app, page, roomyWidth(await place(app), 300))
+    const start = (await place(app)).bounds
+    await page.keyboard.press(tab === 'images' ? KEYS.images : KEYS.changes)
+    await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
+    await panelSettled(page, true)
+
+    const frames = await framesAfterClick(page, `#sheet-header .tab-${tab}-toggle`, 600)
+    const log = timeline(frames)
+    const closing = frames.findIndex((f) => f.panel < 300 - 0.5)
+    expect(closing, log).toBeGreaterThanOrEqual(0)
+    // from the frame it starts to close, each frame draws it at most as wide as the frame before, down to 0
+    const wider = frames.slice(closing + 1).find((f, i) => f.panel > frames[closing + i]!.panel + 0.5)
+    expect(wider, log).toBeUndefined()
+    expect(frames.at(-1)!.panel, log).toBe(0)
+    await expect(panel(page)).toHaveClass(/collapsed/)
+    await app.close()
+  })
+}
+
+test('under reduced motion a panel closed beside the terminal is gone at once: no frame draws it between its width and 0', async () => {
+  const { app, page } = await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false } } })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await setWidth(app, page, roomyWidth(await place(app), 300))
+  const start = (await place(app)).bounds
+  await page.keyboard.press(KEYS.images)
+  await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
+  await expect.poll(async () => (await layout(page)).panelWidth).toBe(300)
+  // a busy machine: the window takes 150 ms to take the size main gives it, so main answers the close late
+  await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find((x) => x.getParentWindow() === null)!
+    const set = w.setBounds.bind(w)
+    w.setBounds = (r, animate) => { setTimeout(() => set(r, animate), 150) }
+  })
+
+  const frames = await framesAfterClick(page, '#sheet-header .tab-images-toggle', 400)
+  const log = timeline(frames)
+  expect(frames.every((f) => f.panel === 0 || f.panel === 300), log).toBe(true)
+  await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width)
+  await expect(panel(page)).toHaveClass(/collapsed/)
+  await app.close()
+})
+
+test('the first open of a panel after launch starts to slide at once: it does not wait out a time limit for the window to grow', { tag: '@alone' }, async () => {
+  // a window the app has not resized yet: on Windows its first resize gives the page more width than the panel's
+  const dataDir = makeDataDir({ imagePanel: { width: 300, autoOpen: false } })
+  writeFileSync(join(dataDir, 'window-state.json'), JSON.stringify({ bounds: { width: 700, height: 600 }, maximized: false }))
+  const { app, page } = await launchApp({ dataDir })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const start = (await place(app)).bounds
+
+  const frames = await framesAfterClick(page, '#sheet-header .tab-images-toggle', 1500)
+  const log = timeline(frames)
+  // the panel is drawn, its slide begun, well before the renderer's one second wait for the window would end
+  const drawn = frames.find((f) => f.panel > 0)
+  expect(drawn && drawn.at <= 300, log).toBe(true)
+  // the window grew for it: the panel opened beside the terminal, the case that waits for the window
+  await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
   await app.close()
 })
