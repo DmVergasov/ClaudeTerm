@@ -141,6 +141,16 @@ function isDirectory(p: string): boolean {
   }
 }
 
+/** two spellings of one folder: through a symlink or a junction (/var and /private/var on macOS), or a short 8.3 name */
+function sameFolder(a: string, b: string): boolean {
+  if (pathKey(a) === pathKey(b)) return true
+  try {
+    return pathKey(realpathSync.native(a)) === pathKey(realpathSync.native(b))
+  } catch {
+    return false
+  }
+}
+
 function childEnv(): Record<string, string> {
   return buildChildEnv(process.env)
 }
@@ -823,9 +833,11 @@ function bootstrap(): void {
       })
     },
     recordSession: (sessionId) => chatSessions.add(sessionId),
-    // the session entered or left a worktree (no statusLine runs for a chat): the tab follows it, when the folder is there
+    // the session started in, entered or left a worktree (no statusLine runs for a chat): the tab follows it, when the folder
+    // is there; the folder the tab names already, however spelled, moves nothing
     folder: (tabId, path) => {
-      if (isDirectory(path)) tabs.setFolder(tabId, path)
+      const now = tabs.get(tabId)?.folder
+      if (now !== undefined && isDirectory(path) && !sameFolder(now, path)) tabs.setFolder(tabId, path)
     },
     now: () => Date.now(),
     log,

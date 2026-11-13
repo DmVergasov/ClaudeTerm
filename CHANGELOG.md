@@ -19,7 +19,7 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 - The model picker of a new chat, opened before its first message, has the model the chat runs checked and shows its effort levels.
 - A Media or Changes panel you close goes at once: it no longer shows again for a moment, half closed.
 - The first Media or Changes panel you open after starting ClaudeTerm opens at once, not a second later (Windows).
-
+- A chat whose conversation works in a git worktree shows that worktree's branch in the tab list again after a restart or a resume, not the branch of the folder the tab was opened in.
 ## 0.18.0
 
 ### New

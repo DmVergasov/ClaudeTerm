@@ -11,7 +11,7 @@ import { capSnapshot } from './chat-mirror'
 import { answeredLine, cardFor, resultFor, type PermissionAsk, type SdkPermissionResult } from './chat-cards'
 import type { ChatEngine, ChatEngineHandlers, StartChatEngine } from './chat-engine'
 import { ChatModel, isPermissionMode } from './chat-model'
-import { sessionFolderOf } from './chat-folder'
+import { sessionFolderOf, startFolderOf } from './chat-folder'
 import type { ChatLaunch } from './claude-spawn'
 
 // One conversation model per Claude tab, in the main process: the engine's messages fold into it, the chat window gets
@@ -104,6 +104,8 @@ interface Live {
   ended: boolean
   /** Claude Code has answered initialize: the start is over, and an exit now is not a failed start */
   ready: boolean
+  /** the process sent its first init: the folder it started in is known, and a later init's folder only follows a Bash cd */
+  inited: boolean
   /** the models Claude Code lists, from its answer to the start: whether the model the chat runs takes auto mode decides the modes */
   models: ChatModelInfo[]
   /** Claude Code refused the auto mode while the chat ran this model: Auto is not offered while it runs that model */
@@ -203,7 +205,7 @@ export class ChatHub {
     this.remove(tabId)
     const newSessionId = resume === null ? randomUUID() : ''
     const live: Live = {
-      tabId, req, engine: null, launch: null, waiting: [], ended: false, ready: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
+      tabId, req, engine: null, launch: null, waiting: [], ended: false, ready: false, inited: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
       kept: null, restarted: restart,
       queued: new Map(), stopping: false, exitDue: false, working: false,
       rev: this.revs.get(tabId) ?? 0, batch: [], batchFrom: 0, timer: null, remoteBatch: [], remoteFrom: 0, remoteTimer: null, cards: new Map(), contextAt: null,
@@ -614,7 +616,10 @@ export class ChatHub {
     // an image the chat shows may have its card already: the panel does not change again to bring it
     if (patches.some(p => (p.op === 'add' || p.op === 'set') && p.item.kind === 'images')) this.publish(live, live.model.attachCards(this.d.cards(live.tabId)))
     if (!isObj(msg)) return
-    const moved = sessionFolderOf(msg)
+    // the process starts where the session works (a worktree it entered before a resume); then entering and leaving a worktree move it
+    const started = live.inited ? null : startFolderOf(msg)
+    if (msg.type === 'system' && msg.subtype === 'init') live.inited = true
+    const moved = started ?? sessionFolderOf(msg)
     if (moved !== null) this.d.folder(live.tabId, moved)
     // Claude Code names its mode in a status and in an init: auto in either one adds Auto to the modes of the tab
     if (msg.type === 'system' && (msg.subtype === 'status' || msg.subtype === 'init') && msg.permissionMode === 'auto') this.autoTabs.add(live.tabId)

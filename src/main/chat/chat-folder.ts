@@ -21,3 +21,13 @@ export function sessionFolderOf(msg: unknown): string | null {
   if (typeof out.action === 'string') return folderText(out.originalCwd)
   return folderText(out.worktreePath)
 }
+
+/**
+ * The folder Claude Code works in, from the init of an SDK message stream: a session resumed after it entered a worktree goes
+ * back into that worktree when its process starts, while the tab still names the folder it was opened in. Only a process's
+ * first init says where it started: a later one follows a Bash cd. Null for any other message or a path that is not absolute.
+ */
+export function startFolderOf(msg: unknown): string | null {
+  if (!isObj(msg) || msg.type !== 'system' || msg.subtype !== 'init') return null
+  return folderText(msg.cwd)
+}

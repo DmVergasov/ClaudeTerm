@@ -267,7 +267,7 @@ function emitInit(): void {
   const terminal = script.terminalCommands === undefined ? {} : { terminal_slash_commands: script.terminalCommands }
   const effort = script.effort === undefined ? {} : { effort: script.effort }
   const mode = script.initPermissionMode === undefined ? {} : { permissionMode: script.initPermissionMode }
-  emit({ ...initTemplate, ...terminal, ...effort, ...mode, model: currentModel(), session_id: session, cwd: process.cwd(), claude_code_version: script.version ?? VERSION, uuid: randomUUID() })
+  emit({ ...initTemplate, ...terminal, ...effort, ...mode, model: currentModel(), session_id: session, cwd: script.cwd ?? process.cwd(), claude_code_version: script.version ?? VERSION, uuid: randomUUID() })
   needInit = false
 }
 

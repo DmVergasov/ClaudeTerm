@@ -35,3 +35,19 @@ test("a chat tab follows its session into a worktree Claude entered, and back ou
     await app.close()
   }
 })
+
+test("a chat tab whose Claude Code starts in the session's worktree (a session resumed there) shows the worktree's branch from its first turn", async () => {
+  const repo = gitRepo()
+  const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+  const worktree = gitWorktree(repo, 'feat/resumed')
+  // the tab opens in the main checkout, as a restored tab does; Claude Code goes back into the worktree the session had entered
+  const { app, page, tabId } = await launchChatTab({ cwd: worktree, turns: { hi: [{ text: 'hello' }] } }, { work: repo, tabs: { position: 'left' } })
+  try {
+    await expect(row(page, tabId).locator('.tp-branch')).toHaveText(branch, { timeout: 15_000 })
+    await sendMessage(page, 'hi')
+    await expect(page.locator('.chat-column')).toContainText('hello', { timeout: 30_000 })
+    await expect(row(page, tabId).locator('.tp-branch')).toHaveText('feat/resumed', { timeout: 15_000 })
+  } finally {
+    await app.close()
+  }
+})

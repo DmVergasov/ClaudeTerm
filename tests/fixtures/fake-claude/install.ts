@@ -61,6 +61,8 @@ export interface FakeScript {
   /** the token counts of the get_context_usage answer (totalTokens, maxTokens); the recorded ones when not given */
   contextTokens?: number | null
   contextMax?: number | null // null: the answer carries no count of this kind
+  /** the folder the init names (Claude Code's working folder: a resumed session's worktree); the folder it was started in when not given */
+  cwd?: string
   /** the answers to ClaudeTerm's Heads up questions (src/main/chat/heads-up.ts): a check's, and Explain more's */
   headsUp?: { check?: string; explain?: string }
 }

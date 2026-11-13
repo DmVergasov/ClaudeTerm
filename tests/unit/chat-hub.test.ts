@@ -262,6 +262,32 @@ describe('ChatHub', () => {
     expect(last(calls.folder)).toEqual([TAB, abs('/work/acme')])
   })
 
+  it("a process's first init moves the tab to the folder Claude Code started in (a session resumed in its worktree); a later init, a Bash cd, does not", async () => {
+    const { hub, engines, calls } = harness()
+    const { req } = startReq()
+    const abs = (p: string): string => (process.platform === 'win32' ? `C:${p.replace(/\//g, '\\')}` : p)
+    hub.start(req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init({ cwd: abs('/work/acme-wt') }))
+    expect(calls.folder).toEqual([[TAB, abs('/work/acme-wt')]])
+    engines[0].h.message(init({ cwd: abs('/work/acme-wt/src') }))
+    expect(calls.folder).toHaveLength(1)
+
+    // the next process of the tab (a restart, a resume) names its folder again; one that names none, or a relative one, moves nothing
+    hub.start(req)
+    await settle()
+    engines[1].h.ready({ permissionMode: 'default' })
+    engines[1].h.message(init({ cwd: abs('/work/acme') }))
+    expect(last(calls.folder)).toEqual([TAB, abs('/work/acme')])
+    hub.start(req)
+    await settle()
+    engines[2].h.ready({ permissionMode: 'default' })
+    engines[2].h.message(init({ cwd: 'relative/wt' }))
+    engines[2].h.message(init({ cwd: abs('/work/later') }))
+    expect(calls.folder).toHaveLength(2)
+  })
+
   it('support failing falls back with its reason', async () => {
     const { hub, engines } = harness({ support: async () => ({ reason: 'Claude Code is too old' }) })
     const { req, exit } = startReq()
