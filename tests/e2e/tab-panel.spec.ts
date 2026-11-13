@@ -169,12 +169,15 @@ test('without a plan Claude Code names, the foot names the login', async () => {
 test('the active row is raised, not barred', async () => {
   const { app, page, tabId, work } = await launchClaudeTab(left(freshFolder()))
   const other = await openTab(page, 'shell', work)
-  const style = (id: string): Promise<{ shadow: string, bg: string }> => row(page, id).evaluate((el) => {
-    const s = getComputedStyle(el)
-    return { shadow: s.boxShadow, bg: s.backgroundColor }
-  })
-  const active = await style(other)
-  const idle = await style(tabId)
+  // both rows are read at one moment, as the panel draws its rows again when a tab changes (on the Windows runner a shell's
+  // title comes late): a row found first and read a moment later may have gone from the page, and reads as no style at all
+  const { active, idle } = await page.evaluate(({ activeId, idleId }) => {
+    const style = (id: string): { shadow: string, bg: string } => {
+      const s = getComputedStyle(document.querySelector(`#tabpanel .tp-tab[data-tab-id="${id}"]`)!)
+      return { shadow: s.boxShadow, bg: s.backgroundColor }
+    }
+    return { active: style(activeId), idle: style(idleId) }
+  }, { activeId: other, idleId: tabId })
   // an inset edge of the border colour, not the accent bar of the old rows; the raised background of the active row
   expect(active.shadow).toContain('inset')
   expect(active.shadow).not.toContain('217, 119, 87')
@@ -1049,12 +1052,17 @@ test('a waiting row\'s word stands at the row\'s right end whatever marks come b
   // the pointer is off the rows: a row pointed at shows its × in its word's place (where the runner's cursor lies is not the test's)
   await page.mouse.move(1, 1)
   for (const id of [plain, muted]) await expect(row(page, id).locator('.tab-status')).toBeVisible()
-  const right = (id: string): Promise<number> => row(page, id).locator('.tab-status').evaluate((el) => el.getBoundingClientRect().right)
-  expect(Math.abs((await right(plain)) - (await right(muted)))).toBeLessThanOrEqual(0.5)
+  // the rows are read at one moment, as the panel draws its rows again when a tab changes (on the Windows runner a shell's
+  // title comes late): a row found first and read a moment later may have gone from the page, and reads as no style at all
+  const rows = await page.evaluate((ids) => ids.map((id) => {
+    const el = document.querySelector(`#tabpanel .tp-tab[data-tab-id="${id}"]`)!
+    return { right: el.querySelector('.tab-status')?.getBoundingClientRect().right ?? NaN, background: getComputedStyle(el).backgroundColor }
+  }), [plain, muted, idle])
+  const [p, m, i] = [rows[0]!, rows[1]!, rows[2]!]
+  expect(Math.abs(p.right - m.right)).toBeLessThanOrEqual(0.5)
   // the pulse is a layer under the row's content: the row's own background is a row's like any other, so a hover still shows
-  const background = (id: string): Promise<string> => row(page, id).evaluate((el) => getComputedStyle(el).backgroundColor)
-  expect(await background(plain)).toBe(await background(idle))
-  expect(await background(muted)).toBe(await background(idle))
+  expect(p.background).toBe(i.background)
+  expect(m.background).toBe(i.background)
   await app.close()
 })
 

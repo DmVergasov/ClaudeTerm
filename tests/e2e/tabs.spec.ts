@@ -114,6 +114,23 @@ const centre = (tab: Locator): Promise<{ x: number, y: number }> => tab.evaluate
   return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
 })
 
+/**
+ * Drags one tab onto another with the mouse, as a user does: a press on the first, a move onto the second, a release, at the
+ * centres both have at one moment. The tab bar builds its tabs again whenever one of them changes (on the Windows runner a
+ * shell's title comes late); a press goes to whatever tab is drawn under the pointer then. Playwright's dragTo would drop
+ * its press instead, when the tab it aimed at was built again just before it, and the tab would not move
+ */
+async function dragTab(page: Page, from: string, to: string): Promise<void> {
+  const [start, end] = await page.evaluate((ids) => ids.map((id) => {
+    const b = document.querySelector(`#tabbar .tab[data-tab-id="${id}"]`)!.getBoundingClientRect()
+    return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+  }), [from, to])
+  await page.mouse.move(start!.x, start!.y)
+  await page.mouse.down()
+  await page.mouse.move(end!.x, end!.y, { steps: 8 })
+  await page.mouse.up()
+}
+
 test('a click on a tab activates it even when the tab bar is drawn again between the press and the release', async () => {
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
@@ -198,14 +215,13 @@ test('a tab is dragged within its group, not into another', async () => {
   const a1 = await openShell(page, repoA)
   const b1 = await openShell(page, repoB)
   const a2 = await openShell(page, repoA)
-  const tab = (id: string): Locator => page.locator(`#tabbar .tab[data-tab-id="${id}"]`)
 
   // the drag waits for the settled order: a tab in No project until its place arrives cannot be dropped in its group
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, b1, home])
-  await tab(a2).dragTo(tab(a1))
+  await dragTab(page, a2, a1)
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a2, a1, b1, home])
 
-  await tab(a1).dragTo(tab(b1))
+  await dragTab(page, a1, b1)
   await page.waitForTimeout(500)
   expect(await page.evaluate(() => window.__ct!.tabIds())).toEqual([a2, a1, b1, home])
   await app.close()
@@ -322,10 +338,12 @@ test('a fork on top can be dragged to the end of its group', async () => {
   await page.locator('.banner-restore').click()
   await page.waitForFunction(() => window.__ct!.tabIds().length === 3)
   const [fork, head, last] = await page.evaluate(() => window.__ct!.tabIds())
-  const tab = (id: string): Locator => page.locator(`#tabbar .tab[data-tab-id="${id}"]`)
+  // the drag waits until git has answered for every tab: the bar shows this order as well while the Claude tabs are in the
+  // project and the shell is still in No project, and a tab is not dropped into another group
+  await expect.poll(() => page.evaluate((ids) => ids.every((id) => window.__ct!.placeOf!(id) !== undefined), [fork!, head!, last!])).toBe(true)
   await expect.poll(() => shownTabIds(page)).toEqual([fork, head, last])
 
-  await tab(fork!).dragTo(tab(last!))
+  await dragTab(page, fork!, last!)
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([head, last, fork])
   await expect.poll(() => shownTabIds(page)).toEqual([head, last, fork])
   await app.close()
