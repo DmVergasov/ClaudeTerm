@@ -537,6 +537,28 @@ test('the bars of running subagents move at once when their chat comes back from
   }
 })
 
+test('the agents list shows its newest rows once it has more than it holds, and leaves a reader who scrolled up in it where they are', async () => {
+  const agents = Array.from({ length: 7 }, (_, i) => ({ type: 'general-purpose', description: `Check region ${i + 1}`, ms: i === 0 ? 3000 : 20_000 }))
+  const { app, page } = await launchChatTab({
+    turns: { team: [{ task: { description: 'Check the regions', result: 'Checked.', agents } }, { text: 'Done.' }] }
+  })
+  try {
+    await send(page, 'team')
+    const rows = page.locator('.chat-agents-dock .chat-agent')
+    await expect(rows).toHaveCount(7)
+    const list = page.locator('.chat-agents-dock .chat-agents-list')
+    // the list scrolls, and stands at its end: the last row shows
+    await expect.poll(() => list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+    await expect.poll(() => list.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThanOrEqual(2)
+    // the reader scrolls up in the list: a row that changes (the first agent ends) does not take them back down
+    await list.evaluate((el) => { el.scrollTop = 0 })
+    await expect(rows.first()).toContainText('done', { timeout: 15_000 })
+    expect(await list.evaluate((el) => el.scrollTop)).toBe(0)
+  } finally {
+    await app.close()
+  }
+})
+
 test('a step that settles while its call still runs stays folded, and does not open again', async () => {
   const { app, page, tabId, pipeName } = await launchChatTab({
     turns: { long: [{ tool: { name: 'Bash', input: { command: 'sleep 9' }, result: 'slept', ms: 9000 } }, { text: 'Done.' }] }

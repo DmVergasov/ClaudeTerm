@@ -390,13 +390,14 @@ export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[]): void {
   let card = box.querySelector<HTMLElement>(':scope > .chat-agents')
   if (card === null) {
     card = el('div', 'chat-agents')
-    card.append(el('div', 'chat-agents-head'), el('div', 'chat-agents-list'))
+    card.append(el('div', 'chat-agents-head'), followingList())
     box.append(card)
   }
   const n = agents.length
   const done = agents.filter((agent) => agent.state === 'done').length
   card.querySelector<HTMLElement>('.chat-agents-head')!.innerHTML = `${icon('users', 13)}<span>${n} agent${n === 1 ? '' : 's'} · ${done} done</span>`
   const list = card.querySelector<HTMLElement>('.chat-agents-list')!
+  let added = false
   agents.forEach((agent, index) => {
     let row = childWith(list, 'agent', agent.id)
     if (row === null) {
@@ -404,6 +405,7 @@ export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[]): void {
       row.dataset.agent = agent.id
       row.append(el('span', 'chat-step-state'), el('span', 'chat-agent-type'), el('span', 'chat-agent-desc'), el('span', 'chat-agent-meta'), el('span', 'chat-agent-state'))
       list.append(row)
+      added = true
     }
     // a row keeps its colour and its bar's offset by its place in the card, which does not change when another row ends. The
     // offset is a negative delay: the bar starts that far into its slide, so the bars are staggered and none stands still when
@@ -416,6 +418,27 @@ export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[]): void {
   for (const child of Array.from(list.children)) {
     if (child instanceof HTMLElement && !ids.has(child.dataset.agent ?? '')) child.remove()
   }
+  if (added) followEnd(list)
+}
+
+/**
+ * The agents' list, which scrolls once it has more rows than it shows. It follows its end, as the conversation does: a new
+ * row, the list growing or coming back into view shows its last rows, unless the reader scrolled up in it; scrolling back
+ * down to the end makes it follow again.
+ */
+function followingList(): HTMLElement {
+  const list = el('div', 'chat-agents-list')
+  list.addEventListener('scroll', () => {
+    // a list that shows nothing (its chat hidden) says nothing of where the reader is
+    if (list.clientHeight === 0) return
+    list.dataset.follow = list.scrollHeight - list.scrollTop - list.clientHeight <= 2 ? '' : 'off'
+  })
+  new ResizeObserver(() => followEnd(list)).observe(list)
+  return list
+}
+
+function followEnd(list: HTMLElement): void {
+  if (list.dataset.follow !== 'off') list.scrollTop = list.scrollHeight
 }
 
 function fillAgent(row: HTMLElement, agent: ChatSubagent): void {
