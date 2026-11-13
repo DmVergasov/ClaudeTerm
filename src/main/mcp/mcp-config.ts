@@ -5,6 +5,9 @@ import { isWindowsPath, nativePath, pathKey } from '../path-key'
 /** a configuration file bigger than this is not read: it is not one Claude Code wrote, and it configures nothing */
 export const MAX_CONFIG_BYTES = 16 * 1024 * 1024
 
+/** a file that exists but could not be read or parsed now: it is not an empty file, so it is not a removal of what it configured */
+export const UNREADABLE: unique symbol = Symbol('unreadable')
+
 export interface ConfigPaths {
   userConfig: string
   userSettings: string
@@ -28,7 +31,7 @@ export function configPaths(env: Record<string, string | undefined>, home: strin
   }
 }
 
-/** each file parsed, null when missing or unreadable */
+/** each file parsed, null when missing, UNREADABLE when it exists but could not be read now */
 export type ConfigFiles = Record<keyof ConfigPaths, unknown>
 
 export interface ConfiguredServer {
@@ -48,7 +51,10 @@ export interface InstalledPlugin {
 export interface TabConfig {
   servers: ConfiguredServer[]
   plugins: InstalledPlugin[]
+  unreadable: (keyof ConfigPaths)[] // files that exist but could not be read now: they configure nothing here
 }
+
+const CONFIG_KEYS: (keyof ConfigPaths)[] = ['userConfig', 'userSettings', 'installedPlugins', 'projectMcp', 'projectSettings', 'localSettings']
 
 export type ConfigChangeKind =
   | 'server-added'
@@ -100,14 +106,17 @@ function pluginName(id: string): string {
 /** what the files configure for a tab in `folder` (the folder already canonical); nothing here throws */
 export function tabConfig(files: ConfigFiles, folder: string): TabConfig {
   const matches = folderMatcher(folder)
-  const user = asObject(files.userConfig)
+  const unreadable = CONFIG_KEYS.filter((key) => files[key] === UNREADABLE)
+  // an unreadable file configures nothing, as a missing one does
+  const readable = (key: keyof ConfigPaths): unknown => (files[key] === UNREADABLE ? null : files[key])
+  const user = asObject(readable('userConfig'))
   const projects = asObject(user?.projects)
   const entryKey = projects === undefined ? undefined : Object.keys(projects).find((key) => matches(key))
   const entry = projects !== undefined && entryKey !== undefined ? asObject(projects[entryKey]) : undefined
 
-  const userSettings = asObject(files.userSettings)
-  const projectSettings = asObject(files.projectSettings)
-  const localSettings = asObject(files.localSettings)
+  const userSettings = asObject(readable('userSettings'))
+  const projectSettings = asObject(readable('projectSettings'))
+  const localSettings = asObject(readable('localSettings'))
   const approvalSources = [entry, userSettings, projectSettings, localSettings].filter((s): s is Json => s !== undefined)
   const disabledHere = (name: string): boolean => listHas(entry?.disabledMcpServers, name)
 
@@ -122,7 +131,7 @@ export function tabConfig(files: ConfigFiles, folder: string): TabConfig {
     }
   }
   addAll('user', user?.mcpServers, () => null)
-  addAll('project', asObject(files.projectMcp)?.mcpServers, (name) => approvalOf(name, approvalSources))
+  addAll('project', asObject(readable('projectMcp'))?.mcpServers, (name) => approvalOf(name, approvalSources))
   addAll('local', entry?.mcpServers, () => null)
 
   // the last of user, project and local settings that names the plugin decides
@@ -136,7 +145,7 @@ export function tabConfig(files: ConfigFiles, folder: string): TabConfig {
     return enabled
   }
 
-  const installed = asObject(asObject(files.installedPlugins)?.plugins)
+  const installed = asObject(asObject(readable('installedPlugins'))?.plugins)
   const plugins: InstalledPlugin[] = []
   for (const id of Object.keys(installed ?? {})) {
     const entries = installed !== undefined ? installed[id] : undefined
@@ -158,16 +167,16 @@ export function tabConfig(files: ConfigFiles, folder: string): TabConfig {
     if (chosen !== null) plugins.push({ id, version: chosen.version, enabled: enabledIn(id) })
   }
 
-  return { servers, plugins }
+  return { servers, plugins, unreadable }
 }
 
-/** the configuration of a tab read from the files; a file that cannot be read is null */
+/** the configuration of a tab read from the files; a file that exists but cannot be read (readJson throws) is UNREADABLE */
 export async function readTabConfig(paths: ConfigPaths, folder: string, readJson: (file: string) => Promise<unknown>): Promise<TabConfig> {
   const read = async (file: string): Promise<unknown> => {
     try {
       return await readJson(file)
     } catch {
-      return null
+      return UNREADABLE
     }
   }
   const [userConfig, userSettings, installedPlugins, projectMcp, projectSettings, localSettings] = await Promise.all([
@@ -182,28 +191,32 @@ export async function readTabConfig(paths: ConfigPaths, folder: string, readJson
 }
 
 /**
- * a reader that stats the file each call and reads and parses it again only when its mtime or size changed; null for missing, unreadable,
- * over MAX_CONFIG_BYTES or not JSON. A read in flight is shared: callers that ask for the same file version at once read it once.
+ * a reader that stats the file each call and reads and parses it again only when its mtime or size changed. The result is null for a file
+ * that does not exist and for one over MAX_CONFIG_BYTES (not read); UNREADABLE for one that exists but whose stat throws (not kept, the next
+ * call asks again), or whose read fails or whose text is not JSON (kept for that version, like a parse). A read in flight is shared: callers
+ * that ask for the same file version at once read it once.
  */
 export function jsonFileCache(fs: {
+  /** null when the file is missing; throws when it cannot be stat-ed */
   stat(f: string): Promise<{ mtimeMs: number; size: number } | null>
+  /** the text, null or a throw when it cannot be read */
   read(f: string): Promise<string | null>
 }): (file: string) => Promise<unknown> {
   const cache = new Map<string, { mtimeMs: number; size: number; data: Promise<unknown> }>()
 
-  /** the parsed file, or null: a read that fails is not kept, a text that is not JSON is */
+  /** the parsed file, or UNREADABLE when the read fails or the text is not JSON */
   const load = async (file: string): Promise<unknown> => {
     let text: string | null
     try {
       text = await fs.read(file)
     } catch {
-      return null
+      return UNREADABLE
     }
-    if (text === null) return null
+    if (text === null) return UNREADABLE
     try {
       return JSON.parse(text)
     } catch {
-      return null
+      return UNREADABLE
     }
   }
 
@@ -212,7 +225,7 @@ export function jsonFileCache(fs: {
     try {
       stat = await fs.stat(file)
     } catch {
-      return null
+      return UNREADABLE
     }
     if (stat === null || stat.size > MAX_CONFIG_BYTES) {
       cache.delete(file)
@@ -221,10 +234,8 @@ export function jsonFileCache(fs: {
     const hit = cache.get(file)
     if (hit !== undefined && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.data
 
-    const entry = { mtimeMs: stat.mtimeMs, size: stat.size, data: load(file) }
-    cache.set(file, entry)
-    const data = await entry.data
-    if (data === null && cache.get(file) === entry) cache.delete(file)
+    const data = load(file)
+    cache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, data })
     return data
   }
 }

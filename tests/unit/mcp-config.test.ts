@@ -9,6 +9,7 @@ import {
   readTabConfig,
   tabConfig,
   touchesConfig,
+  UNREADABLE,
   type ConfigFiles,
   type ConfiguredServer,
   type InstalledPlugin,
@@ -30,11 +31,11 @@ function base(over: Partial<ConfigFiles>): ConfigFiles {
   }
 }
 
-const EMPTY: TabConfig = { servers: [], plugins: [] }
+const EMPTY: TabConfig = { servers: [], plugins: [], unreadable: [] }
 const srv = (name: string, scope: ConfiguredServer['scope'], config: Record<string, unknown>, approval: ConfiguredServer['approval'] = null): ConfiguredServer =>
   ({ name, scope, config, approval, disabled: false })
 const plug = (id: string, version: string, enabled: boolean): InstalledPlugin => ({ id, version, enabled })
-const tab = (servers: ConfiguredServer[] = [], plugins: InstalledPlugin[] = []): TabConfig => ({ servers, plugins })
+const tab = (servers: ConfiguredServer[] = [], plugins: InstalledPlugin[] = []): TabConfig => ({ servers, plugins, unreadable: [] })
 const byId = (a: InstalledPlugin, b: InstalledPlugin): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 
 describe('mcp-config', () => {
@@ -199,7 +200,7 @@ describe('mcp-config', () => {
       }),
       FOLDER
     )
-    expect(t).toEqual({ servers: [srv('n4', 'project', { command: 'ok' }, 'pending')], plugins: [] })
+    expect(t).toEqual({ servers: [srv('n4', 'project', { command: 'ok' }, 'pending')], plugins: [], unreadable: [] })
 
     const broken = tabConfig(
       base({
@@ -219,11 +220,12 @@ describe('mcp-config', () => {
     expect(broken).toEqual(EMPTY)
 
     const paths = configPaths({}, '/home/dev', FOLDER)
+    // a reader that throws could not read the file: that is not an empty file
     await expect(
       readTabConfig(paths, FOLDER, async () => {
         throw new Error('boom')
       })
-    ).resolves.toEqual(EMPTY)
+    ).resolves.toEqual({ ...EMPTY, unreadable: ['userConfig', 'userSettings', 'installedPlugins', 'projectMcp', 'projectSettings', 'localSettings'] })
     await expect(readTabConfig(paths, FOLDER, async (file) => (file === paths.projectMcp ? { mcpServers: { x: { command: 'x' } } } : 42))).resolves.toEqual(
       tab([srv('x', 'project', { command: 'x' }, 'pending')])
     )
@@ -270,6 +272,110 @@ describe('mcp-config', () => {
     const results = await Promise.all([load(file), load(file), load(file)])
     expect(results).toEqual([{ a: 1 }, { a: 1 }, { a: 1 }])
     expect(reads).toHaveLength(1)
+  })
+
+  it('jsonFileCache: a file that exists but cannot be stat-ed, read or parsed is UNREADABLE; a missing one is null', async () => {
+    const file = join('/cfg', '.claude.json')
+    const stats: Array<{ label: string; stat: () => Promise<{ mtimeMs: number; size: number } | null>; read: () => Promise<string | null> }> = [
+      {
+        label: 'stat throws',
+        stat: async () => {
+          throw new Error('EBUSY')
+        },
+        read: async () => '{"a":1}'
+      },
+      { label: 'read returns null', stat: async () => ({ mtimeMs: 1, size: 7 }), read: async () => null },
+      {
+        label: 'read throws',
+        stat: async () => ({ mtimeMs: 1, size: 7 }),
+        read: async () => {
+          throw new Error('EPERM')
+        }
+      },
+      { label: 'torn text', stat: async () => ({ mtimeMs: 1, size: 7 }), read: async () => '{"a":' }
+    ]
+    for (const c of stats) {
+      expect(await jsonFileCache({ stat: c.stat, read: c.read })(file), c.label).toBe(UNREADABLE)
+    }
+
+    // a torn file is kept for its version: the same mtime and size are not read again
+    let reads = 0
+    const torn = jsonFileCache({
+      stat: async () => ({ mtimeMs: 1, size: 7 }),
+      read: async () => {
+        reads++
+        return '{"a":'
+      }
+    })
+    expect(await torn(file)).toBe(UNREADABLE)
+    expect(await torn(file)).toBe(UNREADABLE)
+    expect(reads).toBe(1)
+
+    // a stat that throws is not kept: the next good stat reads the file
+    let statFails = true
+    const flaky = jsonFileCache({
+      stat: async () => {
+        if (statFails) throw new Error('EBUSY')
+        return { mtimeMs: 1, size: 7 }
+      },
+      read: async () => '{"a":1}'
+    })
+    expect(await flaky(file)).toBe(UNREADABLE)
+    statFails = false
+    expect(await flaky(file)).toEqual({ a: 1 })
+
+    expect(await jsonFileCache({ stat: async () => null, read: async () => '{}' })(file)).toBeNull()
+  })
+
+  it('an existing file that cannot be read or parsed is UNREADABLE in the tab config, not an empty file', async () => {
+    const paths = configPaths({}, '/home/dev', FOLDER)
+    const failures = ['stat throws', 'read returns null', 'read throws', 'torn text'] as const
+    for (const failure of failures) {
+      const fakeFs = {
+        stat: async (f: string) => {
+          if (f !== paths.userConfig) return null
+          if (failure === 'stat throws') throw new Error('EBUSY')
+          return { mtimeMs: 1, size: 7 }
+        },
+        read: async (f: string) => {
+          if (f !== paths.userConfig) return null
+          if (failure === 'read returns null') return null
+          if (failure === 'read throws') throw new Error('EPERM')
+          return '{"mcpServers":'
+        }
+      }
+      const config = await readTabConfig(paths, FOLDER, jsonFileCache(fakeFs))
+      expect(config, failure).toEqual({ servers: [], plugins: [], unreadable: ['userConfig'] })
+    }
+  })
+
+  it('a missing file is null and no unreadable entry; an UNREADABLE file configures nothing and is listed', async () => {
+    const paths = configPaths({}, '/home/dev', FOLDER)
+    const missing = jsonFileCache({
+      stat: async () => null,
+      read: async () => {
+        throw new Error('a missing file is not read')
+      }
+    })
+    expect((await readTabConfig(paths, FOLDER, missing)).unreadable).toEqual([])
+
+    const huge = jsonFileCache({
+      stat: async () => ({ mtimeMs: 1, size: MAX_CONFIG_BYTES + 1 }),
+      read: async () => {
+        throw new Error('an oversized file is not read')
+      }
+    })
+    expect(await huge(join('/cfg', '.claude.json'))).toBeNull()
+    expect((await readTabConfig(paths, FOLDER, huge)).unreadable).toEqual([])
+
+    const t = tabConfig(
+      base({
+        userConfig: UNREADABLE,
+        projectMcp: { mcpServers: { a: { command: 'a' } } }
+      }),
+      FOLDER
+    )
+    expect(t).toEqual({ servers: [srv('a', 'project', { command: 'a' }, 'pending')], plugins: [], unreadable: ['userConfig'] })
   })
 
   it('touchesConfig', () => {
