@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { Note } from '../../src/shared/note'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { WIN } from '../fixtures/platform'
-import { bufferText, FAKE_CLAUDE_SETTINGS, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, TEST_SHELL } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, noteText, TEST_SHELL } from './helpers'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const SID_B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -53,12 +53,12 @@ test('the Note button opens an empty card to write in, and typing marks the tab'
   await button.click()
   await expect(card).toBeVisible()
   await expect(text).toBeFocused()
-  await expect(text).toHaveAttribute('placeholder', 'Write a note for this session…')
+  await expect(card.locator('.cm-placeholder')).toHaveText('Write a note for this session…')
   await expect(button).toHaveClass(/active/)
   await expect(mark).toHaveCount(0)
 
   await page.keyboard.type('Goal: payments\nTODO: tests\n— no export.py')
-  await expect(text).toHaveValue('Goal: payments\nTODO: tests\n— no export.py')
+  await expect.poll(() => noteText(page)).toBe('Goal: payments\nTODO: tests\n— no export.py')
   await expect(mark).toHaveCount(1)
   await expect(mark).toHaveAttribute('title', 'Has a note')
   await app.close()
@@ -178,7 +178,7 @@ test('erasing the text removes the mark; the empty card goes once the tab is lef
 
 test('each Claude tab shows its own note', async () => {
   const { app, page, tabId, work } = await launchClaudeTab()
-  const { card, text, button } = note(page)
+  const { card, button } = note(page)
   await button.click()
   await page.keyboard.type('one')
 
@@ -187,14 +187,14 @@ test('each Claude tab shows its own note', async () => {
   await expect(button).not.toHaveClass(/active/)
   await button.click()
   await expect(card).toBeVisible()
-  await expect(text).toHaveValue('')
+  await expect.poll(() => noteText(page)).toBe('')
   await page.keyboard.type('two')
 
   await activate(page, tabId)
-  await expect(text).toHaveValue('one')
+  await expect.poll(() => noteText(page)).toBe('one')
   await expect(button).toHaveClass(/active/)
   await activate(page, second)
-  await expect(text).toHaveValue('two')
+  await expect.poll(() => noteText(page)).toBe('two')
   await expect(button).toHaveClass(/active/)
 
   // the Note button's highlight follows the tab in front
@@ -263,11 +263,11 @@ test('/resume into a conversation with a note while typing in the card: the card
 
   // what was typed may still be on its way to main: it stays with the conversation left either way
   expect(await session(SID_A, 'resume')).toEqual({ ok: true })
-  await expect(text).toHaveValue('alpha')
+  await expect.poll(() => noteText(page)).toBe('alpha')
   await expect(text).toBeFocused()
   await page.keyboard.press('End')
   await page.keyboard.type(' too')
-  await expect(text).toHaveValue('alpha too')
+  await expect.poll(() => noteText(page)).toBe('alpha too')
   await closeWindow(app)
   const saved = JSON.parse(readFileSync(join(dataDir, 'session-notes.json'), 'utf8')) as Record<string, Note>
   expect(saved[SID_A]?.text).toBe('alpha too')

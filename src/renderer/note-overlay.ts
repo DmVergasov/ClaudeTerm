@@ -1,7 +1,8 @@
-import { hasText as noteHasText, MAX_NOTE_LENGTH, type Note, type NoteForm } from '../shared/note'
+import { hasText as noteHasText, type Note, type NoteForm } from '../shared/note'
 import { el } from './dom'
 import { icon as iconSvg } from './icons'
 import { mapKey } from './keymap'
+import { NoteEditor } from './note-editor'
 
 /** the sticky note: the Note button, the label, the card and the mark on a tab */
 export function noteIcon(size: number): string {
@@ -13,6 +14,8 @@ export interface NoteOverlayCallbacks {
   setText(tabId: string, text: string, generation: number): void
   setView(tabId: string, shown: boolean, form: NoteForm, generation: number): void
   focusTerminal(): void
+  /** the text the person copied from the note's editor */
+  copyText(text: string): void
   /** a note got or lost its text, or was shown or hidden */
   changed(): void
 }
@@ -21,6 +24,8 @@ export interface NoteOverlayCallbacks {
 const firstLine = (text: string): string => text.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? ''
 
 const icon = (size: number): HTMLElement => el('span', { className: 'note-icon', innerHTML: noteIcon(size) })
+
+const PLACEHOLDER = 'Write a note for this session…'
 
 /**
  * The note of the Claude tab in front, over the top right of the terminal: a label with its first line, or a card with
@@ -34,8 +39,10 @@ export class NoteOverlay {
   private active: string | null = null
   private readonly label: HTMLElement
   private readonly labelText: HTMLElement
+  /** the tab whose note the editor holds; null for none */
+  private loaded: string | null = null
   private readonly card: HTMLElement
-  private readonly text: HTMLTextAreaElement
+  private readonly editor: NoteEditor
 
   constructor(private readonly root: HTMLElement, private readonly cb: NoteOverlayCallbacks, private readonly platform: string) {
     this.labelText = el('span', { className: 'note-label-text' })
@@ -49,22 +56,24 @@ export class NoteOverlay {
     collapse.addEventListener('click', () => this.present(this.active !== null && this.hasText(this.active) ? 'label' : null))
     const hide = el('button', { className: 'note-hide', innerHTML: iconSvg('x', 12), title: 'Hide the note' })
     hide.addEventListener('click', () => this.present(null))
-    this.text = el('textarea', { className: 'note-text', placeholder: 'Write a note for this session…', maxLength: MAX_NOTE_LENGTH, spellcheck: false })
-    this.text.addEventListener('input', () => this.typed())
-    this.text.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        // the card stays; the keyboard goes back to the terminal
-        e.preventDefault()
-        this.cb.focusTerminal()
-      } else if (mapKey(e, this.platform)?.type === 'toggleNote') {
-        e.preventDefault()
-        this.toggle()
-      }
+    this.editor = new NoteEditor({
+      changed: (text) => this.typed(text),
+      key: (e) => this.key(e),
+      copy: (text) => this.cb.copyText(text)
     })
+    // the placeholder is the editor's from the start: an empty text is not loaded again
+    this.editor.load('', PLACEHOLDER)
+    const body = el('div', { className: 'note-body' }, this.editor.dom)
+    const foot = el('div', { className: 'note-foot' }, this.tool('checkbox', 'Checkbox', 'Turn the line into a checkbox item, or back (or type [ ] at its start)', () => this.editor.toggleCheckbox()), this.tool('list', 'List', 'Turn the line into a bullet item, or back', () => this.editor.toggleBullet()))
     const head = el('div', { className: 'note-head' }, icon(14), el('span', { className: 'note-title', textContent: 'Note' }), collapse, hide)
-    this.card = el('div', { className: 'note-card' }, head, this.text)
+    this.card = el('div', { className: 'note-card' }, head, body, foot)
     root.replaceChildren(this.label, this.card)
     this.draw()
+  }
+
+  /** the text of the editor: the note of the tab in front, kept while the card is hidden */
+  editorText(): string {
+    return this.editor.text
   }
 
   /**
@@ -146,20 +155,43 @@ export class NoteOverlay {
     if (note.shown !== wasShown) this.cb.changed()
   }
 
-  private typed(): void {
+  /** the keys of the editor that the card handles first: Escape leaves it, the note shortcut hides or shows the card */
+  private key(e: KeyboardEvent): boolean {
+    if (e.key === 'Escape') {
+      // the card stays; the keyboard goes back to the terminal
+      e.preventDefault()
+      this.cb.focusTerminal()
+      return true
+    }
+    if (mapKey(e, this.platform)?.type === 'toggleNote') {
+      e.preventDefault()
+      this.toggle()
+      return true
+    }
+    return false
+  }
+
+  /** a tool button of the card's foot: the editor keeps the caret when it is pressed */
+  private tool(name: string, label: string, title: string, run: () => void): HTMLElement {
+    const button = el('button', { className: 'note-tool', textContent: label, title })
+    button.dataset.tool = name
+    button.addEventListener('mousedown', (e) => e.preventDefault())
+    button.addEventListener('click', run)
+    return button
+  }
+
+  private typed(text: string): void {
     if (this.active === null) return
     const note = this.noteOf(this.active)
     const had = noteHasText(note)
-    note.text = this.text.value
+    note.text = text
     this.cb.setText(this.active, note.text, this.generationOf(this.active))
     if (noteHasText(note) !== had) this.cb.changed()
   }
 
   /** the keyboard in the card's text, at its end */
   private focusText(): void {
-    this.text.focus()
-    const end = this.text.value.length
-    this.text.setSelectionRange(end, end)
+    this.editor.focus()
   }
 
   /** draws the note; when the card that had the keyboard goes, the keyboard goes back to the terminal */
@@ -175,9 +207,14 @@ export class NoteOverlay {
     this.label.hidden = form !== 'label' || !noteHasText(note)
     this.card.hidden = form !== 'card'
     this.labelText.textContent = firstLine(note?.text ?? '')
-    // the typed text is the note's already; another tab's note, or one that came with another conversation (main never
-    // echoes what was typed), replaces it even under the user's typing. An unchanged text keeps the caret where it is
+    // the typed text is the note's already; another tab's note replaces the editor's text, and a change of the same tab's
+    // note (one of Claude's edits, which main never echoes as typed) is applied as a change: the caret and the history stay
     const text = note?.text ?? ''
-    if (this.text.value !== text) this.text.value = text
+    if (this.editor.text === text) return
+    if (this.active !== null && this.loaded === this.active) this.editor.update(text)
+    else {
+      this.editor.load(text, PLACEHOLDER)
+      this.loaded = this.active
+    }
   }
 }

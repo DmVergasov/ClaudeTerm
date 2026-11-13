@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { AttentionReason } from '../../src/shared/protocol'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, panelSettled, PROMPT, showSettingsTab, writeTranscript, openTabInFront } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEY_LABELS, KEYS, launchApp, launchClaudeTab, makeDataDir, noteText, panelSettled, PROMPT, showSettingsTab, writeTranscript, openTabInFront } from './helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 // a tab finds its project group once git answers for its folder, late on a busy machine, as when other tests run at the
@@ -754,7 +754,7 @@ test("the panel header's Note button shows and hides a Claude tab's note; a shel
   await expect(button).not.toHaveClass(/active/)
   await button.click()
   await expect(card).toBeVisible()
-  await expect(card.locator('.note-text')).toHaveValue('Goal: payments')
+  await expect.poll(() => noteText(page)).toBe('Goal: payments')
 
   await openTab(page, 'shell', freshFolder())
   await expect(button).toBeHidden()

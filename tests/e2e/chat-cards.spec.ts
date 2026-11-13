@@ -2,7 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chatReady, controlResponses, CHAT_INPUT, launchChatTab, sendMessage, userMessages } from './chat-helpers'
-import { KEYS, openTabInFront } from './helpers'
+import { KEYS, noteText, openTabInFront } from './helpers'
 
 // the tab-switch chord of the app (Ctrl+Alt+digit on Windows and Linux, ⌘ digit on macOS): on a card it answers nothing
 const TAB_CHORD = process.platform === 'darwin' ? 'Meta+Digit2' : 'Control+Alt+Digit2'
@@ -582,7 +582,7 @@ test('a card that comes while the Note has the focus takes no digit: the digit i
     writeFileSync(join(config, 'release'), '')
     await expect(page.locator(PERMISSION)).toHaveCount(1)
     await page.keyboard.type('1')
-    await expect(text).toHaveValue('1')
+    await expect.poll(() => noteText(page)).toBe('1')
     expect(controlResponses(log)).toEqual([])
   } finally {
     await app.close()

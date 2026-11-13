@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { SessionSnapshotTab } from '../../src/shared/types'
-import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, makeDataDir, TEST_SHELL, writeTranscript } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, makeDataDir, noteText, TEST_SHELL, writeTranscript } from './helpers'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const SID_B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -146,7 +146,7 @@ test('Restore forks again a fork without a conversation of its own, and its note
 
   // the fork is forked again from its head: the note it had comes with it
   await page.evaluate((id) => window.ct.activateTab(id), f)
-  await expect(page.locator('#note .note-card .note-text')).toHaveValue('fork note')
+  await expect.poll(() => noteText(page)).toBe('fork note')
 
   // the fork's own SessionStart: the note is stored under the new conversation, and the old entry is gone
   await sessionStarts(pipeName, f, SID_C, 'fork', null)

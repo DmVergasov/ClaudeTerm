@@ -10,7 +10,7 @@ import type { TaskList } from '../../src/shared/task-list'
 import { PEER_ORIGIN, turnPromptLine } from '../fixtures/transcript'
 import { LIST_TIMEOUT_MS, MAX_TRANSFER_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY } from '../../src/shared/remote'
 import { LINUX, MAC, WIN } from '../fixtures/platform'
-import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, keepingClipboard, PNG_1x1, processAlive, PROMPT, showSettingsTab, TEST_SHELL, typeInTerminal, writeTranscript } from './helpers'
+import { bellCommand, bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, gitWorktree, KEYS, keepingClipboard, noteText, PNG_1x1, processAlive, PROMPT, showSettingsTab, TEST_SHELL, typeInTerminal, writeTranscript } from './helpers'
 import { closePaired, type Device, openShell, pairApps, pairedApps, relaunch, setWindowSize, SLOW, startApps, termSize } from './device-pair'
 
 test.afterEach(closePaired)
@@ -2008,14 +2008,14 @@ test("Change folder on another device empties the card that device shows for A's
   }, a.firstTab)
   await expect(b.page.locator('#statusbar .status-model .status-text')).toHaveText('Opus 5.5', SLOW)
   await expect(b.page.locator('#statusbar .status-model .status-pill')).toHaveText('xhigh', SLOW)
-  await expect(b.page.locator('#note .note-text')).toHaveValue('Goal: payments', SLOW)
+  await expect.poll(() => noteText(b.page), SLOW).toBe('Goal: payments')
 
   expect(await b.page.evaluate(([id, dir]) => window.ct.changeFolder(id, dir), [a.firstTab, other] as [string, string])).toEqual({ ok: true })
   await expect(card).toHaveCount(0, SLOW)
   // the status of the old conversation is gone on B, and the note B shows for the tab opens empty
   await expect(b.page.locator('#statusbar .status-model')).toBeHidden(SLOW)
   await b.page.locator('#sheet-header .tab-note-toggle').click()
-  await expect(b.page.locator('#note .note-text')).toHaveValue('', SLOW)
+  await expect.poll(() => noteText(b.page), SLOW).toBe('')
 })
 
 const RECENT_SID = '3c8a6f2e-1d7b-4e5a-8f9c-0b1a2c3d4e5f'

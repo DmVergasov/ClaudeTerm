@@ -121,6 +121,9 @@ export function bufferText(page: Page, tabId?: string): Promise<string> {
   return page.evaluate((id) => window.__ct!.bufferText(id ?? undefined), tabId ?? null)
 }
 
+/** the text in the note's editor, in front (test runs) */
+export const noteText = (page: Page): Promise<string> => page.evaluate(() => window.__ct!.noteText!())
+
 export async function launchClaudeTab(settings: object = FAKE_CLAUDE_SETTINGS, work: string = mkdtempSync(join(tmpdir(), 'ct-work-'))): Promise<Launched & { work: string; tabId: string }> {
   const launched = await launchApp({ settings, args: ['--claude', work] })
   await launched.page.waitForFunction(() => window.__ct!.tabIds().length === 1)

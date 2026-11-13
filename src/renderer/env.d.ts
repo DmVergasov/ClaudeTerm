@@ -30,6 +30,8 @@ export interface CtTestHook {
   placeOf?(id: string): TabPlace | null | undefined
   /** every place event the window got for a tab, in order (test runs): none when no event came, a null place is kept */
   placeEvents?(id: string): (TabPlace | null)[]
+  /** the text in the note's editor (test runs) */
+  noteText?(): string
 }
 
 declare global {

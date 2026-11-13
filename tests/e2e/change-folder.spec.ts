@@ -8,7 +8,7 @@ import type { StatusMessage } from '../../src/shared/protocol'
 import { REMOTE_COPY } from '../../src/shared/remote'
 import type { TaskList } from '../../src/shared/task-list'
 import { bashResultLine, toolUseLine } from '../fixtures/transcript'
-import { bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, KEYS, launchApp, type Launched, PNG_1x1, PROMPT, typeInTerminal, writeTranscript } from './helpers'
+import { bufferText, FAKE_CLAUDE_SETTINGS, gitRepo, KEYS, launchApp, noteText, type Launched, PNG_1x1, PROMPT, typeInTerminal, writeTranscript } from './helpers'
 import { closePaired, pairedApps } from './device-pair'
 
 test.afterEach(closePaired)
@@ -85,7 +85,7 @@ test('Change folder empties the card, Changes, status, note and Docs of the old 
     await expect(bar.locator('.status-model .status-text')).toHaveText('Opus 5.5')
     await expect(bar.locator('.status-model .status-pill')).toHaveText('xhigh')
     await expect(page.locator('#image-panel .card')).toHaveCount(1)
-    await expect(page.locator('#note .note-text')).toHaveValue('Goal: payments')
+    await expect.poll(() => noteText(page)).toBe('Goal: payments')
     await expect(page.locator('.doc-md h1')).toHaveText('Spec')
     // Changes lists the edited file of the old folder
     // the shortcut goes to the terminal, not to the note's text in focus: the terminal's input takes the focus without a
@@ -121,7 +121,7 @@ test('Change folder empties the card, Changes, status, note and Docs of the old 
     expect(await bufferText(page, tabId)).not.toContain('--resume')
     // the note of the old folder is gone: the note opens empty
     await page.locator('#sheet-header .tab-note-toggle').click()
-    await expect(page.locator('#note .note-text')).toHaveValue('', SLOW)
+    await expect.poll(() => noteText(page), SLOW).toBe('')
 
     // a picture shown in the new folder shows there
     const shot2 = join(other, 'shot.png')

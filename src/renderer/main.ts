@@ -950,7 +950,7 @@ function activate(tabId: string): void {
   activeId = tabId
   frontFallback.activated(tabId)
   planList.close()
-  const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
+  const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement || !!document.activeElement?.closest('#note .cm-content')
   const focus = !busy
   for (const [id, t] of tabs) showTab(t, id === tabId, focus)
   const t = tabs.get(tabId)
@@ -1258,6 +1258,7 @@ async function boot(): Promise<void> {
     setText: (id, text, generation) => ct.setNoteText(id, text, generation),
     setView: (id, shown, form, generation) => ct.setNoteView(id, shown, form, generation),
     focusTerminal: () => { if (activeId) focusTab(activeId) },
+    copyText: (text) => ct.writeClipboardText(text),
     changed: () => renderTabs()
   }, ct.platform)
   ct.onTabSessionTitle((id, title) => {
@@ -1295,7 +1296,7 @@ async function boot(): Promise<void> {
     // the chat composer keeps its keys (typing, Enter, Esc, arrows), but an app chord still runs with it focused; its copy
     // and paste are left to the textarea by the checks below
     const composer = onComposer && (e.ctrlKey || e.metaKey || e.altKey)
-    if (!composer && (target?.closest('.xterm') || (target?.tagName === 'INPUT' && !target.classList.contains('review-find-input')) || target?.tagName === 'TEXTAREA')) return
+    if (!composer && (target?.closest('.xterm') || (target?.tagName === 'INPUT' && !target.classList.contains('review-find-input')) || target?.tagName === 'TEXTAREA' || target?.closest('#note .cm-content'))) return
     // a chat has no terminal to pass Ctrl+F to: the plain key finds in it, as ⌘F does on macOS (a shell tab keeps Ctrl+Shift+F)
     const front = activeId ? tabs.get(activeId) : undefined
     const chatFind = isPrimaryKey(e, ct.platform) && e.code === 'KeyF' && front !== undefined && isChatView(front)
@@ -1718,6 +1719,7 @@ async function boot(): Promise<void> {
       choiceAsks: () => choiceAsks,
       placeOf: (id) => places.get(id),
       placeEvents: (id) => [...placeLog.get(id) ?? []],
+      noteText: () => noteOverlay.editorText(),
       tabMarks: (id) => {
         const t = tabs.get(id)
         return t ? { attention: t.attention, unread: t.unread } : null
