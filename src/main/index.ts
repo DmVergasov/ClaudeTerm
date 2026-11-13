@@ -921,7 +921,14 @@ function bootstrap(): void {
     idle: (id) => chatHub.idle(id),
     touchedAt: (id) => chatHub.configTouchedAt(id),
     restart: (id) => {
-      tabs.restart(id, { live: true }).catch((e: Error) => log.warn(`cannot restart tab: ${e.message}`))
+      // a restart that did not start the chat (busy, refused or failed) leaves its card with Restart again
+      tabs.restart(id, { live: true }).then(
+        () => coordinator.restartSettled(id),
+        (e: Error) => {
+          log.warn(`cannot restart tab: ${e.message}`)
+          coordinator.restartSettled(id)
+        }
+      )
     },
     card: (id, card) => chatHub.reloadCard(id, card),
     status: (id) => chatHub.mcpStatus(id),

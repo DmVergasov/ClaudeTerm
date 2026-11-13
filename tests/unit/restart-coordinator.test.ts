@@ -216,6 +216,48 @@ describe('RestartCoordinator', () => {
     expect(h.restarts).toEqual(['t1'])
   })
 
+  it('a restart that never starts the chat is settled to the card with Restart, and restartNow restarts again', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    await flush()
+    h.files.set('t1', cfg([srv('context7')]))
+    c.madeHere('t1')
+    await flush()
+    await vi.advanceTimersByTimeAsync(SETTLE_MS)
+    expect(h.restarts).toEqual(['t1'])
+
+    c.restartSettled('t1')
+    await flush()
+    expect(lastCard(h, 't1')).toEqual({ title: 'New MCP server: context7', text: 'Restart the session to load it — the conversation goes on', action: 'restart' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.restarts).toEqual(['t1'])
+
+    expect(c.restartNow('t1')).toBe(true)
+    await flush()
+    expect(h.restarts).toEqual(['t1', 't1'])
+  })
+
+  it('a restart followed by started is left alone by restartSettled', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    await flush()
+    h.files.set('t1', cfg([srv('context7')]))
+    c.madeHere('t1')
+    await flush()
+    await vi.advanceTimersByTimeAsync(SETTLE_MS)
+    expect(h.restarts).toEqual(['t1'])
+
+    c.started('t1')
+    await flush()
+    const count = h.cards.length
+    c.restartSettled('t1')
+    await flush()
+    expect(h.cards.length).toBe(count)
+    expect(lastCard(h, 't1')).toBeNull()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.restarts).toEqual(['t1'])
+  })
+
   it('a hold keeps the restart until it is released', async () => {
     const { h, c } = harness()
     c.started('t1')

@@ -241,6 +241,23 @@ export class RestartCoordinator {
     return true
   }
 
+  /**
+   * the restart of this tab's state did not start the chat (the tab was busy, the restart was refused or failed): the card says
+   * Restart again, with the changes it was for. A state that `started` has replaced is left alone.
+   */
+  restartSettled(tab: string): void {
+    const s = this.states.get(tab)
+    if (s === undefined || !s.restarting) return
+    s.restarting = false
+    s.auto = false
+    if (s.pending.length === 0) {
+      s.mode = null
+      this.setCard(tab, s, null)
+      return
+    }
+    this.setMode(tab, s, 'manual')
+  }
+
   hold(tab: string): void {
     this.holds.set(tab, (this.holds.get(tab) ?? 0) + 1)
   }
@@ -345,8 +362,8 @@ export class RestartCoordinator {
     this.clearTimer(s)
     s.restarting = true
     this.setMode(tab, s, 'restarting')
+    // the pending changes stay until the chat starts or the restart is settled: the card of a restart that did not start says them
     s.owed = union(s.owed, s.pending)
-    s.pending = []
     this.d.restart(tab)
   }
 
