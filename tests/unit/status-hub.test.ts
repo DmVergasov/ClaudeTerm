@@ -234,13 +234,15 @@ describe('StatusHub.resetTab (fix 1, I3)', () => {
 })
 
 describe('StatusHub.continuesAt', () => {
-  it('a tab waiting to go on after a usage limit says when, and stops saying it when the wait ends; each change is sent once', () => {
+  it('a tab waiting to go on after a usage limit says the reset and when Claude goes on, and stops saying it when the wait ends; each change is sent once', () => {
     const { hub, changes } = makeHub()
-    hub.continuesAt(TAB, 1_800_000_000_000)
-    hub.continuesAt(TAB, 1_800_000_000_000)
-    expect(hub.get(TAB).continuesAt).toBe(1_800_000_000_000)
+    const wait = { resetsAt: 1_800_000_000_000, goesOnAt: 1_800_000_060_000 }
+    hub.continuesAt(TAB, wait)
+    hub.continuesAt(TAB, { ...wait })
+    expect(hub.get(TAB)).toMatchObject({ continuesAt: wait.resetsAt, goesOnAt: wait.goesOnAt })
     hub.continuesAt(TAB, null)
     expect(hub.get(TAB).continuesAt).toBeUndefined()
+    expect(hub.get(TAB).goesOnAt).toBeUndefined()
     expect(changes).toEqual([TAB, TAB])
   })
 })

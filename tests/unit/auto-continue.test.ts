@@ -12,6 +12,8 @@ function setup(enabled = true) {
   const asked: string[] = []
   const logs: string[] = []
   const waits: string[] = []
+  /** when each wait said Claude goes on */
+  const goesOn: number[] = []
   const ac = new AutoContinue({
     enabled: () => state.enabled,
     promptState: async (tabId) => {
@@ -25,10 +27,13 @@ function setup(enabled = true) {
       enabled: () => state.afterLimit,
       resetsAt: () => state.resetsAt,
       now: () => Date.now(),
-      waiting: (tabId, at) => waits.push(`${tabId}:${at ?? 'none'}`)
+      waiting: (tabId, wait) => {
+        waits.push(`${tabId}:${wait?.resetsAt ?? 'none'}`)
+        if (wait) goesOn.push(wait.goesOnAt)
+      }
     }
   })
-  return { ac, writes, notified, asked, logs, state, waits }
+  return { ac, writes, notified, asked, logs, state, waits, goesOn }
 }
 
 /** the text, then Enter on its own */
@@ -253,11 +258,13 @@ describe('AutoContinue after a usage limit', () => {
   const HOUR = 60 * 60 * 1000
 
   it('a turn the usage limit stopped goes on with its own nudge once the limit has reset, and nobody is called meanwhile', async () => {
-    const { ac, writes, notified, state, waits } = setup(false)
+    const { ac, writes, notified, state, waits, goesOn } = setup(false)
     state.resetsAt = Date.now() + 2 * HOUR
     // claude.autoContinue (a cut-off response) is off: the limit has a setting of its own
     expect(ac.failed('t1', LIMIT_ERROR)).toBe(true)
     expect(waits).toEqual([`t1:${state.resetsAt}`])
+    // the wait says when Claude goes on: the margin after the reset
+    expect(goesOn).toEqual([state.resetsAt! + LIMIT_MARGIN_MS])
     await vi.advanceTimersByTimeAsync(2 * HOUR + LIMIT_MARGIN_MS - 1)
     expect(writes).toEqual([])
     await runAll()

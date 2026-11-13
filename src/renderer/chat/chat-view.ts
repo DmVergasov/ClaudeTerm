@@ -8,6 +8,7 @@ import { renderItem, streamText, type ItemCallbacks } from './chat-items'
 import { focusCard, renderCard, waitingCard } from './chat-cards'
 import { elapsedText, fillAgentsCard, setSettled, stepKeep, tickAgentTimes, updateSteps, type StepKeep } from './chat-steps'
 import { chatPalette } from '../themes'
+import { countdown, resetClock } from '../limit-meters'
 import './chat.css'
 import type { ITheme } from '@xterm/xterm'
 
@@ -138,6 +139,10 @@ export class ChatView {
   private frame: { raf: number; timer: ReturnType<typeof setTimeout> } | null = null
   /** the elapsed time of the working line ticks while it shows */
   private clock: ReturnType<typeof setInterval> | null = null
+  /** a turn the usage limit stopped: when (ms) Claude goes on by itself after the reset; null when the chat does not wait */
+  private limitWait: number | null = null
+  /** the working line says when Claude goes on after the usage limit */
+  private waitShown = false
   /** the column stays at its bottom while the scroll area or the column changes size: the composer grows, the window resizes */
   private readonly resize = new ResizeObserver(() => {
     // a plan card is at most half the conversation's height
@@ -989,10 +994,12 @@ export class ChatView {
     if (!this.visible) return
     const turn = this.state.turn
     const activity = this.state.activity
-    this.working.hidden = turn === 'idle' && activity === undefined
+    this.waitShown = this.waitsForLimit()
+    this.working.hidden = turn === 'idle' && activity === undefined && !this.waitShown
     this.verb.textContent = activity?.kind === 'compacting' ? 'Compacting conversation'
       : activity?.kind === 'restarting' ? 'Restarting Claude Code'
-        : turn === 'waiting' ? 'Waiting for you' : 'Working'
+        : this.waitShown ? `Claude goes on by itself at ${resetClock(this.limitWait!, Date.now())}`
+          : turn === 'waiting' ? 'Waiting for you' : 'Working'
     this.verb.classList.toggle('chat-shimmer', activity !== undefined)
     this.activityBar.hidden = activity === undefined
     // Esc interrupts a running turn only: not while Claude waits for the user, nor during an idle compaction
@@ -1003,8 +1010,29 @@ export class ChatView {
     this.settle()
   }
 
+  /**
+   * A turn the usage limit stopped (`goesOnAt`, ms: when Claude goes on by itself after the reset), or no wait (null): while
+   * the chat is idle, its working line says when Claude goes on and counts down to it
+   */
+  setLimitWait(goesOnAt: number | null): void {
+    if (goesOnAt === this.limitWait) return
+    this.limitWait = goesOnAt
+    this.showState()
+  }
+
+  /** the chat is idle and waits for Claude to go on by itself after the usage limit */
+  private waitsForLimit(): boolean {
+    return this.limitWait !== null && this.limitWait > Date.now() && this.state.turn === 'idle' && this.state.activity === undefined
+  }
+
   /** the elapsed time of the line: from the start of its activity, else of the turn; shown only while there is one that started */
   private tickElapsed(): void {
+    if (this.waitShown) {
+      this.elapsedSep.hidden = false
+      this.elapsed.hidden = false
+      this.elapsed.textContent = `in ${countdown(this.limitWait! - Date.now())}`
+      return
+    }
     const started = this.state.activity?.since ?? (this.state.turn === 'idle' ? null : this.state.turnStartedAt)
     const shown = started !== null
     this.elapsedSep.hidden = !shown
@@ -1015,12 +1043,14 @@ export class ChatView {
   /** the elapsed time ticks once a second while the chat is shown and a turn runs, and so do the times of the agents running in the dock, which outlive their turn */
   private syncClock(): void {
     const agents = this.dockOpen && this.dockRows.some((agent) => agent.state === 'running')
-    const run = this.visible && (this.state.turn !== 'idle' || this.state.activity !== undefined || agents)
+    const run = this.visible && (this.state.turn !== 'idle' || this.state.activity !== undefined || agents || this.waitShown)
     if (run && this.clock === null) {
       // a chat shown again catches up at once
       tickAgentTimes(this.dock)
       this.clock = setInterval(() => {
-        this.tickElapsed()
+        // the moment Claude was to go on has come: the line goes, unless Claude Code's own news came first
+        if (this.waitShown && !this.waitsForLimit()) this.showState()
+        else this.tickElapsed()
         tickAgentTimes(this.dock)
       }, 1000)
     }

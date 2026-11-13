@@ -96,11 +96,20 @@ describe('limitMeters', () => {
   it('the meter of the reset the tab waits for says Claude goes on by itself after it; the other one does not', () => {
     const week = new Date(2026, 9, 9, 14, 0).getTime()
     const both = update({ fiveHour: { usedPct: 100, resetsAt: RESET / 1000 }, sevenDay: { usedPct: 100, resetsAt: week / 1000 } })
-    const [five, weekly] = limitMeters({ ...both, continuesAt: week }, NOW, true)
-    expect(weekly!.title).toBe('resets Fri 9 Oct, 14:00, in 3 d 18 h\nused up\nClaude goes on by itself a minute after the reset (Settings → Claude Code)')
+    const [five, weekly] = limitMeters({ ...both, continuesAt: week, goesOnAt: week + 60_000 }, NOW, true)
+    expect(weekly!.title).toBe('resets Fri 9 Oct, 14:00, in 3 d 18 h\nused up\nClaude goes on by itself at Fri 14:01 (Settings → Claude Code)')
     expect(five!.title).toBe('resets at 21:40, in 2 h\nused up')
     // no wait, no such line
     expect(limitMeters(both, NOW, true).map((m) => m.title).join('\n')).not.toContain('goes on')
+  })
+
+  it('after the reset the tab waits for, the meter counts down to the moment Claude goes on, then shows its clock again', () => {
+    const waiting = { ...update({ fiveHour: { usedPct: 100, resetsAt: RESET / 1000 } }), continuesAt: RESET, goesOnAt: RESET + 60_000 }
+    expect(limitMeters(waiting, RESET - 42_000, true)[0]).toMatchObject({ reset: 'in 42s', counting: true })
+    const after = limitMeters(waiting, RESET + 15_000, true)[0]!
+    expect(after).toMatchObject({ reset: 'goes on in 45s', counting: true })
+    expect(after.title).toContain('Claude goes on by itself at 21:41')
+    expect(limitMeters(waiting, RESET + 61_000, true)[0]).toMatchObject({ reset: '21:40', counting: false })
   })
 
   it('a used-up limit whose reset has passed shows its clock again and stops counting', () => {

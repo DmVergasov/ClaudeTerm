@@ -473,10 +473,16 @@ test('a turn the usage limit stopped: the meter of that limit counts down to its
     await expect(reset).toBeVisible()
     await expect(reset).toHaveText(/^in \d+s$/)
     await expect(meter).toHaveClass(/\bcounting\b/)
-    await expect(meter).toHaveAttribute('title', /Claude goes on by itself a minute after the reset/)
+    await expect(meter).toHaveAttribute('title', /Claude goes on by itself at \d{2}:\d{2} /)
     const left = async (): Promise<number> => Number(/^in (\d+)s$/.exec((await reset.textContent()) ?? '')?.[1] ?? NaN)
     const first = await left()
     await expect.poll(left).toBeLessThan(first)
+    // the chat says it too, under the conversation, and counts down to it
+    const working = page.locator('.chat-host:visible .chat-working')
+    await expect(working).toBeVisible()
+    await expect(working.locator('.chat-verb')).toHaveText(/^Claude goes on by itself at \d{2}:\d{2}$/)
+    await expect(working.locator('.chat-elapsed')).toHaveText(/^in \d+s$/)
+    await expect(working.locator('.chat-hint')).toBeHidden()
     // the status bar has no countdown of its own
     await expect(page.locator('#statusbar')).not.toContainText('resets in')
     // at the reset Claude is told to go on, and does; the meter shows its clock again
@@ -484,6 +490,7 @@ test('a turn the usage limit stopped: the meter of that limit counts down to its
     await expect(page.locator('.chat-host:visible')).toContainText('Going on with the work.')
     await expect(reset).toHaveText(/^\d{2}:\d{2}$/)
     await expect(meter).not.toHaveClass(/\bcounting\b/)
+    await expect(working).toBeHidden()
   } finally {
     await app.close()
   }

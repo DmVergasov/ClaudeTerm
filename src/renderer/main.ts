@@ -1378,6 +1378,8 @@ async function boot(): Promise<void> {
   void ct.getUpdateState().then((s) => updateBanner.update(s))
   ct.onStatus((u) => {
     statusUpdates.set(u.tabId, u)
+    // a turn the usage limit stopped: the chat says when Claude goes on by itself
+    tabs.get(u.tabId)?.chat?.setLimitWait(u.goesOnAt ?? null)
     if (u.tabId === activeId) renderStatus(u.tabId)
   })
   ct.onPlan((u) => {

@@ -11,6 +11,7 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 ### Changes
 
 - In a chat question where you can check several answers, what you type in the box is added to the answers you checked, instead of clearing them.
+- When a usage limit stops Claude, the chat says when Claude goes on by itself and counts down to it, and the limit's meter at the top of the window counts down through the minute after the reset too, instead of standing on the reset's time. A message you send before then takes over from it.
 
 ### Fixes
 

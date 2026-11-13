@@ -207,6 +207,8 @@ export interface StatusUpdate {
   background: BackgroundTask[]
   /** the reset time (ms) of the usage limit that stopped the tab's turn, while Claude waits for it to go on by itself */
   continuesAt?: number | null
+  /** when (ms) Claude goes on by itself after that reset, with its margin; set with continuesAt */
+  goesOnAt?: number | null
 }
 
 export interface PlanUpdate {

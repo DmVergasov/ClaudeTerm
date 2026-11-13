@@ -1,6 +1,7 @@
 import type { StatusUpdate } from '../shared/ipc'
 import type { StatusMessage, SubagentMessage } from '../shared/protocol'
 import type { AgentStatus, BackgroundTask, MainStatus } from '../shared/types'
+import type { LimitWait } from './auto-continue'
 import type { AgentMeta, AgentModelInfo } from './transcript-agent-info'
 
 export interface StatusHubDeps {
@@ -24,8 +25,8 @@ interface TabState {
   retired: Set<string>
   /** the background work still running when the last turn ended */
   background: BackgroundTask[]
-  /** the reset time (ms) of the usage limit the tab's turn stopped on, while Claude waits to go on after it */
-  continuesAt: number | null
+  /** the usage limit the tab's turn stopped on, while Claude waits to go on after its reset */
+  wait: LimitWait | null
 }
 
 export class StatusHub {
@@ -152,25 +153,25 @@ export class StatusHub {
     this.deps.onChange(tabId)
   }
 
-  /** the tab's turn stopped on a usage limit, and Claude goes on after its reset (`at`, ms); null: it no longer waits */
-  continuesAt(tabId: string, at: number | null): void {
+  /** the tab's turn stopped on a usage limit, and Claude goes on after its reset (`wait`); null: it no longer waits */
+  continuesAt(tabId: string, wait: LimitWait | null): void {
     const t = this.tab(tabId)
-    if (t.continuesAt === at) return
-    t.continuesAt = at
+    if (t.wait?.resetsAt === wait?.resetsAt && t.wait?.goesOnAt === wait?.goesOnAt) return
+    t.wait = wait
     this.deps.onChange(tabId)
   }
 
   get(tabId: string): StatusUpdate {
     const t = this.tabs.get(tabId)
     const agents = t ? [...t.agents.values()].map(({ agentId, type, description, model, effort, startedAt }) => ({ agentId, type, description, model, effort, startedAt })) : []
-    const waits = t !== undefined && t.continuesAt !== null ? { continuesAt: t.continuesAt } : {}
+    const waits = t?.wait ? { continuesAt: t.wait.resetsAt, goesOnAt: t.wait.goesOnAt } : {}
     return { tabId, main: t?.main ?? null, agents, background: t ? [...t.background] : [], ...waits }
   }
 
   private tab(tabId: string): TabState {
     let t = this.tabs.get(tabId)
     if (!t) {
-      t = { sessionId: null, main: null, agents: new Map(), early: new Map(), retired: new Set(), background: [], continuesAt: null }
+      t = { sessionId: null, main: null, agents: new Map(), early: new Map(), retired: new Set(), background: [], wait: null }
       this.tabs.set(tabId, t)
     }
     return t

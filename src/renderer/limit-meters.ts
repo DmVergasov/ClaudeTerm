@@ -42,17 +42,20 @@ export function resetClock(resetMs: number, now: number): string {
 
 /**
  * a usage limit's meter: its color, forecast and bar from the pace it is spent at; with `paced` off (claude.limitPace),
- * no bar and no forecast, and the color from the fixed 70% and 90%. A used-up limit counts down to its reset, and says when
- * Claude goes on by itself after it (`continuesAt`: the reset the tab waits for, in ms).
+ * no bar and no forecast, and the color from the fixed 70% and 90%. A used-up limit counts down to its reset; the reset the
+ * tab waits for (`wait`) says when Claude goes on by itself after it, and between the reset and that moment the meter counts
+ * down to it.
  */
-function meter(key: LimitMeter['key'], label: LimitMeter['label'], limit: { usedPct: number; resetsAt: number }, windowMs: number, now: number, at: (d: Date) => string, paced: boolean, continuesAt: number | null): LimitMeter {
+function meter(key: LimitMeter['key'], label: LimitMeter['label'], limit: { usedPct: number; resetsAt: number }, windowMs: number, now: number, at: (d: Date) => string, paced: boolean, wait: { resetsAt: number; goesOnAt: number } | null): LimitMeter {
   const reset = limit.resetsAt * 1000
   const lines = [`resets ${at(new Date(reset))}${reset > now ? `, in ${duration(reset - now)}` : ''}`]
   if (limit.usedPct >= 100) lines.push('used up')
-  if (continuesAt === reset && reset > now) lines.push('Claude goes on by itself a minute after the reset (Settings → Claude Code)')
+  const goesOnAt = wait?.resetsAt === reset && wait.goesOnAt > now ? wait.goesOnAt : null
+  if (goesOnAt !== null) lines.push(`Claude goes on by itself at ${resetClock(goesOnAt, now)} (Settings → Claude Code)`)
   const pct = `${Math.round(limit.usedPct)}%`
-  const counting = limit.usedPct >= 100 && reset > now
-  const clock = counting ? `in ${countdown(reset - now)}` : resetClock(reset, now)
+  const toReset = limit.usedPct >= 100 && reset > now
+  const counting = toReset || goesOnAt !== null
+  const clock = toReset ? `in ${countdown(reset - now)}` : goesOnAt !== null ? `goes on in ${countdown(goesOnAt - now)}` : resetClock(reset, now)
   if (!paced) return { key, label, pct, reset: clock, counting, title: lines.join('\n'), level: levelFor(limit.usedPct), bar: null }
   // a limit used up has no forecast
   const pace = limitPace(limit.usedPct, limit.resetsAt, windowMs, now)
@@ -75,8 +78,8 @@ export function limitMeters(u: StatusUpdate | null, now: number, paced: boolean)
   const main = u?.main
   if (!main) return []
   const meters: LimitMeter[] = []
-  const continuesAt = u?.continuesAt ?? null
-  if (main.fiveHour) meters.push(meter('limit', '5-HOUR', main.fiveHour, FIVE_HOURS_MS, now, (d) => `at ${hoursAndMinutes(d)}`, paced, continuesAt))
-  if (main.sevenDay) meters.push(meter('week', 'WEEKLY', main.sevenDay, SEVEN_DAYS_MS, now, dayAndTime, paced, continuesAt))
+  const wait = typeof u?.continuesAt === 'number' && typeof u.goesOnAt === 'number' ? { resetsAt: u.continuesAt, goesOnAt: u.goesOnAt } : null
+  if (main.fiveHour) meters.push(meter('limit', '5-HOUR', main.fiveHour, FIVE_HOURS_MS, now, (d) => `at ${hoursAndMinutes(d)}`, paced, wait))
+  if (main.sevenDay) meters.push(meter('week', 'WEEKLY', main.sevenDay, SEVEN_DAYS_MS, now, dayAndTime, paced, wait))
   return meters
 }

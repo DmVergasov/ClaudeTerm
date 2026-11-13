@@ -1463,7 +1463,7 @@ function bootstrap(): void {
       enabled: () => settings.claude.continueAfterLimit,
       resetsAt: (tabId) => limitResetOf(statusHub.get(tabId).main, Date.now()),
       now: () => Date.now(),
-      waiting: (tabId, at) => statusHub.continuesAt(tabId, at),
+      waiting: (tabId, wait) => statusHub.continuesAt(tabId, wait),
       ...(isTest && process.env.CLAUDETERM_TEST_LIMIT_MARGIN_MS ? { marginMs: Number(process.env.CLAUDETERM_TEST_LIMIT_MARGIN_MS) } : {}),
     },
   })

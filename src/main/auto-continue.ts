@@ -31,6 +31,11 @@ export const LIMIT_ERROR = 'rate_limit'
 export const LIMIT_PROMPT = 'The usage limit has reset. Go on from where you stopped - no apology, no recap.'
 /** after a limit's reset time, before its nudge: the reset is not always in effect at the second it names */
 export const LIMIT_MARGIN_MS = 60_000
+/** a tab waiting for its usage limit: the reset (ms), and when Claude goes on after it, the margin later */
+export interface LimitWait {
+  resetsAt: number
+  goesOnAt: number
+}
 /**
  * When the usage limit that stopped a turn resets, in ms: of the tab's limits used up (100%) whose reset is to come, the later
  * one, as both must have reset for Claude to go on; null when the status shows none
@@ -61,8 +66,8 @@ export interface AutoContinueDeps {
     /** when the tab's used-up limit resets, in ms; null when it is not known */
     resetsAt(tabId: string): number | null
     now(): number
-    /** the tab waits for its limit to reset (the reset time), or no longer does (null) */
-    waiting(tabId: string, at: number | null): void
+    /** the tab waits for its limit to reset (the reset time, and when Claude goes on after it), or no longer does (null) */
+    waiting(tabId: string, wait: LimitWait | null): void
     /** the wait after the reset; LIMIT_MARGIN_MS when not given (a test gives a short one) */
     marginMs?: number
   }
@@ -151,7 +156,7 @@ export class AutoContinue {
       this.endWait(tabId, s)
       void this.type(tabId, s, run, LIMIT_PROMPT)
     }, at - this.d.limit.now() + margin)
-    this.d.limit.waiting(tabId, at)
+    this.d.limit.waiting(tabId, { resetsAt: at, goesOnAt: at + margin })
     this.d.log.info(`continue after the usage limit tab=${tabId} at ${new Date(at + margin).toISOString()}`)
     return true
   }
