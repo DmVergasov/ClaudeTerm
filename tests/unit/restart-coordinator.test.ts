@@ -347,6 +347,74 @@ describe('RestartCoordinator', () => {
     expect(lastCard(h, 't1')).toEqual(shown)
   })
 
+  it('a status that answers null before the limit waits for the next answer, then reports once', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    await flush()
+    h.files.set('t1', cfg([srv('context7')]))
+    c.madeHere('t1')
+    await flush()
+    await vi.advanceTimersByTimeAsync(SETTLE_MS)
+    expect(h.restarts).toEqual(['t1'])
+
+    c.started('t1')
+    await flush()
+    let call = 0
+    const script: (McpLiveServer[] | null)[] = [null, [live('context7', 'connected', ['search', 'fetch'])]]
+    h.servers.set('t1', () => Promise.resolve(script[Math.min(call++, script.length - 1)]))
+    c.ready('t1')
+    await flush()
+    expect(h.reports).toEqual([])
+    await vi.advanceTimersByTimeAsync(REPORT_POLL_MS)
+    expect(h.reports).toEqual([
+      { tab: 't1', divider: { text: 'Session restarted · context7 connected · 2 tools', good: 'context7 connected' }, notices: [] }
+    ])
+  })
+
+  it('a maker comparison superseded by a file-watch comparison still restarts its tab once', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    c.started('t2')
+    await flush()
+    const reads: { tab: string; answer: (config: TabConfig | null) => void }[] = []
+    h.readFn = (tab) => new Promise<TabConfig | null>((resolve) => reads.push({ tab, answer: resolve }))
+    c.madeHere('t1')
+    const sweep = c.compareAll()
+    for (const read of reads) read.answer(cfg([srv('context7')]))
+    await sweep
+    await flush()
+    expect(h.restarts).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(SETTLE_MS - 1)
+    expect(h.restarts).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.restarts).toEqual(['t1'])
+    expect(lastCard(h, 't2')).toEqual({ title: 'New MCP server: context7', text: 'Restart the session to load it — the conversation goes on', action: 'restart' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.restarts).toEqual(['t1'])
+  })
+
+  it('a due restart whose settle time ends during an incomplete comparison restarts once the comparison is over', async () => {
+    const { h, c } = harness()
+    c.started('t1')
+    await flush()
+    h.files.set('t1', cfg([srv('context7')]))
+    c.madeHere('t1')
+    await flush()
+    const sweep = deferred<TabConfig | null>()
+    h.readFn = () => sweep.promise
+    const comparing = c.compareAll()
+    await vi.advanceTimersByTimeAsync(SETTLE_MS)
+    expect(h.restarts).toEqual([])
+
+    sweep.resolve(cfg([], [], ['userConfig']))
+    await comparing
+    await vi.advanceTimersByTimeAsync(RECHECK_MS)
+    expect(h.restarts).toEqual(['t1'])
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(h.restarts).toEqual(['t1'])
+  })
+
   it('reloadView words each kind', () => {
     const one = (kind: Parameters<typeof reloadView>[0][number]['kind'], name: string): Parameters<typeof reloadView>[0] => [{ kind, name }]
     expect(reloadView(one('server-added', 'context7'), 'manual').title).toBe('New MCP server: context7')

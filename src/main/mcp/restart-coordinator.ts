@@ -118,6 +118,8 @@ interface TabState {
   mode: ReloadMode | null
   /** a change made by Claude or in this tab restarts it without asking, until Not now or the next start */
   auto: boolean
+  /** this tab made a change: the next complete comparison of it counts as the maker's, whichever comparison that is */
+  makerDue: boolean
   notNow: boolean
   restarting: boolean
   /** the comparisons in flight: nothing restarts while one is */
@@ -139,6 +141,7 @@ function freshState(owed: ConfigChange[], loadedAt: number): TabState {
     card: null,
     mode: null,
     auto: false,
+    makerDue: false,
     notNow: false,
     restarting: false,
     comparing: 0,
@@ -202,17 +205,19 @@ export class RestartCoordinator {
 
   /** a watched file changed: every tracked tab is compared */
   async compareAll(): Promise<void> {
-    await Promise.all(this.tracked().map((tab) => this.compare(tab, false)))
+    await Promise.all(this.tracked().map((tab) => this.compare(tab)))
   }
 
   /** the turn of the tab ended: compare it, then a restart that waited for the turn may run */
   turnEnded(tab: string): void {
-    void this.compare(tab, false).then(() => this.attempt(tab))
+    void this.compare(tab).then(() => this.attempt(tab))
   }
 
   /** a panel action of this tab changed the configuration: every tab is compared, this one as the maker */
   madeHere(tab: string): void {
-    for (const other of this.tracked()) void this.compare(other, other === tab)
+    const mine = this.states.get(tab)
+    if (mine !== undefined) mine.makerDue = true
+    for (const other of this.tracked()) void this.compare(other)
   }
 
   /** Not now: the card stays, with Restart, until the next start */
@@ -270,7 +275,7 @@ export class RestartCoordinator {
     s.provisional = config === null || config.unreadable.length > 0
   }
 
-  private async compare(tab: string, maker: boolean): Promise<void> {
+  private async compare(tab: string): Promise<void> {
     const first = this.states.get(tab)
     if (first === undefined) return
     const seq = ++first.seq
@@ -281,6 +286,9 @@ export class RestartCoordinator {
     if (s === undefined || s !== first || seq !== s.seq || s.restarting) return
     // an incomplete read changes nothing: the card, the pending changes, the mode and the timers stay as they are
     if (config === null || config.unreadable.length > 0) return
+    // the first complete comparison after the change takes the maker's flag, even when a newer comparison superseded its read
+    const maker = s.makerDue
+    s.makerDue = false
 
     let changes: ConfigChange[] = []
     if (s.loaded === null || s.provisional) {
@@ -314,7 +322,12 @@ export class RestartCoordinator {
   /** an automatic restart that is due runs now when the tab is idle and not held; otherwise the card says auto-later */
   private attempt(tab: string): void {
     const s = this.states.get(tab)
-    if (s === undefined || s.restarting || !s.auto || s.notNow || s.pending.length === 0 || s.comparing > 0) return
+    if (s === undefined || s.restarting || !s.auto || s.notNow || s.pending.length === 0) return
+    // a comparison in flight may answer incomplete or reject and re-arm nothing: the due restart checks again soon
+    if (s.comparing > 0) {
+      this.schedule(tab, s, RECHECK_MS)
+      return
+    }
     if ((this.holds.get(tab) ?? 0) > 0) {
       this.clearTimer(s)
       this.setMode(tab, s, 'auto-later')
@@ -343,13 +356,17 @@ export class RestartCoordinator {
     for (;;) {
       const seen = await this.statusWithin(tab, REPORT_LIMIT_MS - (this.d.now() - startedAt))
       if (!this.reportLive(tab, s, gen)) return
+      const final = this.d.now() - startedAt >= REPORT_LIMIT_MS
+      // a null answer before the limit says nothing about the servers: only an answered list makes the report
       if (seen !== null) servers = seen
-      const made = reportOf(changes, servers, this.d.now() - startedAt >= REPORT_LIMIT_MS)
-      if (made !== null) {
-        s.owed = s.owed.filter((c) => !changes.some((r) => sameChange(r, c)))
-        this.d.report(tab, made.divider, made.notices)
-        this.d.changed(tab)
-        return
+      if (seen !== null || final) {
+        const made = reportOf(changes, servers, final)
+        if (made !== null) {
+          s.owed = s.owed.filter((c) => !changes.some((r) => sameChange(r, c)))
+          this.d.report(tab, made.divider, made.notices)
+          this.d.changed(tab)
+          return
+        }
       }
       await this.pause(s, REPORT_POLL_MS)
       if (!this.reportLive(tab, s, gen)) return
