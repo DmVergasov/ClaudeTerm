@@ -2,10 +2,12 @@ import { win32 } from 'node:path'
 import type { McpLiveServer } from '../chat/chat-engine'
 import type { ChatHub } from '../chat/chat-hub'
 import type { ChatLaunch } from '../chat/claude-spawn'
-import type { McpAction, McpAddRequest, McpEditScope, McpResult, McpScope, McpServerView, McpServersView, McpStatus, McpTransport } from '../../shared/mcp'
+import type { McpAction, McpAddRequest, McpEditScope, McpResult, McpScope, McpServerView, McpServersView, McpStatus, McpTransport, PluginAction, PluginOffer, PluginOption, PluginsView } from '../../shared/mcp'
+import { marketplaceSource } from '../../shared/mcp'
 import { isServerName, maskedConfig, maskText, maskUrl, parseAddInput, secretsOf, targetOf, type McpConfig, type McpOauth } from '../../shared/mcp-add'
 import { isWindowsPath, nativePath, pathKey } from '../path-key'
-import { CliError, cliMessage, LOGIN_TIMEOUT_MS, runClaudeCli, type CliOptions, type CliRun } from './claude-cli'
+import { CliError, cliMessage, jsonOutput, LOGIN_TIMEOUT_MS, runClaudeCli, type CliOptions, type CliRun } from './claude-cli'
+import { parseAvailable, parseCatalog, parseConfigure, parseInstalled, parseMarketplaces, pluginsView, type InstalledEntry, type MarketplaceEntry } from './plugin-cli'
 import { configPaths, readTabConfig, type ConfiguredServer, type ConfigPaths } from './mcp-config'
 
 // The MCP · Plugins panel's backend for servers: what the running session or the configuration files say, the row actions,
@@ -21,6 +23,8 @@ const MAX_TARGET = 2000
 const MAX_TOOLS = 500
 const LIVE_STATUSES = new Set<string>(['connected', 'failed', 'needs-auth', 'pending', 'disabled'])
 const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse', 'ws']
+const LIST_TTL_MS = 30_000
+const NO_LIST = 'Claude Code printed no plugin list'
 
 export interface McpHubDeps {
   launch(): Promise<ChatLaunch>                                   // resolveChatLaunch(settings.claude.command, …)
@@ -39,6 +43,8 @@ export interface McpHubDeps {
 type Tab = { env: Record<string, string>; folder: string }
 type Json = Record<string, unknown>
 type Outcome = { run: CliRun } | { error: string }
+type Catalog = ReturnType<typeof parseCatalog>
+type Lists = { installed: InstalledEntry[]; available: PluginOffer[]; marketplaces: MarketplaceEntry[]; catalogs: Map<string, Catalog> }
 
 export class McpHub {
   private readonly d: McpHubDeps
@@ -46,6 +52,8 @@ export class McpHub {
   private readonly queues = new Map<string, Promise<void>>()
   /** the sign-ins running per tab and server name, so cancel-login and a removed tab can end them */
   private readonly logins = new Map<string, Map<string, AbortController>>()
+  /** the plugin lists of each config folder, kept LIST_TTL_MS; any plugin action drops them */
+  private readonly lists = new Map<string, { at: number; lists: Lists }>()
 
   constructor(d: McpHubDeps) {
     this.d = d
@@ -126,6 +134,36 @@ export class McpHub {
       }
       this.d.changed(tabId, true)
       return { ok: true }
+    })
+  }
+
+  /** the Plugins section of a tab: its config folder's lists, read through the queue and kept LIST_TTL_MS; a failed list is its error */
+  async plugins(tabId: string): Promise<PluginsView | { error: string } | null> {
+    const tab = await this.d.tab(tabId)
+    if (tab === null) return null
+    return this.queued(tab, async () => {
+      const key = this.folderKey(tab)
+      const kept = this.lists.get(key)
+      let lists: Lists
+      if (kept !== undefined && Date.now() - kept.at < LIST_TTL_MS) {
+        lists = kept.lists
+      } else {
+        const read = await this.readLists(tab)
+        if ('error' in read) return read
+        lists = read
+        this.lists.set(key, { at: Date.now(), lists })
+      }
+      return pluginsView(lists.installed, lists.available, lists.marketplaces, lists.catalogs, tab.folder)
+    })
+  }
+
+  /** a plugin or marketplace command, in the queue of the tab's config folder; the lists are read again after it */
+  async pluginAction(tabId: string, a: PluginAction): Promise<McpResult> {
+    const tab = await this.d.tab(tabId)
+    if (tab === null) return fail(NOT_TAB)
+    return this.queued(tab, () => {
+      this.lists.delete(this.folderKey(tab))
+      return this.pluginJob(tabId, tab, a)
     })
   }
 
@@ -227,10 +265,109 @@ export class McpHub {
     }
   }
 
-  /** one configuration command at a time per config folder; the queue key is the folder's pathKey */
-  private queued(tab: Tab, job: () => Promise<McpResult>): Promise<McpResult> {
+  /** a plugin command: the install's options are asked after it, a configure sends its values on stdin */
+  private async pluginJob(tabId: string, tab: Tab, a: PluginAction): Promise<McpResult> {
+    switch (a.kind) {
+      case 'install': {
+        const result = await this.cli(tab, ['plugin', 'install', '--scope', 'user', '--', a.id], { secrets: [] })
+        if ('error' in result) return fail(result.error)
+        // a failed options read leaves none to ask: the plugin is installed either way
+        const asked = await this.cli(tab, ['plugin', 'configure', '--json', '--', a.id], { secrets: [] })
+        const options: PluginOption[] = 'error' in asked ? [] : parseConfigure(jsonOutput(asked.run.stdout))
+        if (options.length > 0) this.d.hold(tabId)
+        this.d.changed(tabId, true)
+        return options.length > 0 ? { ok: true, options } : { ok: true }
+      }
+      case 'configure': {
+        const result = await this.cli(tab, ['plugin', 'configure', '--values-stdin', '--', a.id], {
+          secrets: Object.values(a.values).filter((value) => value !== ''),
+          stdin: JSON.stringify(a.values)
+        })
+        if ('error' in result) return fail(result.error)
+        this.d.release(tabId)
+        this.d.changed(tabId, true)
+        return { ok: true }
+      }
+      case 'configure-later':
+        this.d.release(tabId)
+        return { ok: true }
+      case 'uninstall':
+      case 'enable':
+      case 'disable':
+      case 'update': {
+        const result = await this.cli(tab, ['plugin', a.kind, '--', a.id], { secrets: [] })
+        if ('error' in result) return fail(result.error)
+        this.d.changed(tabId, true)
+        return { ok: true }
+      }
+      case 'marketplace-add':
+        return this.marketplaceAdd(tabId, tab, a.source)
+      case 'marketplace-remove':
+      case 'marketplace-update': {
+        const result = await this.cli(tab, ['plugin', 'marketplace', a.kind === 'marketplace-remove' ? 'remove' : 'update', '--', a.name], { secrets: [] })
+        if ('error' in result) return fail(result.error)
+        this.d.changed(tabId, true)
+        return { ok: true }
+      }
+    }
+  }
+
+  /** the marketplace named by the source: the one the list has after the add and not before it */
+  private async marketplaceAdd(tabId: string, tab: Tab, source: string): Promise<McpResult> {
+    const named = marketplaceSource(source)
+    if (named === null) return fail('Nothing to add: the source is not valid')
+    const before = await this.marketplaceList(tab)
+    if ('error' in before) return fail(before.error)
+    const added = await this.cli(tab, ['plugin', 'marketplace', 'add', '--', named], { secrets: [] })
+    if ('error' in added) return fail(added.error)
+    this.d.changed(tabId, true)
+    const after = await this.marketplaceList(tab)
+    const marketplace = 'error' in after ? undefined : after.markets.find((m) => !before.markets.some((b) => b.name === m.name))?.name
+    return marketplace === undefined ? { ok: true } : { ok: true, marketplace }
+  }
+
+  /** `plugin marketplace list --json` of the tab's config folder: the marketplaces, or the error */
+  private async marketplaceList(tab: Tab): Promise<{ markets: MarketplaceEntry[] } | { error: string }> {
+    const result = await this.cli(tab, ['plugin', 'marketplace', 'list', '--json'], { secrets: [] })
+    if ('error' in result) return result
+    const json = jsonOutput(result.run.stdout)
+    if (json === undefined) return { error: cliMessage(result.run) || NO_LIST }
+    return { markets: parseMarketplaces(json) }
+  }
+
+  /** the installed and available plugins and the marketplaces with their catalogs; a failed list is the error */
+  private async readLists(tab: Tab): Promise<Lists | { error: string }> {
+    const list = await this.cli(tab, ['plugin', 'list', '--json', '--available'], { secrets: [] })
+    if ('error' in list) return list
+    const json = jsonOutput(list.run.stdout)
+    if (json === undefined) return { error: cliMessage(list.run) || NO_LIST }
+    const markets = await this.marketplaceList(tab)
+    if ('error' in markets) return markets
+    const catalogs = new Map<string, Catalog>()
+    for (const market of markets.markets) {
+      if (market.installLocation !== null) catalogs.set(market.name, parseCatalog(await this.catalogOf(market.installLocation)))
+    }
+    return { installed: parseInstalled(json), available: parseAvailable(json), marketplaces: markets.markets, catalogs }
+  }
+
+  /** a marketplace's catalog file, read as the configuration files are; null when it cannot be read */
+  private async catalogOf(installLocation: string): Promise<unknown> {
+    try {
+      return await this.d.readJson((isWindowsPath(installLocation) ? win32 : nativePath).join(installLocation, '.claude-plugin', 'marketplace.json'))
+    } catch {
+      return null
+    }
+  }
+
+  /** the config folder's key: its queue and its plugin lists */
+  private folderKey(tab: Tab): string {
     const dir = tab.env.CLAUDE_CONFIG_DIR || this.d.home
-    const key = pathKey(dir, isWindowsPath(dir) ? win32 : nativePath)
+    return pathKey(dir, isWindowsPath(dir) ? win32 : nativePath)
+  }
+
+  /** one configuration command at a time per config folder; the queue key is the folder's pathKey */
+  private queued<T>(tab: Tab, job: () => Promise<T>): Promise<T> {
+    const key = this.folderKey(tab)
     const run = (this.queues.get(key) ?? Promise.resolve()).then(job)
     const tail = run.then(() => undefined, () => undefined)
     this.queues.set(key, tail)
@@ -241,12 +378,12 @@ export class McpHub {
   }
 
   /** one `claude` call: the answer, or the masked error text. Nothing is logged but the first two arguments and the exit code */
-  private async cli(tab: Tab, args: string[], o: { secrets: string[]; env?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal }): Promise<Outcome> {
+  private async cli(tab: Tab, args: string[], o: { secrets: string[]; env?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; stdin?: string }): Promise<Outcome> {
     const masked = (text: string): string => maskText(text, o.secrets).slice(0, MAX_ERROR)
     try {
       const launch = await this.d.launch()
       if (launch.how === 'none') return { error: launch.reason }
-      const options: CliOptions = { cwd: tab.folder, env: o.env ?? tab.env, timeoutMs: o.timeoutMs, signal: o.signal }
+      const options: CliOptions = { cwd: tab.folder, env: o.env ?? tab.env, timeoutMs: o.timeoutMs, signal: o.signal, stdin: o.stdin }
       const run = await this.d.run(launch, args, options)
       if (run.code === 0) return { run }
       this.d.log.warn(`claude ${args[0]} ${args[1]} failed (${run.code})`)

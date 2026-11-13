@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { McpLiveServer } from '../../src/main/chat/chat-engine'
 import type { ChatLaunch } from '../../src/main/chat/claude-spawn'
 import { CliError, LOGIN_TIMEOUT_MS, type CliOptions, type CliRun } from '../../src/main/mcp/claude-cli'
 import { configPaths, type ConfigPaths } from '../../src/main/mcp/mcp-config'
 import { McpHub } from '../../src/main/mcp/mcp-hub'
+import type { PluginAction } from '../../src/shared/mcp'
 import { MASK } from '../../src/shared/mcp-add'
 
 const HOME = 'C:\\Users\\Dana'
@@ -13,6 +14,11 @@ const TAB = 'tab-1'
 const LAUNCH: ChatLaunch = { how: 'direct', file: 'C:\\Program Files\\Claude\\claude.exe' }
 const NOT_RUNNING = 'Claude Code is not running in this tab'
 const NOT_TAB = 'Not a Claude tab of this computer'
+const PLUGIN = 'ci-watch@acme-tools'
+const MARKET_DIR = 'C:\\Config\\plugins\\marketplaces\\acme-tools'
+const MARKET_FILE = `${MARKET_DIR}\\.claude-plugin\\marketplace.json`
+const LIST = ['plugin', 'list', '--json', '--available']
+const MARKETS = ['plugin', 'marketplace', 'list', '--json']
 
 interface Rec { args: string[]; o: CliOptions }
 type Reply = (args: string[], o: CliOptions) => Promise<CliRun>
@@ -25,14 +31,17 @@ function setup(o: Partial<{
   launch: ChatLaunch
   launchError: string
   openError: string
+  json: Record<string, unknown>   // more files, by their full path
 }> = {}) {
   const paths = configPaths(ENV, HOME, FOLDER)
   const files = new Map<string, unknown>()
   for (const [key, value] of Object.entries(o.files ?? {})) files.set(paths[key as keyof ConfigPaths], value)
+  for (const [file, value] of Object.entries(o.json ?? {})) files.set(file, value)
   const runs: Rec[] = []
   const reconnects: string[] = []
   const toggles: [string, boolean][] = []
   const changed: [string, boolean][] = []
+  const order: string[] = []   // the restart holds, releases and changes, in the order they happen
   const copied: string[] = []
   const opened: string[] = []
   const warns: string[] = []
@@ -60,9 +69,14 @@ function setup(o: Partial<{
     },
     changed: (tab, madeHere) => {
       changed.push([tab, madeHere])
+      order.push(`changed:${tab}:${madeHere}`)
     },
-    hold: () => undefined,
-    release: () => undefined,
+    hold: (tab) => {
+      order.push(`hold:${tab}`)
+    },
+    release: (tab) => {
+      order.push(`release:${tab}`)
+    },
     openPath: async (file) => {
       opened.push(file)
       return o.openError ?? ''
@@ -76,7 +90,7 @@ function setup(o: Partial<{
       }
     }
   })
-  return { hub, runs, reconnects, toggles, changed, copied, opened, warns, paths }
+  return { hub, runs, reconnects, toggles, changed, order, copied, opened, warns, paths }
 }
 
 const live = (over: Partial<McpLiveServer>): McpLiveServer => ({
@@ -338,5 +352,135 @@ describe('McpHub', () => {
 
     expect(await hub.action(TAB, { kind: 'remove', name: 'github', scope: 'user' })).toEqual({ ok: false, error: 'No claude command on PATH' })
     expect(runs).toEqual([])
+  })
+
+  it('plugins runs the two lists once in the tab\'s folder and environment and keeps them 30 s; an action drops them', async () => {
+    const listed = { installed: [{ id: PLUGIN, version: '1.0.0', scope: 'user', enabled: true, mcpServers: { watch: {} }, errors: [] }], available: [] }
+    const markets = [{ name: 'acme-tools', source: 'github', repo: 'acme/tools', installLocation: MARKET_DIR }]
+    const { hub, runs } = setup({
+      reply: async (args) => ({ code: 0, stdout: JSON.stringify(args[1] === 'marketplace' ? markets : listed), stderr: '' }),
+      json: { [MARKET_FILE]: { plugins: [{ name: 'ci-watch', description: 'Follows CI runs and explains what failed.', version: '1.1.0' }] } }
+    })
+    const clock = vi.spyOn(Date, 'now')
+    try {
+      clock.mockReturnValue(1_000_000)
+      expect(await hub.plugins(TAB)).toEqual({
+        installed: [{ id: PLUGIN, name: 'ci-watch', marketplace: 'acme-tools', version: '1.0.0', scope: 'user', enabled: true, update: '1.1.0', description: 'Follows CI runs and explains what failed.', mcpServers: 1, errors: [] }],
+        available: [],
+        marketplaces: [{ name: 'acme-tools', source: 'acme/tools' }]
+      })
+      expect(runs.map((r) => r.args)).toEqual([LIST, MARKETS])
+      expect(runs.every((r) => r.o.cwd === FOLDER && r.o.env === ENV)).toBe(true)
+
+      clock.mockReturnValue(1_029_000)
+      await hub.plugins(TAB)
+      expect(runs).toHaveLength(2)
+
+      clock.mockReturnValue(1_031_000)
+      await hub.plugins(TAB)
+      expect(runs).toHaveLength(4)
+
+      await hub.pluginAction(TAB, { kind: 'enable', id: PLUGIN })
+      await hub.plugins(TAB)
+      expect(runs).toHaveLength(7)
+      expect(runs[4].args).toEqual(['plugin', 'enable', '--', PLUGIN])
+      expect(runs.slice(5).map((r) => r.args)).toEqual([LIST, MARKETS])
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('install reads the plugin\'s options and holds the restart while required ones are unset', async () => {
+    const schema = {
+      token: { type: 'string', title: 'API token', required: true, sensitive: true },
+      region: { type: 'string', title: 'Region', required: false, sensitive: false }
+    }
+    const { hub, runs, order } = setup({
+      reply: async (args) => ({ code: 0, stdout: args.includes('--json') ? JSON.stringify({ schema, configured: [] }) : '', stderr: '' })
+    })
+
+    expect(await hub.pluginAction(TAB, { kind: 'install', id: PLUGIN })).toEqual({
+      ok: true,
+      options: [{ key: 'token', title: 'API token', description: '', sensitive: true }]
+    })
+    expect(runs.map((r) => r.args)).toEqual([
+      ['plugin', 'install', '--scope', 'user', '--', PLUGIN],
+      ['plugin', 'configure', '--json', '--', PLUGIN]
+    ])
+    expect(order).toEqual([`hold:${TAB}`, `changed:${TAB}:true`])
+
+    const configured = setup({
+      reply: async (args) => ({ code: 0, stdout: args.includes('--json') ? JSON.stringify({ schema, configured: ['token'] }) : '', stderr: '' })
+    })
+    expect(await configured.hub.pluginAction(TAB, { kind: 'install', id: PLUGIN })).toEqual({ ok: true })
+    expect(configured.order).toEqual([`changed:${TAB}:true`])
+  })
+
+  it('configure sends the values on stdin, never as arguments, then releases', async () => {
+    const { hub, runs, order } = setup()
+
+    expect(await hub.pluginAction(TAB, { kind: 'configure', id: PLUGIN, values: { token: 'tok-SECRET-42' } })).toEqual({ ok: true })
+    expect(runs[0].args).toEqual(['plugin', 'configure', '--values-stdin', '--', PLUGIN])
+    expect(runs[0].o.stdin).toBe(JSON.stringify({ token: 'tok-SECRET-42' }))
+    expect(runs[0].args.join(' ')).not.toContain('tok-SECRET-42')
+    expect(order).toEqual([`release:${TAB}`, `changed:${TAB}:true`])
+
+    const refused = setup({ reply: async () => ({ code: 1, stdout: '', stderr: 'Invalid token tok-SECRET-42' }) })
+    expect(await refused.hub.pluginAction(TAB, { kind: 'configure', id: PLUGIN, values: { token: 'tok-SECRET-42' } })).toEqual({ ok: false, error: `Invalid token ${MASK}` })
+    expect(refused.order).toEqual([])
+    expect(refused.warns.join(' ')).not.toContain('tok-SECRET-42')
+  })
+
+  it('configure-later releases the restart and runs no command', async () => {
+    const { hub, runs, order } = setup()
+
+    expect(await hub.pluginAction(TAB, { kind: 'configure-later', id: PLUGIN })).toEqual({ ok: true })
+    expect(runs).toEqual([])
+    expect(order).toEqual([`release:${TAB}`])
+  })
+
+  it('marketplace-add takes a GitHub link as owner/repo and names the marketplace it added', async () => {
+    let added = false
+    const { hub, runs, order } = setup({
+      reply: async (args) => {
+        if (args[2] === 'add') added = true
+        const markets = added ? [{ name: 'acme-tools', source: 'github', repo: 'acme/tools', installLocation: MARKET_DIR }] : []
+        return { code: 0, stdout: JSON.stringify(markets), stderr: '' }
+      }
+    })
+
+    expect(await hub.pluginAction(TAB, { kind: 'marketplace-add', source: 'https://github.com/acme/tools' })).toEqual({ ok: true, marketplace: 'acme-tools' })
+    expect(runs.map((r) => r.args)).toEqual([MARKETS, ['plugin', 'marketplace', 'add', '--', 'acme/tools'], MARKETS])
+    expect(order).toEqual([`changed:${TAB}:true`])
+  })
+
+  it('enable, disable, update, uninstall and the marketplace commands run and mark the tab as the maker', async () => {
+    const { hub, runs, changed } = setup()
+    const actions: [PluginAction, string[]][] = [
+      [{ kind: 'enable', id: PLUGIN }, ['plugin', 'enable', '--', PLUGIN]],
+      [{ kind: 'disable', id: PLUGIN }, ['plugin', 'disable', '--', PLUGIN]],
+      [{ kind: 'update', id: PLUGIN }, ['plugin', 'update', '--', PLUGIN]],
+      [{ kind: 'uninstall', id: PLUGIN }, ['plugin', 'uninstall', '--', PLUGIN]],
+      [{ kind: 'marketplace-update', name: 'acme-tools' }, ['plugin', 'marketplace', 'update', '--', 'acme-tools']],
+      [{ kind: 'marketplace-remove', name: 'acme-tools' }, ['plugin', 'marketplace', 'remove', '--', 'acme-tools']]
+    ]
+
+    for (const [action] of actions) expect(await hub.pluginAction(TAB, action)).toEqual({ ok: true })
+    expect(runs.map((r) => r.args)).toEqual(actions.map(([, args]) => args))
+    expect(changed).toEqual(actions.map(() => [TAB, true]))
+  })
+
+  it('a failed command answers its message, and a failed or unreadable list is answered and not kept', async () => {
+    const failing = setup({ reply: async () => ({ code: 1, stdout: '', stderr: 'Error: plugin is not installed' }) })
+    expect(await failing.hub.pluginAction(TAB, { kind: 'uninstall', id: PLUGIN })).toEqual({ ok: false, error: 'Error: plugin is not installed' })
+    expect(await failing.hub.pluginAction(TAB, { kind: 'install', id: PLUGIN })).toEqual({ ok: false, error: 'Error: plugin is not installed' })
+    expect(failing.changed).toEqual([])
+    expect(await failing.hub.plugins(TAB)).toEqual({ error: 'Error: plugin is not installed' })
+    const before = failing.runs.length
+    expect(await failing.hub.plugins(TAB)).toEqual({ error: 'Error: plugin is not installed' })
+    expect(failing.runs.length).toBe(before + 1)
+
+    const garbled = setup({ reply: async () => ({ code: 0, stdout: 'not json', stderr: '' }) })
+    expect(await garbled.hub.plugins(TAB)).toEqual({ error: 'not json' })
   })
 })

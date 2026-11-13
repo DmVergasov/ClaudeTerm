@@ -111,3 +111,44 @@ test('an unknown tab gets null', async () => {
     await app.close()
   }
 })
+
+const ACME_TOOLS = [{
+  name: 'acme-tools',
+  source: 'acme/tools',
+  plugins: [{ name: 'ci-watch', description: 'Follows CI runs and explains what failed.', version: '1.0.0', installs: 812, options: [{ key: 'token', title: 'API token', required: true, sensitive: true }] }]
+}]
+
+test('ct.mcpPluginAction adds a marketplace from a GitHub link and ct.mcpPlugins lists its plugins', async () => {
+  const { app, page, tabId } = await launchChatTab({ turns: {}, marketplaces: ACME_TOOLS })
+  try {
+    await chatReady(page)
+    const added = await page.evaluate((id) => window.ct.mcpPluginAction(id, { kind: 'marketplace-add', source: 'https://github.com/acme/tools' }), tabId)
+    expect(added).toEqual({ ok: true, marketplace: 'acme-tools' })
+    const view = await page.evaluate((id) => window.ct.mcpPlugins(id), tabId)
+    expect(view).toMatchObject({
+      marketplaces: [{ name: 'acme-tools', source: 'acme/tools' }],
+      available: [{ id: 'ci-watch@acme-tools', installs: 812 }]
+    })
+  } finally {
+    await app.close()
+  }
+})
+
+test('an install with a required option returns it, and configure sends the value through stdin', async () => {
+  const { app, page, tabId, log } = await launchChatTab({ turns: {}, marketplaces: ACME_TOOLS })
+  try {
+    await chatReady(page)
+    await page.evaluate((id) => window.ct.mcpPluginAction(id, { kind: 'marketplace-add', source: 'acme/tools' }), tabId)
+    const installed = await page.evaluate((id) => window.ct.mcpPluginAction(id, { kind: 'install', id: 'ci-watch@acme-tools' }), tabId)
+    expect(installed).toEqual({ ok: true, options: [{ key: 'token', title: 'API token', description: '', sensitive: true }] })
+    const configured = await page.evaluate((id) => window.ct.mcpPluginAction(id, { kind: 'configure', id: 'ci-watch@acme-tools', values: { token: 'tok-E2E-777' } }), tabId)
+    expect(configured).toEqual({ ok: true })
+    const last = cliCalls(log).at(-1)!
+    expect(last.argv).toEqual(['plugin', 'configure', '--values-stdin', '--', 'ci-watch@acme-tools'])
+    expect(last.stdinKeys).toEqual(['token'])
+    expect(last.argv.some((arg) => arg.includes('tok-E2E-777'))).toBe(false)
+    expect(JSON.stringify(log())).not.toContain('tok-E2E-777')
+  } finally {
+    await app.close()
+  }
+})

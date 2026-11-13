@@ -126,11 +126,11 @@ import { createUpdateBackend } from './update-backend'
 import { cleanupImageCache, findTranscript, TranscriptFeed } from './transcript-feed'
 import { showWindow } from './window-show'
 import { loadWindowState, trackWindowState } from './window-state'
-import type { McpResult, McpServersView } from '../shared/mcp'
+import type { McpResult, McpServersView, PluginsView } from '../shared/mcp'
 import { jsonFileCache } from './mcp/mcp-config'
 import { runClaudeCli } from './mcp/claude-cli'
 import { McpHub } from './mcp/mcp-hub'
-import { isMcpAction, isMcpAddRequest } from './ipc-guards'
+import { isMcpAction, isMcpAddRequest, isPluginAction } from './ipc-guards'
 
 const dataDir = initDataDir()
 const log = createLogger(join(dataDir, 'logs'))
@@ -2464,6 +2464,8 @@ function bootstrap(): void {
   ipcMain.handle(IPC.mcpServers, (_e, tabId: unknown): Promise<McpServersView | null> => (isLocalClaudeTab(tabId) ? mcpHub.servers(tabId) : Promise.resolve(null)))
   ipcMain.handle(IPC.mcpAction, (_e, tabId: unknown, a: unknown): Promise<McpResult> => (isLocalClaudeTab(tabId) && isMcpAction(a) ? mcpHub.action(tabId, a) : Promise.resolve(notClaudeTab)))
   ipcMain.handle(IPC.mcpAdd, (_e, tabId: unknown, req: unknown): Promise<McpResult> => (isLocalClaudeTab(tabId) && isMcpAddRequest(req) ? mcpHub.add(tabId, req) : Promise.resolve(notClaudeTab)))
+  ipcMain.handle(IPC.mcpPlugins, (_e, tabId: unknown): Promise<PluginsView | { error: string } | null> => (isLocalClaudeTab(tabId) ? mcpHub.plugins(tabId) : Promise.resolve(null)))
+  ipcMain.handle(IPC.mcpPluginAction, (_e, tabId: unknown, a: unknown): Promise<McpResult> => (isLocalClaudeTab(tabId) && isPluginAction(a) ? mcpHub.pluginAction(tabId, a) : Promise.resolve(notClaudeTab)))
   // the files a chat's composer attaches: an image joins the Media panel, and the files are allowed for the tab's messages
   const attachFilesOf = (tabId: string, paths: string[]): Promise<ChatAttachment[]> => attachFiles(tabId, paths, {
     stat: attachDeps.stat,
