@@ -48,6 +48,7 @@ function isAttachment(v: unknown): boolean {
 
 function isSubagent(v: unknown): boolean {
   return isObj(v) && isId(v.id) && str(v.description, SUBJECT_CAP) && str(v.type, NAME_CAP) && oneOf(CALL_STATES, v.state) && opt(v.ms, isMs)
+    && (v.model === undefined || isId(v.model)) && (v.effort === undefined || isId(v.effort)) && (v.context === undefined || isCount(v.context))
 }
 
 function isCall(v: unknown): v is ChatToolCall {

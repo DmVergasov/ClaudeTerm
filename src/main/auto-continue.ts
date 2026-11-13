@@ -1,5 +1,6 @@
 import type { PromptState } from '../shared/ipc'
 import { MAX_AUTO_CONTINUES } from '../shared/settings-keys'
+import type { MainStatus } from '../shared/types'
 import type { Logger } from './log'
 
 /*
@@ -24,6 +25,22 @@ export const RESUME_PROMPT = 'Your previous turn was cut off when the terminal c
 export const BACKGROUND_PROMPT = 'The terminal closed while work you had left running in the background (agents, background commands) was still going, and it stopped with the terminal. Check what of it finished, start again what did not, and go on - no apology, no recap.'
 /** what ClaudeTerm's closing cut off in a restored tab: a turn under way, or the background work a finished turn left */
 export type RestoreCut = 'turn' | 'background'
+/** the StopFailure error of a turn the usage limit stopped (Claude Code's rate_limit) */
+export const LIMIT_ERROR = 'rate_limit'
+/** typed into a tab whose turn the usage limit stopped, once the limit has reset */
+export const LIMIT_PROMPT = 'The usage limit has reset. Go on from where you stopped - no apology, no recap.'
+/** after a limit's reset time, before its nudge: the reset is not always in effect at the second it names */
+export const LIMIT_MARGIN_MS = 60_000
+/**
+ * When the usage limit that stopped a turn resets, in ms: of the tab's limits used up (100%) whose reset is to come, the later
+ * one, as both must have reset for Claude to go on; null when the status shows none
+ */
+export function limitResetOf(main: Pick<MainStatus, 'fiveHour' | 'sevenDay'> | null, now: number): number | null {
+  const resets = [main?.fiveHour, main?.sevenDay]
+    .filter((l): l is { usedPct: number; resetsAt: number } => l !== null && l !== undefined && l.usedPct >= 100 && l.resetsAt * 1000 > now)
+    .map((l) => l.resetsAt * 1000)
+  return resets.length === 0 ? null : Math.max(...resets)
+}
 /** time for Claude Code to take input again, and for a dropped connection to come back */
 export const CONTINUE_DELAY_MS = 5000
 /** Enter goes on its own after the text, as Send does: in the same write it would be part of a paste */
@@ -38,6 +55,17 @@ export interface AutoContinueDeps {
   /** a continue given up when it was due: the tab gives the signals of a finished answer after all */
   notify(tabId: string): void
   log: Pick<Logger, 'info'>
+  /** a turn the usage limit stopped: it goes on once the limit has reset (claude.continueAfterLimit) */
+  limit: {
+    enabled(): boolean
+    /** when the tab's used-up limit resets, in ms; null when it is not known */
+    resetsAt(tabId: string): number | null
+    now(): number
+    /** the tab waits for its limit to reset (the reset time), or no longer does (null) */
+    waiting(tabId: string, at: number | null): void
+    /** the wait after the reset; LIMIT_MARGIN_MS when not given (a test gives a short one) */
+    marginMs?: number
+  }
 }
 
 interface TabState {
@@ -46,6 +74,8 @@ interface TabState {
   timer: ReturnType<typeof setTimeout> | null
   /** bumped by whatever stops a continue under way, so one still waiting for the window's answer knows */
   run: number
+  /** the reset time the tab waits for, while it waits for its usage limit to reset */
+  limitAt: number | null
 }
 
 export class AutoContinue {
@@ -55,7 +85,7 @@ export class AutoContinue {
 
   /** UserPromptSubmit: a turn that starts during the pause (a queued message Claude Code sent) goes on without the nudge */
   turnStarted(tabId: string): void {
-    this.cancel(this.state(tabId))
+    this.cancel(tabId, this.state(tabId))
   }
 
   /** Stop */
@@ -67,16 +97,17 @@ export class AutoContinue {
   userInput(tabId: string): void {
     const s = this.state(tabId)
     s.tries = 0
-    this.cancel(s)
+    this.cancel(tabId, s)
   }
 
   /** StopFailure. True when the turn will be continued, or given up later with notify: nobody needs to be called now. */
   failed(tabId: string, error: string): boolean {
+    if (error === LIMIT_ERROR) return this.afterLimit(tabId)
     if (!this.d.enabled() || error !== CUT_OFF_ERROR) return false
     const s = this.state(tabId)
     if (s.tries >= MAX_AUTO_CONTINUES) return this.skip(tabId, `${MAX_AUTO_CONTINUES} continues in a row`)
     s.tries++
-    this.cancel(s)
+    this.cancel(tabId, s)
     const run = s.run
     s.timer = setTimeout(() => {
       s.timer = null
@@ -93,7 +124,7 @@ export class AutoContinue {
    */
   resumed(tabId: string, cut: RestoreCut = 'turn'): void {
     const s = this.state(tabId)
-    this.cancel(s)
+    this.cancel(tabId, s)
     const run = s.run
     s.timer = setTimeout(() => {
       s.timer = null
@@ -102,10 +133,33 @@ export class AutoContinue {
     this.d.log.info(`continue after restore tab=${tabId} (${cut}) in ${CONTINUE_DELAY_MS} ms`)
   }
 
+  /**
+   * A turn the usage limit stopped: the tab waits for the limit to reset, and a little after it Claude goes on, as a cut-off
+   * response does. Without the setting, or a reset time still to come, the tab calls the user as before.
+   */
+  private afterLimit(tabId: string): boolean {
+    const at = this.d.limit.resetsAt(tabId)
+    if (!this.d.limit.enabled()) return this.skip(tabId, 'claude.continueAfterLimit is off')
+    if (at === null || at <= this.d.limit.now()) return this.skip(tabId, 'no reset time of the limit to wait for')
+    const s = this.state(tabId)
+    this.cancel(tabId, s)
+    const run = s.run
+    s.limitAt = at
+    const margin = this.d.limit.marginMs ?? LIMIT_MARGIN_MS
+    s.timer = setTimeout(() => {
+      s.timer = null
+      this.endWait(tabId, s)
+      void this.type(tabId, s, run, LIMIT_PROMPT)
+    }, at - this.d.limit.now() + margin)
+    this.d.limit.waiting(tabId, at)
+    this.d.log.info(`continue after the usage limit tab=${tabId} at ${new Date(at + margin).toISOString()}`)
+    return true
+  }
+
   /** the tab closed or Claude left it */
   forget(tabId: string): void {
     const s = this.tabs.get(tabId)
-    if (s) this.cancel(s)
+    if (s) this.cancel(tabId, s)
     this.tabs.delete(tabId)
   }
 
@@ -130,16 +184,24 @@ export class AutoContinue {
     return false
   }
 
-  private cancel(s: TabState): void {
+  private cancel(tabId: string, s: TabState): void {
     if (s.timer) clearTimeout(s.timer)
     s.timer = null
     s.run++
+    this.endWait(tabId, s)
+  }
+
+  /** a wait for the limit's reset is over: it came, or something ended the wait */
+  private endWait(tabId: string, s: TabState): void {
+    if (s.limitAt === null) return
+    s.limitAt = null
+    this.d.limit.waiting(tabId, null)
   }
 
   private state(tabId: string): TabState {
     let s = this.tabs.get(tabId)
     if (!s) {
-      s = { tries: 0, timer: null, run: 0 }
+      s = { tries: 0, timer: null, run: 0, limitAt: null }
       this.tabs.set(tabId, s)
     }
     return s

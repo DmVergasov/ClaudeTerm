@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { CONTINUE_PROMPT } from '../../src/main/auto-continue'
+import { CONTINUE_PROMPT, LIMIT_PROMPT } from '../../src/main/auto-continue'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { launchChatTab, sendMessage, userMessages } from './chat-helpers'
 
@@ -392,6 +392,43 @@ test('a task stopped with ✕ leaves the list and the count once Claude Code tak
     await expect(page.locator('.status-tasks .status-task', { hasText: 'Run the e2e suite' })).toHaveCount(0)
     await expect(page.locator(`${STATUS_BACKGROUND} .status-text`)).toHaveText('1 in background: Watch the log')
     expect(stops()).toEqual(['b1'])
+  } finally {
+    await app.close()
+  }
+})
+
+test('a turn the usage limit stopped: the meter of that limit counts down to its reset, and Claude goes on by itself after it', async () => {
+  // the limit resets 12 s after the script is written; in the test, Claude goes on at the reset itself, not a minute after
+  const resetsAt = Math.floor(Date.now() / 1000) + 12
+  const { app, page, tabId, pipeName, log } = await launchChatTab({
+    turns: {
+      work: [{ rateLimit: { type: 'five_hour', utilization: 1, resetsAt, status: 'rejected' } }, { text: "You've hit your limit" }],
+      [LIMIT_PROMPT]: [{ text: 'Going on with the work.' }],
+    },
+  }, { env: { CLAUDETERM_TEST_LIMIT_MARGIN_MS: '0' } })
+  try {
+    await sendMessage(page, 'work')
+    const session = await chatSession(page, tabId)
+    await expect.poll(() => turnState(page, tabId)).toBe('idle')
+    // the turn ended on the limit: Claude Code's StopFailure names rate_limit, as the hook reports it
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: session, reason: 'done', error: 'rate_limit' })).toEqual({ ok: true })
+    // the 5-hour meter in the title bar, the limit the turn hit, counts down in place of its clock and says Claude goes on
+    const meter = page.locator('#titlebar .meter-limit')
+    const reset = meter.locator('.meter-reset')
+    await expect(reset).toBeVisible()
+    await expect(reset).toHaveText(/^in \d+s$/)
+    await expect(meter).toHaveClass(/\bcounting\b/)
+    await expect(meter).toHaveAttribute('title', /Claude goes on by itself a minute after the reset/)
+    const left = async (): Promise<number> => Number(/^in (\d+)s$/.exec((await reset.textContent()) ?? '')?.[1] ?? NaN)
+    const first = await left()
+    await expect.poll(left).toBeLessThan(first)
+    // the status bar has no countdown of its own
+    await expect(page.locator('#statusbar')).not.toContainText('resets in')
+    // at the reset Claude is told to go on, and does; the meter shows its clock again
+    await expect.poll(() => userMessages(log), { timeout: 30_000 }).toContain(LIMIT_PROMPT)
+    await expect(page.locator('.chat-host:visible')).toContainText('Going on with the work.')
+    await expect(reset).toHaveText(/^\d{2}:\d{2}$/)
+    await expect(meter).not.toHaveClass(/\bcounting\b/)
   } finally {
     await app.close()
   }

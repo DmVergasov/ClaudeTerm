@@ -28,6 +28,24 @@ describe("a user item's origin is absent, 'auto' or 'review', and nothing else",
   })
 })
 
+describe("a subagent's model, effort and context are optional, and checked when given", () => {
+  const agent = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ id: 'a1', description: 'Find it', type: 'Explore', state: 'running', ms: null, ...over })
+  const withAgent = (over: Record<string, unknown>): ChatSnapshot => snapshot([{ kind: 'tools', id: 't', calls: [call('c1', { name: 'Agent', agents: [agent(over)] })], ms: null }])
+
+  it('the mirror takes an agent with none of them, or with all of them', () => {
+    expect(parseChatPush(withAgent({}))).not.toBeNull()
+    expect(parseChatPush(withAgent({ model: 'claude-haiku-5-5', effort: 'high', context: 32200 }))).not.toBeNull()
+  })
+
+  it('the mirror refuses a model or effort that is not a name, and a context that is not a count', () => {
+    expect(parseChatPush(withAgent({ model: 5 }))).toBeNull()
+    expect(parseChatPush(withAgent({ model: 'm'.repeat(5000) }))).toBeNull()
+    expect(parseChatPush(withAgent({ effort: null }))).toBeNull()
+    expect(parseChatPush(withAgent({ context: -1 }))).toBeNull()
+    expect(parseChatPush(withAgent({ context: '32k' }))).toBeNull()
+  })
+})
+
 describe('capSnapshot', () => {
   it('a 5 000 notice conversation is cut to what fits in 2 MiB: the newest items, and hasOlder set', () => {
     const items = Array.from({ length: 5000 }, (_, i) => notice(`n${i}`, `Line ${i} `.padEnd(400, 'x')))

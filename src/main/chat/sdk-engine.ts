@@ -2,7 +2,7 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'n
 import type { EffortLevel, ModelInfo, PermissionResult, Query, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import type { ChatCommandInfo, ChatModelInfo } from '../../shared/chat'
 import type { ChatEngine, ChatEngineHandlers, ChatEngineStart, StartChatEngine } from './chat-engine'
-import { spawnChatProcess } from './claude-spawn'
+import { spawnChatProcess, type ChatLaunch } from './claude-spawn'
 
 // One conversation with the user's Claude Code through the Agent SDK's query() in streaming-input mode. The SDK starts
 // no process of its own: every Claude Code process is started by spawnChatProcess, with the user's claude command
@@ -383,5 +383,78 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
       endAsks()
       killChild(true)
     }
+  }
+}
+
+export interface AskOnce {
+  launch: Exclude<ChatLaunch, { how: 'none' }>
+  cwd: string
+  env: Record<string, string>
+  model: string
+  system: string
+  prompt: string
+  /** the answer is given up after this long, and the process killed */
+  timeoutMs: number
+}
+
+/** the process of a single question, and the group it leads on POSIX, killed: it is not waited for */
+function killQuestion(proc: ChildProcess | undefined): void {
+  const pid = proc?.pid
+  if (proc === undefined || pid === undefined || proc.exitCode !== null || proc.signalCode !== null) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).unref()
+    return
+  }
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    // the group is gone
+  }
+}
+
+/**
+ * One question to the user's Claude Code, answered in one turn: no tools, no settings, MCP servers or CLAUDE.md of the user,
+ * and no session kept in their history. Its answer's text; it fails when Claude Code gives no answer, an error, or none in time.
+ */
+export async function askOnce(o: AskOnce): Promise<string> {
+  const sdk = await loadSdk()
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), o.timeoutMs)
+  let child: ChildProcess | undefined
+  async function* prompt(): AsyncGenerator<SDKUserMessage> {
+    yield { type: 'user', message: { role: 'user', content: o.prompt }, parent_tool_use_id: null }
+  }
+  try {
+    const q = sdk.query({
+      prompt: prompt(),
+      options: {
+        cwd: o.cwd,
+        env: o.env,
+        model: o.model,
+        systemPrompt: o.system,
+        tools: [],
+        maxTurns: 1,
+        settingSources: [],
+        mcpServers: {},
+        strictMcpConfig: true,
+        persistSession: false,
+        abortController: abort,
+        pathToClaudeCodeExecutable: o.launch.how === 'shell' ? o.launch.shell : o.launch.file,
+        spawnClaudeCodeProcess: options => {
+          child = spawnChatProcess(o.launch, options.args, options.cwd ?? o.cwd, options.env) as ChildProcessWithoutNullStreams
+          return child as ChildProcessWithoutNullStreams
+        },
+        stderr: () => undefined
+      }
+    })
+    for await (const m of q) {
+      if (m.type !== 'result') continue
+      if (m.subtype === 'success' && typeof m.result === 'string') return m.result
+      throw new Error(`Claude Code answered with ${m.subtype}`)
+    }
+    throw new Error('Claude Code ended without an answer')
+  } finally {
+    clearTimeout(timer)
+    killQuestion(child)
   }
 }

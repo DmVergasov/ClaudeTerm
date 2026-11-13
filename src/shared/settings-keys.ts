@@ -22,7 +22,7 @@ export type SettingKey =
   | 'notifications.sound' | 'notifications.doneWithBackgroundWork' | 'notifications.autoUnread'
   | 'font.family' | 'font.size' | 'theme' | 'scrollback'
   | 'defaultProfile' | 'defaultFolder' | 'claude.command' | 'claude.shellProfile' | 'claude.statusRefresh' | 'claude.statusRefreshInterval' | 'claude.autoContinue'
-  | 'claude.continueAfterRestore' | 'claude.limitPace' | 'claude.view' | 'chat.copyOnSelect' | 'chat.fullWidth'
+  | 'claude.continueAfterRestore' | 'claude.continueAfterLimit' | 'claude.headsUp' | 'claude.limitPace' | 'claude.view' | 'chat.copyOnSelect' | 'chat.fullWidth'
   | 'imageWatch.enabled' | 'imagePanel.autoOpen' | 'autoUpdate'
   | 'review.editor' | 'review.statusBar' | 'review.hideIgnored' | 'review.hideTests' | 'review.testPatterns' | 'review.fileTree'
   | 'review.renderMarkdown' | 'sidePanel.noRoom' | 'tabs.position' | 'conpty' | 'devices.keepAwake' | 'agentMessages.enabled' | 'agentMessages.marks'
@@ -34,7 +34,7 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'notifications.sound', 'notifications.doneWithBackgroundWork', 'notifications.autoUnread',
   'font.family', 'font.size', 'theme', 'scrollback',
   'defaultProfile', 'defaultFolder', 'claude.command', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.autoContinue',
-  'claude.continueAfterRestore', 'claude.limitPace', 'claude.view', 'chat.copyOnSelect', 'chat.fullWidth',
+  'claude.continueAfterRestore', 'claude.continueAfterLimit', 'claude.headsUp', 'claude.limitPace', 'claude.view', 'chat.copyOnSelect', 'chat.fullWidth',
   'imageWatch.enabled', 'imagePanel.autoOpen', 'review.editor', 'review.statusBar', 'review.hideIgnored', 'review.hideTests', 'review.testPatterns', 'review.fileTree', 'review.renderMarkdown', 'sidePanel.noRoom', 'tabs.position', 'conpty', 'autoUpdate', 'devices.keepAwake', 'agentMessages.enabled', 'agentMessages.marks'
 ]
 

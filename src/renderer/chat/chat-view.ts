@@ -1,8 +1,9 @@
-import { acceptPatches, commandWord, typedMessages, type ChatAnswer, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type ChatState, type ChatSubagent } from '../../shared/chat'
+import { acceptPatches, commandWord, typedMessages, type ChatAnswer, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type ChatState, type ChatSubagent, type HeadsUpAction, type HeadsUpCard } from '../../shared/chat'
 import type { ImageCard } from '../../shared/types'
 import { spinner } from '../tab-row'
 import { ChatComposer } from './chat-composer'
 import { QuoteButton, splitQuotes } from './chat-quote'
+import { HeadsUpView } from './heads-up-card'
 import { renderItem, streamText, type ItemCallbacks } from './chat-items'
 import { focusCard, renderCard, waitingCard } from './chat-cards'
 import { elapsedText, fillAgentsCard, setSettled, stepKeep, updateSteps, type StepKeep } from './chat-steps'
@@ -41,6 +42,8 @@ export interface ChatViewOptions {
   revealChange(path: string): void
   openExternal(url: string): void
   copy(text: string): void
+  /** the person's answer to the chat's Heads up card */
+  headsUp(cardId: string, action: HeadsUpAction): void
 }
 
 const NO_STATE: ChatState = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
@@ -90,6 +93,8 @@ export class ChatView {
   private readonly composer: ChatComposer
   /** the Quote button over a selection in the column: its quote goes into the composer */
   private readonly quote: QuoteButton
+  /** the Heads up card, above the message box */
+  private readonly headsUpView: HeadsUpView
   private readonly cb: ItemCallbacks
   private items: ChatItem[] = []
   /** the dock: the subagents of the Agent calls that run, the column's last message, right before the working line */
@@ -236,6 +241,8 @@ export class ChatView {
     })
     this.body.append(this.scroll, this.fade, this.pill)
     this.resize.observe(this.dock)
+    this.headsUpView = new HeadsUpView({ act: (cardId, action) => o.headsUp(cardId, action), openExternal: (url) => o.openExternal(url), copy: (text) => o.copy(text) })
+    this.composer.element.prepend(this.headsUpView.element)
     this.element.append(this.body, this.composer.element)
     o.container.append(this.element)
     this.show(false)
@@ -447,6 +454,11 @@ export class ChatView {
   }
 
   /** the setting: the conversation and the message box take the chat's whole width, not a reading column */
+  /** the chat's Heads up card, above the message box; null takes it away */
+  showHeadsUp(card: HeadsUpCard | null): void {
+    this.headsUpView.show(card)
+  }
+
   setFullWidth(on: boolean): void {
     this.element.classList.toggle('chat-wide', on)
   }

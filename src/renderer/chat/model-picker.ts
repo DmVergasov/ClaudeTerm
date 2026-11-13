@@ -27,6 +27,44 @@ export function findModel(list: ChatModelInfo[], model: string | null): ChatMode
   return byResolved.find((m) => m.value !== 'default') ?? byResolved[0]
 }
 
+/** a model's family and version from its name: `Opus 5.5 (1M context)` is opus [5, 5]; null for a name that is not one */
+function familyOf(displayName: string): { family: string; version: number[] } | null {
+  const m = /^([A-Za-z]+)\s+(\d+(?:\.\d+)*)(?!\S)/.exec(displayName)
+  return m === null ? null : { family: m[1]!.toLowerCase(), version: m[2]!.split('.').map(Number) }
+}
+
+/** compares two versions part by part, as numbers: [5, 10] is after [5, 9], and [5] before [5, 1] */
+function compareVersions(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? -1) - (b[i] ?? -1)
+    if (d !== 0) return d
+  }
+  return 0
+}
+
+/**
+ * The models the picker shows at once, and the ones under More models: an entry whose name is a family and a version (Opus 5.5)
+ * shows when it is its family's newest, or the picked one; any other entry (Default, a name it cannot read) shows. Both keep the
+ * list's order.
+ */
+export function newestModels(list: ChatModelInfo[], picked: string | null): { shown: ChatModelInfo[]; more: ChatModelInfo[] } {
+  const newest = new Map<string, number[]>()
+  for (const model of list) {
+    const f = familyOf(model.displayName)
+    if (f === null) continue
+    const best = newest.get(f.family)
+    if (best === undefined || compareVersions(f.version, best) > 0) newest.set(f.family, f.version)
+  }
+  const shown: ChatModelInfo[] = []
+  const more: ChatModelInfo[] = []
+  for (const model of list) {
+    const f = familyOf(model.displayName)
+    const keep = f === null || model.value === picked || compareVersions(f.version, newest.get(f.family)!) === 0
+    ;(keep ? shown : more).push(model)
+  }
+  return { shown, more }
+}
+
 /** the effort a model takes: the one the session has when the model has it, else none (the model's own default) */
 function effortFor(model: ChatModelInfo | undefined, wanted: string | null): string | null {
   const levels = model?.efforts ?? []
@@ -44,6 +82,8 @@ export class ModelPicker {
   private picked: string | null = null
   private effort: string | null = null
   private opened = false
+  /** the older models show too: More models was clicked since the picker opened */
+  private all = false
   /** each open starts a new round of asks: the rounds of earlier opens stop */
   private generation = 0
   /** the picker is being drawn again: the focus leaves the buttons it removes, and that is not the picker closing */
@@ -73,6 +113,7 @@ export class ModelPicker {
     this.picked = current.model
     this.effort = current.effort
     this.opened = true
+    this.all = false
     this.generation++
     this.element.hidden = false
     this.render()
@@ -90,8 +131,9 @@ export class ModelPicker {
       if (round !== this.generation || !this.opened) return
       if (list.length > 0) {
         this.models = list
-        // the chat's model is checked as the entry it is: the stream's full id is the alias's entry
-        const found = findModel(list, this.picked)
+        // the chat's model is checked as the entry it is: the stream's full id is the alias's entry. Before the first turn names
+        // the model, the default entry stands for it, as main takes it (chat-hub.ts modelEntry), so its effort levels show
+        const found = this.picked === null ? (list.find((m) => m.value === 'default') ?? list[0]) : findModel(list, this.picked)
         if (found !== undefined) this.picked = found.value
         this.effort = effortFor(found, this.effort)
         this.render()
@@ -146,7 +188,10 @@ export class ModelPicker {
 
     const options = document.createElement('div')
     options.className = 'chat-model-options'
-    for (const model of this.models) {
+    // the newest model of each family, and the picked one; the older ones under More models
+    const { shown, more } = newestModels(this.models, this.picked)
+    const listed = this.all ? this.models : shown
+    for (const model of listed) {
       const option = document.createElement('button')
       option.type = 'button'
       option.className = 'chat-model-option'
@@ -164,6 +209,19 @@ export class ModelPicker {
       option.append(text)
       option.addEventListener('click', () => this.pick(model.value))
       options.append(option)
+    }
+    if (more.length > 0) {
+      const toggle = document.createElement('button')
+      toggle.type = 'button'
+      toggle.className = 'chat-model-more'
+      toggle.dataset.focus = 'more'
+      toggle.setAttribute('aria-expanded', String(this.all))
+      toggle.textContent = this.all ? 'Fewer models' : `More models (${more.length})`
+      toggle.addEventListener('click', () => {
+        this.all = !this.all
+        this.render()
+      })
+      options.append(toggle)
     }
     if (this.models.length === 0) {
       const none = document.createElement('div')

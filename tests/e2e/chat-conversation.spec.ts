@@ -665,6 +665,38 @@ test('running agents show in a dock at the end of the conversation, before the w
   }
 })
 
+test('each row of the dock shows its agent\'s model, the effort its call asks for and its context; a row with none shows none', async () => {
+  const { app, page } = await launchChatTab({
+    turns: {
+      team: [{
+        task: {
+          description: 'Check the totals',
+          result: 'Checked.',
+          agents: [
+            { type: 'Explore', description: 'Search the sales folder', ms: 20000, model: 'haiku', effort: 'high', work: { model: 'claude-haiku-5-5', context: 32_200 } },
+            { type: 'general-purpose', description: 'Check the totals', ms: 20000 }
+          ]
+        }
+      }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await send(page, 'team')
+    const rows = page.locator('.chat-host:visible .chat-agents-dock .chat-agent')
+    await expect(rows).toHaveCount(2)
+    const meta = rows.nth(0).locator('.chat-agent-meta')
+    await expect(meta).toHaveText('haiku · high · ctx 32k')
+    // the full names are in its tooltip
+    await expect(meta).toHaveAttribute('title', 'claude-haiku-5-5 · effort high · 32,200 tokens in context')
+    await expect(rows.nth(1).locator('.chat-agent-meta')).toHaveText('')
+    // the meta does not push the row's description out: it keeps a part of the row
+    const desc = await rows.nth(0).locator('.chat-agent-desc').boundingBox()
+    expect(desc!.width).toBeGreaterThan(80)
+  } finally {
+    await app.close()
+  }
+})
+
 test('the dock\'s card lines up with the conversation\'s messages and the working line in a wide window', async () => {
   const { app, page } = await launchChatTab({
     turns: {

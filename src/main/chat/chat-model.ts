@@ -25,14 +25,18 @@ const ENVELOPE = /^\s*<(task-notification|agent-message|cross-session-message|ch
 const FILE_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']
 const EDIT_TOOLS = ['Write', 'Edit', 'MultiEdit']
 const PERMISSION_MODES: readonly ChatPermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']
+/** the effort levels Claude Code has */
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 
 export interface ChatModelOptions { now(): number; newId(): string; folder(): string }
 
 /** a stream block still open: a text item being streamed, or a thinking block with its stream start and length */
 type OpenBlock = { kind: 'text'; id: string } | { kind: 'thinking'; startedAt: number; ms: number | null }
 
-/** a tool call's link to its tools item, when it started, and the image it shows (null: none) */
-interface CallLink { itemId: string; start: number; image: string | null }
+/** what an Agent call asks of its subagents: a model (an alias) and an effort, each only when it names one */
+interface AgentAsk { model?: string; effort?: string }
+/** a tool call's link to its tools item, when it started, the image it shows (null: none), and what an Agent call asks */
+interface CallLink { itemId: string; start: number; image: string | null; ask?: AgentAsk }
 /** a subagent's link to the Task call that started it */
 interface TaskLink { itemId: string; callId: string; start: number }
 /** a prompt we sent: `started` once its turn has begun, so it is dropped when that turn's result comes */
@@ -63,6 +67,27 @@ export const isPermissionMode = (v: unknown): v is ChatPermissionMode => PERMISS
 const pad = (n: number): string => String(n).padStart(2, '0')
 /** the time from a moment to a later one, in milliseconds: a clock that stepped back gives none, never a negative time */
 const elapsed = (from: number, to: number): number => Math.max(0, to - from)
+const isCount = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0
+/** the model and effort an Agent call's input names (sdk-tools.d.ts AgentInput): a level Claude Code does not have is left out */
+const agentAsk = (input: Obj): AgentAsk => ({
+  ...(typeof input.model === 'string' && input.model !== '' ? { model: cap(input.model, MODEL_CAP) } : {}),
+  ...(typeof input.effort === 'string' && EFFORTS.includes(input.effort) ? { effort: input.effort } : {}),
+})
+/**
+ * The tokens of a conversation at one API call, from its usage: what it sent (input, cache written and read) and what came back;
+ * null when the input count is missing or a count is not one
+ */
+const contextOf = (usage: unknown): number | null => {
+  if (!isObj(usage) || !isCount(usage.input_tokens)) return null
+  let total = usage.input_tokens
+  for (const key of ['cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens']) {
+    const n = usage[key]
+    if (n === undefined || n === null) continue
+    if (!isCount(n)) return null
+    total += n
+  }
+  return total
+}
 
 /** a token count as a compaction's divider shows it: 950, 3.9k, 27k */
 function tokenCount(n: number): string {
@@ -276,8 +301,9 @@ export class ChatModel {
 
   /** one SDK message, live or from history; anything malformed or unknown gives [] */
   apply(msg: unknown): ChatPatch[] {
-    // a message of a subagent (parent_tool_use_id set) is not part of the main conversation
-    if (!isObj(msg) || (typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id !== '')) return []
+    if (!isObj(msg)) return []
+    // a message of a subagent (parent_tool_use_id set) is not part of the main conversation: its own calls tell its model and context
+    if (typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id !== '') return msg.type === 'assistant' ? this.subagentCall(msg) : []
     switch (msg.type) {
       case 'stream_event': {
         const folded = this.taken(msg)
@@ -581,15 +607,16 @@ export class ChatModel {
       id, name, subject: toolSubject(name, input, this.o.folder()), detail: startDetail(name, input), state: 'running',
       output: null, error: null, editPath: EDIT_TOOLS.includes(name) ? pathOf(input.file_path) : null, agents: [], ms: null,
     }
+    const ask = name === 'Task' || name === 'Agent' ? { ask: agentAsk(input) } : {}
     const open = this.step === null ? undefined : this.get(this.step)
     if (open?.kind === 'tools') {
-      this.calls.set(id, { itemId: open.id, start, image })
+      this.calls.set(id, { itemId: open.id, start, image, ...ask })
       return [...this.callPatch(open, [...open.calls, call], call), ...this.showImage(open.id, image)]
     }
     const item: ChatItem = { kind: 'tools', id: this.o.newId(), calls: [call], ms: null }
     this.step = item.id
     this.stepStart.set(item.id, start)
-    this.calls.set(id, { itemId: item.id, start, image })
+    this.calls.set(id, { itemId: item.id, start, image, ...ask })
     return [...this.add(item), ...this.showImage(item.id, image)]
   }
 
@@ -764,9 +791,8 @@ export class ChatModel {
     if (typeof msg.model === 'string' && msg.model !== '') partial.model = cap(msg.model, MODEL_CAP)
     if (isUuid(msg.session_id)) partial.sessionId = msg.session_id
     // the effort in effect for the next message: a level, or null when none is sent; anything else, or no field, keeps the last
-    const efforts: string[] = ['low', 'medium', 'high', 'xhigh', 'max']
     if (msg.effort === null) partial.effort = null
-    else if (typeof msg.effort === 'string' && efforts.includes(msg.effort)) partial.effort = msg.effort
+    else if (typeof msg.effort === 'string' && EFFORTS.includes(msg.effort)) partial.effort = msg.effort
     // Claude Code starts every turn with an init: after a result, the next turn runs from this one
     if (this.afterResult && this.st.turn === 'idle') Object.assign(partial, { turn: 'working', turnStartedAt: this.o.now() })
     return this.setState(partial)
@@ -792,12 +818,42 @@ export class ChatModel {
     if (!call || !['Task', 'Agent', 'SendMessage'].includes(call.name) || call.agents.some(a => a.id === taskId)) return []
     const agent: ChatSubagent = {
       id: taskId, description: cap(str(msg.description) ?? '', SUBJECT_CAP),
-      type: cap(str(msg.subagent_type) ?? str(msg.task_type) ?? 'agent', NAME_CAP), state: 'running', ms: null,
+      type: cap(str(msg.subagent_type) ?? str(msg.task_type) ?? 'agent', NAME_CAP), state: 'running', ms: null, ...link?.ask,
     }
     this.tasks.set(taskId, { itemId: item.id, callId, start: this.o.now() })
     const agents = [...call.agents, agent]
     const next: ChatToolCall = { ...call, agents, detail: agents.length > 1 ? `${agents.length} agents` : call.detail }
     return this.callPatch(item, item.calls.map(c => (c.id === callId ? next : c)), next)
+  }
+
+  /**
+   * A call of a running subagent, as Claude Code passes it on (its tool_use blocks, parent_tool_use_id set): the model it runs on and
+   * the tokens of its conversation, on its row. The agent is the one agent_id names; an older Claude Code names none, and then it is
+   * the one agent running for the call parent_tool_use_id names, when there is one.
+   */
+  private subagentCall(msg: Obj): ChatPatch[] {
+    const message = isObj(msg.message) ? msg.message : null
+    if (message === null) return []
+    let taskId = typeof msg.agent_id === 'string' ? cap(msg.agent_id, NAME_CAP) : null
+    if (taskId === null || !this.tasks.has(taskId)) {
+      const callId = cap(msg.parent_tool_use_id as string, NAME_CAP)
+      const running = [...this.tasks].filter(([, link]) => link.callId === callId)
+      taskId = running.length === 1 ? running[0]![0] : null
+    }
+    const link = taskId === null ? undefined : this.tasks.get(taskId)
+    const item = link ? this.get(link.itemId) : undefined
+    if (!link || item?.kind !== 'tools') return []
+    const call = item.calls.find(c => c.id === link.callId)
+    const agent = call?.agents.find(a => a.id === taskId)
+    if (!call || !agent) return []
+    // a message Claude Code makes itself (an error) names the model <synthetic>: it runs on no model
+    const named = typeof message.model === 'string' && message.model !== '' && !message.model.startsWith('<') ? cap(message.model, MODEL_CAP) : null
+    const context = contextOf(message.usage)
+    const model = named ?? agent.model
+    if (model === agent.model && (context === null || context === agent.context)) return []
+    const next: ChatSubagent = { ...agent, ...(model === undefined ? {} : { model }), ...(context === null ? {} : { context }) }
+    const updated: ChatToolCall = { ...call, agents: call.agents.map(a => (a.id === taskId ? next : a)) }
+    return this.callPatch(item, item.calls.map(c => (c.id === updated.id ? updated : c)), updated)
   }
 
   /** a subagent finished, failed or was stopped: its state on the call that started it */

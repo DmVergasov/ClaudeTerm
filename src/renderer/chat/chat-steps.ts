@@ -2,6 +2,7 @@ import type { ChatCallState, ChatItem, ChatSubagent, ChatToolCall } from '../../
 import type { ImageCard } from '../../shared/types'
 import { icon } from '../icons'
 import { imageUrl } from '../image-url'
+import { formatTokens, modelFamily } from '../status-bar'
 import type { ItemCallbacks } from './chat-items'
 
 // The tool steps and the images of the chat. A step is a card while a call runs, and a pill once every call is done; its
@@ -401,7 +402,7 @@ export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[]): void {
     if (row === null) {
       row = el('div', 'chat-agent')
       row.dataset.agent = agent.id
-      row.append(el('span', 'chat-step-state'), el('span', 'chat-agent-type'), el('span', 'chat-agent-desc'), el('span', 'chat-agent-state'))
+      row.append(el('span', 'chat-step-state'), el('span', 'chat-agent-type'), el('span', 'chat-agent-desc'), el('span', 'chat-agent-meta'), el('span', 'chat-agent-state'))
       list.append(row)
     }
     // a row keeps its colour and its bar's delay by its place in the card, which does not change when another row ends
@@ -419,6 +420,7 @@ function fillAgent(row: HTMLElement, agent: ChatSubagent): void {
   setStateIcon(row.querySelector<HTMLElement>('.chat-step-state')!, agent.state)
   setText(row.querySelector<HTMLElement>('.chat-agent-type')!, agent.type)
   setText(row.querySelector<HTMLElement>('.chat-agent-desc')!, agent.description)
+  fillAgentMeta(row.querySelector<HTMLElement>('.chat-agent-meta')!, agent)
   const text = row.querySelector<HTMLElement>('.chat-agent-state')!
   if (agent.state === 'running') {
     // a running row's last column is its bar: a track the bar slides through, in the row's colour
@@ -432,6 +434,19 @@ function fillAgent(row: HTMLElement, agent: ChatSubagent): void {
   text.replaceChildren()
   if (agent.state === 'failed') text.textContent = 'failed'
   else text.textContent = agent.ms === null ? 'done' : `done · ${secondsText(agent.ms)}`
+}
+
+/**
+ * What an agent runs with, as far as it is known: its model's family, the effort its call asks for, the tokens of its context
+ * (`haiku · high · ctx 32k`); the full model name and the exact count are its tooltip. An agent with none of them shows nothing.
+ */
+function fillAgentMeta(node: HTMLElement, agent: ChatSubagent): void {
+  const short = [agent.model === undefined ? null : modelFamily(agent.model), agent.effort ?? null, agent.context === undefined ? null : `ctx ${formatTokens(agent.context)}`]
+  const long = [agent.model ?? null, agent.effort === undefined ? null : `effort ${agent.effort}`, agent.context === undefined ? null : `${agent.context.toLocaleString('en-US')} tokens in context`]
+  setText(node, short.filter((part) => part !== null).join(' · '))
+  const title = long.filter((part) => part !== null).join(' · ')
+  if (title === '') node.removeAttribute('title')
+  else node.title = title
 }
 
 /** a duration in whole seconds, at least one: `14s` */

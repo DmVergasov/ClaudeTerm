@@ -171,8 +171,9 @@ function lastLineUuid(file: string): string | null {
 }
 
 // the transcript file Claude Code would write: one line per user and assistant message, each chained to the line before it
-// (the SDK reads a session by walking that chain back from its last line)
+// (the SDK reads a session by walking that chain back from its last line); none for a session that is not kept
 function record(type: 'user' | 'assistant', message: Msg): void {
+  if (has('--no-session-persistence')) return
   mkdirSync(projectDir, { recursive: true })
   const file = join(projectDir, `${session}.jsonl`)
   if (transcriptTail === undefined) transcriptTail = lastLineUuid(file)
@@ -509,18 +510,39 @@ function emitToolUses(calls: { name: string; input: Record<string, unknown> }[])
   return blocks.map((block) => block.id)
 }
 
+// A subagent's own tool call, as Claude Code passes it on by default (sdk.d.ts forwardSubagentText): an assistant message with
+// parent_tool_use_id set to the Agent call and agent_id to its task id (SDKAssistantMessage), carrying the subagent's model and
+// the usage of its API call, here all of it read from the cache
+function subagentCall(toolId: string, taskId: string, type: string, description: string, work: { model: string; context: number }): void {
+  const message = {
+    model: work.model,
+    id: `msg_fake_${++seq}`,
+    type: 'message',
+    role: 'assistant',
+    content: [{ type: 'tool_use', id: `toolu_fake_${++seq}`, name: 'Grep', input: { pattern: 'total' }, caller: { type: 'direct' } }],
+    stop_reason: 'tool_use',
+    stop_sequence: null,
+    usage: { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: work.context, output_tokens: 0 }
+  }
+  emit({ type: 'assistant', message, parent_tool_use_id: toolId, agent_id: taskId, subagent_type: type, task_description: description, session_id: session, uuid: randomUUID(), timestamp: stamp() })
+}
+
 // Agent calls, one per subagent, in one assistant message (parallel calls, as Claude Code makes them). Each subagent is
 // reported as the SDK reports it (SDKTaskStartedMessage, sdk.d.ts 6505; SDKTaskNotificationMessage, sdk.d.ts 6436): its
 // task_started names its call in tool_use_id, and its task_notification comes at its ms. A call's result follows its end.
 // The input is the SDK's AgentInput (sdk-tools.d.ts 763): description and prompt are required.
-async function taskStep(step: { description: string; result: string; background?: true; agents: { type: string; description: string; ms: number; failed?: boolean }[] }): Promise<Outcome> {
+async function taskStep(step: { description: string; result: string; background?: true; agents: { type: string; description: string; ms: number; failed?: boolean; model?: string; effort?: string; work?: { model: string; context: number } }[] }): Promise<Outcome> {
   const toolIds = emitToolUses(step.agents.map((agent) => ({
     name: 'Agent',
-    input: { description: agent.description, prompt: agent.description, subagent_type: agent.type }
+    input: {
+      description: agent.description, prompt: agent.description, subagent_type: agent.type,
+      ...(agent.model === undefined ? {} : { model: agent.model }), ...(agent.effort === undefined ? {} : { effort: agent.effort })
+    }
   })))
   const agents = step.agents.map((agent, i) => ({ agent, toolId: toolIds[i], taskId: `task_fake_${++seq}` }))
   for (const { agent, toolId, taskId } of agents) {
     emit(sys('task_started', { task_id: taskId, tool_use_id: toolId, description: agent.description, subagent_type: agent.type, task_type: 'local_agent' }))
+    if (agent.work !== undefined) subagentCall(toolId, taskId, agent.type, agent.description, agent.work)
   }
   // a background agent: its call ends at once with the launch notice, and the agent ends at its ms, after the turn's result has gone
   if (step.background === true) {
@@ -712,9 +734,16 @@ async function runUnavailableTurn(name: string, text: string): Promise<void> {
   if (queue.length === 0) emit(state('idle'))
 }
 
+// a question of ClaudeTerm's Heads up (src/main/chat/heads-up.ts), known by how it starts: answered from the script's headsUp
+function headsUpSteps(text: string): FakeStep[] | undefined {
+  if (text.startsWith('Offered already, do not offer again:')) return [{ text: script.headsUp?.check ?? 'topic: none' }]
+  if (text.startsWith('The card said (')) return [{ text: script.headsUp?.explain ?? '' }]
+  return undefined
+}
+
 async function runTurn(text: string): Promise<void> {
   aborted = false
-  const steps = Object.hasOwn(script.turns, text) ? script.turns[text] : script.fallback ?? [{ text: 'ok' }]
+  const steps = headsUpSteps(text) ?? (Object.hasOwn(script.turns, text) ? script.turns[text] : script.fallback ?? [{ text: 'ok' }])
   if (steps.length === 1 && 'command' in steps[0]) return runLocalTurn(steps[0], text)
   if (steps.length === 1 && 'notAvailable' in steps[0]) return runUnavailableTurn(steps[0].notAvailable, text)
   emit(state('running'))

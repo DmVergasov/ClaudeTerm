@@ -504,6 +504,64 @@ test('the model the person picks decides whether Auto is offered: a model that r
   }
 })
 
+test('the model picker lists the newest model of each family; the older ones are under More models, and one picked from there stays in view', async () => {
+  const { app, page } = await launchChatTab({
+    models: [
+      { value: 'default', displayName: 'Default (recommended)', description: 'Opus 5.5', supportedEffortLevels: [] },
+      { value: 'opus', displayName: 'Opus 5.5', description: 'For complex work', supportedEffortLevels: [] },
+      { value: 'haiku', displayName: 'Haiku 5.5', description: 'Fastest for quick answers', supportedEffortLevels: [] },
+      { value: 'claude-haiku-4-5', displayName: 'Haiku 4.5', description: 'Fastest for quick answers', supportedEffortLevels: [] },
+      { value: 'claude-opus-5', displayName: 'Opus 5', description: 'Best for everyday, complex tasks', supportedEffortLevels: [] },
+    ],
+    turns: {},
+  })
+  try {
+    await ready(page)
+    const picker = page.locator('.chat-host:visible .chat-model-picker')
+    const options = picker.locator('.chat-model-option .chat-model-name')
+    const more = picker.locator('.chat-model-more')
+    await page.locator(MODEL_CHIP).click()
+    await expect(options).toHaveText(['Default (recommended)', 'Opus 5.5', 'Haiku 5.5'])
+    await expect(more).toHaveText('More models (2)')
+    await more.click()
+    await expect(options).toHaveText(['Default (recommended)', 'Opus 5.5', 'Haiku 5.5', 'Haiku 4.5', 'Opus 5'])
+    await expect(more).toHaveText('Fewer models')
+    // an older model picked from there is applied, and the next open shows it without More models
+    await picker.locator('.chat-model-option', { hasText: 'Haiku 4.5' }).click()
+    await picker.locator('button', { hasText: 'Apply' }).click()
+    await expect(picker).toBeHidden()
+    await expect(page.locator(MODEL_CHIP)).toContainText('Haiku 4.5')
+    await page.locator(MODEL_CHIP).click()
+    await expect(options).toHaveText(['Default (recommended)', 'Opus 5.5', 'Haiku 5.5', 'Haiku 4.5'])
+    await expect(picker.locator('.chat-model-option[aria-pressed="true"] .chat-model-name')).toHaveText('Haiku 4.5')
+    await expect(more).toHaveText('More models (1)')
+  } finally {
+    await app.close()
+  }
+})
+
+test('the model picker opened before the first turn checks the default entry the chat runs, and shows its effort levels', async () => {
+  const { app, page } = await launchChatTab({
+    models: [
+      { value: 'default', displayName: 'Default (recommended)', description: 'Opus 5.5', supportedEffortLevels: ['low', 'medium', 'high'] },
+      { value: 'haiku', displayName: 'Haiku 5.5', description: 'Fastest for quick answers', supportedEffortLevels: [] },
+    ],
+    turns: {},
+  })
+  try {
+    await ready(page)
+    await expect(page.locator(MODEL_CHIP)).toContainText('Model')
+    await page.locator(MODEL_CHIP).click()
+    const picker = page.locator('.chat-host:visible .chat-model-picker')
+    await expect(picker.locator('.chat-model-option[aria-pressed="true"] .chat-model-name')).toHaveText('Default (recommended)')
+    await expect(picker.locator('.chat-model-effort')).toBeVisible()
+    await expect(picker.locator('.chat-model-levels button')).toHaveText(['low', 'medium', 'high'])
+    await expect(picker.locator('button', { hasText: 'Apply' })).toBeEnabled()
+  } finally {
+    await app.close()
+  }
+})
+
 test('the model chip reads Model before the first turn, then the model', async () => {
   const { app, page, tabId } = await launchChatTab({ turns: { hi: [{ text: 'hello' }] } })
   try {

@@ -16,7 +16,7 @@ export type FakeStep =
   | { compact: true | FakeCompact }
   | { wait: number }
   | { thinking: string; ms: number } // a thinking block of the message: its summary ("" for none); Claude thinks for ms
-  | { task: { description: string; result: string; background?: true; agents: { type: string; description: string; ms: number; failed?: boolean }[] } } // an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ms (failed: they end failed); the call ends with its result; background: the call ends at once with the launch notice, and each agent ends at its ms after that, outliving the turn
+  | { task: { description: string; result: string; background?: true; agents: { type: string; description: string; ms: number; failed?: boolean; model?: string; effort?: string; work?: { model: string; context: number } }[] } } // an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ms (failed: they end failed); the call ends with its result; background: the call ends at once with the launch notice, and each agent ends at its ms after that, outliving the turn. model, effort: what the call asks for (AgentInput); work: the subagent's own call, passed on as Claude Code does (its model, and its usage with this many tokens)
   | { crash: number; once?: boolean } // exit with this code; once: only on the first run (a marker file beside the script)
   | { noise: string } // a raw stdout line that is not a message
   | { dialog: string } // a control_request { subtype: 'request_user_dialog', dialog_kind: <it>, payload: {} }; goes on when answered
@@ -61,6 +61,8 @@ export interface FakeScript {
   /** the token counts of the get_context_usage answer (totalTokens, maxTokens); the recorded ones when not given */
   contextTokens?: number | null
   contextMax?: number | null // null: the answer carries no count of this kind
+  /** the answers to ClaudeTerm's Heads up questions (src/main/chat/heads-up.ts): a check's, and Explain more's */
+  headsUp?: { check?: string; explain?: string }
 }
 
 const STAND_IN = resolve(import.meta.dirname, 'fake-claude.ts')

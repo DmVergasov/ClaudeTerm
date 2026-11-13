@@ -70,7 +70,7 @@ function buildMeter(m: LimitMeter): HTMLElement {
 }
 
 function fillMeter(el: HTMLElement, m: LimitMeter): void {
-  const className = `meter meter-${m.key}${m.level === 'normal' ? '' : ` ${m.level}`}`
+  const className = `meter meter-${m.key}${m.level === 'normal' ? '' : ` ${m.level}`}${m.counting ? ' counting' : ''}`
   if (el.className !== className) el.className = className
   if (el.title !== m.title) el.title = m.title
   const label = el.querySelector<HTMLElement>('.meter-label')!

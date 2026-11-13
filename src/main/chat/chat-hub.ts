@@ -74,6 +74,8 @@ export interface ChatHubDeps {
   folder(tabId: string, path: string): void
   now(): number
   log: { warn(m: string): void }
+  /** a message of a tab's running chat, once the chat has taken it (not its history's): Heads up counts the tool calls in it */
+  observe?(tabId: string, msg: unknown): void
 }
 
 type Support = Awaited<ReturnType<ChatHubDeps['support']>>
@@ -94,6 +96,8 @@ interface Live {
   model: ChatModel
   /** the running engine; null until the support check has passed */
   engine: ChatEngine | null
+  /** how the engine's Claude Code was started; null until the support check has passed */
+  launch: Exclude<ChatLaunch, { how: 'none' }> | null
   /** messages sent while the engine starts: shown at once, sent to the engine when it runs, in the order typed; their files are read already */
   waiting: { text: string; images: { mediaType: string; data: string }[]; id: string }[]
   /** the process ended or the start was cancelled: nothing more is started, sent or drawn */
@@ -199,7 +203,7 @@ export class ChatHub {
     this.remove(tabId)
     const newSessionId = resume === null ? randomUUID() : ''
     const live: Live = {
-      tabId, req, engine: null, waiting: [], ended: false, ready: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
+      tabId, req, engine: null, launch: null, waiting: [], ended: false, ready: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
       kept: null, restarted: restart,
       queued: new Map(), stopping: false, exitDue: false, working: false,
       rev: this.revs.get(tabId) ?? 0, batch: [], batchFrom: 0, timer: null, remoteBatch: [], remoteFrom: 0, remoteTimer: null, cards: new Map(), contextAt: null,
@@ -505,6 +509,7 @@ export class ChatHub {
         handlers,
       )
       live.engine = engine
+      live.launch = support.launch
       // the messages sent while it started go out now, in the order they were typed
       const waiting = live.waiting
       live.waiting = []
@@ -631,6 +636,17 @@ export class ChatHub {
       // the main conversation grows while the turn runs; a subagent's messages are in its own context, not this one
       if (live.contextAt === null || this.d.now() - live.contextAt >= CONTEXT_EVERY_MS) this.readContext(live)
     }
+    this.d.observe?.(live.tabId, msg)
+  }
+
+  /**
+   * What a side question about a tab's running chat needs: how its Claude Code was started, in which folder and with which
+   * environment (its account), and its conversation. Null when the chat does not run.
+   */
+  side(tabId: string): { launch: Exclude<ChatLaunch, { how: 'none' }>; cwd: string; env: Record<string, string>; items: readonly ChatItem[] } | null {
+    const live = this.tabs.get(tabId)
+    if (!live || live.ended || live.launch === null) return null
+    return { launch: live.launch, cwd: live.req.tab.cwd, env: live.req.env, items: live.model.items() }
   }
 
   private readContext(live: Live): void {

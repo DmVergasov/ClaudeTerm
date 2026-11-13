@@ -1,16 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AutoContinue, BACKGROUND_PROMPT, CONTINUE_DELAY_MS, CONTINUE_PROMPT, ENTER_DELAY_MS, RESUME_PROMPT } from '../../src/main/auto-continue'
+import { AutoContinue, BACKGROUND_PROMPT, CONTINUE_DELAY_MS, CONTINUE_PROMPT, ENTER_DELAY_MS, LIMIT_ERROR, LIMIT_MARGIN_MS, LIMIT_PROMPT, RESUME_PROMPT, limitResetOf } from '../../src/main/auto-continue'
 import type { PromptState } from '../../src/shared/ipc'
 import { MAX_AUTO_CONTINUES as MAX_CONTINUES } from '../../src/shared/settings-keys'
 
 const CUT_OFF = 'server_error'
 
 function setup(enabled = true) {
-  const state = { enabled, prompt: 'empty' as PromptState }
+  const state = { enabled, prompt: 'empty' as PromptState, afterLimit: true, resetsAt: null as number | null }
   const writes: string[] = []
   const notified: string[] = []
   const asked: string[] = []
   const logs: string[] = []
+  const waits: string[] = []
   const ac = new AutoContinue({
     enabled: () => state.enabled,
     promptState: async (tabId) => {
@@ -19,9 +20,15 @@ function setup(enabled = true) {
     },
     write: (tabId, data) => writes.push(`${tabId}:${data}`),
     notify: (tabId) => notified.push(tabId),
-    log: { info: (m) => logs.push(m) }
+    log: { info: (m) => logs.push(m) },
+    limit: {
+      enabled: () => state.afterLimit,
+      resetsAt: () => state.resetsAt,
+      now: () => Date.now(),
+      waiting: (tabId, at) => waits.push(`${tabId}:${at ?? 'none'}`)
+    }
   })
-  return { ac, writes, notified, asked, logs, state }
+  return { ac, writes, notified, asked, logs, state, waits }
 }
 
 /** the text, then Enter on its own */
@@ -186,7 +193,8 @@ describe('AutoContinue', () => {
         promptState: () => new Promise((r) => { answer = r }),
         write: (tabId, data) => writes.push(`${tabId}:${data}`),
         notify: (tabId) => notified.push(tabId),
-        log: { info: () => {} }
+        log: { info: () => {} },
+        limit: { enabled: () => true, resetsAt: () => null, now: () => Date.now(), waiting: () => {} }
       })
       ac.failed('t1', CUT_OFF)
       await vi.advanceTimersByTimeAsync(CONTINUE_DELAY_MS)
@@ -222,5 +230,84 @@ describe('AutoContinue', () => {
     ac.userInput('t2')
     await runAll()
     expect(writes).toEqual(typed('t1'))
+  })
+})
+
+describe('limitResetOf', () => {
+  const NOW = 1_800_000_000_000
+  const at = (ms: number): number => (NOW + ms) / 1000
+
+  it('the reset of a used-up limit; with both used up, the later one', () => {
+    expect(limitResetOf({ fiveHour: { usedPct: 100, resetsAt: at(3600_000) }, sevenDay: { usedPct: 40, resetsAt: at(86_400_000) } }, NOW)).toBe(NOW + 3600_000)
+    expect(limitResetOf({ fiveHour: { usedPct: 100, resetsAt: at(3600_000) }, sevenDay: { usedPct: 100, resetsAt: at(86_400_000) } }, NOW)).toBe(NOW + 86_400_000)
+  })
+
+  it('none while no limit is used up, its reset has passed, or there is no status', () => {
+    expect(limitResetOf({ fiveHour: { usedPct: 99, resetsAt: at(3600_000) }, sevenDay: null }, NOW)).toBeNull()
+    expect(limitResetOf({ fiveHour: { usedPct: 100, resetsAt: at(-1000) }, sevenDay: null }, NOW)).toBeNull()
+    expect(limitResetOf(null, NOW)).toBeNull()
+  })
+})
+
+describe('AutoContinue after a usage limit', () => {
+  const HOUR = 60 * 60 * 1000
+
+  it('a turn the usage limit stopped goes on with its own nudge once the limit has reset, and nobody is called meanwhile', async () => {
+    const { ac, writes, notified, state, waits } = setup(false)
+    state.resetsAt = Date.now() + 2 * HOUR
+    // claude.autoContinue (a cut-off response) is off: the limit has a setting of its own
+    expect(ac.failed('t1', LIMIT_ERROR)).toBe(true)
+    expect(waits).toEqual([`t1:${state.resetsAt}`])
+    await vi.advanceTimersByTimeAsync(2 * HOUR + LIMIT_MARGIN_MS - 1)
+    expect(writes).toEqual([])
+    await runAll()
+    expect(writes).toEqual([`t1:${LIMIT_PROMPT}`, 't1:\r'])
+    expect(notified).toEqual([])
+    expect(waits).toEqual([`t1:${state.resetsAt}`, 't1:none'])
+  })
+
+  it('with the setting off, no reset time, or a reset time already past, the limit calls the user as before', () => {
+    const { ac, state, waits } = setup()
+    state.afterLimit = false
+    state.resetsAt = Date.now() + HOUR
+    expect(ac.failed('t1', LIMIT_ERROR)).toBe(false)
+    state.afterLimit = true
+    state.resetsAt = null
+    expect(ac.failed('t1', LIMIT_ERROR)).toBe(false)
+    state.resetsAt = Date.now() - 1000
+    expect(ac.failed('t1', LIMIT_ERROR)).toBe(false)
+    expect(waits).toEqual([])
+  })
+
+  it('a message the person sends, or a key, while it waits ends the wait: nothing is typed at the reset', async () => {
+    const { ac, writes, state, waits } = setup()
+    state.resetsAt = Date.now() + HOUR
+    ac.failed('t1', LIMIT_ERROR)
+    ac.failed('t2', LIMIT_ERROR)
+    ac.turnStarted('t1')
+    ac.userInput('t2')
+    await runAll()
+    expect(writes).toEqual([])
+    expect(waits).toEqual([`t1:${state.resetsAt}`, `t2:${state.resetsAt}`, 't1:none', 't2:none'])
+  })
+
+  it("the person's text in the prompt at the reset holds the nudge back, and the tab calls them", async () => {
+    const { ac, writes, notified, state } = setup()
+    state.resetsAt = Date.now() + HOUR
+    ac.failed('t1', LIMIT_ERROR)
+    state.prompt = 'draft'
+    await runAll()
+    expect(writes).toEqual([])
+    expect(notified).toEqual(['t1'])
+  })
+
+  it('a tab that closes while it waits ends its wait', async () => {
+    const { ac, writes, state, waits } = setup()
+    state.resetsAt = Date.now() + HOUR
+    ac.failed('t1', LIMIT_ERROR)
+    ac.forget('t1')
+    await runAll()
+    expect(writes).toEqual([])
+    expect(waits).toEqual([`t1:${state.resetsAt}`, 't1:none'])
   })
 })

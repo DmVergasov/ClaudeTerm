@@ -375,7 +375,21 @@ function renderStatus(tabId: string): void {
   const t = tabs.get(tabId)
   const chat = t && isChatView(t) ? { tab: tabId, stopTask: (taskId: string) => stopTaskOf(tabId, taskId) } : undefined
   statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null, Date.now(), chat)
-  titleBar.render(limitMeters(statusUpdates.get(tabId) ?? null, Date.now(), settings.claude.limitPace))
+  renderMeters(tabId)
+}
+
+/** the next draw of the title bar's limits, while a used-up one counts down to its reset */
+let meterTick: ReturnType<typeof setTimeout> | null = null
+
+/** the usage limits of the tab in front, in the title bar: drawn again each second while one counts down */
+function renderMeters(tabId: string): void {
+  const meters = limitMeters(statusUpdates.get(tabId) ?? null, Date.now(), settings.claude.limitPace)
+  titleBar.render(meters)
+  if (meterTick !== null) clearTimeout(meterTick)
+  meterTick = meters.some((m) => m.counting) ? setTimeout(() => {
+    meterTick = null
+    if (activeId) renderMeters(activeId)
+  }, 1000) : null
 }
 
 /**
@@ -776,10 +790,13 @@ function makeChat(tabId: string): ChatView {
       reviewPanel.revealFile(tabId, path)
     },
     openExternal: (url) => ct.openExternal(url),
-    copy: (text) => ct.writeClipboardText(text)
+    copy: (text) => ct.writeClipboardText(text),
+    headsUp: (cardId, action) => ct.chatHeadsUpAction(tabId, cardId, action)
   })
   chat.setTheme(resolveTheme(settings.theme))
   chat.setFullWidth(settings.chat.fullWidth)
+  // a card the chat had before this view was made: later ones come with onChatHeadsUp
+  void ct.chatHeadsUp(tabId).then((card) => chat.showHeadsUp(card))
   return chat
 }
 
@@ -1555,6 +1572,10 @@ async function boot(): Promise<void> {
     const t = tabs.get(tabId)
     if (!t || tabId !== activeId || !isChatView(t)) return
     if (!t.chat?.patch(fromRev, toRev, patches)) loadChat(tabId)
+  })
+  // a chat's Heads up card came, changed or went: drawn whether or not the tab is in front
+  ct.onChatHeadsUp((tabId, card) => {
+    tabs.get(tabId)?.chat?.showHeadsUp(card)
   })
   // a remote chat's snapshot came (a member attached its tab): the chat in front is drawn from it again
   ct.onChatReload((tabId) => {

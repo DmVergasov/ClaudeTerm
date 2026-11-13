@@ -31,6 +31,8 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .meter-reset { margin-left: auto; color: var(--text-3); font-size: 10.5px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .meter-pct { color: var(--text); font-size: 12px; font-weight: 600; line-height: 14px; font-variant-numeric: tabular-nums; }
 .meter.warn .meter-pct, .meter.crit .meter-pct { color: var(--meter); }
+/* a used-up limit counts down to its reset in the limit's color */
+.meter.counting .meter-reset { color: var(--meter); }
 .meter-bar { position: relative; height: 4px; border-radius: 2px; background: var(--line-2); }
 .meter-bar::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: var(--used, 0%); border-radius: inherit; background: var(--meter); transition: width 600ms ease; }
 .meter-bar::after { content: ''; position: absolute; top: -2px; left: var(--elapsed, 0%); width: 2px; height: 8px; border-radius: 1px; background: var(--text); transform: translateX(-50%); }

@@ -160,10 +160,12 @@ export interface Settings {
   /**
    * statusRefresh: Claude Code also re-runs a Claude tab's statusLine every statusRefreshInterval seconds; autoContinue: type a
    * nudge into a Claude tab whose response a dropped connection cut off, instead of calling the user; continueAfterRestore:
-   * the same for a restored tab Claude was working in when ClaudeTerm closed; limitPace: the title bar shows how fast each
+   * the same for a restored tab Claude was working in when ClaudeTerm closed; continueAfterLimit: the same for a turn the usage
+   * limit stopped, once the limit has reset; headsUp: while Claude works in a chat, a side agent reads the conversation and shows
+   * a Heads up card above the message box when it finds something the person should know; limitPace: the title bar shows how fast each
    * usage limit is spent, with a bar, a color and a forecast from the pace (off: the fixed 70% and 90% only)
    */
-  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean; limitPace: boolean; view: TabView }
+  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean; continueAfterLimit: boolean; headsUp: boolean; limitPace: boolean; view: TabView }
   /** copyOnSelect: text selected with the mouse in a chat goes to the clipboard, as in a terminal (Ctrl+C copies either way); fullWidth: the conversation and the message box take the whole width of the window, not a reading column */
   chat: { copyOnSelect: boolean; fullWidth: boolean }
   profiles: ProfileDef[]

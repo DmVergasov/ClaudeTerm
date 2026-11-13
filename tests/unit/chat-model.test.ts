@@ -728,6 +728,48 @@ describe('ChatModel', () => {
     expect(callsOf(m).find(c => c.id === 't9')?.agents).toEqual([expect.objectContaining({ id: 'a1', state: 'done', ms: 900 })])
   })
 
+  it('a subagent shows the model and effort its Agent call asks for, then the model it runs on and its context, from its own messages', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find the config', prompt: 'look', model: 'haiku', effort: 'high' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find the config', subagent_type: 'Explore' })
+    expect(callsOf(m)[0].agents[0]).toMatchObject({ id: 'a1', model: 'haiku', effort: 'high' })
+    expect(callsOf(m)[0].agents[0].context).toBeUndefined()
+
+    // Claude Code passes a subagent's tool calls on, with parent_tool_use_id and agent_id: its model and its usage, its context
+    const own = { type: 'assistant', parent_tool_use_id: 't1', agent_id: 'a1', message: { role: 'assistant', model: 'claude-haiku-5-5', content: [{ type: 'tool_use', id: 's1', name: 'Grep', input: { pattern: 'config' } }], usage: { input_tokens: 12, cache_creation_input_tokens: 2000, cache_read_input_tokens: 30000, output_tokens: 188 } } }
+    const count = m.items().length
+    expect(m.apply(own)).toHaveLength(1)
+    expect(m.items()).toHaveLength(count)
+    expect(callsOf(m)).toHaveLength(1)
+    expect(callsOf(m)[0].agents[0]).toMatchObject({ id: 'a1', model: 'claude-haiku-5-5', effort: 'high', context: 32200 })
+    // the same numbers again change nothing, and the subagent's tool results are not the conversation's
+    expect(m.apply(own)).toEqual([])
+    expect(m.apply({ type: 'user', parent_tool_use_id: 't1', agent_id: 'a1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's1', content: 'found' }] } })).toEqual([])
+    // its next call has grown its context
+    m.apply({ ...own, message: { ...own.message, usage: { input_tokens: 5, cache_read_input_tokens: 41000, output_tokens: 95 } } })
+    expect(callsOf(m)[0].agents[0]).toMatchObject({ model: 'claude-haiku-5-5', context: 41100 })
+  })
+
+  it('a subagent message with no agent_id is the one agent running for its call; one for no known agent, or with bad usage, changes nothing', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find it', prompt: 'look', effort: 'extreme' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find it', subagent_type: 'Explore' })
+    // an effort Claude Code does not have is not shown
+    expect(callsOf(m)[0].agents[0].effort).toBeUndefined()
+    const usage = { input_tokens: 100, cache_read_input_tokens: 900, output_tokens: 0 }
+    m.apply({ type: 'assistant', parent_tool_use_id: 't1', message: { role: 'assistant', model: 'claude-sonnet-5-5', content: [], usage } })
+    expect(callsOf(m)[0].agents[0]).toMatchObject({ model: 'claude-sonnet-5-5', context: 1000 })
+
+    expect(m.apply({ type: 'assistant', parent_tool_use_id: 'nope', message: { role: 'assistant', model: 'claude-opus-5-5', content: [], usage } })).toEqual([])
+    expect(m.apply({ type: 'assistant', parent_tool_use_id: 't1', agent_id: 'a1', message: { role: 'assistant', model: 'claude-sonnet-5-5', content: [], usage: { input_tokens: -1, output_tokens: 5 } } })).toEqual([])
+    expect(m.apply({ type: 'assistant', parent_tool_use_id: 't1', agent_id: 'a1', message: { role: 'assistant', model: '<synthetic>', content: [], usage: 'many' } })).toEqual([])
+    expect(callsOf(m)[0].agents[0]).toMatchObject({ model: 'claude-sonnet-5-5', context: 1000 })
+
+    // two agents running for one call: a message that names neither is not guessed
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a2', description: 'And this', subagent_type: 'Explore' })
+    expect(m.apply({ type: 'assistant', parent_tool_use_id: 't1', message: { role: 'assistant', model: 'claude-opus-5-5', content: [], usage } })).toEqual([])
+  })
+
   it('a Read of a png adds an images item', () => {
     const { m } = model()
     m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/work/acme/shot.PNG' } }] } })

@@ -1,5 +1,5 @@
 import type { AccountResult, AccountsView } from './accounts'
-import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, TabView } from './chat'
+import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { MailConversationView, MailUnread } from './mail'
 import type { DeviceResult, DevicesView } from './devices'
@@ -165,6 +165,10 @@ export const IPC = {
   chatAttach: 'chat:attach',
   chatPickFiles: 'chat:pick-files',
   chatFiles: 'chat:files',
+  /** the Heads up card of a chat: the one the window shows per tab, and the person's answer to it */
+  chatHeadsUp: 'chat:heads-up',
+  chatHeadsUpAction: 'chat:heads-up-action',
+  evChatHeadsUp: 'ev:chat-heads-up',
   /** the patches of a chat, in order: from the rev the window had to the rev they make */
   evChatPatch: 'ev:chat-patch',
   /** a remote chat's snapshot arrived: the window reloads the chat from ct.chatSnapshot */
@@ -201,6 +205,8 @@ export interface StatusUpdate {
   agents: AgentStatus[]
   /** the background work still running when Claude's last turn ended */
   background: BackgroundTask[]
+  /** the reset time (ms) of the usage limit that stopped the tab's turn, while Claude waits for it to go on by itself */
+  continuesAt?: number | null
 }
 
 export interface PlanUpdate {
@@ -491,6 +497,12 @@ export interface CtApi {
   chatPickFiles(tabId: string): Promise<ChatAttachment[]>
   /** the files of the tab's folder whose path matches the query, best first, for the @ picker */
   chatFiles(tabId: string, query: string): Promise<string[]>
+  /** the Heads up card a local chat shows now; null when it shows none */
+  chatHeadsUp(tabId: string): Promise<HeadsUpCard | null>
+  /** the person's answer to a chat's Heads up card */
+  chatHeadsUpAction(tabId: string, cardId: string, action: HeadsUpAction): void
+  /** a chat's Heads up card came, changed (Explain more) or went (null) */
+  onChatHeadsUp(cb: (tabId: string, card: HeadsUpCard | null) => void): Unsubscribe
   /** a chat's patches: from the rev the window had to the rev they make; a window that is not at fromRev asks for a snapshot */
   onChatPatch(cb: (tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]) => void): Unsubscribe
   onChatReload(cb: (tabId: string) => void): Unsubscribe

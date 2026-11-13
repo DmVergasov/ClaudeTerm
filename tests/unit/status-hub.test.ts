@@ -219,3 +219,15 @@ describe('StatusHub.resetTab (fix 1, I3)', () => {
     expect(hub.get(TAB).main?.model.displayName).toBe('New')
   })
 })
+
+describe('StatusHub.continuesAt', () => {
+  it('a tab waiting to go on after a usage limit says when, and stops saying it when the wait ends; each change is sent once', () => {
+    const { hub, changes } = makeHub()
+    hub.continuesAt(TAB, 1_800_000_000_000)
+    hub.continuesAt(TAB, 1_800_000_000_000)
+    expect(hub.get(TAB).continuesAt).toBe(1_800_000_000_000)
+    hub.continuesAt(TAB, null)
+    expect(hub.get(TAB).continuesAt).toBeUndefined()
+    expect(changes).toEqual([TAB, TAB])
+  })
+})

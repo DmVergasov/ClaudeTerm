@@ -154,6 +154,9 @@ const api: CtApi = {
   chatAttach: (tabId, paths) => ipcRenderer.invoke(IPC.chatAttach, tabId, paths),
   chatPickFiles: (tabId) => ipcRenderer.invoke(IPC.chatPickFiles, tabId),
   chatFiles: (tabId, query) => ipcRenderer.invoke(IPC.chatFiles, tabId, query),
+  chatHeadsUp: (tabId) => ipcRenderer.invoke(IPC.chatHeadsUp, tabId),
+  chatHeadsUpAction: (tabId, cardId, action) => ipcRenderer.send(IPC.chatHeadsUpAction, tabId, cardId, action),
+  onChatHeadsUp: (cb) => on(IPC.evChatHeadsUp, cb),
   onChatPatch: (cb) => on(IPC.evChatPatch, cb),
   onChatReload: (cb) => on(IPC.evChatReload, cb)
 }

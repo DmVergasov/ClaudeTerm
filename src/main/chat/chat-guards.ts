@@ -1,4 +1,4 @@
-import type { ChatAnswer, ChatAttachment, ChatPermissionMode, ChatSend } from '../../shared/chat'
+import { HEADS_UP_ACTIONS, type ChatAnswer, type ChatAttachment, type ChatPermissionMode, type ChatSend, type HeadsUpAction } from '../../shared/chat'
 
 // The checks on what the renderer sends back: every field's type and size
 
@@ -63,4 +63,9 @@ export function isChatSend(v: unknown): v is ChatSend {
 
 export function isPermissionMode(v: unknown): v is ChatPermissionMode {
   return typeof v === 'string' && (MODES as readonly string[]).includes(v)
+}
+
+/** the person's answer to a Heads up card */
+export function isHeadsUpAction(v: unknown): v is HeadsUpAction {
+  return typeof v === 'string' && (HEADS_UP_ACTIONS as readonly string[]).includes(v)
 }

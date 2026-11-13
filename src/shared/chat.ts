@@ -23,7 +23,15 @@ export const isHandoffLine = (line: string): boolean => line.length > 0 && line.
 export const commandWord = (text: string): string => text.split(/\s/)[0] ?? text
 
 export type ChatCallState = 'running' | 'done' | 'failed'
-export interface ChatSubagent { id: string; description: string; type: string; state: ChatCallState; ms: number | null }
+/**
+ * A subagent of an Agent call. model: the model its call asks for (an alias), then the one it runs on (an id); effort: the level
+ * its call asks for; context: the tokens of its own conversation at its last call. Each is absent while not known, and from an
+ * older device.
+ */
+export interface ChatSubagent {
+  id: string; description: string; type: string; state: ChatCallState; ms: number | null
+  model?: string; effort?: string; context?: number
+}
 export interface ChatToolCall {
   id: string; name: string; subject: string; detail: string | null; state: ChatCallState
   output: string | null; error: string | null; editPath: string | null; agents: ChatSubagent[]; ms: number | null
@@ -79,6 +87,25 @@ export type ChatPatch =
   | { op: 'call'; id: string; call: ChatToolCall }   // in the tools item `id`: replaces the call with the same call.id, or appends it
   | { op: 'state'; state: ChatState }
   | { op: 'reset'; items: ChatItem[]; hasOlder: boolean }
+
+/**
+ * A Heads up card above a chat's message box: what a side agent, reading the conversation while Claude works, found the
+ * person should know. `heads-up`: about the work in this session (a decision Claude made, a result that may be off);
+ * `should-know`: how something works that matters for their work. `more` is the longer explanation asked for with Explain
+ * more, while `explaining` it is on its way; `explainError` says why it did not come.
+ */
+export interface HeadsUpCard {
+  id: string
+  tag: 'heads-up' | 'should-know'
+  title: string
+  text: string
+  more: string | null
+  explaining: boolean
+  explainError: string | null
+}
+/** Got it closes the card, Not relevant closes it and the topic is not offered again, Explain more asks for more */
+export type HeadsUpAction = 'got-it' | 'not-relevant' | 'explain'
+export const HEADS_UP_ACTIONS: readonly HeadsUpAction[] = ['got-it', 'not-relevant', 'explain']
 
 /** the messages the user typed in a chat, oldest first: what ↑ recalls. Auto-continue prompts and Review sends are not the user's */
 export function typedMessages(items: readonly ChatItem[]): string[] {

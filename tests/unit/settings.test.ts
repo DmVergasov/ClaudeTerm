@@ -26,7 +26,7 @@ describe('parseSettings', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])
     expect(settings.font).toEqual({ family: DEFAULT_SETTINGS.font.family, size: 16 })
-    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true, view: 'chat' })
+    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, continueAfterLimit: true, headsUp: true, limitPace: true, view: 'chat' })
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
   })
 
@@ -44,6 +44,22 @@ describe('parseSettings', () => {
     const r = parseSettings(JSON.stringify({ claude: { continueAfterRestore: 'no' } }))
     expect(r.settings.claude.continueAfterRestore).toBe(true)
     expect(r.errors.join('\n')).toContain('"claude.continueAfterRestore"')
+  })
+
+  it('claude.continueAfterLimit is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.claude.continueAfterLimit).toBe(true)
+    expect(parseSettings(JSON.stringify({ claude: { continueAfterLimit: false } })).settings.claude.continueAfterLimit).toBe(false)
+    const r = parseSettings(JSON.stringify({ claude: { continueAfterLimit: 1 } }))
+    expect(r.settings.claude.continueAfterLimit).toBe(true)
+    expect(r.errors.join('\n')).toContain('"claude.continueAfterLimit"')
+  })
+
+  it('claude.headsUp is on unless turned off, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.claude.headsUp).toBe(true)
+    expect(parseSettings(JSON.stringify({ claude: { headsUp: false } })).settings.claude.headsUp).toBe(false)
+    const r = parseSettings(JSON.stringify({ claude: { headsUp: 'yes' } }))
+    expect(r.settings.claude.headsUp).toBe(true)
+    expect(r.errors.join('\n')).toContain('"claude.headsUp"')
   })
 
   it('claude.autoContinue is off unless turned on, and a value that is not a boolean falls back with a notice', () => {

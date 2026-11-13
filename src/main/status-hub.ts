@@ -24,6 +24,8 @@ interface TabState {
   retired: Set<string>
   /** the background work still running when the last turn ended */
   background: BackgroundTask[]
+  /** the reset time (ms) of the usage limit the tab's turn stopped on, while Claude waits to go on after it */
+  continuesAt: number | null
 }
 
 export class StatusHub {
@@ -142,16 +144,25 @@ export class StatusHub {
     this.tabs.delete(tabId)
   }
 
+  /** the tab's turn stopped on a usage limit, and Claude goes on after its reset (`at`, ms); null: it no longer waits */
+  continuesAt(tabId: string, at: number | null): void {
+    const t = this.tab(tabId)
+    if (t.continuesAt === at) return
+    t.continuesAt = at
+    this.deps.onChange(tabId)
+  }
+
   get(tabId: string): StatusUpdate {
     const t = this.tabs.get(tabId)
     const agents = t ? [...t.agents.values()].map(({ agentId, type, description, model, effort, startedAt }) => ({ agentId, type, description, model, effort, startedAt })) : []
-    return { tabId, main: t?.main ?? null, agents, background: t ? [...t.background] : [] }
+    const waits = t !== undefined && t.continuesAt !== null ? { continuesAt: t.continuesAt } : {}
+    return { tabId, main: t?.main ?? null, agents, background: t ? [...t.background] : [], ...waits }
   }
 
   private tab(tabId: string): TabState {
     let t = this.tabs.get(tabId)
     if (!t) {
-      t = { sessionId: null, main: null, agents: new Map(), early: new Map(), retired: new Set(), background: [] }
+      t = { sessionId: null, main: null, agents: new Map(), early: new Map(), retired: new Set(), background: [], continuesAt: null }
       this.tabs.set(tabId, t)
     }
     return t

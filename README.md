@@ -139,6 +139,8 @@ Under the conversation is the composer. **Enter** sends, **Shift+Enter** starts 
 
 Type `/` for Claude Code's commands. **/model** opens the model picker and **/resume** the Recent sessions window, both in the chat. A few commands need Claude Code's own screen — `/config`, `/permissions`, `/agents`, `/login`, `/doctor`, `/rewind` and others — and so does any line that starts with `!`: the tab switches to its terminal and the line is typed into Claude Code's prompt there, because the chat does not draw those dialogs and settings.
 
+While Claude works, a side agent reads the conversation now and then (after every 6th tool call of a turn) and, when it finds something you would likely miss and should know — a decision Claude made in passing, a result that may be off, a concept the work depends on — shows it as a **Heads up** card above the message box. **Explain more** asks for a longer explanation, **Not relevant** keeps that topic from coming back, **Got it** closes the card. The side agent runs on Sonnet in the tab's account, with no tools and nothing kept in your sessions, and it uses your plan: **Heads up** in Settings → Claude Code turns it off.
+
 A Claude tab on another of your computers shows its chat too, and you can send messages and answer its cards from there.
 
 The chat runs on Anthropic's Claude Agent SDK (its license is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) and needs **Claude Code 2.1.322 or later**. An older Claude Code, or one whose version cannot be read, opens the tab in the terminal as before. A folder Claude Code does not trust yet opens its Claude tab in the terminal for the trust dialog, whatever the setting.
@@ -256,6 +258,8 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "statusRefreshInterval": 5,    // that timer in seconds, 1–300; each refresh starts a few short processes per Claude tab
     "autoContinue": false,         // type a nudge into a Claude tab whose response a dropped connection cut off, up to 3 times in a row
     "continueAfterRestore": true,  // a restored tab Claude was working in when ClaudeTerm closed goes on by itself, also one whose background work it cut off
+    "continueAfterLimit": true,    // a turn the usage limit stopped goes on by itself a minute after the limit resets; that limit's meter in the title bar counts down to it
+    "headsUp": true,               // in a chat, a side agent on Sonnet shows what you should know above the message box while Claude works; it uses your plan
     "limitPace": true,             // each usage limit in the title bar has a bar, a color and a forecast from the pace it is spent at; false = the fixed 70% and 90% only
     "view": "chat"                 // Claude tabs open in the chat; "terminal" = Claude Code's own screen
   },

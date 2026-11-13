@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { isSettingKey, isSettingValue, SETTING_KEYS } from '../../src/shared/settings-keys'
 
 describe('settings keys', () => {
-  it('lists the 25 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-eight plain settings', () => {
-    expect(SETTING_KEYS).toHaveLength(60)
+  it('lists the 25 notification cells, the sound, doneWithBackgroundWork, autoUnread and the twenty-nine plain settings', () => {
+    expect(SETTING_KEYS).toHaveLength(62)
     expect(SETTING_KEYS).toContain('claude.view')
     expect(SETTING_KEYS).toContain('chat.copyOnSelect')
     expect(SETTING_KEYS).toContain('chat.fullWidth')
@@ -23,6 +23,8 @@ describe('settings keys', () => {
     expect(SETTING_KEYS).toContain('claude.statusRefreshInterval')
     expect(SETTING_KEYS).toContain('claude.autoContinue')
     expect(SETTING_KEYS).toContain('claude.continueAfterRestore')
+    expect(SETTING_KEYS).toContain('claude.continueAfterLimit')
+    expect(SETTING_KEYS).toContain('claude.headsUp')
     expect(SETTING_KEYS).toContain('claude.limitPace')
     expect(SETTING_KEYS).toContain('review.editor')
     expect(SETTING_KEYS).toContain('review.statusBar')

@@ -9,7 +9,7 @@ import type { ConptyHost, NoRoomMode, NotificationSettings, ProfileDef, Settings
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   defaultFolder: null,
-  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, limitPace: true, view: 'chat' },
+  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, continueAfterLimit: true, headsUp: true, limitPace: true, view: 'chat' },
   chat: { copyOnSelect: true, fullWidth: false },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
@@ -135,6 +135,8 @@ export function parseSettings(text: string | null): ParsedSettings {
         wholeIn(NUMBER_LIMITS['claude.statusRefreshInterval'].min, NUMBER_LIMITS['claude.statusRefreshInterval'].max), d.claude.statusRefreshInterval),
       autoContinue: take('claude.autoContinue', claude.autoContinue, isBool, d.claude.autoContinue),
       continueAfterRestore: take('claude.continueAfterRestore', claude.continueAfterRestore, isBool, d.claude.continueAfterRestore),
+      continueAfterLimit: take('claude.continueAfterLimit', claude.continueAfterLimit, isBool, d.claude.continueAfterLimit),
+      headsUp: take('claude.headsUp', claude.headsUp, isBool, d.claude.headsUp),
       limitPace: take('claude.limitPace', claude.limitPace, isBool, d.claude.limitPace),
       view: take('claude.view', claude.view, isTabView, d.claude.view)
     },

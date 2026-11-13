@@ -19,7 +19,7 @@ import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './a
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
 import { badgeDescription, dotBitmap } from './app-badge'
-import { AutoContinue, type RestoreCut } from './auto-continue'
+import { AutoContinue, limitResetOf, type RestoreCut } from './auto-continue'
 import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
@@ -64,13 +64,14 @@ import { ChatSessions } from './chat/chat-sessions'
 import { isHandoffLine, openInTerminal, type HandoffDeps } from './chat/terminal-handoff'
 import { chatPromptState, planChatResume, routeChatResume, type ChatResumeDeps } from './chat/chat-routing'
 import { scaleChatImage } from './chat/chat-image'
-import { isChatAnswer, isChatSend, isPermissionMode } from './chat/chat-guards'
+import { isChatAnswer, isChatSend, isHeadsUpAction, isPermissionMode } from './chat/chat-guards'
 import { canonicalFolder, readTrustFile } from './chat/chat-files'
 import { attachFiles, attachmentOf, isChatPaths, isChatQuery, type AttachDeps } from './chat/chat-attachments'
 import { matchFiles, projectFiles } from './chat/project-files'
 import { cachedTrustList, chatSupport } from './chat/chat-support'
 import { resolveChatLaunch, type ChatLaunchDeps } from './chat/claude-spawn'
-import { loadSdk, startSdkEngine } from './chat/sdk-engine'
+import { askOnce, loadSdk, startSdkEngine } from './chat/sdk-engine'
+import { HEADS_UP_MODEL, HEADS_UP_TIMEOUT_MS, HeadsUp } from './chat/heads-up'
 import { claudeAccountFile, readPlan } from './claude-plan'
 import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
@@ -616,6 +617,7 @@ function bootstrap(): void {
       taskLists.removeTab(tabId)
       newerSide.delete(tabId)
       chatHub.removeTab(tabId)
+      headsUp.forget(tabId)
     },
     // read at each start: the console host applies to tabs opened after a change
     spawn: (o) => spawnPty({ ...o, bundledConpty: settings.conpty === 'bundled' }),
@@ -826,6 +828,20 @@ function bootstrap(): void {
       if (isDirectory(path)) tabs.setFolder(tabId, path)
     },
     now: () => Date.now(),
+    log,
+    observe: (tabId, msg) => headsUp.message(tabId, msg)
+  })
+  // a side agent reads a chat while Claude works, and shows what the person should know above its message box
+  const headsUp = new HeadsUp({
+    enabled: () => settings.claude.headsUp,
+    items: (tabId) => chatHub.side(tabId)?.items ?? null,
+    ask: (tabId, system, prompt) => {
+      const side = chatHub.side(tabId)
+      if (side === null) return Promise.reject(new Error('the chat does not run'))
+      return askOnce({ launch: side.launch, cwd: side.cwd, env: side.env, model: HEADS_UP_MODEL, system, prompt, timeoutMs: HEADS_UP_TIMEOUT_MS })
+    },
+    show: (tabId, card) => send(IPC.evChatHeadsUp, tabId, card),
+    newId: () => randomUUID(),
     log
   })
 
@@ -1423,7 +1439,15 @@ function bootstrap(): void {
     notify: (tabId) => {
       raiseAttention(tabId, 'done')
     },
-    log
+    log,
+    // the reset comes from the tab's own status: the statusLine of a terminal tab, the stream of a chat tab
+    limit: {
+      enabled: () => settings.claude.continueAfterLimit,
+      resetsAt: (tabId) => limitResetOf(statusHub.get(tabId).main, Date.now()),
+      now: () => Date.now(),
+      waiting: (tabId, at) => statusHub.continuesAt(tabId, at),
+      ...(isTest && process.env.CLAUDETERM_TEST_LIMIT_MARGIN_MS ? { marginMs: Number(process.env.CLAUDETERM_TEST_LIMIT_MARGIN_MS) } : {}),
+    },
   })
   // restored tabs whose turn, or the background work a finished turn left, ClaudeTerm's closing cut off: they go on once
   // their session has started again
@@ -2255,6 +2279,10 @@ function bootstrap(): void {
   ipcMain.on(IPC.chatInterrupt, (_e, tabId: unknown) => {
     if (isLocalClaudeTab(tabId)) chatHub.interrupt(tabId)
     else if (isId(tabId) && remote?.viewer.has(tabId)) remote.actions.chatInterrupt(tabId)
+  })
+  ipcMain.handle(IPC.chatHeadsUp, (_e, tabId: unknown) => (isLocalClaudeTab(tabId) ? headsUp.card(tabId) : null))
+  ipcMain.on(IPC.chatHeadsUpAction, (_e, tabId: unknown, cardId: unknown, action: unknown) => {
+    if (isLocalClaudeTab(tabId) && isChatRef(cardId) && isHeadsUpAction(action)) headsUp.act(tabId, cardId, action)
   })
   ipcMain.handle(IPC.chatAnswer, (_e, tabId: unknown, cardId: unknown, a: unknown): boolean | Promise<boolean> => {
     if (!isId(tabId) || !isChatRef(cardId) || !isChatAnswer(a)) return false

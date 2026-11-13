@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { limitMeters, resetClock } from '../../src/renderer/limit-meters'
+import { countdown, limitMeters, resetClock } from '../../src/renderer/limit-meters'
 import type { StatusUpdate } from '../../src/shared/ipc'
 import type { MainStatus } from '../../src/shared/types'
 
@@ -31,6 +31,16 @@ describe('resetClock', () => {
   })
 })
 
+describe('countdown', () => {
+  it('days and hours, hours and minutes, minutes and seconds, or seconds; never below 0', () => {
+    expect(countdown(3 * 86_400_000 + 18 * H + 20 * 60_000)).toBe('3d 18h')
+    expect(countdown(2 * H + 5 * 60_000)).toBe('2h 05m')
+    expect(countdown(25 * 60_000 + 5_000)).toBe('25m 05s')
+    expect(countdown(41_200)).toBe('42s')
+    expect(countdown(-5_000)).toBe('0s')
+  })
+})
+
 describe('limitMeters', () => {
   it('gives the 5-hour and weekly meters in that order, with a bar of the % used and the share of the window gone by', () => {
     // the 5h limit 3 hours into its window, the week 3 days 18 hours before its reset (46% of it gone)
@@ -48,8 +58,8 @@ describe('limitMeters', () => {
   it('a limit that runs out before its reset says when, and one used up says so', () => {
     const at = (usedPct: number, now: number) => limitMeters(update({ fiveHour: { usedPct, resetsAt: RESET / 1000 } }), now, true)[0]
     // 50% in the first hour: the rest goes in the next hour, at 18:40, three hours before the reset
-    expect(at(50, RESET - 4 * H)).toEqual({ key: 'limit', label: '5-HOUR', pct: '50%', reset: '21:40', title: 'resets at 21:40, in 4 h\nat this pace: runs out at 18:40, 3 h before the reset', level: 'crit', bar: { used: 50, elapsed: 20 } })
-    expect(at(100, NOW)).toEqual({ key: 'limit', label: '5-HOUR', pct: '100%', reset: '21:40', title: 'resets at 21:40, in 2 h\nused up', level: 'crit', bar: { used: 100, elapsed: 60 } })
+    expect(at(50, RESET - 4 * H)).toEqual({ key: 'limit', label: '5-HOUR', pct: '50%', reset: '21:40', counting: false, title: 'resets at 21:40, in 4 h\nat this pace: runs out at 18:40, 3 h before the reset', level: 'crit', bar: { used: 50, elapsed: 20 } })
+    expect(at(100, NOW)).toEqual({ key: 'limit', label: '5-HOUR', pct: '100%', reset: 'in 2h 00m', counting: true, title: 'resets at 21:40, in 2 h\nused up', level: 'crit', bar: { used: 100, elapsed: 60 } })
     // too early in the window for a pace: no forecast
     expect(at(10, RESET - FIVE_HOURS + 18 * 60_000)).toMatchObject({ title: 'resets at 21:40, in 4 h 42 min', level: 'normal' })
   })
@@ -62,10 +72,40 @@ describe('limitMeters', () => {
   it('with the pace turned off a limit has no bar and no forecast, and takes its color from the fixed 70% and 90%', () => {
     const at = (usedPct: number) => limitMeters(update({ fiveHour: { usedPct, resetsAt: RESET / 1000 } }), RESET - 4 * H, false)[0]
     // 50% in the first hour runs out early at this pace, but is only half the limit
-    expect(at(50)).toEqual({ key: 'limit', label: '5-HOUR', pct: '50%', reset: '21:40', title: 'resets at 21:40, in 4 h', level: 'normal', bar: null })
+    expect(at(50)).toEqual({ key: 'limit', label: '5-HOUR', pct: '50%', reset: '21:40', counting: false, title: 'resets at 21:40, in 4 h', level: 'normal', bar: null })
     expect(at(75)).toMatchObject({ level: 'warn', bar: null })
-    expect(at(100)).toEqual({ key: 'limit', label: '5-HOUR', pct: '100%', reset: '21:40', title: 'resets at 21:40, in 4 h\nused up', level: 'crit', bar: null })
-    expect(limitMeters(update({}), NOW, false)[1]).toEqual({ key: 'week', label: 'WEEKLY', pct: '41%', reset: 'Fri 14:00', title: 'resets Fri 9 Oct, 14:00, in 3 d 18 h', level: 'normal', bar: null })
+    expect(at(100)).toEqual({ key: 'limit', label: '5-HOUR', pct: '100%', reset: 'in 4h 00m', counting: true, title: 'resets at 21:40, in 4 h\nused up', level: 'crit', bar: null })
+    expect(limitMeters(update({}), NOW, false)[1]).toEqual({ key: 'week', label: 'WEEKLY', pct: '41%', reset: 'Fri 14:00', counting: false, title: 'resets Fri 9 Oct, 14:00, in 3 d 18 h', level: 'normal', bar: null })
+  })
+
+  it('a used-up limit counts down to its reset in its own meter: hours and minutes, then minutes and seconds, then seconds', () => {
+    const five = (now: number) => limitMeters(update({ fiveHour: { usedPct: 100, resetsAt: RESET / 1000 } }), now, true)[0]!
+    expect(five(NOW)).toMatchObject({ reset: 'in 2h 00m', counting: true })
+    expect(five(RESET - 25 * 60_000 - 5_000)).toMatchObject({ reset: 'in 25m 05s', counting: true })
+    expect(five(RESET - 42_000)).toMatchObject({ reset: 'in 42s', counting: true })
+    // the weekly one stays a clock while it is not used up
+    expect(limitMeters(update({ fiveHour: { usedPct: 100, resetsAt: RESET / 1000 } }), NOW, true)[1]).toMatchObject({ reset: 'Fri 14:00', counting: false })
+  })
+
+  it('the weekly limit used up counts down in days and hours, in the weekly meter', () => {
+    const [five, week] = limitMeters(update({ sevenDay: { usedPct: 100, resetsAt: new Date(2026, 9, 9, 14, 0).getTime() / 1000 } }), NOW, true)
+    expect(week).toMatchObject({ reset: 'in 3d 18h', counting: true, level: 'crit' })
+    expect(five).toMatchObject({ reset: '21:40', counting: false })
+  })
+
+  it('the meter of the reset the tab waits for says Claude goes on by itself after it; the other one does not', () => {
+    const week = new Date(2026, 9, 9, 14, 0).getTime()
+    const both = update({ fiveHour: { usedPct: 100, resetsAt: RESET / 1000 }, sevenDay: { usedPct: 100, resetsAt: week / 1000 } })
+    const [five, weekly] = limitMeters({ ...both, continuesAt: week }, NOW, true)
+    expect(weekly!.title).toBe('resets Fri 9 Oct, 14:00, in 3 d 18 h\nused up\nClaude goes on by itself a minute after the reset (Settings → Claude Code)')
+    expect(five!.title).toBe('resets at 21:40, in 2 h\nused up')
+    // no wait, no such line
+    expect(limitMeters(both, NOW, true).map((m) => m.title).join('\n')).not.toContain('goes on')
+  })
+
+  it('a used-up limit whose reset has passed shows its clock again and stops counting', () => {
+    const five = limitMeters(update({ fiveHour: { usedPct: 100, resetsAt: RESET / 1000 } }), RESET + 1000, true)[0]
+    expect(five).toMatchObject({ reset: '21:40', counting: false })
   })
 
   it('the levels while the pace is not known: 70% warn, 90% crit, for the limits too', () => {
