@@ -53,6 +53,19 @@ describe('parseFinding', () => {
     expect(found).toMatchObject({ tag: 'should-know', title: 'Keys are per user', text: 'Each user gets a cache of their own.' })
   })
 
+  it('a finding in the language the person writes in, with the fields and the tag as given, is read whole', () => {
+    const found = parseFinding('topic: Тесты чистят боевую базу заказов.\ntag: Heads up\ntitle: Тесты идут по боевой базе.\nФайл `.env` указывает на **боевую** базу.')
+    expect(found).toEqual({ topic: 'Тесты чистят боевую базу заказов.', tag: 'heads-up', title: 'Тесты идут по боевой базе', text: 'Файл `.env` указывает на **боевую** базу.' })
+  })
+
+  it("the side agent writes in the person's language, and keeps the answer's fields and tag as they are named", () => {
+    for (const system of [CHECK_SYSTEM, EXPLAIN_SYSTEM]) {
+      expect(system).toContain('in the language the person writes in')
+      expect(system).not.toMatch(/write in english/i)
+    }
+    expect(CHECK_SYSTEM).toContain('Keep the field names topic, tag and title, and the tag itself, in English')
+  })
+
   it('none, or an answer that keeps to neither form, is no finding', () => {
     expect(parseFinding('topic: none')).toBeNull()
     expect(parseFinding('topic: none.\n')).toBeNull()
