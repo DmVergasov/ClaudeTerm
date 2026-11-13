@@ -223,12 +223,11 @@ function noticeItem(tone: 'info' | 'error', text: string, action: ChatNoticeActi
 /** the restart report's divider: its first `good` part is drawn in green, the rest as the text is */
 function dividerItem(text: string, good: string | null): HTMLElement {
   const box = el('div', 'chat-divider')
+  const line = el('span', 'chat-divider-text')
   const at = good ? text.indexOf(good) : -1
-  if (good === null || at < 0) {
-    box.textContent = text
-    return box
-  }
-  box.append(text.slice(0, at), el('span', 'chat-divider-good', good), text.slice(at + good.length))
+  if (good === null || at < 0) line.textContent = text
+  else line.append(text.slice(0, at), el('span', 'chat-divider-good', good), text.slice(at + good.length))
+  box.append(line)
   return box
 }
 

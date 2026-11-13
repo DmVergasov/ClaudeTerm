@@ -266,6 +266,18 @@ test('the divider names what came up, the connected part in green', async () => 
     await expect(divider).toContainText('Session restarted · context7 connected · 2 tools')
     const good = divider.locator('.chat-divider-good')
     await expect(good).toHaveText('context7 connected')
+    // the divider's text is one flex item: the green part sits inside one text span, with the usual space before it
+    const layout = await divider.evaluate((box) => {
+      const text = box.querySelector<HTMLElement>('.chat-divider-text')
+      const green = text?.querySelector<HTMLElement>('.chat-divider-good') ?? null
+      const before = green?.previousSibling ?? null
+      if (!text || !green || !before || before.nodeType !== Node.TEXT_NODE) return null
+      const range = document.createRange()
+      range.selectNodeContents(before)
+      return { children: box.children.length, text: text.textContent, gap: green.getBoundingClientRect().left - range.getBoundingClientRect().right }
+    })
+    expect(layout).toEqual({ children: 1, text: 'Session restarted · context7 connected · 2 tools', gap: expect.any(Number) })
+    expect(layout!.gap).toBeLessThan(6)
     const colours = await good.evaluate((node) => {
       const probe = document.createElement('span')
       probe.style.color = 'var(--green)'
