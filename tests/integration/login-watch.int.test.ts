@@ -1,3 +1,4 @@
+import { pbkdf2 } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -62,6 +63,29 @@ describe('LoginWatch', () => {
     await start()
     writeFileSync(file, login('acc-2'))
     await expect.poll(() => changes).toBe(1)
+  })
+
+  it('sees a /login written right after the watch started, while the file system answers late', async () => {
+    // a loaded machine: the thread pool that answers file reads stays busy, every job that ends starts another
+    let busy = true
+    const job = (): void => pbkdf2('x', 'y', 3000, 32, 'sha256', () => { if (busy) job() })
+    for (let k = 0; k < 4; k++) job()
+    const watches: LoginWatch[] = []
+    try {
+      for (let i = 0; i < 10; i++) {
+        const at = join(dir, `${i}.json`)
+        writeFileSync(at, login('acc-1'))
+        let seen = 0
+        const w = new LoginWatch(at, () => { seen += 1 }, 20)
+        watches.push(w)
+        await w.start()
+        writeFileSync(at, login('acc-2'))
+        await expect.poll(() => seen, { timeout: 3000 }).toBe(1)
+      }
+    } finally {
+      busy = false
+      for (const w of watches) w.stop()
+    }
   })
 
   it('tells nothing once stopped', async () => {
