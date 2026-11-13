@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { LoginWatch } from '../../src/main/login-watch'
+import { LoginWatch, type FileStamp } from '../../src/main/login-watch'
 
 const login = (accountUuid: string, more: object = {}): string =>
   JSON.stringify({ numStartups: 3, ...more, oauthAccount: { accountUuid, organizationUuid: 'org-1', organizationType: 'claude_max' } })
@@ -86,6 +86,33 @@ describe('LoginWatch', () => {
       busy = false
       for (const w of watches) w.stop()
     }
+  })
+
+  it('sees a /login on a file system whose times are coarse: a rewrite in the same tick leaves the stamp as it was', async () => {
+    writeFileSync(file, login('acc-1'))
+    // the Windows runner's NTFS gives the file the time of the timer's tick, 15.6 ms long: both writes come in one tick and
+    // the file keeps its size, so its stamp does not change
+    const written = Date.now()
+    const coarse = async (): Promise<FileStamp> => ({ ino: 7, size: 120, mtimeMs: written, ctimeMs: written })
+    watch = new LoginWatch(file, () => { changes += 1 }, 20, coarse)
+    await watch.start()
+    writeFileSync(file, login('acc-2'))
+    await expect.poll(() => changes).toBe(1)
+  })
+
+  it('a file written long ago whose stamp stays is not read again on each poll', async () => {
+    writeFileSync(file, login('acc-1'))
+    const old = Date.now() - 60_000
+    let looks = 0
+    const still = async (): Promise<FileStamp> => {
+      looks += 1
+      return { ino: 7, size: 120, mtimeMs: old, ctimeMs: old }
+    }
+    watch = new LoginWatch(file, () => { changes += 1 }, 20, still)
+    await watch.start()
+    writeFileSync(file, login('acc-2'))
+    await expect.poll(() => looks).toBeGreaterThan(5)
+    expect(changes).toBe(0)
   })
 
   it('tells nothing once stopped', async () => {
