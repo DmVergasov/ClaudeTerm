@@ -505,6 +505,38 @@ test('a running subagent keeps its bar delay when an earlier agent ends', async 
   }
 })
 
+test('the bars of running subagents move at once when their chat comes back from another tab', async () => {
+  const { app, page, tabId, work } = await launchChatTab({
+    turns: {
+      team: [{
+        task: {
+          description: 'Check the totals',
+          result: 'Checked.',
+          agents: [
+            { type: 'Explore', description: 'Search the sales folder', ms: 20_000 },
+            { type: 'general-purpose', description: 'Check the totals', ms: 20_000 },
+            { type: 'general-purpose', description: 'Compare the regions', ms: 20_000 }
+          ]
+        }
+      }, { text: 'Done.' }]
+    }
+  })
+  try {
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await send(page, 'team')
+    await expect(page.locator('.chat-agents-dock .chat-agent-bar')).toHaveCount(3)
+    await openTabInFront(page, 'shell', work)
+    await page.evaluate((id) => window.ct.activateTab(id), tabId)
+    await expect(page.locator('.chat-agents-dock .chat-agent-bar')).toHaveCount(3)
+    // every bar is in its slide as soon as it shows again: none waits out a delay standing still
+    const sliding = await page.locator('.chat-agents-dock .chat-agent-bar').evaluateAll((bars) =>
+      bars.map((bar) => bar.getAnimations().some((a) => a.effect?.getComputedTiming().progress !== null)))
+    expect(sliding).toEqual([true, true, true])
+  } finally {
+    await app.close()
+  }
+})
+
 test('a step that settles while its call still runs stays folded, and does not open again', async () => {
   const { app, page, tabId, pipeName } = await launchChatTab({
     turns: { long: [{ tool: { name: 'Bash', input: { command: 'sleep 9' }, result: 'slept', ms: 9000 } }, { text: 'Done.' }] }
