@@ -508,6 +508,13 @@ export class TabManager {
     return rec ? { ...rec.info } : null
   }
 
+  /** the environment a Claude tab's Claude Code starts with, as start() gives it; null for a shell tab or an unknown id */
+  claudeEnv(tabId: string): Record<string, string> | null {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.info.kind !== 'claude') return null
+    return this.envOf(rec)
+  }
+
   /** whether a Claude tab is working now: a turn began and its end, an Esc or a Ctrl+C has not yet cleared it */
   isWorking(tabId: string): boolean {
     return this.tabs.get(tabId)?.working ?? false
@@ -665,7 +672,7 @@ export class TabManager {
     this.refreshActivity(rec)
     // a new process works in the folder the tab was opened in, wherever the last one had moved to
     this.moveTo(rec, rec.info.cwd)
-    const env = applyEnvPatch({ ...this.deps.baseEnv(), CLAUDETERM_TAB_ID: rec.info.id, CLAUDETERM_PIPE: this.deps.pipeName }, rec.launch.env)
+    const env = this.envOf(rec)
     const gen = ++rec.gen
     // a process is reported as ended once: a second report from its handle does nothing
     const proc = { exited: false }
@@ -735,6 +742,11 @@ export class TabManager {
 
   private isLive(rec: TabRecord): boolean {
     return this.tabs.get(rec.info.id) === rec
+  }
+
+  /** the environment of a tab's process: the app's, the tab's ids, and its launch's changes (an account's token or config folder) */
+  private envOf(rec: TabRecord): Record<string, string> {
+    return applyEnvPatch({ ...this.deps.baseEnv(), CLAUDETERM_TAB_ID: rec.info.id, CLAUDETERM_PIPE: this.deps.pipeName }, rec.launch.env)
   }
 
   private queue(rec: TabRecord, data: string): void {

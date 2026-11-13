@@ -3,7 +3,7 @@ import { MAX_ADDRESS_LENGTH } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
-import { isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
+import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -336,5 +336,65 @@ describe('device guards', () => {
     expect(isPathText('x'.repeat(MAX_PATH_TEXT + 1))).toBe(false)
     expect(isPathText(1)).toBe(false)
     expect(isPathText(null)).toBe(false)
+  })
+})
+
+describe('MCP guards', () => {
+  it('isMcpName takes 1 to 200 characters, no control character, not starting with -', () => {
+    for (const v of ['github', 'my server', 'a'.repeat(200)]) expect(isMcpName(v)).toBe(true)
+    for (const v of ['', 'a'.repeat(201), '-x', 'a\nb', 'a\u0007', 1, null]) expect(isMcpName(v)).toBe(false)
+  })
+
+  it('isMcpAction takes each row action of its shape and refuses an unknown kind, scope or name', () => {
+    const valid: unknown[] = [
+      { kind: 'reconnect', name: 'github' }, { kind: 'toggle', name: 'github', enabled: false }, { kind: 'remove', name: 'github', scope: 'user' },
+      { kind: 'login', name: 'sentry' }, { kind: 'cancel-login', name: 'sentry' }, { kind: 'logout', name: 'sentry' },
+      { kind: 'copy-config', name: 'github', scope: 'project' }, { kind: 'open-config', scope: 'local' }
+    ]
+    for (const v of valid) expect(isMcpAction(v)).toBe(true)
+    const invalid: unknown[] = [
+      { kind: 'delete', name: 'x' }, { kind: 'reconnect' }, { kind: 'reconnect', name: '-x' }, { kind: 'toggle', name: 'x', enabled: 'yes' },
+      { kind: 'remove', name: 'x', scope: 'managed' }, { kind: 'open-config', scope: 'plugin' }, null, 'reconnect'
+    ]
+    for (const v of invalid) expect(isMcpAction(v)).toBe(false)
+  })
+
+  it('isMcpAddRequest takes the text, the names, the scope and a one-line secret or null, and refuses the rest', () => {
+    const request = { text: '{"mcpServers":{"context7":{"type":"http","url":"https://example.com/mcp"}}}', names: ['context7'], scope: 'user', clientSecret: null }
+    expect(isMcpAddRequest(request)).toBe(true)
+    expect(isMcpAddRequest({ ...request, clientSecret: 'cs-123' })).toBe(true)
+    expect(isMcpAddRequest({ ...request, text: 'x'.repeat(65_536) })).toBe(true)
+    expect(isMcpAddRequest({ ...request, names: Array.from({ length: 20 }, (_, i) => `s${i}`) })).toBe(true)
+    const refused: unknown[] = [
+      { ...request, text: 'x'.repeat(65_537) }, { ...request, names: ['-x'] }, { ...request, names: ['a b'] },
+      { ...request, names: Array.from({ length: 21 }, (_, i) => `s${i}`) }, { ...request, scope: 'managed' },
+      { ...request, clientSecret: 'a\nb' }, { ...request, clientSecret: '' }, { ...request, clientSecret: 'x'.repeat(4097) },
+      { ...request, clientSecret: undefined }, { ...request, text: 1 }, null
+    ]
+    for (const v of refused) expect(isMcpAddRequest(v)).toBe(false)
+  })
+
+  it('isPluginAction takes each plugin action of its shape and refuses bad ids, sources and option values', () => {
+    const valid: unknown[] = [
+      { kind: 'install', id: 'github@official' }, { kind: 'configure-later', id: 'github' },
+      { kind: 'configure', id: 'github@official', values: { token: 'abc', 'base.url': 'https://x' } },
+      { kind: 'marketplace-add', source: 'o/r' }, { kind: 'marketplace-add', source: 'https://github.com/o/r.git' },
+      { kind: 'marketplace-remove', name: 'official' }, { kind: 'marketplace-update', name: 'official' }
+    ]
+    for (const v of valid) expect(isPluginAction(v)).toBe(true)
+    const invalid: unknown[] = [
+      { kind: 'install', id: '@official' }, { kind: 'install', id: 'a@b@c' }, { kind: 'install', id: 'x'.repeat(201) },
+      { kind: 'marketplace-remove', name: 'official@x' }, { kind: 'marketplace-add', source: '-x' }, { kind: 'marketplace-add', source: 'o/r\nx' },
+      { kind: 'configure', id: 'github', values: { 'bad key': 'x' } }, { kind: 'configure', id: 'github', values: { token: 'a\nb' } },
+      { kind: 'configure', id: 'github', values: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`k${i}`, 'v'])) },
+      { kind: 'uninstall-all', id: 'github' }, null
+    ]
+    for (const v of invalid) expect(isPluginAction(v)).toBe(false)
+  })
+
+  it('isReloadAction takes not-now or restart only', () => {
+    expect(isReloadAction('not-now')).toBe(true)
+    expect(isReloadAction('restart')).toBe(true)
+    for (const v of ['now', '', null, 1]) expect(isReloadAction(v)).toBe(false)
   })
 })

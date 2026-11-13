@@ -126,6 +126,11 @@ import { createUpdateBackend } from './update-backend'
 import { cleanupImageCache, findTranscript, TranscriptFeed } from './transcript-feed'
 import { showWindow } from './window-show'
 import { loadWindowState, trackWindowState } from './window-state'
+import type { McpResult, McpServersView } from '../shared/mcp'
+import { jsonFileCache } from './mcp/mcp-config'
+import { runClaudeCli } from './mcp/claude-cli'
+import { McpHub } from './mcp/mcp-hub'
+import { isMcpAction, isMcpAddRequest } from './ipc-guards'
 
 const dataDir = initDataDir()
 const log = createLogger(join(dataDir, 'logs'))
@@ -650,6 +655,7 @@ function bootstrap(): void {
       newerSide.delete(tabId)
       chatHub.removeTab(tabId)
       headsUp.forget(tabId)
+      mcpHub.removeTab(tabId)
     },
     // read at each start: the console host applies to tabs opened after a change
     spawn: (o) => spawnPty({ ...o, bundledConpty: settings.conpty === 'bundled' }),
@@ -865,6 +871,37 @@ function bootstrap(): void {
     now: () => Date.now(),
     log,
     observe: (tabId, msg) => headsUp.message(tabId, msg)
+  })
+  // the MCP · Plugins panel's servers: the configuration files are read once per version, and a CLI call runs as the tab's Claude Code starts
+  const readJson = jsonFileCache({
+    stat: async (file) => {
+      try {
+        const s = await fsPromises.stat(file)
+        return { mtimeMs: s.mtimeMs, size: s.size }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw e
+      }
+    },
+    read: (file) => fsPromises.readFile(file, 'utf8')
+  })
+  const mcpHub = new McpHub({
+    launch: () => resolveChatLaunch(settings.claude.command, chatLaunchDeps),
+    tab: async (id) => {
+      const env = tabs.claudeEnv(id)
+      const tab = tabs.get(id)
+      return env && tab ? { env, folder: await canonicalFolder(tab.cwd) } : null
+    },
+    home: homedir(),
+    readJson,
+    run: runClaudeCli,
+    session: chatHub,
+    changed: (id) => send(IPC.evMcpChanged, id),
+    hold: () => {},
+    release: () => {},
+    openPath: (file) => shell.openPath(file),
+    copy: (text) => clipboard.writeText(text),
+    log
   })
   // a side agent reads a chat while Claude works, and shows what the person should know above its message box
   const headsUp = new HeadsUp({
@@ -2422,6 +2459,11 @@ function bootstrap(): void {
   ipcMain.handle(IPC.chatResume, (_e, tabId: unknown, sessionId: unknown, _cwd: unknown): Promise<'here' | 'new-tab' | null> => (
     isLocalClaudeTab(tabId) && isSessionId(sessionId) ? routeChatResume(tabId, sessionId, chatResumeDeps) : Promise.resolve(null)
   ))
+  // the MCP · Plugins panel's servers of a local Claude tab: the list, a row action and an add through Claude Code's own CLI
+  const notClaudeTab: McpResult = { ok: false, error: 'Not a Claude tab of this computer' }
+  ipcMain.handle(IPC.mcpServers, (_e, tabId: unknown): Promise<McpServersView | null> => (isLocalClaudeTab(tabId) ? mcpHub.servers(tabId) : Promise.resolve(null)))
+  ipcMain.handle(IPC.mcpAction, (_e, tabId: unknown, a: unknown): Promise<McpResult> => (isLocalClaudeTab(tabId) && isMcpAction(a) ? mcpHub.action(tabId, a) : Promise.resolve(notClaudeTab)))
+  ipcMain.handle(IPC.mcpAdd, (_e, tabId: unknown, req: unknown): Promise<McpResult> => (isLocalClaudeTab(tabId) && isMcpAddRequest(req) ? mcpHub.add(tabId, req) : Promise.resolve(notClaudeTab)))
   // the files a chat's composer attaches: an image joins the Media panel, and the files are allowed for the tab's messages
   const attachFilesOf = (tabId: string, paths: string[]): Promise<ChatAttachment[]> => attachFiles(tabId, paths, {
     stat: attachDeps.stat,

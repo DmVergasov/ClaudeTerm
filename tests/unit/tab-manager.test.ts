@@ -1274,3 +1274,25 @@ describe('TabManager resumeSession', () => {
     expect(startChat.mock.calls[1][0].claude.resumeSessionId).toBe(SID_B)
   })
 })
+
+describe('TabManager claudeEnv', () => {
+  it('claudeEnv is the environment the tab starts with, its account\'s config folder included; null for a shell tab', () => {
+    const resolveLaunch = (req: LaunchRequest): ResolvedLaunch => ({
+      profileName: 'Windows PowerShell',
+      spec: { file: 'powershell.exe', args: [] },
+      account: req.account,
+      env: req.account === 'work' ? { set: { CLAUDE_CONFIG_DIR: 'D:\\accounts\\work' }, unset: ['ANTHROPIC_API_KEY'] } : undefined
+    })
+    const { tm, ptys } = setup({ resolveLaunch, baseEnv: () => ({ PATH: 'C:\\Windows', ANTHROPIC_API_KEY: 'key' }) })
+    const main = tm.open({ kind: 'claude', cwd: 'D:\\x', account: null })
+    const work = tm.open({ kind: 'claude', cwd: 'D:\\x', account: 'work' })
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+
+    expect(tm.claudeEnv(main.id)).toEqual({ PATH: 'C:\\Windows', ANTHROPIC_API_KEY: 'key', CLAUDETERM_TAB_ID: main.id, CLAUDETERM_PIPE: '\\\\.\\pipe\\test' })
+    expect(tm.claudeEnv(work.id)).toEqual({ PATH: 'C:\\Windows', CLAUDE_CONFIG_DIR: 'D:\\accounts\\work', CLAUDETERM_TAB_ID: work.id, CLAUDETERM_PIPE: '\\\\.\\pipe\\test' })
+    // the process the tab started with had the same environment
+    expect(tm.claudeEnv(work.id)).toEqual(ptys[1].opts.env)
+    expect(tm.claudeEnv(shell.id)).toBeNull()
+    expect(tm.claudeEnv('no-such-tab')).toBeNull()
+  })
+})

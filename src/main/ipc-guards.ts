@@ -7,6 +7,8 @@ import { isUuid } from '../shared/protocol'
 import { MAX_HASH, REVIEW_SCOPES, type ReviewScope } from '../shared/review'
 import { MAX_FOLDED_GROUPS, type OpenTabRequest, type TabLayout } from '../shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../shared/remote'
+import { MCP_EDIT_SCOPES, marketplaceSource, type McpAction, type McpAddRequest, type McpEditScope, type PluginAction, type ReloadAction } from '../shared/mcp'
+import { isServerName } from '../shared/mcp-add'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
@@ -167,3 +169,96 @@ const READING_INPUT = /^(?:\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3}|\x1b\[[1456](
 
 /** a key that can change what a prompt holds: text, editing keys, history (arrows), a paste */
 export const isPromptInput = (data: string): boolean => isUserInput(data) && !READING_INPUT.test(data)
+
+// the MCP · Plugins panel's requests: names and text bounded as the panel types them; the shapes are those of shared/mcp.ts
+const MAX_MCP_TEXT = 65_536
+const MAX_MCP_NAMES = 20
+const MAX_MCP_NAME = 200
+const MAX_MCP_SECRET = 4096
+const MAX_PLUGIN_ID = 200
+const MAX_PLUGIN_SOURCE = 2000
+const MAX_PLUGIN_VALUES = 50
+const MAX_PLUGIN_VALUE = 4096
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
+const PLUGIN_ID = /^[A-Za-z0-9][\w.-]*(@[A-Za-z0-9][\w.-]*)?$/
+const MARKETPLACE_NAME = /^[A-Za-z0-9][\w.-]*$/
+const OPTION_KEY = /^[\w.-]{1,100}$/
+const RELOAD_ACTIONS: readonly string[] = ['not-now', 'restart']
+
+/** text of 1 to max characters on one line */
+const oneLine = (v: unknown, max: number): v is string => typeof v === 'string' && v.length >= 1 && v.length <= max && !CONTROL_CHARACTER.test(v)
+
+/** a server name as the panel passes it to a row action: 1 to 200 characters, one line, not an option */
+export const isMcpName = (v: unknown): v is string => oneLine(v, MAX_MCP_NAME) && !v.startsWith('-')
+
+const isMcpEditScope = (v: unknown): v is McpEditScope => typeof v === 'string' && (MCP_EDIT_SCOPES as readonly string[]).includes(v)
+
+/** a row action of the servers list: its kind with the name, the scope or the switch it needs */
+export const isMcpAction = (v: unknown): v is McpAction => {
+  if (typeof v !== 'object' || v === null) return false
+  const a = v as Record<string, unknown>
+  switch (a.kind) {
+    case 'reconnect':
+    case 'login':
+    case 'cancel-login':
+    case 'logout':
+      return isMcpName(a.name)
+    case 'toggle':
+      return isMcpName(a.name) && typeof a.enabled === 'boolean'
+    case 'remove':
+    case 'copy-config':
+      return isMcpName(a.name) && isMcpEditScope(a.scope)
+    case 'open-config':
+      return isMcpEditScope(a.scope)
+    default:
+      return false
+  }
+}
+
+/** an add from pasted text: the text, the names chosen for its servers (each a valid name, at most 20), the scope and a secret or null */
+export const isMcpAddRequest = (v: unknown): v is McpAddRequest => {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  return typeof r.text === 'string' && r.text.length <= MAX_MCP_TEXT &&
+    Array.isArray(r.names) && r.names.length <= MAX_MCP_NAMES && r.names.every((n) => typeof n === 'string' && isServerName(n)) &&
+    isMcpEditScope(r.scope) &&
+    (r.clientSecret === null || oneLine(r.clientSecret, MAX_MCP_SECRET))
+}
+
+const isPluginId = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_PLUGIN_ID && PLUGIN_ID.test(v)
+
+const isMarketplaceName = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_PLUGIN_ID && MARKETPLACE_NAME.test(v)
+
+/** plugin option values: at most 50 entries, keys of 1 to 100 characters, values of one line */
+const isOptionValues = (v: unknown): v is Record<string, string> => {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  const entries = Object.entries(v)
+  return entries.length <= MAX_PLUGIN_VALUES && entries.every(([key, value]) => OPTION_KEY.test(key) && typeof value === 'string' && value.length <= MAX_PLUGIN_VALUE && !CONTROL_CHARACTER.test(value))
+}
+
+/** a plugin or marketplace action: an id (name@marketplace), a marketplace name, a source `claude plugin marketplace add` takes, or the option values */
+export const isPluginAction = (v: unknown): v is PluginAction => {
+  if (typeof v !== 'object' || v === null) return false
+  const a = v as Record<string, unknown>
+  switch (a.kind) {
+    case 'install':
+    case 'uninstall':
+    case 'enable':
+    case 'disable':
+    case 'update':
+    case 'configure-later':
+      return isPluginId(a.id)
+    case 'configure':
+      return isPluginId(a.id) && isOptionValues(a.values)
+    case 'marketplace-add':
+      return typeof a.source === 'string' && a.source.length <= MAX_PLUGIN_SOURCE && marketplaceSource(a.source) !== null
+    case 'marketplace-remove':
+    case 'marketplace-update':
+      return isMarketplaceName(a.name)
+    default:
+      return false
+  }
+}
+
+/** the reload card's answer: later, or restart now */
+export const isReloadAction = (v: unknown): v is ReloadAction => typeof v === 'string' && RELOAD_ACTIONS.includes(v)

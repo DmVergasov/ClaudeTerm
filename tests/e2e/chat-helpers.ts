@@ -29,7 +29,7 @@ function installCommand(dir: string): string {
  */
 export async function launchChatTab(
   script: FakeScript,
-  o: { trusted?: boolean; login?: object; version?: string; work?: string; autoContinue?: boolean; headsUp?: boolean; env?: Record<string, string>; tabs?: object; sidePanel?: object } = {}
+  o: { trusted?: boolean; login?: object; version?: string; work?: string; autoContinue?: boolean; headsUp?: boolean; env?: Record<string, string>; tabs?: object; sidePanel?: object; claude?: object } = {}
 ): Promise<Launched & { work: string; config: string; tabId: string; log(): Record<string, unknown>[] }> {
   const root = mkdtempSync(join(tmpdir(), 'ct-chat-'))
   const work = o.work ?? join(root, 'work')
@@ -41,8 +41,10 @@ export async function launchChatTab(
   writeFileSync(scriptFile, JSON.stringify({ ...script, version: o.version ?? script.version }))
   const logFile = join(root, 'fake-claude.log')
   // Claude Code keys the trust by the folder's real path: the key is the canonical one, as the app compares it
+  // o.claude: more of the account's configuration (its user-scope mcpServers), written before the stand-in starts
   const claudeJson = {
-    ...(o.trusted !== false ? { projects: { [realpathSync.native(work)]: { hasTrustDialogAccepted: true } } } : {}),
+    ...o.claude,
+    ...(o.trusted !== false ? { projects: { [realpathSync.native(work)]: { hasTrustDialogAccepted: true } } } : o.claude ? { projects: {} } : {}),
     ...(o.login ? { oauthAccount: o.login } : {})
   }
   if (Object.keys(claudeJson).length > 0) writeFileSync(join(config, '.claude.json'), JSON.stringify(claudeJson))
