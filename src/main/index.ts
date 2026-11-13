@@ -25,7 +25,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
 import { NOT_RUNNING, type ReviewUpdate } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -77,6 +77,8 @@ import { LoginWatch } from './login-watch'
 import { SessionStore } from './session-store'
 import { StarredSessions } from './starred-sessions'
 import { NoteHub } from './note-hub'
+import { ProjectNoteHub } from './project-note-hub'
+import { ProjectNotes } from './project-notes'
 import { SessionNotes } from './session-notes'
 import { TaskListHub, shownPlan } from './task-list-hub'
 import { TaskListStore } from './task-list-store'
@@ -296,6 +298,12 @@ function bootstrap(): void {
     store: notes,
     publish: (tabId, note, generation) => send(IPC.evNote, tabId, note, generation),
     publishOp: (tabId, op, generation) => send(IPC.evNoteOp, tabId, op, generation)
+  })
+  const projectNotesStore = new ProjectNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
+  const projectNotes = new ProjectNoteHub({
+    store: projectNotesStore,
+    publish: (key, note, generation) => send(IPC.evProjectNote, key, note, generation),
+    publishOp: (key, op, generation) => send(IPC.evProjectNoteOp, key, op, generation)
   })
   const taskListStore = new TaskListStore(dataDir, { onError: (m) => log.warn(m), warn: toast })
   // the side of a tab's plan and list that changed last: with both finished, the one that finished later shows
@@ -562,6 +570,8 @@ function bootstrap(): void {
     run: execGit,
     publish: (id, place) => {
       tabPlaces.set(id, place)
+      // a Claude tab's project note reaches the window before the window learns the tab's project
+      if (tabs.get(id)?.kind === 'claude') projectNotes.place(id, place ? { key: place.project.key, name: place.project.name } : null)
       send(IPC.evTabPlace, id, place)
       // the place is part of the tab's directory entry: the members hear of it as of any other change
       remote?.host.changed()
@@ -634,6 +644,7 @@ function bootstrap(): void {
       tabPlaces.delete(tabId)
       docs.removeTab(tabId)
       noteHub.removeTab(tabId)
+      projectNotes.removeTab(tabId)
       taskLists.removeTab(tabId)
       newerSide.delete(tabId)
       chatHub.removeTab(tabId)
@@ -1627,6 +1638,7 @@ function bootstrap(): void {
     beforeInstall: () => {
       sessions.flush()
       notes.flush()
+      projectNotesStore.flush()
       taskListStore.flush()
       if (!writeUpdateMarker(dataDir, Date.now())) log.warn('cannot write the update restart marker')
     },
@@ -2190,6 +2202,12 @@ function bootstrap(): void {
       noteHub.setSize(id, size, generation)
       remote?.host.changed()
     }
+  })
+  ipcMain.on(IPC.projectNotesSetText, (_e, id: unknown, key: unknown, text: unknown, generation: unknown) => {
+    if (isId(id) && isProjectKeyArg(key) && isNoteText(text) && isGeneration(generation)) projectNotes.setText(id, key, text, generation)
+  })
+  ipcMain.on(IPC.projectNotesSetSize, (_e, id: unknown, key: unknown, size: unknown) => {
+    if (isId(id) && isProjectKeyArg(key) && isNoteSizeArg(size)) projectNotes.setSize(id, key, size)
   })
   ipcMain.on(IPC.tasksClear, (_e, id: unknown) => {
     if (!isId(id)) return
@@ -2900,7 +2918,7 @@ function bootstrap(): void {
   const sendFullScreen = (): void => { if (win && !win.isDestroyed()) win.webContents.send(IPC.fullScreen, win.isFullScreen()) }
   win.on('enter-full-screen', sendFullScreen)
   win.on('leave-full-screen', sendFullScreen)
-  win.on('close', () => { sessions.flush(); notes.flush(); taskListStore.flush(); bridge?.flush(); group?.flush() })
+  win.on('close', () => { sessions.flush(); notes.flush(); projectNotesStore.flush(); taskListStore.flush(); bridge?.flush(); group?.flush() })
   win.once('ready-to-show', () => {
     if (!win) return
     sendFullScreen()
@@ -2945,6 +2963,7 @@ function bootstrap(): void {
     updater.stop()
     sessions.flush()
     notes.flush()
+    projectNotesStore.flush()
     taskListStore.flush()
     bridge?.flush()
     group?.flush()
