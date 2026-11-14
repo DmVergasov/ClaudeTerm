@@ -26,6 +26,8 @@ export interface ReviewHubDeps {
   remoteFront?(tabId: string): boolean
   publish(update: ReviewUpdate): void
   onError(message: string): void
+  /** a change left the tab with no dialog open, where it had one: the terminal's permission or question prompts, subagents' included */
+  onDialogsClosed?(tabId: string): void
   /** review.hideIgnored: Last turn and Session leave out the files git ignores */
   hideIgnored(): boolean
   /** review.hideTests: the patterns of the files every view leaves out; null while the setting is off */
@@ -153,7 +155,7 @@ export class ReviewHub {
     t.forced.clear()
     t.viewed.clear()
     t.running = false
-    t.dialogs.clear()
+    this.clearDialogs(t)
     t.gen++
     t.countJob = null
     t.retryMs = REVIEW_RETRY_MS
@@ -222,7 +224,7 @@ export class ReviewHub {
     if (!t) return
     this.useSession(t, sessionId)
     t.running = true
-    if (source !== 'compact') t.dialogs.clear()
+    if (source !== 'compact') this.clearDialogs(t)
     this.publishState(t)
     this.trigger(tabId)
   }
@@ -232,7 +234,7 @@ export class ReviewHub {
     const t = this.tabs.get(tabId)
     if (!t || t.sessionId !== sessionId) return
     t.running = false
-    t.dialogs.clear()
+    this.clearDialogs(t)
     this.publishState(t)
   }
 
@@ -241,7 +243,7 @@ export class ReviewHub {
     if (!t) return
     this.useSession(t, sessionId)
     t.running = true
-    t.dialogs.delete(null)
+    this.closeDialog(t, null)
     t.ledger!.startTurn()
     this.publishState(t)
   }
@@ -293,7 +295,7 @@ export class ReviewHub {
   /** SubagentStop: a dialog the subagent raised is gone with it */
   subagentStopped(tabId: string, agentId: string): void {
     const t = this.tabs.get(tabId)
-    if (!t?.dialogs.delete(agentId)) return
+    if (!t || !this.closeDialog(t, agentId)) return
     this.publishState(t)
   }
 
@@ -308,7 +310,7 @@ export class ReviewHub {
   turnEnded(tabId: string): void {
     const t = this.tabs.get(tabId)
     if (!t) return
-    t.dialogs.delete(null)
+    this.closeDialog(t, null)
     this.publishState(t)
     this.trigger(tabId)
   }
@@ -435,8 +437,23 @@ export class ReviewHub {
     const t = this.tabs.get(tabId)
     const openedAt = t?.dialogs.get(agentId)
     if (!t || openedAt === undefined || at <= openedAt) return
-    t.dialogs.delete(agentId)
+    this.closeDialog(t, agentId)
     this.publishState(t)
+  }
+
+  /** closes the dialog of `agentId`; true when there was one. Through here onDialogsClosed hears when the last dialog goes */
+  private closeDialog(t: TabState, agentId: string | null): boolean {
+    const had = t.dialogs.size > 0
+    const closed = t.dialogs.delete(agentId)
+    if (had && t.dialogs.size === 0) this.d.onDialogsClosed?.(t.tabId)
+    return closed
+  }
+
+  /** every dialog of the tab closes; onDialogsClosed hears of it when there were any */
+  private clearDialogs(t: TabState): void {
+    const had = t.dialogs.size > 0
+    t.dialogs.clear()
+    if (had) this.d.onDialogsClosed?.(t.tabId)
   }
 
   /** the tab is in front on this device, or another device has it in front */

@@ -161,6 +161,12 @@ export class AutoContinue {
     return true
   }
 
+  /** a continue is armed, or the tab waits for its limit to reset */
+  pending(tabId: string): boolean {
+    const s = this.tabs.get(tabId)
+    return s !== undefined && (s.timer !== null || s.limitAt !== null)
+  }
+
   /** the tab closed or Claude left it */
   forget(tabId: string): void {
     const s = this.tabs.get(tabId)

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
-import { type AttentionMessage, type AttentionReason, defaultPipeName, isUuid, type PipeMessage, type PipeResponse } from '../shared/protocol'
+import { type AttentionMessage, type AttentionReason, cutText, defaultPipeName, isUuid, LAST_MESSAGE_MAX, oneLineText, type PipeMessage, type PipeResponse, PROMPT_TEXT_MAX } from '../shared/protocol'
 import type { BackgroundTask } from '../shared/types'
 import { compactWindow } from './compact-window'
 import { statusFromStatusLine } from './status-line'
@@ -37,6 +37,29 @@ function backgroundTask(t: unknown): BackgroundTask[] {
   if (!isObj(t) || typeof t.id !== 'string' || t.id === '') return []
   const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null)
   return [{ id: t.id, type: text(t.type) ?? 'task', description: text(t.description), command: text(t.command) }]
+}
+
+/** the pipe server refuses a line over 64 KB and the turn's end would be lost with it: a Stop whose message would encode longer drops its last answer */
+const STOP_MESSAGE_ENCODED_MAX = 60_000
+
+/** the tool input fields that say what a permission prompt runs or touches, the first one that is a string wins */
+const PROMPT_DETAIL_FIELDS = ['command', 'file_path', 'notebook_path', 'url', 'path', 'pattern', 'description']
+
+/** "Allow <tool>: <detail>", the detail the first string of command, file_path, notebook_path, url, path, pattern, description; "Allow <tool>" without one; null without a tool name */
+export function permissionPrompt(tool: unknown, input: unknown): string | null {
+  if (typeof tool !== 'string' || tool === '') return null
+  const ti = isObj(input) ? input : {}
+  const detail = PROMPT_DETAIL_FIELDS.map((k) => ti[k]).find((v): v is string => typeof v === 'string' && oneLineText(v, PROMPT_TEXT_MAX) !== '')
+  return oneLineText(detail === undefined ? `Allow ${tool}` : `Allow ${tool}: ${detail}`, PROMPT_TEXT_MAX)
+}
+
+/** the first question's text of an AskUserQuestion input, or null */
+export function questionPrompt(input: unknown): string | null {
+  const questions = isObj(input) && Array.isArray(input.questions) ? input.questions : []
+  const first = isObj(questions[0]) ? questions[0].question : undefined
+  if (typeof first !== 'string') return null
+  const line = oneLineText(first, PROMPT_TEXT_MAX)
+  return line === '' ? null : line
 }
 
 /** Pipe message for a hook event; SessionStart is assumed when hook_event_name is missing. */
@@ -83,13 +106,23 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
     ({ v: 1, type: 'attention', tabId, sessionId, reason, ...(agentId ? { agentId } : {}), ...(background ? { background: true as const } : {}) })
   // Claude Code asks an AskUserQuestion through its permission dialog too, a second after PreToolUse reported the question:
   // that one is no permission prompt, and the question is reported already
-  if (event === 'PermissionRequest') return input.tool_name === 'AskUserQuestion' ? null : attention('permission')
-  if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') return attention('question')
+  if (event === 'PermissionRequest') {
+    if (input.tool_name === 'AskUserQuestion') return null
+    const prompt = permissionPrompt(input.tool_name, input.tool_input)
+    return { ...attention('permission'), ...(prompt ? { prompt } : {}) }
+  }
+  if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') {
+    const prompt = questionPrompt(input.tool_input)
+    return { ...attention('question'), ...(prompt ? { prompt } : {}) }
+  }
   // background_tasks: the background work still in flight, which wakes the session again when it ends
   if (event === 'Stop') {
-    if (!Array.isArray(input.background_tasks)) return attention('done')
-    const tasks = input.background_tasks.flatMap(backgroundTask)
-    return { ...attention('done', input.background_tasks.length > 0), tasks }
+    const done = Array.isArray(input.background_tasks)
+      ? { ...attention('done', input.background_tasks.length > 0), tasks: input.background_tasks.flatMap(backgroundTask) }
+      : attention('done')
+    if (typeof input.last_assistant_message !== 'string') return done
+    const withLast = { ...done, lastMessage: cutText(input.last_assistant_message, LAST_MESSAGE_MAX) }
+    return JSON.stringify(withLast).length > STOP_MESSAGE_ENCODED_MAX ? done : withLast
   }
   if (event === 'StopFailure') return { ...attention('done'), error: typeof input.error === 'string' ? input.error : 'unknown' }
   return null

@@ -173,6 +173,20 @@ describe('session hook end to end', () => {
     expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true, tasks: [{ id: 'bmv6531d6', type: 'shell', description: 'build', command: 'make' }] }])
   })
 
+  it('node bundle: Stop forwards the last answer, a permission request its line, and both print nothing', async () => {
+    const { pipe, got } = await listen()
+    const stop = JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'Parser fixed.' })
+    const permission = JSON.stringify({ session_id: SID, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } })
+    const a = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, stop)
+    const b = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, permission)
+    expect(a).toEqual({ code: 0, stdout: '' })
+    expect(b).toEqual({ code: 0, stdout: '' })
+    expect(got).toEqual([
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', lastMessage: 'Parser fixed.' },
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'permission', prompt: 'Allow Bash: npm test' }
+    ])
+  })
+
   it.runIf(WIN)('the exec-form hook from the settings file runs with no shell and no batch file, and passes stdin through', async () => {
     const { pipe, got } = await listen()
     const { settingsPath } = writeClaudeTabFiles(join(work, 'data-exec'), process.execPath, bundle, 5, false)

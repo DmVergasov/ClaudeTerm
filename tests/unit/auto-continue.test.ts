@@ -236,6 +236,29 @@ describe('AutoContinue', () => {
     await runAll()
     expect(writes).toEqual(typed('t1'))
   })
+
+  it('pending is true while a continue or a limit wait is armed, false once it ran or was cancelled', async () => {
+    const { ac, state } = setup()
+    expect(ac.pending('t1')).toBe(false)
+    ac.failed('t1', CUT_OFF)
+    expect(ac.pending('t1')).toBe(true)
+    await runAll()
+    expect(ac.pending('t1')).toBe(false)
+    ac.failed('t1', CUT_OFF)
+    ac.userInput('t1')
+    expect(ac.pending('t1')).toBe(false)
+    state.resetsAt = Date.now() + 3_600_000
+    ac.failed('t2', LIMIT_ERROR)
+    expect(ac.pending('t2')).toBe(true)
+    ac.forget('t2')
+    expect(ac.pending('t2')).toBe(false)
+    ac.failed('t3', LIMIT_ERROR)
+    await vi.advanceTimersByTimeAsync(3_600_000 + LIMIT_MARGIN_MS)
+    // the nudge is typed, and its Enter is still armed a moment longer
+    expect(ac.pending('t3')).toBe(true)
+    await runAll()
+    expect(ac.pending('t3')).toBe(false)
+  })
 })
 
 describe('limitResetOf', () => {

@@ -19,6 +19,21 @@ const MAX_REF = 200
 const MAX_PATHS = 100
 const MAX_FOLDER = 4096
 const ATTENTION_REASONS: readonly string[] = ['permission', 'question', 'done'] satisfies AttentionReason[]
+/** the longest last answer a Stop passes, and the longest line of a pending permission or question, in characters */
+export const LAST_MESSAGE_MAX = 8000
+export const PROMPT_TEXT_MAX = 200
+
+/** the first max code points of text */
+export function cutText(text: string, max: number): string {
+  return Array.from(text).slice(0, max).join('')
+}
+
+/** text as one line: control characters and line separators become spaces, runs of spaces one, trimmed; longer than max: max - 1 code points and "…" */
+export function oneLineText(text: string, max: number): string {
+  const line = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, ' ').replace(/ {2,}/g, ' ').trim()
+  const points = Array.from(line)
+  return points.length > max ? `${points.slice(0, max - 1).join('')}…` : line
+}
 
 export interface ShowImageMessage {
   v: 1
@@ -82,6 +97,10 @@ export interface AttentionMessage {
   error?: string
   /** done only (Stop): the background work still running as the turn ended; absent when Claude Code does not say */
   tasks?: BackgroundTask[]
+  /** permission or question: what waits for the user, as one line */
+  prompt?: string
+  /** done without error (Stop): Claude Code's last_assistant_message, at most LAST_MESSAGE_MAX characters */
+  lastMessage?: string
 }
 
 /** Claude Code took a prompt (UserPromptSubmit): a turn starts. */
@@ -390,7 +409,10 @@ export function parsePipeMessage(line: string): ParseResult {
       const background = m.reason === 'done' && m.background === true ? { background: true as const } : {}
       const error = m.reason === 'done' && typeof m.error === 'string' && ERROR_RE.test(m.error) ? { error: m.error } : {}
       const tasks = m.reason === 'done' && Array.isArray(m.tasks) ? { tasks: parseTasks(m.tasks) } : {}
-      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background, ...error, ...tasks } }
+      const line = typeof m.prompt === 'string' ? oneLineText(m.prompt, PROMPT_TEXT_MAX) : ''
+      const prompt = m.reason !== 'done' && line !== '' ? { prompt: line } : {}
+      const lastMessage = m.reason === 'done' && !('error' in error) && typeof m.lastMessage === 'string' ? { lastMessage: cutText(m.lastMessage, LAST_MESSAGE_MAX) } : {}
+      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background, ...error, ...tasks, ...prompt, ...lastMessage } }
     }
     if (m.type === 'subagent') {
       if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }

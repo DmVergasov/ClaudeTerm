@@ -20,7 +20,7 @@ const result = (...inputs: DiffInput[]): Inputs => ({ inputs, tooMany: false })
 
 function setup(
   o: Partial<ReviewSources> = {}, active: string | null = TAB, now?: () => number, hideIgnored = false, testPatterns: string[] | null | (() => string[] | null) = null,
-  renderMarkdown: boolean | (() => boolean) = false, remoteFront?: (tabId: string) => boolean
+  renderMarkdown: boolean | (() => boolean) = false, remoteFront?: (tabId: string) => boolean, onDialogsClosed?: (tabId: string) => void
 ) {
   const published: ReviewUpdate[] = []
   const errors: string[] = []
@@ -52,7 +52,8 @@ function setup(
     testPatterns: () => (typeof testPatterns === 'function' ? testPatterns() : testPatterns),
     renderMarkdown: () => (typeof renderMarkdown === 'function' ? renderMarkdown() : renderMarkdown),
     now,
-    remoteFront
+    remoteFront,
+    onDialogsClosed
   })
   hub.addTab(TAB, ROOT, true)
   return { hub, published, errors, git, ledger, totals, ignored, setActive: (id: string | null) => { activeId = id }, last: () => published[published.length - 1]! }
@@ -633,6 +634,20 @@ describe('ReviewHub Send guard', () => {
     expect(hub.canSend(TAB)).toEqual({ ok: false, reason: IN_DIALOG })
     hub.sessionStarted(TAB, SID, 'resume')
     expect(hub.canSend(TAB)).toEqual({ ok: true })
+  })
+
+  it('onDialogsClosed is called once when the last open dialog goes, not while a subagent\'s dialog is still open', async () => {
+    const closed: string[] = []
+    const { hub } = setup({}, TAB, undefined, false, null, false, undefined, (tabId) => closed.push(tabId))
+    hub.sessionStarted(TAB, SID, 'startup')
+    hub.dialogOpened(TAB, null)
+    hub.dialogOpened(TAB, 'agent-1')
+    hub.turnEnded(TAB)
+    expect(closed).toEqual([])
+    hub.subagentStopped(TAB, 'agent-1')
+    expect(closed).toEqual([TAB])
+    hub.subagentStopped(TAB, 'agent-1')
+    expect(closed).toEqual([TAB])
   })
 
   it('SubagentStop closes that subagent\'s dialog only', async () => {

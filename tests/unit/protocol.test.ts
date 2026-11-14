@@ -189,6 +189,28 @@ describe('status, subagent and session_end messages', () => {
     const permission = { ...ids, type: 'attention', reason: 'permission' }
     expect(parsePipeMessage(JSON.stringify({ ...permission, tasks: [task] }))).toEqual({ ok: true, message: permission })
   })
+
+  it('attention keeps a prompt line on permission and question, cut to 200 on one line, and drops it on done', () => {
+    const permission = { ...ids, type: 'attention', reason: 'permission' }
+    expect(parsePipeMessage(JSON.stringify({ ...permission, prompt: 'Allow Bash:\n npm   test' }))).toEqual({ ok: true, message: { ...permission, prompt: 'Allow Bash: npm test' } })
+    const question = { ...ids, type: 'attention', reason: 'question' }
+    expect(parsePipeMessage(JSON.stringify({ ...question, prompt: 'y'.repeat(300) }))).toEqual({ ok: true, message: { ...question, prompt: `${'y'.repeat(199)}…` } })
+    expect(parsePipeMessage(JSON.stringify({ ...question, prompt: ' \n\t ' }))).toEqual({ ok: true, message: question })
+    expect(parsePipeMessage(JSON.stringify({ ...question, prompt: 42 }))).toEqual({ ok: true, message: question })
+    const done = { ...ids, type: 'attention', reason: 'done' }
+    expect(parsePipeMessage(JSON.stringify({ ...done, prompt: 'Allow Bash: npm test' }))).toEqual({ ok: true, message: done })
+  })
+
+  it('attention keeps lastMessage only on a done without error, cut to 8000 characters', () => {
+    const done = { ...ids, type: 'attention', reason: 'done' }
+    expect(parsePipeMessage(JSON.stringify({ ...done, lastMessage: 'Parser fixed.' }))).toEqual({ ok: true, message: { ...done, lastMessage: 'Parser fixed.' } })
+    const long = parsePipeMessage(JSON.stringify({ ...done, lastMessage: 'x'.repeat(9000) }))
+    expect(long.ok && long.message.type === 'attention' ? long.message.lastMessage : null).toHaveLength(8000)
+    expect(parsePipeMessage(JSON.stringify({ ...done, lastMessage: 'API Error', error: 'server_error' }))).toEqual({ ok: true, message: { ...done, error: 'server_error' } })
+    expect(parsePipeMessage(JSON.stringify({ ...done, lastMessage: 7 }))).toEqual({ ok: true, message: done })
+    const permission = { ...ids, type: 'attention', reason: 'permission' }
+    expect(parsePipeMessage(JSON.stringify({ ...permission, lastMessage: 'Done.' }))).toEqual({ ok: true, message: permission })
+  })
 })
 
 describe('parsePipeMessage: review messages', () => {

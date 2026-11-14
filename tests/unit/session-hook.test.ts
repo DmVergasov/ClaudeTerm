@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WIN } from '../fixtures/platform'
-import { runSessionHook, runStatusLine } from '../../src/hook/session-hook'
+import { hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine } from '../../src/hook/session-hook'
+import type { AttentionMessage } from '../../src/shared/protocol'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -70,7 +71,7 @@ describe('runSessionHook: other hook events', () => {
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: {} }), ENV, send)
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)
     const attention = (reason: string) => ({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason })
-    expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', attention('permission'))
+    expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', { ...attention('permission'), prompt: 'Allow Bash: mkdir x' })
     expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', attention('question'))
     expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', attention('done'))
   })
@@ -81,7 +82,7 @@ describe('runSessionHook: other hook events', () => {
     const ask = { session_id: SID, tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Which colour?', options: [] }] } }
     await runSessionHook(JSON.stringify({ ...ask, hook_event_name: 'PreToolUse' }), ENV, send)
     await runSessionHook(JSON.stringify({ ...ask, hook_event_name: 'PermissionRequest' }), ENV, send)
-    expect(send.mock.calls.map((c) => (c as unknown[])[1])).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question' }])
+    expect(send.mock.calls.map((c) => (c as unknown[])[1])).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', prompt: 'Which colour?' }])
   })
 
   it('marks a Stop with background work still in flight and lists it; an empty background_tasks lists none; a missing one says nothing of it', async () => {
@@ -205,6 +206,47 @@ describe('runSessionHook: review events', () => {
   it('puts the subagent id on a permission prompt from a subagent', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PermissionRequest', tool_name: 'Bash', agent_id: AGENT }), ENV, send)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'permission', agentId: AGENT })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'permission', agentId: AGENT, prompt: 'Allow Bash' })
+  })
+})
+
+describe('hookMessage: the last answer and the prompt line', () => {
+  it('Stop passes the last answer, cut to 8000 characters; StopFailure passes none', () => {
+    expect(hookMessage({ session_id: SID, hook_event_name: 'Stop', last_assistant_message: 'Done.' }, TAB))
+      .toEqual({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', lastMessage: 'Done.' })
+    expect((hookMessage({ session_id: SID, hook_event_name: 'Stop', last_assistant_message: 'x'.repeat(9000) }, TAB) as AttentionMessage).lastMessage).toHaveLength(8000)
+    expect(hookMessage({ session_id: SID, hook_event_name: 'StopFailure', error: 'server_error', last_assistant_message: 'API Error' }, TAB))
+      .toEqual({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error' })
+  })
+
+  it('a permission prompt names the tool and what it runs or touches', () => {
+    const p = (tool_name: string, tool_input: object) => (hookMessage({ session_id: SID, hook_event_name: 'PermissionRequest', tool_name, tool_input }, TAB) as AttentionMessage).prompt
+    expect(p('Bash', { command: 'python tools/fetch_net.py --env prod' })).toBe('Allow Bash: python tools/fetch_net.py --env prod')
+    expect(p('Edit', { file_path: '/w/a.ts' })).toBe('Allow Edit: /w/a.ts')
+    expect(p('mcp__acme__deploy', {})).toBe('Allow mcp__acme__deploy')
+  })
+
+  it('a question is its first question, on one line of at most 200 characters', () => {
+    const q = hookMessage({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Which\nbranch?' }] } }, TAB)
+    expect(q).toEqual({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', prompt: 'Which branch?' })
+    expect(questionPrompt({ questions: [{ question: 'y'.repeat(300) }] })).toBe(`${'y'.repeat(199)}…`)
+  })
+
+  it('the prompt helpers give null for input they cannot read, and a blank detail is no detail', () => {
+    expect(permissionPrompt(undefined, {})).toBeNull()
+    expect(permissionPrompt('Bash', { command: '  \n ' })).toBe('Allow Bash')
+    expect(permissionPrompt('Bash', { command: 42, description: 'run tests' })).toBe('Allow Bash: run tests')
+    expect(questionPrompt({ questions: [] })).toBeNull()
+    expect(questionPrompt({ questions: [{ question: 7 }] })).toBeNull()
+    expect(questionPrompt(null)).toBeNull()
+  })
+
+  it('a Stop whose answer would overflow the pipe line keeps its end and drops the answer', () => {
+    // 8000 control characters encode to 48000 characters of JSON; 50 background tasks of 300 characters add 15000 more
+    const tasks = Array.from({ length: 50 }, (_, i) => ({ id: `bg${i}`, type: 'shell', status: 'running', description: 'build', command: 'c'.repeat(300) }))
+    const msg = hookMessage({ session_id: SID, hook_event_name: 'Stop', last_assistant_message: '\u0001'.repeat(8000), background_tasks: tasks }, TAB)
+    expect(msg).toMatchObject({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true })
+    expect(msg).not.toHaveProperty('lastMessage')
+    expect((msg as AttentionMessage).tasks).toHaveLength(50)
   })
 })
