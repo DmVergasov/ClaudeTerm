@@ -1361,6 +1361,8 @@ async function mcpCommand(verb: string | undefined, args: string[], call: CliCal
     }
     case 'login': {
       if (name === undefined) return bad('Missing server name')
+      // Claude Code 2.1.323 waits for the browser's sign-in only with a terminal on stdin; without one it gives up at once
+      if (cliProcess && !process.stdin.isTTY) return bad(`Couldn't complete authentication for "${name}": stdin isn't a terminal, so authentication can't be completed here. Re-run in an interactive terminal — e.g. \`ssh -t\` — and paste the redirect URL when prompted.`)
       const plan = script.mcpLogin?.[name]
       const gate = plan?.gate
       if (gate !== undefined) {
@@ -1615,7 +1617,11 @@ async function runCli(args: string[], input: () => Promise<string>): Promise<Cli
 }
 
 // the CLI mode (argv starts with mcp or plugin): answers, prints and exits; the stdin is read for --values-stdin only
+/** the CLI runs as a process of its own, not as a Bash step of a turn: its stdin is the one Claude Code's CLI would have */
+let cliProcess = false
+
 async function cliMode(): Promise<void> {
+  cliProcess = true
   try {
     const result = await runCli(argv, readStdin)
     process.stdout.write(result.stdout, () => process.stderr.write(result.stderr, () => exit(result.code)))

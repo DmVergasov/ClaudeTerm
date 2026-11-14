@@ -132,7 +132,7 @@ describe('runClaudeCli', () => {
   it('a command that never ends is killed at its time limit', async () => {
     const script: FakeScript = { turns: {}, mcpLogin: { docs: { gate: 'never-written' } } }
     const begun = Date.now()
-    const error = await runClaudeCli(launch, ['mcp', 'login', '--', 'docs'], { cwd: work, env: env(script), timeoutMs: 1500 }).catch((e: unknown) => e)
+    const error = await runClaudeCli(launch, ['mcp', 'login', '--', 'docs'], { cwd: work, env: env(script), timeoutMs: 1500, tty: true }).catch((e: unknown) => e)
     expect(Date.now() - begun).toBeLessThan(5000)
     expect(error).toBeInstanceOf(CliError)
     expect((error as CliError).reason).toBe('timeout')
@@ -151,7 +151,7 @@ describe('runClaudeCli', () => {
   it('an abort ends the command', async () => {
     const script: FakeScript = { turns: {}, mcpLogin: { docs: { gate: 'never-written' } } }
     const controller = new AbortController()
-    const pending = runClaudeCli(launch, ['mcp', 'login', '--', 'docs'], { cwd: work, env: env(script), timeoutMs: LOGIN_TIMEOUT_MS, signal: controller.signal })
+    const pending = runClaudeCli(launch, ['mcp', 'login', '--', 'docs'], { cwd: work, env: env(script), timeoutMs: LOGIN_TIMEOUT_MS, signal: controller.signal, tty: true })
     await until(() => started() !== undefined, 'the stand-in start')
     controller.abort()
     const error = await pending.catch((e: unknown) => e)
@@ -174,10 +174,25 @@ describe('runClaudeCli', () => {
   })
 
   it('a failing command resolves with its exit code and its stderr', async () => {
-    const script: FakeScript = { turns: {}, mcpLogin: { docs: { fail: 'Login refused' } } }
-    const run = await runClaudeCli(launch, ['mcp', 'login', '--', 'docs'], { cwd: work, env: env(script) })
+    const run = await runClaudeCli(launch, ['mcp', 'remove', '--', 'nothing-here'], { cwd: work, env: env() })
     expect(run.code).toBe(1)
-    expect(run.stderr).toContain('Login refused')
+    expect(run.stderr).toContain('No MCP server found with name: nothing-here')
+  })
+
+  it('mcp login signs in only in a terminal: Claude Code gives up without one on stdin, and waits for the browser in one', async () => {
+    const piped = await runClaudeCli(launch, ['mcp', 'login', '--', 'notion'], { cwd: work, env: env() })
+    expect(piped.code).toBe(1)
+    expect(piped.stderr).toContain("stdin isn't a terminal")
+    const run = await runClaudeCli(launch, ['mcp', 'login', '--', 'notion'], { cwd: work, env: env(), timeoutMs: 20_000, tty: true })
+    expect(run.code).toBe(0)
+    expect(run.stdout).toContain('Authentication successful')
+  })
+
+  it('a failing command in a terminal resolves with its exit code, and what it printed is its output', async () => {
+    const script: FakeScript = { turns: {}, mcpLogin: { docs: { fail: 'Login refused' } } }
+    const run = await runClaudeCli(launch, ['mcp', 'login', '--', 'docs'], { cwd: work, env: env(script), timeoutMs: 20_000, tty: true })
+    expect(run.code).toBe(1)
+    expect(run.stdout).toContain('Login refused')
   })
 
   it('the command runs with NO_COLOR=1 set', async () => {

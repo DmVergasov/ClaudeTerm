@@ -1,5 +1,6 @@
 import { execFile, type ChildProcess } from 'node:child_process'
-import { spawnChatProcess, type ChatLaunch } from '../chat/claude-spawn'
+import { ptyCommand, spawnChatProcess, type ChatLaunch } from '../chat/claude-spawn'
+import { spawnPty, type PtyHandle } from '../pty-host'
 
 /** the time limit of a `claude mcp` or `claude plugin` call */
 export const CLI_TIMEOUT_MS = 60_000
@@ -19,6 +20,11 @@ export interface CliOptions {
   stdin?: string
   signal?: AbortSignal
   maxStdout?: number // 4 MiB
+  /**
+   * runs the command in a pseudo terminal, so its stdin and stdout are a terminal: `claude mcp login` waits for the browser's
+   * sign-in only then. What it prints is the run's stdout (a terminal has no stderr of its own); `stdin` is not sent
+   */
+  tty?: boolean
 }
 
 export class CliError extends Error {
@@ -34,6 +40,7 @@ export class CliError extends Error {
  * Nothing is logged here: the arguments may carry secrets.
  */
 export function runClaudeCli(launch: Exclude<ChatLaunch, { how: 'none' }>, args: string[], o: CliOptions): Promise<CliRun> {
+  if (o.tty === true) return runInTerminal(launch, args, o)
   return new Promise((resolve, reject) => {
     if (o.signal?.aborted) {
       reject(new CliError('cancelled', 'Cancelled'))
@@ -98,6 +105,74 @@ export function runClaudeCli(launch: Exclude<ChatLaunch, { how: 'none' }>, args:
     proc.stdin?.on('error', () => undefined)
     proc.stdin?.end(o.stdin ?? '')
 
+    timer = setTimeout(() => fail(new CliError('timeout', `Claude Code did not answer in ${timeoutMs / 1000} s`)), timeoutMs)
+    o.signal?.addEventListener('abort', onAbort)
+  })
+}
+
+/** the size of the pseudo terminal a command runs in: wide, so a URL it prints is not wrapped */
+const TTY_COLS = 400
+const TTY_ROWS = 50
+
+/** runClaudeCli in a pseudo terminal: the same time limit, abort and cap; the terminal is closed on either, which ends its programs */
+function runInTerminal(launch: Exclude<ChatLaunch, { how: 'none' }>, args: string[], o: CliOptions): Promise<CliRun> {
+  return new Promise((resolve, reject) => {
+    if (o.signal?.aborted) {
+      reject(new CliError('cancelled', 'Cancelled'))
+      return
+    }
+    const timeoutMs = o.timeoutMs ?? CLI_TIMEOUT_MS
+    const maxStdout = o.maxStdout ?? MAX_STDOUT
+    const out: string[] = []
+    let outBytes = 0
+    let settled = false
+    let term: PtyHandle | undefined
+    let timer: NodeJS.Timeout | undefined
+
+    const detach = (): void => {
+      clearTimeout(timer)
+      o.signal?.removeEventListener('abort', onAbort)
+    }
+    const fail = (error: CliError): void => {
+      if (settled) return
+      settled = true
+      detach()
+      term?.kill()
+      reject(error)
+    }
+    const onAbort = (): void => fail(new CliError('cancelled', 'Cancelled'))
+
+    const env = { ...o.env, NO_COLOR: '1' }
+    try {
+      const command = ptyCommand(launch, args, env)
+      term = spawnPty({
+        file: command.file,
+        args: command.args,
+        cwd: o.cwd,
+        env,
+        cols: TTY_COLS,
+        rows: TTY_ROWS,
+        onData: (data) => {
+          if (settled) return
+          outBytes += Buffer.byteLength(data)
+          if (outBytes > maxStdout) {
+            fail(new CliError('too-large', "Claude Code's answer is too large"))
+            return
+          }
+          out.push(data)
+        },
+        onExit: (code) => {
+          if (settled) return
+          settled = true
+          detach()
+          resolve({ code, stdout: out.join(''), stderr: '' })
+        }
+      })
+    } catch (error) {
+      settled = true
+      reject(new CliError('failed', errorMessage(error)))
+      return
+    }
     timer = setTimeout(() => fail(new CliError('timeout', `Claude Code did not answer in ${timeoutMs / 1000} s`)), timeoutMs)
     o.signal?.addEventListener('abort', onAbort)
   })

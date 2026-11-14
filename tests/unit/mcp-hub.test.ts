@@ -215,6 +215,8 @@ describe('McpHub', () => {
     expect(done.runs[0].args).toEqual(['mcp', 'login', '--', 'github'])
     expect(done.runs[0].o.timeoutMs).toBe(LOGIN_TIMEOUT_MS)
     expect(LOGIN_TIMEOUT_MS).toBe(300_000)
+    // Claude Code waits for the browser's sign-in only with a terminal on stdin
+    expect(done.runs[0].o.tty).toBe(true)
     expect(done.reconnects).toEqual(['github'])
     expect(done.changed).toEqual([[TAB, false]])
 

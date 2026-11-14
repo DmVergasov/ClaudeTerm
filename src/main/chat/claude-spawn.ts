@@ -119,6 +119,24 @@ export function quoteForLoginShell(shell: string, arg: string): string {
  * own rule. On POSIX the process leads a group of its own (detached), so ending the chat ends the group: the commands and
  * servers Claude Code started go with it (sdk-engine's killChild).
  */
+/**
+ * the program and arguments a pseudo terminal starts for `claude <args>`, as spawnChatProcess starts it: a .cmd shim's line goes
+ * to cmd.exe whole (node-pty takes a string as Windows' command line as it is)
+ */
+export function ptyCommand(launch: Exclude<ChatLaunch, { how: 'none' }>, args: string[], env: Record<string, string | undefined>): { file: string; args: string[] | string } {
+  switch (launch.how) {
+    case 'direct':
+      return { file: launch.file, args }
+    case 'cmd':
+      return { file: env.ComSpec ?? 'cmd.exe', args: `/d /s /c "${cmdShimLine(launch.file, args)}"` }
+    case 'shell': {
+      const family = shellFamily({ name: 'login', command: launch.shell, args: [] })
+      const line = `exec ${launch.command} ${args.map((a) => quoteForLoginShell(launch.shell, a)).join(' ')}`
+      return { file: launch.shell, args: [...loginShellCommandFlags(family), line] }
+    }
+  }
+}
+
 export function spawnChatProcess(launch: Exclude<ChatLaunch, { how: 'none' }>, args: string[], cwd: string, env: Record<string, string | undefined>): ChildProcess {
   const options = { cwd, env, stdio: 'pipe' as const, windowsHide: true, detached: process.platform !== 'win32' }
   switch (launch.how) {

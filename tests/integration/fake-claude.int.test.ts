@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { fixtureLines } from '../fixtures/chat-fixtures'
 import { FAKE_CREDENTIAL, installFakeClaude, type FakeScript } from '../fixtures/fake-claude/install'
 import { forwardText } from '../../src/main/chat/agent-forward'
+import { spawnPty, type PtyHandle } from '../../src/main/pty-host'
 
 // The stand-in Claude Code (tests/fixtures/fake-claude/fake-claude.ts) run as the installed command
 
@@ -108,6 +109,31 @@ function cli(args: string[], script?: string, input = ''): { code: number | null
   return { code: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 
+const terms: PtyHandle[] = []
+
+// a CLI call in a pseudo terminal, as the app runs `claude mcp login`: its stdin is a terminal, and what it prints comes back
+// as one text
+function cliInTerminal(args: string[], script?: string): { output: () => string; exited: () => boolean; exit: Promise<number> } {
+  let output = ''
+  let exited = false
+  let markExit: (code: number) => void = () => {}
+  const exit = new Promise<number>(resolve => { markExit = resolve })
+  terms.push(spawnPty({
+    file: process.execPath,
+    args: ['--experimental-strip-types', '--no-warnings', STAND_IN, ...args],
+    cwd: work,
+    env: env(script) as Record<string, string>,
+    cols: 400,
+    rows: 50,
+    onData: data => { output += data },
+    onExit: code => {
+      exited = true
+      markExit(code)
+    }
+  }))
+  return { output: () => output, exited: () => exited, exit }
+}
+
 function readJson(file: string): Msg {
   return JSON.parse(readFileSync(file, 'utf8')) as Msg
 }
@@ -165,6 +191,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  for (const term of terms.splice(0)) term.kill()
   for (const run of runs.splice(0)) {
     if (run.child.exitCode !== null || run.child.signalCode !== null) continue
     run.child.stdin?.end()
@@ -911,27 +938,36 @@ describe('the stand-in\'s claude mcp, claude plugin and the session\'s MCP reque
     expect(cli(['mcp', 'remove', '--', 'docs'])).toMatchObject({ code: 1, stderr: 'No MCP server found with name: docs\n' })
   })
 
-  it('claude mcp login waits for its gate; a scripted failure exits 1 with the message', async () => {
-    const login = start(['mcp', 'login', '--', 'sentry'], { turns: {}, mcpLogin: { sentry: { gate: 'release-login.txt' } } })
+  it('claude mcp login in a terminal waits for its gate; a scripted failure exits 1 with the message', async () => {
+    const script = writeScript({ turns: {}, mcpLogin: { sentry: { gate: 'release-login.txt' }, broken: { fail: 'Invalid client secret' } } })
+    const login = cliInTerminal(['mcp', 'login', '--', 'sentry'], script)
     await new Promise(resolve => setTimeout(resolve, 300))
-    expect(login.child.exitCode).toBeNull()
+    expect(login.exited()).toBe(false)
     writeFileSync(join(config, 'release-login.txt'), '')
     expect(await login.exit).toBe(0)
-    expect(login.stdout).toBe('Authentication successful\n')
+    expect(login.output()).toContain('Authentication successful')
     expect(readJson(join(config, 'fake-mcp-auth.json'))).toEqual({ sentry: true })
 
-    const broken = start(['mcp', 'login', '--', 'broken'], { turns: {}, mcpLogin: { broken: { fail: 'Invalid client secret' } } })
+    const broken = cliInTerminal(['mcp', 'login', '--', 'broken'], script)
     expect(await broken.exit).toBe(1)
-    expect(broken.stderr).toContain('Invalid client secret')
+    expect(broken.output()).toContain('Invalid client secret')
+  })
+
+  it('claude mcp login without a terminal on stdin gives up at once, as Claude Code does', () => {
+    const piped = cli(['mcp', 'login', '--', 'sentry'])
+    expect(piped.code).toBe(1)
+    expect(piped.stderr).toContain("stdin isn't a terminal")
+    expect(existsSync(join(config, 'fake-mcp-auth.json'))).toBe(false)
   })
 
   it('a stand-in whose parent is killed exits by itself, so a gate that never opens cannot orphan it', async () => {
-    // a parent process starts `claude mcp login` (its gate never opens) and is killed: the stand-in must end on its own
-    const file = writeScript({ turns: {}, mcpLogin: { sentry: { gate: 'never-released.txt' } } })
-    const args = ['--experimental-strip-types', '--no-warnings', STAND_IN, 'mcp', 'login', '--', 'sentry']
+    // a parent process starts a CLI call whose gate never opens (a sign-in the app abandons) and is killed: the stand-in must
+    // end on its own
+    const file = writeScript({ turns: {}, cliGate: { 'mcp list': 'never-released.txt' } })
+    const args = ['--experimental-strip-types', '--no-warnings', STAND_IN, 'mcp', 'list']
     const parentCode = "const { spawn } = require('node:child_process'); spawn(process.execPath, JSON.parse(process.argv[1]), { stdio: 'ignore', windowsHide: true }); setInterval(() => {}, 1000)"
     const parent = track(spawn(process.execPath, ['-e', parentCode, JSON.stringify(args)], { cwd: work, env: env(file), stdio: 'ignore', windowsHide: true }))
-    const started = (): Msg | undefined => logEntries().find(entry => Array.isArray(entry.argv) && entry.argv.includes('login'))
+    const started = (): Msg | undefined => logEntries().find(entry => Array.isArray(entry.argv) && entry.argv.includes('list'))
     await until(() => started() !== undefined, 'the stand-in to start its login')
     const pid = started()?.pid as number
     try {
@@ -1029,7 +1065,7 @@ describe('the stand-in\'s claude mcp, claude plugin and the session\'s MCP reque
     expect(await answer({ subtype: 'mcp_reconnect', serverName: 'sentry' })).toMatchObject({ subtype: 'success', response: {} })
     expect((await statuses()).sentry.status).toBe('needs-auth')
     expect(await answer({ subtype: 'mcp_reconnect', serverName: 'nope' })).toMatchObject({ subtype: 'error', error: 'Server not found: nope' })
-    expect(cli(['mcp', 'login', '--', 'sentry'], scriptFile)).toMatchObject({ code: 0 })
+    expect(await cliInTerminal(['mcp', 'login', '--', 'sentry'], scriptFile).exit).toBe(0)
     await answer({ subtype: 'mcp_reconnect', serverName: 'sentry' })
     expect((await statuses()).sentry.status).toBe('connected')
 

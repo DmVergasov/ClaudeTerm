@@ -257,7 +257,8 @@ export class McpHub {
       const tab = await this.d.tab(tabId)
       if (tab === null) return fail(NOT_TAB)
       if (controller.signal.aborted) return fail('Cancelled')
-      const result = await this.cli(tab, ['mcp', 'login', '--', name], { secrets: [], timeoutMs: LOGIN_TIMEOUT_MS, signal: controller.signal })
+      // Claude Code waits for the browser's sign-in only with a terminal on stdin: the login runs in a pseudo terminal
+      const result = await this.cli(tab, ['mcp', 'login', '--', name], { secrets: [], timeoutMs: LOGIN_TIMEOUT_MS, signal: controller.signal, tty: true })
       if ('error' in result) return fail(result.error)
       await this.reconnectQuietly(tabId, name)
       this.d.changed(tabId, false)
@@ -402,12 +403,12 @@ export class McpHub {
   }
 
   /** one `claude` call: the answer, or the masked error text. Nothing is logged but the first two arguments and the exit code */
-  private async cli(tab: Tab, args: string[], o: { secrets: string[]; env?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; stdin?: string }): Promise<Outcome> {
+  private async cli(tab: Tab, args: string[], o: { secrets: string[]; env?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; stdin?: string; tty?: boolean }): Promise<Outcome> {
     const masked = (text: string): string => maskText(text, o.secrets).slice(0, MAX_ERROR)
     try {
       const launch = await this.d.launch()
       if (launch.how === 'none') return { error: launch.reason }
-      const options: CliOptions = { cwd: tab.folder, env: o.env ?? tab.env, timeoutMs: o.timeoutMs, signal: o.signal, stdin: o.stdin }
+      const options: CliOptions = { cwd: tab.folder, env: o.env ?? tab.env, timeoutMs: o.timeoutMs, signal: o.signal, stdin: o.stdin, ...(o.tty ? { tty: true } : {}) }
       const run = await this.d.run(launch, args, options)
       if (run.code === 0) return { run }
       this.d.log.warn(`claude ${args[0]} ${args[1]} failed (${run.code})`)
