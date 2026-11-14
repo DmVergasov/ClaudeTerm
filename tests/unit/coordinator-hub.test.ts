@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LIMIT_ERROR } from '../../src/main/auto-continue'
-import { CoordinatorHub, HUB_TEXT, type HubTab } from '../../src/main/coordinator/coordinator-hub'
+import { CoordinatorHub, HUB_TEXT, START_WAIT_MS, worktreeInstruction, type HubTab } from '../../src/main/coordinator/coordinator-hub'
 import {
   CoordinatorStore,
   MAX_ATTACHMENTS,
@@ -12,9 +12,10 @@ import {
   MAX_TASKS_PER_SESSION,
   type StoredAttachment
 } from '../../src/main/coordinator/coordinator-store'
-import { nameAgents, type AgentTab } from '../../src/main/mail/agent-directory'
+import { nameAgents, refOf, type AgentTab } from '../../src/main/mail/agent-directory'
 import { MailStore } from '../../src/main/mail/mail-store'
 import type { TabWaitsState } from '../../src/main/tab-waits'
+import type { CoordOp } from '../../src/shared/coordinator'
 import type { MailRecord } from '../../src/shared/mail'
 import type { OpenTabRequest, PlanStatus } from '../../src/shared/types'
 
@@ -698,10 +699,7 @@ describe('views', () => {
     expect(w.hub.read('tab-c', 'nobody')).toEqual({ ok: false, error: 'No session "nobody" here; call list_sessions.' })
     expect(await w.hub.tool('tab-c', { op: 'list' })).toMatchObject({ ok: true })
     expect(await w.hub.tool('tab-1', { op: 'list' })).toEqual({ ok: false, error: HUB_TEXT.notCoordinator })
-    expect(await w.hub.tool('tab-c', { op: 'start', task: 'x', name: null, folder: null, device: null, worktree: null })).toEqual({
-      ok: false,
-      error: 'unknown operation'
-    })
+    expect(await w.hub.tool('tab-c', { op: 'bogus' } as unknown as CoordOp)).toEqual({ ok: false, error: 'unknown operation' })
   })
 
   it('read shows the last report the session sent, and its text', () => {
@@ -1011,5 +1009,190 @@ describe('CoordinatorHub task lifecycle', () => {
     w.hub.detach('tab-c', 'a10000')
     fire(w)
     expect(records(w, 'report')).toEqual([])
+  })
+
+  it('a turn that ended without background work and a dispose before its settle: no report is written after it', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Done.' })
+    w.hub.dispose()
+    fire(w)
+    expect(records(w, 'report')).toEqual([])
+  })
+
+  it('a clear ends the turn the tab was in: a task delivered after it is not stopped by an Esc outside a turn', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    const NEW = uid(0x2002)
+    update(w, 'tab-1', { session: NEW })
+    w.hub.sessionStarted('tab-1', S.one, NEW, 'clear')
+    w.hub.message('tab-c', 'parser · Desktop', 'Then the docs.')
+    const next = records(w, 'task')[1]
+    w.hub.handedOver('tab-1', [next], 'prompt')
+    w.hub.interrupted('tab-1')
+    expect(records(w, 'report').map((r) => r.outcome)).toEqual(['stopped'])
+  })
+
+  it('a detach drops the kept last answers of the tasks it drops', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Parser fixed.' })
+    w.hub.detach('tab-c', 'a10000')
+    // white-box: the answer of a dropped task has no reader left, so the map must not keep it
+    expect((w.hub as unknown as { answers: Map<string, string> }).answers.size).toBe(0)
+  })
+})
+
+const S_NEW = 'd4000000-0000-4000-8000-000000000005'
+const START = { task: 'Write the release notes.', name: 'Release notes', folder: null, device: null, worktree: null }
+/** lets the hub's async folder check run */
+const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
+
+/** the window shows the tab a start opened, with the session it started */
+const showSession = (w: World, tabId: string, session: string): void => {
+  w.tabs = [...w.tabs, tab(tabId, session, ACME)]
+  w.hub.tabSession(tabId, session)
+}
+
+describe('CoordinatorHub start', () => {
+  it("start opens a Claude tab in the coordinator's folder, on its account, behind, named as asked", async () => {
+    const w = world()
+    w.tabs[0] = { ...w.tabs[0], account: 'acc-1' }
+    w.hub.make('tab-c', false)
+    TITLES['new-tab-1'] = 'Release notes'
+    const answer = w.hub.start('tab-c', { task: 'Write the release notes.', name: 'Release notes', folder: null, device: null, worktree: null })
+    await tick()
+    expect(w.opened).toEqual([{ kind: 'claude', cwd: 'D:\\Work\\acme', account: 'acc-1', title: 'Release notes' }])
+    expect(w.hub.view('tab-c')!.sessions).toEqual([expect.objectContaining({ key: 'start:new-tab-1', marker: 'starting', line: 'Starting…', group: 'working' })])
+    w.tabs.push(tab('new-tab-1', null, ACME))
+    w.hub.tabSession('new-tab-1', null)
+    w.tabs[4] = { ...w.tabs[4], session: S_NEW }
+    w.hub.tabSession('new-tab-1', S_NEW)
+    expect(await answer).toEqual({
+      ok: true,
+      info: `Started Release notes · Desktop [${refOf(S_NEW)}] in D:\\Work\\acme on Account acc-1, attached to you. Its task is its first message; its report comes to you by itself when the task ends.`
+    })
+    expect(records(w, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: S_NEW }), text: 'Write the release notes.' })])
+  })
+
+  it('a worktree name puts the EnterWorktree instruction before the task', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    const answer = w.hub.start('tab-c', { ...START, worktree: 'notes' })
+    await tick()
+    showSession(w, 'new-tab-1', S_NEW)
+    await answer
+    expect(records(w, 'task')).toEqual([expect.objectContaining({ text: worktreeInstruction('notes') + 'Write the release notes.' })])
+  })
+
+  it('without a session within 20 s it answers that the session is starting, and a later session is still attached and tasked', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    const answer = w.hub.start('tab-c', START)
+    await tick()
+    expect(w.timers.map((t) => t.ms)).toEqual([START_WAIT_MS])
+    fire(w)
+    expect(await answer).toEqual({
+      ok: true,
+      info: 'Opening Release notes in D:\\Work\\acme on Main account. It shows as Starting… until its session starts; its task is sent then.'
+    })
+    expect(w.hub.view('tab-c')!.sessions).toEqual([expect.objectContaining({ key: 'start:new-tab-1', marker: 'starting' })])
+    showSession(w, 'new-tab-1', S_NEW)
+    expect(w.store.coordinator(S.coord)!.attachments.map((a) => a.session)).toEqual([S_NEW])
+    expect(records(w, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: S_NEW }), text: 'Write the release notes.' })])
+  })
+
+  it('a folder that is not a directory and another device are refused, and nothing opens; this device\'s name is accepted in any case', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    expect(await w.hub.start('tab-c', { ...START, device: 'Laptop' })).toEqual({ ok: false, error: HUB_TEXT.otherDevice })
+    expect(await w.hub.start('tab-c', { ...START, folder: 'D:\\Nowhere' })).toEqual({ ok: false, error: 'No folder D:\\Nowhere on this device.' })
+    expect(w.opened).toEqual([])
+    void w.hub.start('tab-c', { ...START, device: 'desktop' })
+    await tick()
+    expect(w.opened).toHaveLength(1)
+  })
+
+  it('a pending start whose tab closes is dropped, and the answer says so', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    const answer = w.hub.start('tab-c', START)
+    await tick()
+    w.hub.tabClosed('new-tab-1')
+    expect(await answer).toEqual({ ok: false, error: HUB_TEXT.closedEarly })
+    expect(w.hub.view('tab-c')!.sessions).toEqual([])
+    expect(w.timers).toEqual([])
+  })
+
+  it('detach of a Starting row cancels its start: the start answers so, and its session, when it comes, is neither attached nor tasked', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    const answer = w.hub.start('tab-c', START)
+    await tick()
+    expect(w.hub.detach('tab-c', 'Release notes')).toEqual({ ok: true, info: 'Detached Release notes; its open task was dropped.' })
+    expect(await answer).toEqual({ ok: false, error: HUB_TEXT.startCancelled })
+    expect(w.timers).toEqual([])
+    showSession(w, 'new-tab-1', S_NEW)
+    expect(w.store.coordinator(S.coord)!.attachments).toEqual([])
+    expect(w.store.hosted(S_NEW)).toBeNull()
+    expect(records(w, 'attach')).toEqual([])
+    expect(records(w, 'task')).toEqual([])
+  })
+
+  it('resolve of a Starting row answers that it is still starting', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    void w.hub.start('tab-c', START)
+    await tick()
+    expect(w.hub.resolve('tab-c', 'Release notes')).toEqual({ ok: false, error: 'Release notes is still starting.' })
+  })
+
+  it('message to a Starting row answers that it is still starting, and writes no task', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    void w.hub.start('tab-c', START)
+    await tick()
+    expect(w.hub.message('tab-c', 'Release notes', 'Fix it.')).toEqual({
+      ok: false,
+      error: 'Release notes is still starting; its first task is already waiting.'
+    })
+    expect(records(w, 'task')).toEqual([])
+  })
+
+  it('start answers fullAttached before a tab opens when the pending starts fill the coordinator\'s attachments', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.store.putCoordinator({
+      session: S.coord,
+      project: ACME,
+      since: NOW,
+      attachments: Array.from({ length: MAX_ATTACHMENTS - 1 }, (_, i) => attachment(uid(0x10000 + i)))
+    })
+    void w.hub.start('tab-c', START)
+    await tick()
+    expect(w.opened).toHaveLength(1)
+    expect(await w.hub.start('tab-c', START)).toEqual({ ok: false, error: HUB_TEXT.fullAttached })
+    expect(w.opened).toHaveLength(1)
+  })
+
+  it('a session whose attach or task record cannot be written is not attached: its start answers notSaved, and the hub logs why', async () => {
+    let broken = false
+    let ids = 0x8000
+    const flaky = world({ newId: () => (broken ? 'not-a-uuid' : uid(++ids)) })
+    flaky.hub.make('tab-c', false)
+    const answer = flaky.hub.start('tab-c', START)
+    await tick()
+    broken = true
+    showSession(flaky, 'new-tab-1', S_NEW)
+    expect(await answer).toEqual({ ok: false, error: HUB_TEXT.notSaved })
+    expect(flaky.warns.length).toBeGreaterThan(0)
+    expect(flaky.store.coordinator(S.coord)!.attachments).toEqual([])
+    expect(flaky.store.hosted(S_NEW)).toBeNull()
+    expect(flaky.mail.all()).toEqual([])
+  })
+
+  it('tool gives a start to the hub', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    void w.hub.tool('tab-c', { op: 'start', task: 'Write it.', name: null, folder: null, device: null, worktree: null })
+    await tick()
+    expect(w.opened).toHaveLength(1)
   })
 })

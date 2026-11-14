@@ -1,4 +1,4 @@
-import type { CoordGroup, CoordMarks, CoordOp, CoordResult, CoordSessionRow, CoordTaskInfo, CoordinatorView } from '../../shared/coordinator'
+import type { CoordGroup, CoordMarks, CoordOp, CoordResult, CoordSessionRow, CoordStartRequest, CoordTaskInfo, CoordinatorView } from '../../shared/coordinator'
 import { COORD_TASK_MAX } from '../../shared/coordinator'
 import { isSignal, kindOf, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
 import { isUuid, type PipeResponse } from '../../shared/protocol'
@@ -73,6 +73,12 @@ const PROJECT_NAME_MAX = 200
 /** a Stop that comes to rest ends the task this long after it, unless a turn starts meanwhile */
 export const REST_SETTLE_MS = 2000
 
+/** how long start_session waits for the new tab's session id before it answers without one */
+export const START_WAIT_MS = 20_000
+
+export const worktreeInstruction = (name: string): string =>
+  `First enter a new git worktree named "${name}" with your EnterWorktree tool, and do the task below there.\n\n`
+
 /** a record the hub writes: its version, id, time and flags are set by write() */
 type RecordInput = Omit<MailRecord, 'v' | 'id' | 'sentAt' | 'delivered' | 'read'> & { delivered?: boolean; read?: boolean }
 
@@ -105,10 +111,41 @@ export const HUB_TEXT = {
   fullCoordinators: `This device has ${MAX_COORDINATORS} coordinators already, the most it keeps; stop one first.`,
   fullAttached: `This coordinator has ${MAX_ATTACHMENTS} sessions attached already, the most it keeps; detach one first.`,
   fullHosted: `This device has ${MAX_HOSTED} attached sessions already, the most it keeps; detach one first.`,
-  notSaved: 'ClaudeTerm could not save this; nothing was changed.'
+  notSaved: 'ClaudeTerm could not save this; nothing was changed.',
+  otherDevice: 'Sessions on other devices cannot be started yet; leave device out.',
+  noFolder: (folder: string) => `No folder ${folder} on this device.`,
+  notOpened: 'The new tab could not be opened.',
+  closedEarly: 'The new tab closed before its session started.',
+  startCancelled: 'The new session was detached before its session started; it gets no task.',
+  stillStarting: (name: string) => `${name} is still starting.`,
+  started: (name: string, ref: string, folder: string, account: string) =>
+    `Started ${name} [${ref}] in ${folder} on ${account}, attached to you. Its task is its first message; its report comes to you by itself when the task ends.`,
+  opening: (name: string, folder: string, account: string) =>
+    `Opening ${name} in ${folder} on ${account}. It shows as Starting… until its session starts; its task is sent then.`
 }
 
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error })
+
+/** a session start the hub waits on: its tab is open, and its session id has not come yet */
+interface PendingStart {
+  tabId: string
+  coordinator: string // the coordinator's session
+  name: string // the name asked for, else the folder's last part
+  folder: string
+  account: string | null
+  text: string // the worktree instruction, if one was asked for, and the task
+  startedAt: number
+  answer: ((r: PipeResponse) => void) | null // null once answered
+  cancelWait: () => void // the START_WAIT_MS timer
+}
+
+/** what a row of a coordinator names: an attached session (att) or a Starting… tab (start), never both */
+type FoundRow = { row: CoordSessionRow; att: StoredAttachment; start: null } | { row: CoordSessionRow; att: null; start: PendingStart }
+
+/** a folder's last part, the name of a session started without one */
+function folderName(folder: string): string {
+  return folder.split(/[\\/]/).filter((p) => p !== '').pop() ?? folder
+}
 
 /** the project name as records and the store keep it: control characters become spaces, at most 200 UTF-16 units */
 function projectText(name: string): string {
@@ -136,6 +173,8 @@ export class CoordinatorHub {
   private readonly settle = new Map<string, () => void>()
   /** the last answer of a task's session, by task id: the text of its report */
   private readonly answers = new Map<string, string>()
+  /** the sessions being started, by the id of the tab that opened each: a Starting… row until its session id comes */
+  private readonly starts = new Map<string, PendingStart>()
   private readonly unsubscribe: () => void
 
   constructor(private readonly d: CoordinatorHubDeps) {
@@ -176,6 +215,7 @@ export class CoordinatorHub {
           this.d.store.putHosted({ ...h, coordinator: this.stored(this.address(null, session)) })
         }
       }
+      this.moveStarts(other.session, session)
     }
     this.d.store.putCoordinator({ session, project, since: this.d.now(), attachments: moved })
     for (const a of moved) {
@@ -207,6 +247,8 @@ export class CoordinatorHub {
         return this.message(tabId, op.session, op.text)
       case 'resolve':
         return this.resolve(tabId, op.session)
+      case 'start':
+        return this.start(tabId, op)
       default:
         return fail('unknown operation')
     }
@@ -236,6 +278,45 @@ export class CoordinatorHub {
     }
   }
 
+  /** starts a new Claude tab in the coordinator's folder: its task is given when its session id comes; the answer waits for that, or for START_WAIT_MS */
+  async start(tabId: string, req: CoordStartRequest & { device: string | null }): Promise<PipeResponse> {
+    if (!this.isCoordinator(tabId)) return fail(HUB_TEXT.notCoordinator)
+    const problem = this.d.problem()
+    if (problem !== null) return fail(problem)
+    if (req.task.trim() === '') return fail(HUB_TEXT.noText)
+    if (req.task.length > COORD_TASK_MAX) return fail(HUB_TEXT.tooLong)
+    if (req.device !== null && req.device.toLowerCase() !== this.d.selfName().toLowerCase()) return fail(HUB_TEXT.otherDevice)
+    const tab = this.d.tabs().find((t) => t.tabId === tabId)
+    if (!tab) return fail(HUB_TEXT.notCoordinator)
+    const folder = req.folder ?? tab.folder
+    const isFolder = await this.d.isDirectory(folder)
+    // the coordinator may have stopped while the folder was checked
+    const c = this.own(tabId)
+    if (!c) return fail(HUB_TEXT.notCoordinator)
+    if (!isFolder) return fail(HUB_TEXT.noFolder(folder))
+    if (c.attachments.length + this.startsOf(c).length >= MAX_ATTACHMENTS) return fail(HUB_TEXT.fullAttached)
+    if (this.d.store.allHosted().length + this.starts.size >= MAX_HOSTED) return fail(HUB_TEXT.fullHosted)
+    const newTab = this.d.openTab({ kind: 'claude', cwd: folder, account: tab.account, title: req.name })
+    if (newTab === null) return fail(HUB_TEXT.notOpened)
+    const text = (req.worktree === null ? '' : worktreeInstruction(req.worktree)) + req.task
+    return new Promise<PipeResponse>((answer) => {
+      const start: PendingStart = {
+        tabId: newTab,
+        coordinator: c.session,
+        name: req.name ?? folderName(folder),
+        folder,
+        account: tab.account,
+        text,
+        startedAt: this.d.now(),
+        answer,
+        cancelWait: () => {}
+      }
+      start.cancelWait = this.d.later(START_WAIT_MS, () => this.waitOver(newTab))
+      this.starts.set(newTab, start)
+      this.d.changed()
+    })
+  }
+
   attach(tabId: string, target: string): PipeResponse {
     const c = this.own(tabId)
     if (!c) return fail(HUB_TEXT.notCoordinator)
@@ -262,6 +343,11 @@ export class CoordinatorHub {
     if (!c) return fail(HUB_TEXT.notCoordinator)
     const found = this.attachedFind(c, target)
     if ('error' in found) return fail(found.error)
+    if (found.att === null) {
+      this.cancelStart(found.start.tabId, HUB_TEXT.startCancelled)
+      this.d.changed()
+      return { ok: true, info: HUB_TEXT.detached(found.row.name, true) }
+    }
     const { att, row } = found
     // best-effort, as end() does it: a refused record is logged, and the session is detached all the same
     this.write(this.detachRecord(c.session, att.session, c.project.name))
@@ -280,8 +366,8 @@ export class CoordinatorHub {
     if (text.length > COORD_TASK_MAX) return fail(HUB_TEXT.tooLong)
     const found = this.attachedFind(c, target)
     if ('error' in found) return fail(found.error)
+    if (found.att === null) return fail(HUB_TEXT.starting(found.row.name))
     const { att, row } = found
-    if (row.marker === 'starting') return fail(HUB_TEXT.starting(row.name))
     const hosted = this.d.store.hosted(att.session)
     if (!hosted) {
       this.d.log.warn(`coordinator: ${row.name} is attached without its hosted entry; the task is not given`)
@@ -310,6 +396,7 @@ export class CoordinatorHub {
     if (!c) return fail(HUB_TEXT.notCoordinator)
     const found = this.attachedFind(c, target)
     if ('error' in found) return fail(found.error)
+    if (found.att === null) return fail(HUB_TEXT.stillStarting(found.row.name))
     this.patchAttachment(c, found.att.session, { resolved: true, failed: false })
     this.d.changed()
     return { ok: true, info: HUB_TEXT.resolved(found.row.name) }
@@ -399,6 +486,7 @@ export class CoordinatorHub {
     const before = this.sessions.get(tabId) ?? null
     if (before !== null && session !== null && before !== session) this.renamedFrom.set(tabId, before)
     this.sessions.set(tabId, session)
+    if (session !== null) this.startArrived(tabId, session)
   }
 
   /** a tab's conversation started under a session id; clear, compact and resume move the coordinator and its sessions to it */
@@ -406,16 +494,21 @@ export class CoordinatorHub {
     const remembered = this.renamedFrom.get(tabId) ?? null
     this.renamedFrom.delete(tabId)
     this.sessions.set(tabId, after)
+    this.startArrived(tabId, after)
     // the design names clear and compact; resume is needed too, for a restored tab that resumes under a new id
     if (source !== 'clear' && source !== 'compact' && source !== 'resume') return
     const old = before !== null && before !== after ? before : remembered
     if (old !== null && old !== after) {
       this.d.store.renameSession(old, after)
+      this.moveStarts(old, after)
       this.d.alias(old, after)
       this.d.changed()
     }
-    // a clear ends the task its session held; the report comes from the new id
-    if (source === 'clear') this.onCurrent(tabId, { kind: 'stopped', reason: REASONS.clear })
+    // a clear ends the task its session held, and the turn the tab was in; the report comes from the new id
+    if (source === 'clear') {
+      this.inTurn.delete(tabId)
+      this.onCurrent(tabId, { kind: 'stopped', reason: REASONS.clear })
+    }
   }
 
   /** the tab was closed on purpose: its tasks fail, oldest first, and a coordinator's tab stops its coordinator */
@@ -423,6 +516,7 @@ export class CoordinatorHub {
     this.renamedFrom.delete(tabId)
     this.inTurn.delete(tabId)
     this.cancelSettle(tabId)
+    this.cancelStart(tabId, HUB_TEXT.closedEarly)
     const session = this.sessionOfTab(tabId)
     if (session !== null) {
       const tasks = this.d.store.hosted(session)?.tasks ?? []
@@ -458,6 +552,8 @@ export class CoordinatorHub {
     this.unsubscribe()
     for (const cancel of this.settle.values()) cancel()
     this.settle.clear()
+    for (const s of this.starts.values()) s.cancelWait()
+    this.starts.clear()
   }
 
   /** the coordinator a tab runs, or null */
@@ -468,6 +564,14 @@ export class CoordinatorHub {
 
   /** a session is attached to this coordinator: the hosted entry, the attachment and the tasks given go; a detach record says so */
   private attachTo(c: StoredCoordinator, to: MailAddress): PipeResponse {
+    const found = this.attachSession(c, to)
+    if (!found.ok) return found
+    if (found.already) return { ok: true, info: HUB_TEXT.alreadyAttached(to.name) }
+    return { ok: true, info: HUB_TEXT.attached(to.name, refOf(to.session)) }
+  }
+
+  /** a session is attached to this coordinator: its attach record, attachment and hosted entry; `already` when it was attached before */
+  private attachSession(c: StoredCoordinator, to: MailAddress): { ok: true; already: boolean } | { ok: false; error: string } {
     const session = to.session
     const name = to.name
     if (session === c.session) return fail(HUB_TEXT.self)
@@ -475,7 +579,7 @@ export class CoordinatorHub {
     if (this.d.store.coordinator(session)) return fail(HUB_TEXT.isCoordinator(name))
     const hosted = this.d.store.hosted(session)
     if (c.attachments.some((a) => a.session === session) || (hosted?.coordinator.device === null && hosted.coordinator.session === c.session)) {
-      return { ok: true, info: HUB_TEXT.alreadyAttached(name) }
+      return { ok: true, already: true }
     }
     if (hosted) return fail(HUB_TEXT.elsewhere(name, hosted.project, hosted.coordinator.name))
     if (c.attachments.length >= MAX_ATTACHMENTS) return fail(HUB_TEXT.fullAttached)
@@ -497,11 +601,101 @@ export class CoordinatorHub {
     this.d.store.putCoordinator({ ...c, attachments: [...c.attachments, attachment] })
     this.d.store.putHosted({ session, coordinator: this.stored(this.address(null, c.session)), project, tasks: [] })
     this.d.changed()
-    return { ok: true, info: HUB_TEXT.attached(name, refOf(session)) }
+    return { ok: true, already: false }
+  }
+
+  /** a session id came to a tab that a start opened: the session is attached and given the task, or the start answers why not */
+  private startArrived(tabId: string, session: string): void {
+    const s = this.dropStart(tabId)
+    if (!s) return
+    const c = this.d.store.coordinator(s.coordinator)
+    if (!c) return this.answerStart(s, fail(HUB_TEXT.startCancelled))
+    // the task record is checked before the attach, so a record that cannot be written changes nothing
+    const task = this.record({
+      kind: 'task',
+      from: this.address(null, c.session),
+      to: this.address(null, session),
+      replyTo: null,
+      text: s.text,
+      project: c.project.name,
+      delivered: false,
+      read: false
+    })
+    if (task === null) return this.answerStart(s, fail(HUB_TEXT.notSaved))
+    const to: MailAddress = { device: null, session, name: this.nameOf(session) }
+    const attached = this.attachSession(c, to)
+    if (!attached.ok) return this.answerStart(s, attached)
+    // the record goes after the hosted entry exists: the mail listener takes the task into it
+    this.d.mail.add(task)
+    this.d.changed()
+    this.answerStart(s, { ok: true, info: HUB_TEXT.started(to.name, refOf(session), s.folder, this.d.accountLabel(s.account)) })
+  }
+
+  /** START_WAIT_MS passed without a session id: the start answers without one, and it goes on */
+  private waitOver(tabId: string): void {
+    const s = this.starts.get(tabId)
+    if (s) this.answerStart(s, { ok: true, info: HUB_TEXT.opening(s.name, s.folder, this.d.accountLabel(s.account)) })
+  }
+
+  /** a pending start leaves the hub: its wait timer is cancelled, and the caller answers it */
+  private dropStart(tabId: string): PendingStart | null {
+    const s = this.starts.get(tabId)
+    if (!s) return null
+    this.starts.delete(tabId)
+    s.cancelWait()
+    return s
+  }
+
+  /** a pending start leaves the hub and its answer, if still open, is the failure given */
+  private cancelStart(tabId: string, error: string): void {
+    const s = this.dropStart(tabId)
+    if (s) this.answerStart(s, fail(error))
+  }
+
+  /** answers a start once: a later answer does nothing */
+  private answerStart(s: PendingStart, r: PipeResponse): void {
+    const answer = s.answer
+    s.answer = null
+    answer?.(r)
+  }
+
+  /** the starts of a coordinator, oldest first */
+  private startsOf(c: StoredCoordinator): PendingStart[] {
+    return [...this.starts.values()].filter((s) => s.coordinator === c.session)
+  }
+
+  /** the starts that followed a coordinator to another session id */
+  private moveStarts(from: string, to: string): void {
+    for (const s of this.starts.values()) if (s.coordinator === from) s.coordinator = to
+  }
+
+  /** a Starting… row: its tab is open and its session id has not come */
+  private startRow(s: PendingStart): CoordSessionRow {
+    return {
+      key: `start:${s.tabId}`,
+      tabId: s.tabId,
+      device: null,
+      deviceName: null,
+      session: null,
+      ref: null,
+      name: s.name,
+      folder: s.folder,
+      branch: null,
+      group: 'working',
+      why: null,
+      marker: 'starting',
+      line: 'Starting…',
+      progress: null,
+      changedAt: this.d.now(),
+      task: null,
+      lastReport: null,
+      attachedTo: null
+    }
   }
 
   /** the coordinator is gone: each session is detached as detach does it, and the coordinator is removed */
   private end(c: StoredCoordinator): void {
+    for (const s of this.startsOf(c)) this.cancelStart(s.tabId, HUB_TEXT.startCancelled)
     for (const a of c.attachments) {
       this.write(this.detachRecord(c.session, a.session, c.project.name))
       this.unhost(a.session)
@@ -518,6 +712,7 @@ export class CoordinatorHub {
     const hosted = this.d.store.hosted(session)
     if (!hosted) return 0
     this.d.store.removeHosted(session)
+    for (const t of hosted.tasks) this.answers.delete(t.id)
     const queued = hosted.tasks.filter((t) => t.state === 'queued').map((t) => t.id)
     if (queued.length > 0) {
       this.d.mail.mark(queued, 'delivered')
@@ -554,12 +749,16 @@ export class CoordinatorHub {
     return c.attachments.map((a) => this.rowOf(a.session, this.agentName(a.session) ?? a.name, this.tabOfSession(a.session), this.d.store.hosted(a.session), a))
   }
 
-  /** the attached row a target names, with its attachment */
-  private attachedFind(c: StoredCoordinator, target: string): { att: StoredAttachment; row: CoordSessionRow } | { error: string } {
-    const rows = this.attachedRows(c)
+  /** the row a target names among a coordinator's attached sessions and its Starting… rows */
+  private attachedFind(c: StoredCoordinator, target: string): FoundRow | { error: string } {
+    const attached = this.attachedRows(c)
+    const starts = this.startsOf(c)
+    const rows = [...attached, ...starts.map((s) => this.startRow(s))]
     const found = findRow(rows, target)
     if ('error' in found) return found
-    return { att: c.attachments[rows.indexOf(found.row)], row: found.row }
+    const i = rows.indexOf(found.row)
+    if (i < attached.length) return { row: found.row, att: c.attachments[i], start: null }
+    return { row: found.row, att: null, start: starts[i - attached.length] }
   }
 
   /** a row of a session: its tab's facts, its hosted entry's task, and its attachment's report and marks */
@@ -606,7 +805,7 @@ export class CoordinatorHub {
   }
 
   private viewOf(c: StoredCoordinator, tabId: string): CoordinatorView {
-    const sessions = this.attachedRows(c)
+    const sessions = [...this.attachedRows(c), ...this.startsOf(c).map((s) => this.startRow(s))]
     const attached = new Set(c.attachments.map((a) => a.session))
     const tabs = this.d.tabs()
     const notAttached: CoordSessionRow[] = []
@@ -765,13 +964,17 @@ export class CoordinatorHub {
     this.settle.delete(tabId)
   }
 
-  /** writes a record the hub makes: null when the mail check refuses it, and the reason is logged */
-  private write(r: RecordInput): string | null {
+  /** a record the hub makes, checked: null when the mail check refuses it, and the reason is logged */
+  private record(r: RecordInput): MailRecord | null {
     const record = checkMailRecord({ v: 1, id: this.d.newId(), sentAt: this.d.now(), delivered: false, read: false, ...r })
-    if (record === null) {
-      this.d.log.warn(`coordinator: a ${kindOf(r)} record for ${r.to.session} was refused by the mail check`)
-      return null
-    }
+    if (record === null) this.d.log.warn(`coordinator: a ${kindOf(r)} record for ${r.to.session} was refused by the mail check`)
+    return record
+  }
+
+  /** writes a record the hub makes: null when the mail check refuses it */
+  private write(r: RecordInput): string | null {
+    const record = this.record(r)
+    if (record === null) return null
     this.d.mail.add(record)
     return record.id
   }
