@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -570,7 +570,8 @@ describe('carry-over', () => {
 
     await carryItem('skills', deps())
     expect(readFileSync(join(target, 'skills', 'stow', 'x.md'), 'utf8')).toBe('dotfile skill')
-    expect(readlinkSync(join(target, 'skills', 'stow'))).toBe(join(dir, 'dotfiles', 'skills'))
+    // the link names the folder by its real path (/private/var on macOS for /var)
+    expect(readlinkSync(join(target, 'skills', 'stow'))).toBe(realpathSync(join(dir, 'dotfiles', 'skills')))
   })
 
   it.skipIf(process.platform === 'win32')('a replaced file keeps its permissions', async () => {

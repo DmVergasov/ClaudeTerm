@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -82,7 +82,9 @@ describe('runClaudeCli', () => {
   it('the command runs in the given folder with the given environment', async () => {
     const script = 'process.stdout.write(JSON.stringify({ cwd: process.cwd(), config: process.env.CLAUDE_CONFIG_DIR }))'
     const run = await runClaudeCli(node, ['-e', script], { cwd: work, env: { ...base(), CLAUDE_CONFIG_DIR: config } })
-    expect(JSON.parse(run.stdout)).toEqual({ cwd: work, config })
+    const got = JSON.parse(run.stdout) as { cwd: string; config: string }
+    // the folder as the command sees it is the real one (/private/var on macOS for /var)
+    expect({ ...got, cwd: realpathSync(got.cwd) }).toEqual({ cwd: realpathSync(work), config })
   })
 
   it('a command that never ends is killed at its time limit', async () => {
