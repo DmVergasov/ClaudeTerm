@@ -154,6 +154,26 @@ test("text typed in the card's field stays when Explain more brings the explanat
   }
 })
 
+test('the field keeps its focus and caret when the card is updated under the person typing', async () => {
+  const { app, page } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING, explain: MORE } }, { headsUp: true })
+  try {
+    await sendMessage(page, 'clean up')
+    const card = page.locator(CARD)
+    await expect(card).toBeVisible({ timeout: 20_000 })
+    const field = card.getByRole('textbox', { name: 'Ask Claude about this card' })
+    await field.focus()
+    await page.keyboard.type('Why pro')
+    // Explain more is pressed without moving the focus: the card is rebuilt when the explanation comes, and the field must stay put
+    await card.getByRole('button', { name: 'Explain more' }).evaluate((b: HTMLElement) => b.click())
+    await expect(card.locator('.chat-heads-up-more')).toBeVisible()
+    await expect(field).toBeFocused()
+    await page.keyboard.type('duction?')
+    await expect(field).toHaveValue('Why production?')
+  } finally {
+    await app.close()
+  }
+})
+
 test('with Heads up turned off, a long turn asks no side question and shows no card', async () => {
   const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY * 2) }, headsUp: { check: FINDING } }, { headsUp: false })
   try {

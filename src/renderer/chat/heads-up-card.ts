@@ -24,6 +24,9 @@ export class HeadsUpView {
   private readonly input: HTMLTextAreaElement
   private readonly askButton: HTMLButtonElement
   private readonly askError: HTMLElement
+  // show rebuilds the card above and below the field only: the field itself is never detached, so it keeps its focus and caret
+  private readonly top = document.createElement('div')
+  private readonly bottom = document.createElement('div')
 
   constructor(private readonly o: HeadsUpViewOptions) {
     this.element = document.createElement('section')
@@ -63,6 +66,7 @@ export class HeadsUpView {
     this.askError.className = 'chat-heads-up-error'
     this.askError.hidden = true
     this.askRow.append(this.input, this.askButton, this.askError)
+    this.element.append(this.top, this.askRow, this.bottom)
     this.updateAsk()
   }
 
@@ -73,7 +77,8 @@ export class HeadsUpView {
     if (same) return
     this.element.hidden = card === null
     if (card === null) {
-      this.element.replaceChildren()
+      this.top.replaceChildren()
+      this.bottom.replaceChildren()
       return
     }
     if (card.id !== this.fieldCard) {
@@ -111,8 +116,6 @@ export class HeadsUpView {
       error.textContent = card.explainError
       parts.push(error)
     }
-    parts.push(this.askRow)
-
     const actions = document.createElement('div')
     actions.className = 'chat-heads-up-actions'
     const button = (action: HeadsUpAction, label: string, primary = false): HTMLButtonElement => {
@@ -130,8 +133,8 @@ export class HeadsUpView {
       actions.append(explain)
     }
     actions.append(button('not-relevant', 'Not relevant'), button('got-it', 'Got it', true))
-    parts.push(actions)
-    this.element.replaceChildren(...parts)
+    this.top.replaceChildren(...parts)
+    this.bottom.replaceChildren(actions)
   }
 
   /** the person's message about the shown card goes to the chat; main closes the card once it is sent */
