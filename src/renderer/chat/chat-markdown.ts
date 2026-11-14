@@ -129,6 +129,8 @@ export function markdownClick(e: MouseEvent, cb: { openExternal(url: string): vo
   const file = target?.closest<HTMLElement>('.chat-file-link')
   if (file && file.dataset.file !== undefined && cb.openFile) {
     e.preventDefault()
+    // the second click of a double-click, and a drag that ends on the link (some text selected), open nothing
+    if (e.detail > 1 || window.getSelection()?.isCollapsed === false) return
     cb.openFile(file.dataset.file, file.dataset.line === undefined ? null : Number(file.dataset.line))
     return
   }

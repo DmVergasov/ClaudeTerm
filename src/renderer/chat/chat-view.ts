@@ -354,6 +354,12 @@ export class ChatView {
     if (focus && !(this.activeCard !== null && !this.hasDraft())) this.focus()
   }
 
+  /** the tab's folder moved (Claude entered or left a worktree, or cd'd): the paths are asked again in the new folder */
+  folderChanged(): void {
+    this.links?.forget()
+    this.links?.scan()
+  }
+
   /**
    * The snapshot of the chat. A view that holds it already is not touched. Otherwise, when the snapshot's first item is held, the
    * older items held before it stay (the pages the user read up to), and the snapshot's items come after them: a view stuck to
@@ -381,6 +387,8 @@ export class ChatView {
     if (at === 0) this.pages.hasOlder = s.hasOlder
     this.rev = s.rev
     this.state = s.state
+    // a turn that ended while the tab was not in front: the paths that were not files are asked again
+    if (s.state.turn === 'idle') this.links?.recheck()
     this.page?.setChatExited(s.state.exited)
     this.composer.setState(s.state)
     this.pruneFolds()
@@ -420,6 +428,8 @@ export class ChatView {
     this.syncDock()
     this.pruneFolds()
     this.state = s.state
+    // a turn that ended while the tab was not in front: the paths that were not files are asked again
+    if (s.state.turn === 'idle') this.links?.recheck()
     this.page?.setChatExited(s.state.exited)
     this.composer.setState(s.state)
     // with an agent page in place, the reading place waits for its close: a stuck column keeps its end, another keeps its window

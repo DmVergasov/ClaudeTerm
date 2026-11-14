@@ -30,7 +30,20 @@ export interface FileLinkDeps {
 /** the files remembered per tab: past this, the oldest goes first */
 export const MAX_LINKED = 10_000
 
-/** The files each tab was told about by a chat text, so a click opens only a file Claude named in that tab. */
+/** how long one stat may take: a path on a disconnected drive or a sleeping share counts as not a file, and holds no batch */
+export const STAT_TIMEOUT_MS = 2000
+
+/** the answer of a stat, or false when it takes STAT_TIMEOUT_MS; the timer does not keep the process alive */
+function withinStatTimeout(stat: Promise<boolean>): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const limit = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), STAT_TIMEOUT_MS)
+    timer.unref()
+  })
+  return Promise.race([stat, limit]).finally(() => clearTimeout(timer))
+}
+
+/** The files each tab was told about by a chatFileLinks answer, so main opens only a file a chatFileLinks answer of this tab named. */
 export class FileLinks {
   /** per tab, the pathKeys of its files, oldest first */
   private readonly tabs = new Map<string, Set<string>>()
@@ -41,7 +54,7 @@ export class FileLinks {
   async resolve(tabId: string, folder: string, texts: readonly string[]): Promise<FileLink[]> {
     const answers = await Promise.all([...new Set(texts)].map(async (text): Promise<FileLink | null> => {
       const r = resolveLinkPath(folder, text, this.d.home, this.path)
-      if (r === null || !(await this.d.isFile(r.file))) return null
+      if (r === null || !(await withinStatTimeout(this.d.isFile(r.file)))) return null
       return { path: text, file: r.file, kind: docKindOf(r.file) !== null ? 'doc' : 'file', line: r.line }
     }))
     const found = answers.filter((a): a is FileLink => a !== null)

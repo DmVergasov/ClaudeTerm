@@ -2975,17 +2975,17 @@ function bootstrap(): void {
     if (!tab || !isFileLinkPaths(paths)) return Promise.resolve([])
     return fileLinks.resolve(tab.id, tab.folder, paths)
   })
-  // only a file an answer of this tab named opens; a document goes to the Docs panel, anything else to the editor at its line
+  // only a file a chatFileLinks answer of this tab named opens; a document goes to the Docs panel, anything else to the editor at its line
   ipcMain.on(IPC.chatOpenFile, (_e, tabId: unknown, file: unknown, line: unknown) => {
     if (!isLocalClaudeTab(tabId) || !isAbsPath(file) || !isOptionalLineNo(line) || !fileLinks.linked(tabId, file)) return
-    void openFileLink(tabId, file, line, {
+    chatCall(openFileLink(tabId, file, line, {
       isFile: isRegularFile,
       checkDoc: checkDocFile,
       htmlRefused: (f) => htmlFolderRefused(f, homedir()),
       showDoc: (id, f, kind) => { docs.show(id, f, null, kind) },
       edit: (f, l) => launchEditor(settings.review.editor, f, l, { spawn: spawnDetached, reveal: (p) => shell.showItemInFolder(p), onError: toast }),
       toast
-    })
+    }), 'chat open file')
   })
   // a remote tab's view switches on its device; the tab's own view and the handoff of a command go through the same switch
   ipcMain.handle(IPC.tabsSetView, (_e, tabId: unknown, view: unknown): Promise<boolean> => {

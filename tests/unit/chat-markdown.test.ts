@@ -170,6 +170,9 @@ describe('chatMarkdownHtml with paths', () => {
     expect(html).toContain('data-path="src/a&amp;b.ts"')
     expect(html).toContain('>src/a&amp;b.ts</span>')
   })
+  it('a path after a closed link is wrapped too', () => {
+    expect(chatMarkdownHtml('[a](https://x.dev) then src/c.ts', { paths: true })).toContain('data-path="src/c.ts"')
+  })
   it('without the paths option nothing is wrapped', () => {
     expect(chatMarkdownHtml('see src/a.ts and `src/b.ts`')).toBe('<p>see src/a.ts and <code>src/b.ts</code></p>\n')
     expect(chatMarkdownHtml('[a](src/a.ts)')).toBe('<p><a class="chat-link">a</a></p>\n')

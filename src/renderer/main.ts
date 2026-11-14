@@ -1714,8 +1714,11 @@ async function boot(): Promise<void> {
     const t = tabs.get(info.id)
     if (!t) return
     const viewChanged = t.info.view !== info.view
+    const folderChanged = t.info.folder !== info.folder
     t.info = info
     if (viewChanged) applyView(t)
+    // the folder moved (a worktree entered or left): the chat's file links are asked again in the new folder
+    if (folderChanged) t.chat?.folderChanged()
     renderTabs()
     // a switch of the account shows at once
     if (info.id === activeId) renderStatus(info.id)

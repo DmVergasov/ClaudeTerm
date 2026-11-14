@@ -13,14 +13,17 @@ export class FileLinker {
   private readonly known = new Map<string, FileLink | null>()
   /** the path texts of the calls that have not answered yet */
   private readonly inFlight = new Set<string>()
+  /** bumped by forget(): an answer asked before it is dropped when it lands */
+  private generation = 0
   private timer: ReturnType<typeof setTimeout> | null = null
   private disposed = false
 
   constructor(private readonly root: HTMLElement, private readonly resolve: (paths: string[]) => Promise<FileLink[]>) {}
 
-  /** the text changed: the paths are asked about once it has stood still for ASK_DELAY_MS */
+  /** the text changed: the answers kept are applied at once, and the paths are asked about once the text has stood still for ASK_DELAY_MS */
   scan(): void {
     if (this.disposed) return
+    this.applyKnown([...this.root.querySelectorAll<HTMLElement>('.chat-path')])
     if (this.timer !== null) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.timer = null
@@ -36,21 +39,39 @@ export class FileLinker {
     this.scan()
   }
 
+  /**
+   * The tab's folder moved (Claude entered or left a worktree, or cd'd): the answers kept were given for the old folder, so they
+   * are dropped, and an answer still on its way is dropped when it lands. The links drawn stay: their files are absolute. The
+   * paths that were asked or were text are asked again by the next scan.
+   */
+  forget(): void {
+    if (this.disposed) return
+    this.generation++
+    this.known.clear()
+    this.inFlight.clear()
+    for (const node of this.root.querySelectorAll<HTMLElement>('.chat-path[data-link="asked"], .chat-path[data-link="none"]')) delete node.dataset.link
+  }
+
   dispose(): void {
     this.disposed = true
     if (this.timer !== null) clearTimeout(this.timer)
     this.timer = null
   }
 
-  /** applies the answers kept to the paths in the column, then asks main about the paths nobody asked yet */
-  private ask(): void {
-    if (this.disposed) return
-    const nodes = [...this.root.querySelectorAll<HTMLElement>('.chat-path')]
+  /** applies the answers kept to the paths given that have no link or text decided yet */
+  private applyKnown(nodes: HTMLElement[]): void {
     for (const node of nodes) {
       if (node.dataset.link === 'file' || node.dataset.link === 'none') continue
       const answer = this.known.get(node.dataset.path ?? '')
       if (answer !== undefined) this.apply(node, answer)
     }
+  }
+
+  /** applies the answers kept to the paths in the column, then asks main about the paths nobody asked yet */
+  private ask(): void {
+    if (this.disposed) return
+    const nodes = [...this.root.querySelectorAll<HTMLElement>('.chat-path')]
+    this.applyKnown(nodes)
     const batch = new Set<string>()
     for (const node of nodes) {
       if (node.dataset.link !== undefined) continue
@@ -64,9 +85,11 @@ export class FileLinker {
     if (batch.size === 0) return
     const paths = [...batch]
     for (const path of paths) this.inFlight.add(path)
+    const generation = this.generation
     this.resolve(paths).then(
       (links) => {
-        if (this.disposed) return
+        // an answer for the folder the tab left is dropped: forget() has cleared the paths it was asked for
+        if (this.disposed || generation !== this.generation) return
         const byPath = new Map(links.map((link) => [link.path, link]))
         for (const path of paths) {
           this.inFlight.delete(path)
@@ -75,7 +98,7 @@ export class FileLinker {
         this.ask()
       },
       () => {
-        if (this.disposed) return
+        if (this.disposed || generation !== this.generation) return
         // a failed call caches nothing: its paths are text for now, and the next recheck asks them again
         for (const path of paths) this.inFlight.delete(path)
         for (const node of this.root.querySelectorAll<HTMLElement>('.chat-path[data-link="asked"]')) {

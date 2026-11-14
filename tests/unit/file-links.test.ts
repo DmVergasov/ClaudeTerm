@@ -1,6 +1,6 @@
 import { posix, win32 } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { FileLinks, openFileLink, resolveLinkPath, type OpenFileDeps } from '../../src/main/chat/file-links'
+import { describe, expect, it, vi } from 'vitest'
+import { FileLinks, openFileLink, resolveLinkPath, STAT_TIMEOUT_MS, type OpenFileDeps } from '../../src/main/chat/file-links'
 import { pathKey } from '../../src/main/path-key'
 import type { DocCheck } from '../../src/shared/doc-file'
 
@@ -52,6 +52,18 @@ describe('FileLinks', () => {
     expect(links.linked('t2', 'C:\\proj\\src\\a.ts')).toBe(false)
     links.removeTab('t')
     expect(links.linked('t', 'C:\\proj\\src\\a.ts')).toBe(false)
+  })
+  it('a path whose stat never answers is not a file after STAT_TIMEOUT_MS, and does not hold the others', async () => {
+    vi.useFakeTimers()
+    try {
+      const links = new FileLinks({ isFile: (p) => (p.endsWith('slow.ts') ? new Promise<boolean>(() => {}) : Promise.resolve(true)), home: '/home/me' }, posix)
+      const answer = links.resolve('t', '/proj', ['slow.ts', 'fast.ts'])
+      await vi.advanceTimersByTimeAsync(STAT_TIMEOUT_MS)
+      expect((await answer).map((l) => l.path)).toEqual(['fast.ts'])
+      expect(links.linked('t', '/proj/slow.ts')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
   it('on Linux, linked keeps the case', async () => {
     const links = new FileLinks({ isFile: async () => true, home: '/home/me' }, posix)

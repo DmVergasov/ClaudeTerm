@@ -138,3 +138,69 @@ test('a streamed answer asks main once it settles, not once per piece', async ()
     await app.close()
   }
 })
+
+test('a path an answer names after the tab moved into another folder links that folder\'s file', async () => {
+  const work = project()
+  const other = project()
+  const { app, page } = await launchChatTab({
+    turns: {
+      first: [{ text: 'Read src/a.ts first.' }],
+      enter: [
+        { tool: { name: 'EnterWorktree', input: { path: other }, result: `Switched to worktree ${other}`, output: { worktreePath: other, worktreeBranch: 'feat/other', message: 'switched' } } },
+        { text: 'Now src/a.ts again.' }
+      ]
+    }
+  }, { work })
+  try {
+    const real = (file: string | null): string => (file === null ? '' : realpathSync.native(file))
+    const links = page.locator('.chat-text .chat-file-link')
+    await sendMessage(page, 'first')
+    await expect(links).toHaveCount(1)
+    expect(real(await links.nth(0).getAttribute('data-file'))).toBe(realpathSync.native(join(work, 'src', 'a.ts')))
+    await sendMessage(page, 'enter')
+    await expect(page.locator('.chat-text', { hasText: 'Now src/a.ts again.' })).toHaveCount(1)
+    await expect(links).toHaveCount(2)
+    await expect.poll(async () => real(await links.nth(1).getAttribute('data-file'))).toBe(realpathSync.native(join(other, 'src', 'a.ts')))
+  } finally {
+    await app.close()
+  }
+})
+
+test('a double-click on a file link opens the file in the editor once', async () => {
+  const editor = standInEditor()
+  const work = project()
+  const { app, page } = await launchChatTab({ turns: { files: [{ text: 'Read `src/a.ts:12` now.' }] } }, { work, review: { editor: editor.command } })
+  try {
+    await sendMessage(page, 'files')
+    const link = page.locator('.chat-text .chat-file-link')
+    await expect(link).toHaveText(['src/a.ts:12'])
+    await link.dblclick()
+    await expect.poll(() => editor.runs().length).toBe(1)
+    await page.waitForTimeout(500)
+    expect(editor.runs().length).toBe(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a path named before its file is written links when the turn ends while the tab is in the background', async () => {
+  const work = project()
+  const { app, page, tabId, config } = await launchChatTab({ turns: { later: [{ text: 'I will write notes/later.md next.' }, { gate: 'write' }, { text: 'Written.' }] } }, { work })
+  try {
+    await sendMessage(page, 'later')
+    await expect(page.locator('.chat-text .chat-path[data-link="none"]')).toHaveText(['notes/later.md'])
+    // another tab is in front while the file is written and the turn ends
+    const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work))!.id
+    await page.waitForFunction((id) => window.__ct!.activeTabId() === id, shell)
+    mkdirSync(join(work, 'notes'))
+    writeFileSync(join(work, 'notes', 'later.md'), '# Later\n')
+    writeFileSync(join(config, 'write'), '')
+    await expect.poll(async () => (await page.evaluate((id) => window.ct.chatSnapshot(id), tabId))?.state.turn ?? null, { timeout: 30_000 }).toBe('idle')
+    await page.evaluate((id) => window.ct.activateTab(id), tabId)
+    await page.waitForFunction((id) => window.__ct!.activeTabId() === id, tabId)
+    await expect(page.locator('.chat-text', { hasText: 'Written.' })).toHaveCount(1)
+    await expect(page.locator('.chat-text .chat-file-link')).toHaveText(['notes/later.md'])
+  } finally {
+    await app.close()
+  }
+})
