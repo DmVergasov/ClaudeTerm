@@ -237,6 +237,21 @@ test('an open task survives a quit; the restored session\'s rest reports it', as
   }
 })
 
+test('a restart of the session\'s tab ends the turn a task woke: the task queued in that turn goes to the next watcher', async () => {
+  const t = await openTask()
+  try {
+    // the second task is queued while the first one's mail turn runs: the session is not at rest, so it waits
+    expect(await coord(t.pipeName, t.tab1, { op: 'message', session: refOf(t.sid2), text: 'Then the docs.' })).toMatchObject({ ok: true })
+    await t.page.evaluate((id) => window.ct.restartTab(id, true), t.tab2)
+    // the restarted Claude Code says it starts, as its SessionStart hook does, and its new watcher takes the queued task
+    expect(await startSession(t.pipeName, t.tab2, t.sid2)).toEqual({ ok: true })
+    const next = waitForMail(t.pipeName, t.tab2, t.sid2)
+    expect((await within(next, 15_000)).info).toContain('> Then the docs.')
+  } finally {
+    await t.app.close()
+  }
+})
+
 test('the report of a task the previous coordinator gave goes to the new one with a note', async () => {
   const t = await openTask({ count: 3 })
   try {

@@ -1106,6 +1106,52 @@ describe('MailHub stopped reports ride with a wake', () => {
     expect(store.get(stopped.id)?.delivered).toBe(true)
     expect(store.get(finished.id)?.delivered).toBe(true)
   })
+
+  it('riders never take the place of the mail they ride with: a stopped report that does not fit with the oldest real report waits', async () => {
+    const { hub, store } = setup({ accepts: r => r.outcome !== 'stopped' })
+    const stopped = record({ kind: 'report', outcome: 'stopped', reason: 'Esc', from: MAC, to: LOCAL, text: 'S'.repeat(5000), sentAt: NOW - 1000 })
+    const finished = record({ kind: 'report', outcome: 'finished', from: MAC, to: LOCAL, text: 'F'.repeat(4300), sentAt: NOW })
+    store.add(stopped)
+    const held = hub.wait('tab-2', SES_LOCAL, signal())
+
+    store.add(finished)
+    expect(store.get(finished.id)?.delivered).toBe(true)
+    expect(store.get(stopped.id)?.delivered).toBe(false)
+    expect(await held).toMatchObject({
+      ok: true,
+      info: expect.stringContaining(`> ${'F'.repeat(4300)}`)
+    })
+    expect(store.get(finished.id)?.delivered).toBe(true)
+  })
+})
+
+describe('MailHub stopped reports in a prompt', () => {
+  it('a prompt that takes a task takes no stopped report along: a session that stopped coordinating gets only its task', () => {
+    const { hub, store } = setup({ accepts: r => r.outcome !== 'stopped' })
+    const stopped = record({ kind: 'report', outcome: 'stopped', reason: 'Esc', from: MAC, to: LOCAL, text: 'The task was stopped.', sentAt: NOW - 1000 })
+    const task = record({ kind: 'task', from: MAC, to: LOCAL, text: 'Fix the parser.' })
+    store.add(stopped)
+    store.add(task)
+    const prompt = hub.takeForPrompt('tab-2', SES_LOCAL)
+    expect(prompt).toEqual({ info: expect.stringContaining('> Fix the parser.'), taken: [expect.objectContaining({ id: task.id })] })
+    expect(prompt?.info).not.toContain('its task was stopped by the user')
+    expect(store.get(task.id)?.delivered).toBe(true)
+    expect(store.get(stopped.id)?.delivered).toBe(false)
+  })
+
+  it('a prompt that takes a report takes the pending stopped reports along, as a wake does', () => {
+    const { hub, store } = setup({ accepts: r => r.outcome !== 'stopped' })
+    const stopped = record({ kind: 'report', outcome: 'stopped', reason: 'Esc', from: MAC, to: LOCAL, text: 'The task was stopped.', sentAt: NOW - 1000 })
+    const finished = record({ kind: 'report', outcome: 'finished', from: MAC, to: LOCAL, text: 'Parser fixed.' })
+    store.add(stopped)
+    store.add(finished)
+    const prompt = hub.takeForPrompt('tab-2', SES_LOCAL)
+    expect(prompt?.taken.map(r => r.id).sort()).toEqual([stopped.id, finished.id].sort())
+    expect(prompt?.info).toContain('its task was stopped by the user: Esc.')
+    expect(prompt?.info).toContain('its task finished.')
+    expect(store.get(stopped.id)?.delivered).toBe(true)
+    expect(store.get(finished.id)?.delivered).toBe(true)
+  })
 })
 
 describe('MailHub recent addresses', () => {

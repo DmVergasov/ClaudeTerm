@@ -891,6 +891,8 @@ function bootstrap(): void {
     onTabRestarting: (tabId, continuedAs) => {
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
+      // the old process's turn ends with it: no Stop comes, so the mail turn and the coordinator's task in it are ended here
+      interrupted(tabId)
       // the chat says at once that its Claude Code restarts, and keeps its conversation until the new one is ready
       chatHub.restarting(tabId, continuedAs ? `Continued as ${accountLabel(continuedAs.account)}` : undefined)
     },

@@ -632,6 +632,45 @@ describe('tasks given', () => {
     expect(w.warns.some((m) => m.includes(gone))).toBe(true)
   })
 
+  it('a queued task whose mail record is gone is not the view\'s task, and a new message is accepted', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    const gone = uid(0x5002)
+    const h = w.store.hosted(S.one)!
+    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW, deliveredAt: null }] })
+    expect(w.hub.view('tab-c')!.sessions[0].task).toBeNull()
+    expect(w.hub.message('tab-c', 'a10000', 'Fix the parser.')).toMatchObject({ ok: true })
+    const [t] = records(w, 'task')
+    expect(w.store.hosted(S.one)!.tasks.map((x) => x.id)).toEqual([t.id])
+  })
+
+  it('a queued task whose mail record is gone does not count toward the 20 tasks of a session', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    for (let i = 0; i < MAX_TASKS_PER_SESSION - 1; i++) expect(w.hub.message('tab-c', 'a10000', `Task ${i}.`)).toMatchObject({ ok: true })
+    const gone = uid(0x5003)
+    const h = w.store.hosted(S.one)!
+    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW - 1, deliveredAt: null }, ...h.tasks] })
+    expect(w.hub.message('tab-c', 'a10000', 'One more.')).toMatchObject({ ok: true })
+    expect(w.store.hosted(S.one)!.tasks.some((t) => t.id === gone)).toBe(false)
+    expect(records(w, 'task')).toHaveLength(MAX_TASKS_PER_SESSION)
+  })
+
+  it('a task is not handed over idle while the tab is in a turn; after the turn ends and settles it is', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    const [t] = records(w, 'task')
+    w.hub.turnStarted('tab-1')
+    expect(w.hub.accepts(t, 'tab-1', 'idle')).toBe(false)
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: null })
+    fire(w)
+    expect(w.hub.accepts(t, 'tab-1', 'idle')).toBe(true)
+  })
+
   it('a task is accepted by the tab that runs its session, and by no other tab', () => {
     const w = world()
     w.hub.make('tab-c', false)

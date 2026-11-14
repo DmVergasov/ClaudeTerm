@@ -16,7 +16,7 @@ import type { PeerMail } from '../transcript-mail'
 import { formatAgentList, replaceControls, resolveAgent, type Agent } from './agent-directory'
 import { checkMailRecord, mailFlags, MAIL_NAME_MAX } from './mail-record'
 import type { MailStore } from './mail-store'
-import { wakeTextWithin } from './wake-text'
+import { wakeText, wakeTextWithin } from './wake-text'
 
 /** the longest wake text a watcher gets: Claude Code cuts a hook's output at 10,000 characters */
 const WAKE_MAX = 9500
@@ -258,7 +258,7 @@ export class MailHub {
    */
   takeForPrompt(tabId: string, session: string): { info: string; taken: MailRecord[] } | null {
     const mail = this.promptable(tabId, session)
-    const wake = mail.length === 0 ? null : this.wakeOf(this.current(session), mail)
+    const wake = mail.length === 0 ? null : this.wakeOf(this.current(session), mail, true)
     if (!wake) return null
     const { taken, info } = wake
     this.deps.store.mark(taken.map(r => r.id), 'delivered')
@@ -399,7 +399,7 @@ export class MailHub {
     const mail = this.pending(w.tabId, session, into)
     if (mail.length === 0) return
     // the oldest messages that fit one wake text; the rest wait for the next watcher
-    const wake = this.wakeOf(session, mail)
+    const wake = this.wakeOf(session, mail, false)
     if (!wake) return
     const { taken, info } = wake
     this.handOver(w, into)
@@ -424,14 +424,25 @@ export class MailHub {
   }
 
   /**
-   * The wake text of the oldest of the mail that fits, with the session's pending stopped reports riding along: a
-   * coordinator woken by one report learns of a stop in the same wake. Null when none of the mail fits.
+   * The wake text of the oldest of the mail that fits, then the session's pending stopped reports ride along, oldest
+   * first, while the whole wake still fits: a coordinator woken by a report learns of a stop in the same wake. The
+   * riders never take the place of the mail, and a rider that does not fit waits for a later hand-over. A prompt takes
+   * riders only when its mail holds a report. Null when none of the mail fits.
    */
-  private wakeOf(session: string, mail: MailRecord[]): { taken: MailRecord[]; info: string } | null {
+  private wakeOf(session: string, mail: MailRecord[], prompt: boolean): { taken: MailRecord[]; info: string } | null {
+    const senders = (a: MailAddress): { folder: string | null; branch: string | null } => this.deps.sender(a)
+    const real = wakeTextWithin(mail, senders, WAKE_MAX).taken
+    if (real.length === 0) return null
+    if (prompt && !real.some(r => kindOf(r) === 'report')) return { taken: real, info: wakeText(real, senders) }
     const ids = new Set(mail.map(r => r.id))
-    const riders = this.pendingStops(session).filter(r => !ids.has(r.id))
-    const wake = wakeTextWithin([...mail, ...riders], a => this.deps.sender(a), WAKE_MAX)
-    return wake.taken.some(r => ids.has(r.id)) ? wake : null
+    let taken = real
+    for (const rider of this.pendingStops(session)) {
+      if (ids.has(rider.id)) continue
+      const next = [...taken, rider]
+      if (wakeText(next, senders).length > WAKE_MAX) break
+      taken = next
+    }
+    return { taken, info: wakeText(taken, senders) }
   }
 
   /** the stopped reports of a session (its current id) not delivered yet: they are handed over with other mail, never alone */

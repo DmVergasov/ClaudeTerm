@@ -368,7 +368,8 @@ export class CoordinatorHub {
     if ('error' in found) return fail(found.error)
     if (found.att === null) return fail(HUB_TEXT.starting(found.row.name))
     const { att, row } = found
-    const hosted = this.d.store.hosted(att.session)
+    const stored = this.d.store.hosted(att.session)
+    const hosted = stored ? this.withoutDeadTasks(stored) : null
     if (!hosted) {
       this.d.log.warn(`coordinator: ${row.name} is attached without its hosted entry; the task is not given`)
       return fail(HUB_TEXT.notSaved)
@@ -849,7 +850,8 @@ export class CoordinatorHub {
   }
 
   private taskInfo(h: StoredHosted): CoordTaskInfo | null {
-    const t = currentTask(h) ?? nextTask(h)
+    const live = this.withoutDeadTasks(h)
+    const t = currentTask(live) ?? nextTask(live)
     return t ? { id: t.id, state: t.state, since: t.deliveredAt ?? t.queuedAt } : null
   }
 
@@ -896,15 +898,19 @@ export class CoordinatorHub {
 
   /** the session's next task to give; a queued task whose mail record is gone is dropped first, so it cannot hold the queue */
   private nextQueuedTask(session: string): StoredTask | null {
-    for (;;) {
-      const h = this.d.store.hosted(session)
-      const next = h ? nextTask(h) : null
-      if (!h || !next) return null
-      if (this.d.mail.get(next.id)) return next
-      this.d.log.warn(`coordinator: the task ${next.id} of ${session} has no mail record; it is dropped`)
-      this.d.store.putHosted({ ...h, tasks: h.tasks.filter((t) => t.id !== next.id) })
-      this.d.changed()
-    }
+    const h = this.d.store.hosted(session)
+    return h ? nextTask(this.withoutDeadTasks(h)) : null
+  }
+
+  /** the hosted entry without its dead tasks: a queued task whose mail record is gone is dropped and stored, so it cannot hold the queue, show in the view or count toward the cap */
+  private withoutDeadTasks(h: StoredHosted): StoredHosted {
+    const dead = h.tasks.filter((t) => t.state === 'queued' && !this.d.mail.get(t.id))
+    if (dead.length === 0) return h
+    for (const t of dead) this.d.log.warn(`coordinator: the task ${t.id} of ${h.session} has no mail record; it is dropped`)
+    const live = { ...h, tasks: h.tasks.filter((t) => !dead.includes(t)) }
+    this.d.store.putHosted(live)
+    this.d.changed()
+    return live
   }
 
   /** the session of a tab and the task it holds now, delivered or open; null when it holds none */
