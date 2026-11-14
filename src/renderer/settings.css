@@ -156,7 +156,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .account-field { display: flex; flex-direction: column; gap: 6px; color: var(--text-3); font-size: 11.5px; }
 .account-field .text-input { width: 100%; height: 32px; border-radius: 8px; background: var(--term); color: var(--text); font-size: 13px; }
 .account-field .text-input:focus { box-shadow: 0 0 0 3px #D9775722; }
-.account-tick { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--raised); font-size: 12.5px; }
+.account-tick { min-width: 0; display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--raised); font-size: 12.5px; }
 .account-tick.disabled { opacity: 0.45; }
 .account-tick input { margin: 2px 0 0; }
 .account-tick-text { min-width: 0; flex: 1; display: flex; flex-direction: column; }
@@ -231,7 +231,7 @@ input[type="text"].device-code-input { width: 240px; font-family: Consolas, "Cas
 .helper-step.on i { background: var(--accent); border-color: var(--accent); color: #1A1A1A; }
 .helper-step.done i { background: #63C08F1A; border-color: #63C08F66; color: var(--green); }
 .helper-ln { width: 18px; height: 1px; background: var(--line-2); }
-.helper-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.helper-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .helper-col { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .helper-note { color: var(--text-3); font-size: 11px; }
 .helper-label { color: var(--text-3); font-size: 11.5px; }
@@ -241,7 +241,8 @@ input[type="text"].device-code-input { width: 240px; font-family: Consolas, "Cas
 .helper-path { font: 11px 'Cascadia Mono', Consolas, monospace; color: var(--text-3); }
 .helper-links { margin-left: auto; display: flex; gap: 10px; }
 .helper-link { height: auto; padding: 0; background: transparent; border: 0; color: var(--blue); font-size: 12px; }
-.account-ticks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+/* two columns that share the box's width whatever their notes say: a note too long for its column ends in an ellipsis */
+.account-ticks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .account-tick input { accent-color: var(--accent); }
 .helper-count { font: 11px 'Cascadia Mono', Consolas, monospace; color: var(--text-2); white-space: nowrap; }
 .helper-lock { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px dashed var(--line-2); border-radius: 9px; color: var(--text-3); font-size: 11.5px; }

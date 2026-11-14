@@ -453,6 +453,38 @@ test('in a Settings window of the smallest size the helper keeps its title and i
   await app.close()
 })
 
+test('long notes of the ticks fit the box: it never scrolls sideways, and every tick is whole inside it', async () => {
+  // Main account with a dozen MCP servers: the note of MCP servers names them, longer than its column
+  const manyServers = (config: string): void => {
+    mainSetup(config)
+    const doc = JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8')) as Record<string, unknown>
+    const names = ['asana', 'autopilot', 'claude-terminal', 'figma', 'linear', 'miro', 'notion', 'notion-work', 'sentry', 'slack', 'trello', 'youtrack']
+    doc.mcpServers = Object.fromEntries(names.map((name) => [name, { type: 'http', url: `https://mcp.example.test/${name}` }]))
+    writeFileSync(join(config, '.claude.json'), JSON.stringify(doc))
+  }
+  const { app, page } = await launchAccounts({ script: { turns: {} }, main: manyServers })
+  const win = await accountsWindow(app, page)
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('settings.html'))!.setContentSize(760, 760)
+  })
+  await expect.poll(() => win.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(780)
+  await fillAdd(win, 'Work', null)
+  const dialog = helper(win)
+  await expect(dialog.locator('.account-tick', { hasText: 'MCP servers' })).toContainText('asana', LONG)
+  const body = dialog.locator('.account-dialog-body')
+  expect(await body.evaluate((b) => b.scrollWidth - b.clientWidth)).toBe(0)
+  const boxes = await body.evaluate((b) => {
+    const frame = b.getBoundingClientRect()
+    return [...b.querySelectorAll('.account-tick')].map((t) => {
+      const r = t.getBoundingClientRect()
+      return { left: r.left >= frame.left, right: r.right <= frame.right + 0.5 }
+    })
+  })
+  expect(boxes.length).toBeGreaterThan(0)
+  for (const box of boxes) expect(box).toEqual({ left: true, right: true })
+  await app.close()
+})
+
 test('while the helper is open, Ctrl+F does not move the focus behind it', async () => {
   const { app, page } = await launchAccounts({ script: { turns: {} } })
   const win = await settingsWindow(app, page, 'add-account')
