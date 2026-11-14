@@ -461,6 +461,7 @@ function bootstrap(): void {
     store: accounts,
     root: () => accountsRootDir,
     mainFolder: mainConfigDir,
+    mainClaudeJson,
     canonical,
     isDir: isDirAsync,
     mkdir: (folder) => fsPromises.mkdir(folder, { recursive: true, mode: 0o700 }).then(() => undefined),

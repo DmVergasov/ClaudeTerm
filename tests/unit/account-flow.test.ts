@@ -1,5 +1,5 @@
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AccountFlow, type AccountFlowDeps } from '../../src/main/account-flow'
 import { NO_IDENTITY, type AuthStatus, type Identity } from '../../src/main/account-login'
@@ -28,6 +28,8 @@ function gate(): { wait: Promise<void>; open: () => void } {
 
 interface Options {
   main?: string
+  mainClaudeJson?: string | null
+  canonical?: (path: string) => Promise<string>
   entries?: AccountEntry[]
   others?: { label: string; identity: Identity }[]
   tabs?: Record<string, number>
@@ -66,7 +68,8 @@ function setup(over: Options = {}) {
     },
     root: () => ROOT,
     mainFolder: over.main ?? MAIN,
-    canonical: async (p) => p,
+    mainClaudeJson: over.mainClaudeJson === undefined ? join(dirname(MAIN), '.claude.json') : over.mainClaudeJson,
+    canonical: over.canonical ?? (async (p) => p),
     isDir: async (p) => dirs.has(p),
     mkdir: async (p) => {
       calls.push(`mkdir ${p}`)
@@ -449,6 +452,21 @@ describe('AccountFlow', () => {
     t.dirs.add(join(home, '.claude', 'projects'))
     expect(await t.flow.pick(home)).toEqual({ ok: false, error: "This folder is part of Main account's setup" })
     expect(await t.flow.pick(join(home, '.claude', 'projects'))).toEqual({ ok: false, error: "This folder is part of Main account's setup" })
+    expect(await t.flow.pick(join(home, 'notes'))).toMatchObject({ ok: true, path: join(home, 'notes') })
+  })
+
+  it("pick refuses the home folder when ~/.claude is a link to a folder elsewhere: its .claude.json is Main account's", async () => {
+    const home = join(tmpdir(), 'home-of-the-person')
+    const elsewhere = join(tmpdir(), 'elsewhere', 'claude-config')
+    const link = join(home, '.claude')
+    const t = setup({
+      main: link,
+      mainClaudeJson: join(home, '.claude.json'),
+      canonical: async (p) => (p === link || p.startsWith(link + sep) ? elsewhere + p.slice(link.length) : p)
+    })
+    t.dirs.add(home)
+    t.dirs.add(join(home, 'notes'))
+    expect(await t.flow.pick(home)).toEqual({ ok: false, error: "This folder is part of Main account's setup" })
     expect(await t.flow.pick(join(home, 'notes'))).toMatchObject({ ok: true, path: join(home, 'notes') })
   })
 

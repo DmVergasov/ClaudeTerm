@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import {
   CARRY_ITEMS,
   CARRY_LABELS,
@@ -27,6 +28,8 @@ export interface AccountFlowDeps {
   store: Pick<AccountStore, 'list' | 'addLogin' | 'toLogin'>
   root(): string
   mainFolder: string | null
+  /** Main account's .claude.json (beside its folder); null when unknown */
+  mainClaudeJson: string | null
   canonical(path: string): Promise<string>
   isDir(path: string): Promise<boolean>
   /** recursive; mode 0700 off Windows */
@@ -334,7 +337,9 @@ export class AccountFlow {
   /**
    * why a folder cannot be an account's now; null when it can. A folder equal to, inside or holding Main account's or
    * another account's folder is refused: sign-in, carry-over and sign-out would write into their files. Main account's
-   * `.claude.json` sits beside its folder (the home folder for the default ~/.claude), so the home folder holds it too.
+   * `.claude.json` sits beside its folder (the home folder for the default ~/.claude), so the folder holding that file is
+   * refused too: with ~/.claude a link elsewhere, the home folder holds Main account's `.claude.json` and no longer
+   * holds its folder.
    */
   private async folderError(path: string): Promise<string | null> {
     const real = await this.d.canonical(path)
@@ -342,6 +347,10 @@ export class AccountFlow {
       const main = await this.d.canonical(this.d.mainFolder)
       if (pathKey(main) === pathKey(real)) return "This is Main account's folder"
       if (clashes(real, [main])) return "This folder is part of Main account's setup"
+    }
+    if (this.d.mainClaudeJson !== null) {
+      const file = await this.d.canonical(join(real, '.claude.json'))
+      if (pathKey(file) === pathKey(await this.d.canonical(this.d.mainClaudeJson))) return "This folder is part of Main account's setup"
     }
     for (const a of this.d.store.list()) {
       if (a.folder === null) continue
