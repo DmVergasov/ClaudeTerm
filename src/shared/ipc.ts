@@ -3,6 +3,7 @@ import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommand
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { FileLink } from './chat-paths'
 import type { MailConversationView, MailUnread } from './mail'
+import type { CoordinatorView, CoordMarks, CoordResult, CoordStartRequest } from './coordinator'
 import type { McpAction, McpAddRequest, McpResult, McpServersView, PluginAction, PluginsView, ReloadAction } from './mcp'
 import type { DeviceResult, DevicesView } from './devices'
 import type { Note, NoteForm, NoteSide, NoteSize, ProjectNote } from './note'
@@ -164,6 +165,19 @@ export const IPC = {
   evMail: 'ev:mail',
   mailConversations: 'mail:conversations',
   mailRead: 'mail:read',
+  /** the project coordinator's view of a Claude tab, or null: sent when it changes, and asked for with coordView */
+  evCoordView: 'ev:coord-view',
+  /** the coordinator marks of the tabs: the whole map, sent when it changes, and asked for with coordMarks */
+  evCoordMarks: 'ev:coord-marks',
+  coordView: 'coord:view',
+  coordMarks: 'coord:marks',
+  coordMake: 'coord:make',
+  coordStop: 'coord:stop',
+  coordAttach: 'coord:attach',
+  coordDetach: 'coord:detach',
+  coordMessage: 'coord:message',
+  coordResolve: 'coord:resolve',
+  coordNewSession: 'coord:new-session',
   /** the chat of a Claude tab in its chat view: its conversation, its patches, and what the user does in it */
   chatSnapshot: 'chat:snapshot',
   chatSend: 'chat:send',
@@ -334,6 +348,23 @@ export interface CtApi {
   getMailConversations(tabId: string | null): Promise<MailConversationView[]>
   /** marks the messages with these ids read */
   markMailRead(ids: string[]): Promise<void>
+  /** the project coordinator's view of a local Claude tab; null for another tab, or a tab that coordinates nothing */
+  coordView(tabId: string): Promise<CoordinatorView | null>
+  /** the coordinator marks of every tab of this device, keyed by tab id */
+  coordMarks(): Promise<CoordMarks>
+  /** makes the tab the coordinator of its project; replace moves the project's coordinator to this tab */
+  coordMake(tabId: string, replace: boolean): Promise<CoordResult>
+  coordStop(tabId: string): Promise<CoordResult>
+  /** attaches the session of another local tab to the coordinator */
+  coordAttach(tabId: string, sessionTabId: string): Promise<CoordResult>
+  /** detaches the session row of the view with this key */
+  coordDetach(tabId: string, key: string): Promise<CoordResult>
+  /** gives the session row with this key a task, as a message */
+  coordMessage(tabId: string, key: string, text: string): Promise<CoordResult>
+  /** marks the session row with this key resolved */
+  coordResolve(tabId: string, key: string): Promise<CoordResult>
+  /** starts a new session in the coordinator's folder with its task */
+  coordNewSession(tabId: string, req: CoordStartRequest): Promise<CoordResult>
   listProfiles(): Promise<string[]>
   getSettings(): Promise<Settings>
   openSettingsFile(): void
@@ -548,6 +579,10 @@ export interface CtApi {
   onScreenSeed(cb: (tabId: string, token: number) => void): Unsubscribe
   /** the unread agent messages per tab changed: the whole map, keyed by tab id */
   onMail(cb: (unread: MailUnread) => void): Unsubscribe
+  /** a Claude tab's coordinator view changed; null: the tab shows none now */
+  onCoordView(cb: (tabId: string, view: CoordinatorView | null) => void): Unsubscribe
+  /** the coordinator marks changed: the whole map */
+  onCoordMarks(cb: (marks: CoordMarks) => void): Unsubscribe
   /** the main window's full-screen state changed (sent when it shows, too) */
   onFullScreen(cb: (on: boolean) => void): Unsubscribe
   /** the conversation of a local Claude tab in its chat view; null for another tab, or one whose chat is not running */

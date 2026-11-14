@@ -11,6 +11,7 @@ import { MAX_FOLDED_GROUPS, type OpenTabRequest, type TabLayout } from '../share
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../shared/remote'
 import { MCP_EDIT_SCOPES, isClientSecret, marketplaceSource, type McpAction, type McpAddRequest, type McpEditScope, type PluginAction, type ReloadAction } from '../shared/mcp'
 import { isServerName } from '../shared/mcp-add'
+import { COORD_KEY_MAX, COORD_NAME_MAX, COORD_TASK_MAX, isWorktreeName, type CoordStartRequest } from '../shared/coordinator'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
@@ -306,3 +307,19 @@ export const isPluginAction = (v: unknown): v is PluginAction => {
 
 /** the reload card's answer: later, or restart now */
 export const isReloadAction = (v: unknown): v is ReloadAction => typeof v === 'string' && RELOAD_ACTIONS.includes(v)
+
+/** a coordinator's key of a row or a project: 1 to COORD_KEY_MAX characters, none of them a control character */
+export const isCoordKey = (v: unknown): v is string => oneLine(v, COORD_KEY_MAX)
+
+/** a task's text: not blank, at most COORD_TASK_MAX characters */
+export const isCoordTaskText = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= COORD_TASK_MAX
+
+/** the window's request to start a session in a coordinator's tab: a task, and a name, folder and worktree each null or valid */
+export const isCoordStartRequest = (v: unknown): v is CoordStartRequest => {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  return isCoordTaskText(r.task) &&
+    (r.name === null || oneLine(r.name, COORD_NAME_MAX)) &&
+    (r.folder === null || (isAbsPath(r.folder) && r.folder.length <= MAX_PATH_TEXT)) &&
+    (r.worktree === null || isWorktreeName(r.worktree))
+}

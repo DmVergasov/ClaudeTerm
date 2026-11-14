@@ -28,13 +28,18 @@ import { accountSessionStore, copyAt, copyTranscript, decideMove, findCopies, ty
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
 import { badgeDescription, dotBitmap } from './app-badge'
-import { AutoContinue, limitResetOf, type RestoreCut } from './auto-continue'
+import { AutoContinue, CONTINUE_DELAY_MS, LIMIT_ERROR, limitResetOf, type RestoreCut } from './auto-continue'
+import { CoordinatorHub } from './coordinator/coordinator-hub'
+import { CoordinatorStore } from './coordinator/coordinator-store'
+import { PromptDelivery } from './coordinator/prompt-delivery'
+import { TabWaits } from './tab-waits'
+import { coordinatorProblem, type CoordinatorView, type CoordMarks, type CoordResult } from '../shared/coordinator'
 import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { applyEnvPatch, buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isFileLinkPaths, isOptionalLineNo } from './ipc-guards'
+import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isFileLinkPaths, isOptionalLineNo, isCoordKey, isCoordStartRequest, isCoordTaskText } from './ipc-guards'
 import { NOT_RUNNING, type ReviewUpdate } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -324,6 +329,8 @@ function bootstrap(): void {
     publishOp: (key, op, generation) => send(IPC.evProjectNoteOp, key, op, generation)
   })
   const taskListStore = new TaskListStore(dataDir, { onError: (m) => log.warn(m), warn: toast })
+  // the project coordinators, the sessions attached to them and the tasks they give: kept in coordinators.json
+  const coordinatorStore = new CoordinatorStore(dataDir, { onError: (m) => log.warn(m), warn: toast })
   // the side of a tab's plan and list that changed last: with both finished, the one that finished later shows
   const newerSide = new Map<string, 'plan' | 'list'>()
   // the list Claude keeps for the status bar; each change goes out through sendPlan, with the plan
@@ -332,6 +339,8 @@ function bootstrap(): void {
     onChange: (tabId) => {
       if (taskLists.status(tabId)) newerSide.set(tabId, 'list')
       sendPlan(tabId)
+      // the coordinator's progress column reads the list
+      coordSoon.request()
     }
   })
   const accounts = new AccountStore(nodeAccountFile(join(dataDir, 'accounts.json')), electronVault(safeStorage, process.platform), { onError: (m) => log.warn(m) })
@@ -635,6 +644,9 @@ function bootstrap(): void {
     }
   })
 
+  // what a tab waits for the person for: its open dialog and its usage limit; each change asks the coordinator views to go out
+  const tabWaits = new TabWaits({ now: () => Date.now(), onChange: () => coordSoon.request() })
+
   // the status bar's plan segment: the superpowers plan, or else the list Claude keeps; every evPlan goes through here, and
   // the members attached to the tab get the same plan with the same flag
   const shownPlanOf = (tabId: string): PlanUpdate => ({ tabId, ...shownPlan(planHub.get(tabId).plan, taskLists.status(tabId), newerSide.get(tabId) ?? 'plan') })
@@ -767,7 +779,11 @@ function bootstrap(): void {
       onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info),
       onEditEvent: (ev) => review.transcriptEvent(tabId, ev),
       onAssistant: (agentId, at) => review.assistantEntry(tabId, agentId, at),
-      onInterrupt: (agentId, at) => review.interrupted(tabId, agentId, at),
+      onInterrupt: (agentId, at) => {
+        review.interrupted(tabId, agentId, at)
+        // the person ended the main conversation's turn: its task ends with it
+        if (agentId === null) projectCoordinators.interrupted(tabId, at)
+      },
       onTurn: (turnIndex, peer) => turns.report(tabId, turnIndex, peer),
       onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at),
       onTitle: (title) => setSessionTitle(tabId, title),
@@ -821,6 +837,8 @@ function bootstrap(): void {
       // a Claude tab's project note reaches the window before the window learns the tab's project
       if (tabs.get(id)?.kind === 'claude') projectNotes.place(id, place ? { key: place.project.key, name: place.project.name } : null)
       send(IPC.evTabPlace, id, place)
+      // a coordinator's project and branch come from the place
+      coordSoon.request()
       // the place is part of the tab's directory entry: the members hear of it as of any other change
       remote?.host.changed()
     }
@@ -905,6 +923,10 @@ function bootstrap(): void {
       // a closed chat's configuration files are no longer watched
       coordinator.removeTab(tabId)
       void watchConfigFiles()
+      // a tab closed on quit is not a closed coordinator: the store keeps its coordinators for the next start
+      if (!quitting) projectCoordinators.tabClosed(tabId)
+      tabWaits.removeTab(tabId)
+      coordSoon.request()
     },
     // read at each start: the console host applies to tabs opened after a change
     spawn: (o) => spawnPty({ ...o, bundledConpty: settings.conpty === 'bundled' }),
@@ -974,20 +996,28 @@ function bootstrap(): void {
         send(IPC.evTabOpened, t)
         // a Claude tab asks its command for its version, once a run: the mail watcher depends on the answer
         if (t.kind === 'claude') probeVersion()
+        // the coordinators hear of the tab's session before the tab list is read for names: a new tab's first session is named at once
+        if (t.kind === 'claude') projectCoordinators.tabSession(t.id, t.claudeSessionId)
         mailKeys.set(t.id, mailKeyOf(t))
         mailTabsChanged()
+        coordSoon.request()
         // a new tab has printed nothing yet: its copy opens at number 0 and waits for no seed
         const size = tabs.size(t.id)
         if (size) remote?.host.opened(t.id, size.cols, size.rows, settings.scrollback)
       },
       updated: (t) => {
         send(IPC.evTabUpdated, t)
+        // the coordinators follow the tab's session before anything else reads the tab list: a new tab's first session is named at once
+        if (t.kind === 'claude') projectCoordinators.tabSession(t.id, t.claudeSessionId)
+        // a tab that exited ends its turn: the task it held fails
+        if (t.kind === 'claude' && t.exited) projectCoordinators.exited(t.id)
         // the mail follows a tab's session, its exit and its folder: its working and title changes do not reach it
         const mailKey = mailKeyOf(t)
         if (mailKeys.get(t.id) !== mailKey) {
           mailKeys.set(t.id, mailKey)
           mailTabsChanged()
         }
+        coordSoon.request()
         // the other devices show the tab's activity and exit too: an update goes out in the directory
         remote?.host.changed()
         // a tab that changes its view (chat or terminal) shows the title that view names it by
@@ -1004,6 +1034,7 @@ function bootstrap(): void {
       },
       closed: (id) => {
         send(IPC.evTabClosed, id)
+        coordSoon.request()
         remote?.closed(id)
         viewFollow.removeTab(id)
         mailKeys.delete(id)
@@ -2065,6 +2096,7 @@ function bootstrap(): void {
       notes.flush()
       projectNotesStore.flush()
       taskListStore.flush()
+      coordinatorStore.flush()
       if (!writeUpdateMarker(dataDir, Date.now())) log.warn('cannot write the update restart marker')
     },
     openReleasePage: (version) => void shell.openExternal(releasePage(version)),
@@ -2202,6 +2234,9 @@ function bootstrap(): void {
       if (device === null || device === selfDeviceId) return selfName()
       return group?.view().devices.find((d) => d.id === device)?.name ?? null
     },
+    // the coordinators say which mail a tab takes: a task of its coordinator, a report, or any message when no task is held
+    accepts: (r, tabId, into) => projectCoordinators.accepts(r, tabId, into),
+    handedOver: (tabId, taken, into) => projectCoordinators.handedOver(tabId, taken, into),
     onUnread: () => {
       mailChanged = true
       mailSoon.request()
@@ -2217,6 +2252,97 @@ function bootstrap(): void {
     accept: () => ({ on: settings.agentMessages.enabled, wakes: localWakes(), claude: localVersion() }),
     onPeers: () => mailTabsChanged()
   })
+
+  // ---- project coordinators: a Claude tab coordinates its project, and the tasks it gives reach the sessions as agent mail
+  /** a Claude tab at rest: no turn runs in it, and no mail turn is pending */
+  const claudeIdle = (id: string): boolean => !tabs.isWorking(id) && !mailHub.busy(id) && (tabs.get(id)?.view !== 'chat' || chatHub.idle(id))
+  /** a task or a report that no mail watcher takes is typed into the session's prompt once it rests */
+  const promptDelivery = new PromptDelivery({
+    session: (id) => {
+      const t = tabs.get(id)
+      return t && t.kind === 'claude' && !t.exited ? t.claudeSessionId : null
+    },
+    idle: (id) => claudeIdle(id) && !autoContinue.pending(id) && !resumeAfterRestore.has(id),
+    hasWatcher: (id) => mailHub.hasWatcher(id),
+    canTake: (id, session) => mailHub.canTakeForPrompt(id, session),
+    take: (id, session) => mailHub.takeForPrompt(id, session),
+    promptState: (id) => chatPromptState(tabs.get(id)?.view ?? null, chatHub.isRunning(id), () => promptQueries.ask(id)),
+    view: (id) => tabs.get(id)?.view ?? null,
+    write: writeToClaude,
+    delayMs: isTest && process.env.CLAUDETERM_TEST_PROMPT_DELAY_MS ? Number(process.env.CLAUDETERM_TEST_PROMPT_DELAY_MS) : CONTINUE_DELAY_MS,
+    log
+  })
+  /** the coordinator views last sent, by tab, as JSON; and the marks last sent */
+  const coordViews = new Map<string, string>()
+  let coordMarksSent: string | null = null
+  /** asks for the coordinator views and marks to go to the window: one send per burst of changes */
+  const coordSoon = new Coalescer(50, () => {
+    const shown = new Set<string>()
+    for (const t of tabs.list()) {
+      if (t.kind !== 'claude') continue
+      const view = projectCoordinators.view(t.id)
+      if (view === null) continue
+      shown.add(t.id)
+      const json = JSON.stringify(view)
+      if (coordViews.get(t.id) === json) continue
+      coordViews.set(t.id, json)
+      send(IPC.evCoordView, t.id, view)
+    }
+    // a tab that had a view and has none now, or is gone, is sent once as null
+    for (const id of [...coordViews.keys()]) {
+      if (shown.has(id)) continue
+      coordViews.delete(id)
+      send(IPC.evCoordView, id, null)
+    }
+    const marks = projectCoordinators.marks()
+    const json = JSON.stringify(marks)
+    if (json === coordMarksSent) return
+    coordMarksSent = json
+    send(IPC.evCoordMarks, marks)
+  })
+  const projectCoordinators = new CoordinatorHub({
+    store: coordinatorStore,
+    mail: mailStore,
+    self: () => selfDeviceId || null,
+    selfName,
+    problem: () => coordinatorProblem(settings.agentMessages.enabled, localWakes(), localVersion()),
+    tabs: () => tabs.list().filter((t) => t.kind === 'claude').map((t) => {
+      const place = tabPlaces.get(t.id) ?? null
+      return {
+        tabId: t.id,
+        session: t.claudeSessionId,
+        account: t.account,
+        folder: t.folder,
+        exited: t.exited,
+        working: t.activity === 'working',
+        view: t.view,
+        project: place ? { key: place.project.key, name: place.project.name } : null,
+        branch: place?.branch ?? null
+      }
+    }),
+    agents: agentsNow,
+    waits: (id) => tabWaits.get(id),
+    progress: (id) => taskLists.status(id),
+    taskList: (id) => taskLists.get(id),
+    restingNow: claudeIdle,
+    isDirectory: isDirAsync,
+    accountLabel,
+    openTab: (req) => openTab(req, false)?.id ?? null,
+    recheckMail: () => mailHub.tabsChanged(),
+    poke: (id) => promptDelivery.poke(id),
+    alias: (oldSession, newSession) => mailHub.alias(oldSession, newSession),
+    changed: () => coordSoon.request(),
+    clock: (ms) => new Date(ms).toTimeString().slice(0, 5),
+    now: () => Date.now(),
+    later: (ms, fn) => {
+      const timer = setTimeout(fn, ms)
+      return () => clearTimeout(timer)
+    },
+    newId: randomUUID,
+    log
+  })
+  // the tabs restored before the coordinators existed: their sessions are known to the hub from the start
+  for (const t of tabs.list()) if (t.kind === 'claude') projectCoordinators.tabSession(t.id, t.claudeSessionId)
 
   // a socket left by a run that crashed would refuse the new one; a socket folder others can enter is never used
   const uid = process.getuid?.() ?? -1
@@ -2252,6 +2378,7 @@ function bootstrap(): void {
         resumeAfterRestore.delete(msg.tabId)
         autoContinue.resumed(msg.tabId, cut)
       }
+      projectCoordinators.sessionStarted(msg.tabId, before, msg.sessionId, msg.source)
       mailTabsChanged()
       return { ok: true }
     },
@@ -2295,10 +2422,22 @@ function bootstrap(): void {
         tabs.setWorking(msg.tabId, false)
         // the status bar shows the background work still running; a turn end that does not say leaves the last list
         if (msg.tasks !== undefined) statusHub.background(msg.tabId, msg.sessionId, msg.tasks)
-        if (msg.error === undefined) autoContinue.turnEnded(msg.tabId)
-        // a response a dropped connection cut off goes on by itself: nobody needs to look yet
-        else if (autoContinue.failed(msg.tabId, msg.error)) return { ok: true }
-      } else review.dialogOpened(msg.tabId, msg.agentId ?? null)
+        if (msg.error === undefined) {
+          autoContinue.turnEnded(msg.tabId)
+          projectCoordinators.turnEnded(msg.tabId, { background: msg.background === true, lastMessage: msg.lastMessage ?? null })
+        } else {
+          // a response a dropped connection cut off goes on by itself: nobody needs to look yet
+          const continued = autoContinue.failed(msg.tabId, msg.error)
+          projectCoordinators.turnFailed(msg.tabId, msg.error, continued)
+          // a usage limit stops the turn: the tab waits for its reset
+          if (msg.error === LIMIT_ERROR) tabWaits.limited(msg.tabId, limitResetOf(statusHub.get(msg.tabId).main, Date.now()))
+          if (continued) return { ok: true }
+        }
+        tabWaits.dialogsClosed(msg.tabId)
+      } else {
+        review.dialogOpened(msg.tabId, msg.agentId ?? null)
+        tabWaits.dialogOpened(msg.tabId, msg.reason, msg.prompt ?? null)
+      }
       // an answer typed or fronted while the turn's end is read makes the attention void: it starts nowhere
       const inputsAtEnd = tabInputs.of(msg.tabId)
       // the follow-up turn of a forward is quiet: its end is no notification, mark or badge (the agent's answer is on its page)
@@ -2332,6 +2471,10 @@ function bootstrap(): void {
       review.turn(msg.tabId, msg.sessionId)
       tabs.setWorking(msg.tabId, true)
       autoContinue.turnStarted(msg.tabId)
+      // the turn starts: a task waiting for the session is open in it, and no dialog or limit waits any more
+      projectCoordinators.turnStarted(msg.tabId)
+      tabWaits.dialogsClosed(msg.tabId)
+      tabWaits.turnStarted(msg.tabId)
       return { ok: true }
     },
     editBefore: (msg) => {
@@ -2382,7 +2525,7 @@ function bootstrap(): void {
       remote?.host.changed()
       return reply
     },
-    coord: async () => ({ ok: false, error: 'not wired yet' }),
+    coord: (msg) => projectCoordinators.tool(msg.tabId, msg),
     mailWait: (msg, closed) => mailHub.wait(msg.tabId, msg.sessionId, closed)
   })
     .then((h) => { pipe = h })
@@ -2805,6 +2948,18 @@ function bootstrap(): void {
   // ---- chats: a call for a tab without a chat does nothing; chatSend answers with the hub's reason, as a tab without one has no conversation
   /** a local Claude tab: the only kind that has a chat */
   const isLocalClaudeTab = (tabId: unknown): tabId is string => isId(tabId) && tabs.get(tabId)?.kind === 'claude'
+  // ---- project coordinators: the window's calls; each checks its tab (and the session's tab) is a local Claude tab
+  /** the answer to a call whose request does not pass its check */
+  const coordRefused: CoordResult = { ok: false, error: 'Invalid request' }
+  ipcMain.handle(IPC.coordView, (_e, tabId: unknown): CoordinatorView | null => (isLocalClaudeTab(tabId) ? projectCoordinators.view(tabId) : null))
+  ipcMain.handle(IPC.coordMarks, (): CoordMarks => projectCoordinators.marks())
+  ipcMain.handle(IPC.coordMake, (_e, tabId: unknown, replace: unknown): CoordResult => (isLocalClaudeTab(tabId) && typeof replace === 'boolean' ? projectCoordinators.make(tabId, replace) : coordRefused))
+  ipcMain.handle(IPC.coordStop, (_e, tabId: unknown): CoordResult => (isLocalClaudeTab(tabId) ? projectCoordinators.stop(tabId) : coordRefused))
+  ipcMain.handle(IPC.coordAttach, (_e, tabId: unknown, sessionTabId: unknown): CoordResult => (isLocalClaudeTab(tabId) && isLocalClaudeTab(sessionTabId) ? projectCoordinators.attachTab(tabId, sessionTabId) : coordRefused))
+  ipcMain.handle(IPC.coordDetach, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.detach(tabId, key) : coordRefused))
+  ipcMain.handle(IPC.coordMessage, (_e, tabId: unknown, key: unknown, text: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) && isCoordTaskText(text) ? projectCoordinators.message(tabId, key, text) : coordRefused))
+  ipcMain.handle(IPC.coordResolve, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.resolve(tabId, key) : coordRefused))
+  ipcMain.handle(IPC.coordNewSession, (_e, tabId: unknown, req: unknown): Promise<CoordResult> => (isLocalClaudeTab(tabId) && isCoordStartRequest(req) ? projectCoordinators.start(tabId, { ...req, device: null }) : Promise.resolve(coordRefused)))
   /** a chat call that is not awaited: a failure is logged, never thrown into the main process */
   const chatCall = (call: Promise<void>, what: string): void => {
     call.catch((e: unknown) => log.warn(`${what}: ${String(e)}`))
@@ -3541,7 +3696,7 @@ function bootstrap(): void {
   const sendFullScreen = (): void => { if (win && !win.isDestroyed()) win.webContents.send(IPC.fullScreen, win.isFullScreen()) }
   win.on('enter-full-screen', sendFullScreen)
   win.on('leave-full-screen', sendFullScreen)
-  win.on('close', () => { sessions.flush(); notes.flush(); projectNotesStore.flush(); taskListStore.flush(); bridge?.flush(); group?.flush() })
+  win.on('close', () => { sessions.flush(); notes.flush(); projectNotesStore.flush(); taskListStore.flush(); coordinatorStore.flush(); bridge?.flush(); group?.flush() })
   win.once('ready-to-show', () => {
     if (!win) return
     sendFullScreen()
@@ -3604,6 +3759,7 @@ function bootstrap(): void {
     notes.flush()
     projectNotesStore.flush()
     taskListStore.flush()
+    coordinatorStore.flush()
     bridge?.flush()
     group?.flush()
     for (const id of [...sources.keys()]) stopTabImages(id)
@@ -3616,6 +3772,9 @@ function bootstrap(): void {
     // the pipe first, so no request comes in while the mail closes; then the pending count, the hub, the links, and the store last
     void pipe?.close()
     mailSoon.cancel()
+    coordSoon.cancel()
+    promptDelivery.dispose()
+    projectCoordinators.dispose()
     mailHub.close()
     mailSync.close()
     mailStore.flush()

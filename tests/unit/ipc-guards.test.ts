@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { COORD_KEY_MAX, COORD_NAME_MAX, COORD_TASK_MAX } from '../../src/shared/coordinator'
 import { MAX_ADDRESS_LENGTH } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
-import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions } from '../../src/main/ipc-guards'
+import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isCoordKey, isCoordStartRequest } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -469,5 +470,27 @@ describe('MCP guards', () => {
     expect(isReloadAction('not-now')).toBe(true)
     expect(isReloadAction('restart')).toBe(true)
     for (const v of ['now', '', null, 1]) expect(isReloadAction(v)).toBe(false)
+  })
+
+  it('isCoordStartRequest takes a task with its optional fields and refuses a blank task, a relative folder and a bad worktree', () => {
+    expect(isCoordStartRequest({ task: 'Write the notes.', name: null, folder: null, worktree: null })).toBe(true)
+    expect(isCoordStartRequest({ task: 'Write the notes.', name: 'Notes', folder: '/work/notes', worktree: 'notes' })).toBe(true)
+    for (const v of [
+      { task: '   ', name: null, folder: null, worktree: null },
+      { task: 'x'.repeat(COORD_TASK_MAX + 1), name: null, folder: null, worktree: null },
+      { task: 'Write.', name: null, folder: 'relative/folder', worktree: null },
+      { task: 'Write.', name: null, folder: null, worktree: '../escape' },
+      { task: 'Write.', name: 'two\nlines', folder: null, worktree: null },
+      { task: 'Write.', name: 'x'.repeat(COORD_NAME_MAX + 1), folder: null, worktree: null },
+      { task: 'Write.', name: null, folder: null },
+      null
+    ]) expect(isCoordStartRequest(v)).toBe(false)
+  })
+
+  it('isCoordKey refuses an empty key, 201 characters and a newline', () => {
+    expect(isCoordKey('local:0f8fad5b-d9cb-469f-a165-f11d7e2b6a1c')).toBe(true)
+    expect(isCoordKey('')).toBe(false)
+    expect(isCoordKey('k'.repeat(COORD_KEY_MAX + 1))).toBe(false)
+    expect(isCoordKey('local:a\nb')).toBe(false)
   })
 })
