@@ -163,6 +163,8 @@ export class TabManager {
   private order: string[] = []
   private activeId: string | null = null
   private disposed = false
+  /** the view switch each tab is making now: a switch asked meanwhile waits for it */
+  private readonly switching = new Map<string, Promise<boolean>>()
 
   constructor(private readonly deps: TabManagerDeps) {}
 
@@ -437,8 +439,25 @@ export class TabManager {
    * restart waits for the old process. True when the other view started.
    */
   async setView(tabId: string, view: TabView): Promise<boolean> {
+    // a switch asked while the tab is still switching (Terminal, then Chat at once) is made once that switch ends
+    const pending = this.switching.get(tabId)
+    if (pending) {
+      await pending
+      return this.tabs.get(tabId)?.info.view === view || this.setView(tabId, view)
+    }
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude' || rec.restarting || rec.preparing || rec.info.view === view || this.activityOf(rec) === 'working') return false
+    const run = this.switchView(rec, view)
+    this.switching.set(tabId, run)
+    try {
+      return await run
+    } finally {
+      if (this.switching.get(tabId) === run) this.switching.delete(tabId)
+    }
+  }
+
+  private async switchView(rec: TabRecord, view: TabView): Promise<boolean> {
+    const tabId = rec.info.id
     rec.info.view = view
     this.deps.events.updated({ ...rec.info })
     this.changed()

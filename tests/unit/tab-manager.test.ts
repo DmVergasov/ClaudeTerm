@@ -1034,6 +1034,30 @@ describe('TabManager chat view', () => {
     expect(ptys).toHaveLength(1)
   })
 
+  it('a view switch asked while the tab is still switching its view is made once that switch ends', async () => {
+    let release = (): void => {}
+    const carried = new Promise<void>((r) => { release = r })
+    // the switch to the chat waits on the carry of its conversation (rule B) before the chat starts
+    const moveConversation = vi.fn(async (): Promise<boolean> => {
+      await carried
+      return true
+    })
+    const { tm, ptys, chats } = chatSetup({ moveConversation })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    const toChat = tm.setView(tab.id, 'chat')
+    ptys[0].emitExit(0)
+    await vi.waitFor(() => expect(moveConversation).toHaveBeenCalledTimes(1))
+    // the person goes back to the terminal before the chat has started
+    const back = tm.setView(tab.id, 'terminal')
+    release()
+    expect(await toChat).toBe(true)
+    await vi.waitFor(() => expect(chats[0]?.stops).toBe(1))
+    chats[0].end(0, null)
+    expect(await back).toBe(true)
+    expect(tm.get(tab.id)).toMatchObject({ view: 'terminal', exited: false })
+    expect(ptys).toHaveLength(2)
+  })
+
   it('setView kills a chat process that does not stop', async () => {
     vi.useFakeTimers()
     const { tm, ptys, chats, startChat } = chatSetup({ defaultView: () => 'chat' })
