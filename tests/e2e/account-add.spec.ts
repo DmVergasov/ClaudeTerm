@@ -433,6 +433,26 @@ test('Settings opened on the Accounts section checks the sign-ins when the page 
   await app.close()
 })
 
+test('in a Settings window of the smallest size the helper keeps its title and its buttons in view, and its body scrolls', async () => {
+  const { app, page } = await launchAccounts({ script: { turns: {} }, main: mainSetup })
+  const win = await accountsWindow(app, page)
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('settings.html'))!.setContentSize(560, 480)
+  })
+  await expect.poll(() => win.evaluate(() => window.innerHeight)).toBeLessThanOrEqual(500)
+  await fillAdd(win, 'Work', null)
+  const dialog = helper(win)
+  await expect(dialog.locator('.account-dialog-head')).toBeInViewport({ ratio: 1 })
+  await expect(dialog.getByRole('button', { name: 'Sign in…', exact: true })).toBeInViewport({ ratio: 1 })
+  // the ticks are more than the window holds: they scroll inside the box
+  const body = dialog.locator('.account-dialog-body')
+  expect(await body.evaluate((b) => b.scrollHeight > b.clientHeight)).toBe(true)
+  await body.locator('.account-tick').last().scrollIntoViewIfNeeded()
+  await expect(body.locator('.account-tick').last()).toBeInViewport()
+  await expect(dialog.getByRole('button', { name: 'Sign in…', exact: true })).toBeInViewport({ ratio: 1 })
+  await app.close()
+})
+
 test('while the helper is open, Ctrl+F does not move the focus behind it', async () => {
   const { app, page } = await launchAccounts({ script: { turns: {} } })
   const win = await settingsWindow(app, page, 'add-account')

@@ -144,13 +144,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .account-add .hint { margin-left: 6px; font-size: 11.5px; }
 .account-add button.primary, .account-dialog button.primary { background: var(--accent); border-color: var(--accent); color: #1A1A1A; font-weight: 600; }
 .account-add button.primary:hover:not(:disabled), .account-dialog button.primary:hover:not(:disabled) { background: #E08A6B; border-color: #E08A6B; }
-/* the dialogs: over the window on a scrim; the box is 600 px, narrower in a narrow window */
-.account-scrim { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: #05050690; backdrop-filter: blur(2px); }
-.account-dialog { width: 600px; max-width: calc(100% - 24px); display: flex; flex-direction: column; background: var(--sheet); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 40px 100px #000c; overflow: hidden; }
-.account-dialog-head { padding: 18px 20px 4px; font-size: 15px; font-weight: 600; }
-.account-dialog-body { display: flex; flex-direction: column; gap: 14px; padding: 10px 20px 18px; }
+/* the dialogs: over the window on a scrim; the box is 600 px, narrower in a narrow window, and no taller than the window: its body scrolls, its head and foot stay */
+.account-scrim { position: fixed; inset: 0; z-index: 20; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; background: #05050690; backdrop-filter: blur(2px); }
+.account-dialog { width: 600px; max-width: calc(100% - 24px); max-height: calc(100% - 24px); display: flex; flex-direction: column; background: var(--sheet); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 40px 100px #000c; overflow: hidden; }
+.account-dialog-head { flex: none; padding: 18px 20px 4px; font-size: 15px; font-weight: 600; }
+.account-dialog-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 10px 20px 18px; }
 .account-dialog-text { margin: 0; color: var(--text-2); }
-.account-dialog-foot { display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); }
+.account-dialog-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); }
 .account-get-token { margin-right: auto; }
 .account-dialog button.danger { background: var(--red); border-color: var(--red); color: #1A1A1A; font-weight: 600; }
 .account-field { display: flex; flex-direction: column; gap: 6px; color: var(--text-3); font-size: 11.5px; }
