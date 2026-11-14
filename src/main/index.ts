@@ -2822,8 +2822,10 @@ function bootstrap(): void {
   ipcMain.on(IPC.chatHeadsUpAction, (_e, tabId: unknown, cardId: unknown, action: unknown) => {
     if (isLocalClaudeTab(tabId) && isChatRef(cardId) && isHeadsUpAction(action)) headsUp.act(tabId, cardId, action)
   })
-  ipcMain.handle(IPC.chatHeadsUpAsk, (_e, tabId: unknown, cardId: unknown, text: unknown): Promise<string | null> =>
-    (isLocalClaudeTab(tabId) && isChatRef(cardId) && isHeadsUpAskText(text) ? headsUp.ask(tabId, cardId, text) : Promise.resolve('The card is gone.')))
+  ipcMain.handle(IPC.chatHeadsUpAsk, (_e, tabId: unknown, cardId: unknown, text: unknown): Promise<string | null> => {
+    if (!isLocalClaudeTab(tabId) || !isChatRef(cardId)) return Promise.resolve('The card is gone.')
+    return isHeadsUpAskText(text) ? headsUp.ask(tabId, cardId, text) : Promise.resolve('Invalid message')
+  })
   ipcMain.handle(IPC.chatAnswer, (_e, tabId: unknown, cardId: unknown, a: unknown): boolean | Promise<boolean> => {
     if (!isId(tabId) || !isChatRef(cardId) || !isChatAnswer(a)) return false
     if (remote?.viewer.has(tabId)) return remote.actions.chatAnswer(tabId, cardId, a)

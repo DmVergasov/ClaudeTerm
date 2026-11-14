@@ -108,6 +108,12 @@ export function copyAt(path: string | null | undefined, copies: TranscriptCopy[]
   return copies.find((c) => pathKey(c.path) === key) ?? null
 }
 
+/** a compaction that keeps neither a preserved segment nor preserved messages: the conversation before it is not read */
+function startsHistory(entry: SessionStoreEntry): boolean {
+  const e = entry as { type?: unknown; subtype?: unknown; compactMetadata?: { preservedSegment?: unknown; preservedMessages?: unknown } }
+  return e.type === 'system' && e.subtype === 'compact_boundary' && !e.compactMetadata?.preservedSegment && !e.compactMetadata?.preservedMessages
+}
+
 /**
  * A session store over one `projects` folder, for the SDK's getSessionMessages: a sign-in account's transcripts are in
  * its own folder, not in the folder the SDK reads by default. `load` returns the newest copy of the session in the
@@ -128,7 +134,11 @@ export function accountSessionStore(projects: string): SessionStore {
         for await (const line of createInterface({ input: createReadStream(copy.path, 'utf8'), crlfDelay: Infinity })) {
           try {
             const entry: unknown = JSON.parse(line)
-            if (typeof entry === 'object' && entry !== null && typeof (entry as { type?: unknown }).type === 'string') entries.push(entry as SessionStoreEntry)
+            if (typeof entry === 'object' && entry !== null && typeof (entry as { type?: unknown }).type === 'string') {
+              // the history starts at the last compaction that keeps no segment of the old conversation, as the SDK reads it: the lines before it are dropped as they stream
+              if (startsHistory(entry as SessionStoreEntry)) entries.length = 0
+              entries.push(entry as SessionStoreEntry)
+            }
           } catch {
             // a line that does not parse is skipped: transcript formats change between Claude Code versions
           }

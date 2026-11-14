@@ -1,9 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { HEADS_UP_EVERY } from '../../src/main/chat/heads-up'
+import { IPC } from '../../src/shared/ipc'
 import type { FakeStep } from '../fixtures/fake-claude/install'
-import { launchChatTab, sendMessage, userMessages } from './chat-helpers'
+import { CHAT_INPUT, controlResponses, launchChatTab, sendMessage, userMessages } from './chat-helpers'
 
 const CARD = '.chat-host:visible .chat-heads-up'
+const PERMISSION = '.chat-host:visible .chat-card-permission'
 
 const FINDING = [
   'topic: The cleanup script runs against the production database, so it deletes real orders.',
@@ -107,7 +111,7 @@ test('Not relevant closes the card, and a turn of fewer tool calls asks nothing'
 })
 
 test('Ask Claude sends your words with the card to the conversation, and the card closes', async () => {
-  const { app, page, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
   try {
     await sendMessage(page, 'clean up')
     const card = page.locator(CARD)
@@ -115,14 +119,112 @@ test('Ask Claude sends your words with the card to the conversation, and the car
     const field = card.getByRole('textbox', { name: 'Ask Claude about this card' })
     const ask = card.getByRole('button', { name: 'Ask Claude' })
     await expect(ask).toBeDisabled()
+    // main refuses a blank message as invalid, and says so: the card is there
+    expect(await page.evaluate(async (id) => window.ct.chatHeadsUpAsk(id, (await window.ct.chatHeadsUp(id))!.id, '   '), tabId)).toBe('Invalid message')
     await field.fill('Stop and use the test database')
     await expect(ask).toBeEnabled()
     await ask.click()
     await expect(card).toBeHidden()
-    await expect.poll(() => userMessages(log).find((m) => m.startsWith('Stop and use the test database'))).toBe(
-      'Stop and use the test database\n\n> Heads up: The cleanup runs on production\n>\n> The `.env` the script reads points at the **production** database.'
+    // the card is quoted first, the person's words after it
+    await expect.poll(() => userMessages(log).find((m) => m.startsWith('> Heads up'))).toBe(
+      '> Heads up: The cleanup runs on production\n> \n> The `.env` the script reads points at the **production** database.\n\nStop and use the test database'
     )
-    await expect(page.locator('.chat-host:visible .chat-user', { hasText: 'Stop and use the test database' })).toHaveCount(1)
+    // the bubble draws the card as its quote and the words as its text
+    const bubble = page.locator('.chat-host:visible .chat-user', { hasText: 'Stop and use the test database' })
+    await expect(bubble).toHaveCount(1)
+    await expect(bubble.locator('.chat-quote-block')).toContainText('Heads up: The cleanup runs on production')
+    expect(await bubble.evaluate((el) => el.lastChild?.textContent)).toBe('Stop and use the test database')
+    // the keyboard goes back to the composer, as it does after an answered card
+    await expect(page.locator(CHAT_INPUT)).toBeFocused()
+  } finally {
+    await app.close()
+  }
+})
+
+test('a card that comes while the person types in its field does not take the keyboard', async () => {
+  const { app, page, log, config } = await launchChatTab({
+    turns: { go: [...work(HEADS_UP_EVERY), { gate: 'release' }, { ask: { tool: 'Bash', input: { command: 'ls' } }, allowed: [], denied: [] }] },
+    headsUp: { check: FINDING }
+  }, { headsUp: true })
+  try {
+    await sendMessage(page, 'go')
+    const card = page.locator(CARD)
+    await expect(card).toBeVisible({ timeout: 20_000 })
+    const field = card.getByRole('textbox', { name: 'Ask Claude about this card' })
+    await field.focus()
+    await page.keyboard.type('Stop the cleanup')
+    // the turn goes on: a permission ask comes while the person has words in the field
+    writeFileSync(join(config, 'release'), '')
+    await expect(page.locator(PERMISSION)).toHaveCount(1)
+    await expect(field).toBeFocused()
+    await page.keyboard.press('Space')
+    await expect(page.locator(PERMISSION)).toHaveCount(1)
+    expect(controlResponses(log)).toEqual([])
+  } finally {
+    await app.close()
+  }
+})
+
+test('a new card starts with an empty field', async () => {
+  const { app, page, tabId } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY), again: work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  try {
+    await sendMessage(page, 'clean up')
+    const card = page.locator(CARD)
+    await expect(card).toBeVisible({ timeout: 20_000 })
+    const field = card.getByRole('textbox', { name: 'Ask Claude about this card' })
+    await field.fill('Not for this card')
+    await card.getByRole('button', { name: 'Got it' }).click()
+    await expect(card).toBeHidden()
+    await expect.poll(() => turnIdle(page, tabId)).toBe(true)
+    await sendMessage(page, 'again')
+    await expect(card).toBeVisible({ timeout: 20_000 })
+    await expect(field).toHaveValue('')
+  } finally {
+    await app.close()
+  }
+})
+
+test('when the chat has ended, Ask Claude shows the error under the field and the words stay in it', async () => {
+  const { app, page, config } = await launchChatTab({
+    turns: { 'clean up': [...work(HEADS_UP_EVERY), { gate: 'release' }, { crash: 1, once: true }] },
+    headsUp: { check: FINDING }
+  }, { headsUp: true })
+  try {
+    await sendMessage(page, 'clean up')
+    const card = page.locator(CARD)
+    await expect(card).toBeVisible({ timeout: 20_000 })
+    const field = card.getByRole('textbox', { name: 'Ask Claude about this card' })
+    await field.fill('Stop and use the test database')
+    // the chat ends while the card shows
+    writeFileSync(join(config, 'release'), '')
+    await expect(page.locator('.chat-host:visible .chat-notice', { hasText: 'Claude Code stopped' })).toHaveCount(1)
+    await card.getByRole('button', { name: 'Ask Claude' }).click()
+    await expect(card.locator('.chat-heads-up-ask .chat-heads-up-error')).toContainText('not running')
+    await expect(field).toHaveValue('Stop and use the test database')
+    await expect(card).toBeVisible()
+  } finally {
+    await app.close()
+  }
+})
+
+test('a message that the window cannot hand over shows why under the field, and keeps the words', async () => {
+  const { app, page } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  try {
+    await sendMessage(page, 'clean up')
+    const card = page.locator(CARD)
+    await expect(card).toBeVisible({ timeout: 20_000 })
+    const field = card.getByRole('textbox', { name: 'Ask Claude about this card' })
+    await field.fill('Stop and use the test database')
+    // main's handler fails the call, as an IPC call can: the error is shown, nothing is sent, the card stays
+    await app.evaluate(({ ipcMain }, channel: string) => {
+      ipcMain.removeHandler(channel)
+      ipcMain.handle(channel, () => Promise.reject(new Error('the window lost the chat')))
+    }, IPC.chatHeadsUpAsk)
+    await card.getByRole('button', { name: 'Ask Claude' }).click()
+    await expect(card.locator('.chat-heads-up-ask .chat-heads-up-error')).toContainText('Could not send: ')
+    await expect(card.locator('.chat-heads-up-ask .chat-heads-up-error')).toContainText('the window lost the chat')
+    await expect(field).toHaveValue('Stop and use the test database')
+    await expect(card).toBeVisible()
   } finally {
     await app.close()
   }
@@ -144,10 +246,12 @@ test("text typed in the card's field stays when Explain more brings the explanat
     await field.press('Shift+Enter')
     await expect(card).toBeVisible()
     await expect(field).toHaveValue('Why production?\n')
+    // the field grows to its two lines with no scrollbar: its text fits, the 1px borders included
+    expect(await field.evaluate((el: HTMLTextAreaElement) => [el.scrollHeight <= el.clientHeight, getComputedStyle(el).overflowY])).toEqual([true, 'hidden'])
     await field.press('Enter')
     await expect(card).toBeHidden()
-    await expect.poll(() => userMessages(log).find((m) => m.startsWith('Why production?'))).toBe(
-      'Why production?\n\n> Heads up: The cleanup runs on production\n>\n> The `.env` the script reads points at the **production** database.\n>\n> Set `DATABASE_URL` to a test database before you run the cleanup again.'
+    await expect.poll(() => userMessages(log).find((m) => m.startsWith('> Heads up'))).toBe(
+      '> Heads up: The cleanup runs on production\n> \n> The `.env` the script reads points at the **production** database.\n> \n> Set `DATABASE_URL` to a test database before you run the cleanup again.\n\nWhy production?'
     )
   } finally {
     await app.close()

@@ -265,7 +265,7 @@ describe('HeadsUp', () => {
     expect(h.card('t')).toBeNull()
   })
 
-  const QUOTED = '> Heads up: The tests run against production\n>\n> The `.env` the tests read points at the **production** database.\n>\n> - Point `DATABASE_URL` at a test database before the next run.'
+  const QUOTED = '> Heads up: The tests run against production\n> \n> The `.env` the tests read points at the **production** database.\n> \n> - Point `DATABASE_URL` at a test database before the next run.'
 
   it('Ask Claude sends the words with the card quoted to the conversation, and closes the card', async () => {
     const { h, asked, shown, sent, settle } = setup()
@@ -274,7 +274,7 @@ describe('HeadsUp', () => {
     asked[0]!.resolve(FINDING)
     await settle()
     expect(await h.ask('t', 'card-1', '  Fix it now  ')).toBeNull()
-    expect(sent).toEqual([{ tabId: 't', text: `Fix it now\n\n${QUOTED}` }])
+    expect(sent).toEqual([{ tabId: 't', text: `${QUOTED}\n\nFix it now` }])
     expect(shown.at(-1)).toBeNull()
     expect(h.card('t')).toBeNull()
   })
@@ -289,7 +289,7 @@ describe('HeadsUp', () => {
     asked[1]!.resolve('Your `.env` holds the production URL.')
     await settle()
     expect(await h.ask('t', 'card-1', 'Why?')).toBeNull()
-    expect(sent[0]!.text).toBe(`Why?\n\n${QUOTED}\n>\n> Your \`.env\` holds the production URL.`)
+    expect(sent[0]!.text).toBe(`${QUOTED}\n> \n> Your \`.env\` holds the production URL.\n\nWhy?`)
   })
 
   it('a second Ask Claude while the first message is still being sent sends nothing, and a failed first send lets the card be asked again', async () => {
@@ -313,7 +313,7 @@ describe('HeadsUp', () => {
 
   it('a You should know card is quoted with its own tag', () => {
     const card: HeadsUpCard = { id: 'card-1', tag: 'should-know', title: 'Keys are per user', text: 'Each user gets a cache.\n\n- Clear it per user.', more: null, explaining: false, explainError: null }
-    expect(askMessage(card, 'Why?')).toBe('Why?\n\n> You should know: Keys are per user\n>\n> Each user gets a cache.\n>\n> - Clear it per user.')
+    expect(askMessage(card, 'Why?')).toBe('> You should know: Keys are per user\n> \n> Each user gets a cache.\n> \n> - Clear it per user.\n\nWhy?')
   })
 
   it('Ask Claude on a card the tab does not show sends nothing, and a failed send keeps the card', async () => {

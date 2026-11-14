@@ -299,7 +299,7 @@ export class ChatView {
     })
     this.body.append(this.scroll, this.fade, this.pill)
     this.resize.observe(this.dock)
-    this.headsUpView = new HeadsUpView({ act: (cardId, action) => o.headsUp(cardId, action), openExternal: (url) => o.openExternal(url), copy: (text) => o.copy(text), ask: (cardId, text) => o.headsUpAsk(cardId, text) })
+    this.headsUpView = new HeadsUpView({ act: (cardId, action) => o.headsUp(cardId, action), openExternal: (url) => o.openExternal(url), copy: (text) => o.copy(text), ask: (cardId, text) => o.headsUpAsk(cardId, text), focusComposer: () => this.composer.focus() })
     this.composer.element.prepend(this.headsUpView.element)
     this.element.append(this.body, this.composer.element)
     o.container.append(this.element)
@@ -1102,6 +1102,8 @@ export class ChatView {
     const at = document.activeElement
     if (at === null || at === document.body) return true
     if (this.body.contains(at)) return true
+    // the Heads up field sits in the composer's element: words typed in it keep the keyboard, whatever the composer holds
+    if (this.headsUpView.owns(at)) return !this.headsUpView.hasDraft()
     if (this.composer.element.contains(at)) return !this.composer.hasDraft()
     return false
   }

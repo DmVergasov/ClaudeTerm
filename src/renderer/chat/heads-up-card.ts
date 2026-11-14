@@ -6,9 +6,13 @@ export interface HeadsUpViewOptions {
   openExternal(url: string): void
   copy(text: string): void
   ask(cardId: string, text: string): Promise<string | null>
+  /** the keyboard goes back to the chat's composer: the card that took it is gone */
+  focusComposer(): void
 }
 
 const TAGS: Record<HeadsUpCard['tag'], string> = { 'heads-up': 'Heads up', 'should-know': 'You should know' }
+
+const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 /**
  * The Heads up card above a chat's message box: its tag and title, the side agent's explanation, the longer one once Explain
@@ -46,8 +50,7 @@ export class HeadsUpView {
     this.input.placeholder = 'Ask Claude about this…'
     this.input.setAttribute('aria-label', 'Ask Claude about this card')
     this.input.addEventListener('input', () => {
-      this.input.style.height = 'auto'
-      this.input.style.height = `${this.input.scrollHeight}px`
+      this.grow()
       this.updateAsk()
     })
     this.input.addEventListener('keydown', (e) => {
@@ -137,6 +140,16 @@ export class HeadsUpView {
     this.bottom.replaceChildren(actions)
   }
 
+  /** whether the element is the field: the chat keeps the keyboard in it while it holds text */
+  owns(el: Element | null): boolean {
+    return el !== null && el === this.input
+  }
+
+  /** the field holds text the person has not sent */
+  hasDraft(): boolean {
+    return this.input.value.trim() !== ''
+  }
+
   /** the person's message about the shown card goes to the chat; main closes the card once it is sent */
   private async send(): Promise<void> {
     const card = this.shown
@@ -146,12 +159,15 @@ export class HeadsUpView {
     this.updateAsk()
     this.setAskError(null)
     try {
-      const error = await this.o.ask(card.id, text)
+      const error = await this.o.ask(card.id, text).catch((e: unknown) => `Could not send: ${errorText(e)}`)
       // the field may have moved on to another card while the message went: then it is not this card's text any more
       if (this.fieldCard !== card.id) return
       if (error === null) {
         this.input.value = ''
         this.input.style.height = ''
+        // the card closed with the focus on its button: the keyboard goes back to the composer, as after an answered card
+        const at = document.activeElement
+        if (at === null || at === document.body || this.element.contains(at)) this.o.focusComposer()
       } else {
         this.setAskError(error)
       }
@@ -159,6 +175,16 @@ export class HeadsUpView {
       this.asking = false
       this.updateAsk()
     }
+  }
+
+  /** the field grows with its text up to its max-height, then scrolls; its 1px borders are part of its height */
+  private grow(): void {
+    this.input.style.height = 'auto'
+    const borders = this.input.offsetHeight - this.input.clientHeight
+    const max = parseFloat(getComputedStyle(this.input).maxHeight)
+    const wanted = this.input.scrollHeight + borders
+    this.input.style.height = `${Math.min(wanted, max)}px`
+    this.input.style.overflowY = wanted > max ? 'auto' : 'hidden'
   }
 
   private updateAsk(): void {

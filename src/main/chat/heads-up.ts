@@ -1,4 +1,5 @@
 import type { ChatItem, HeadsUpAction, HeadsUpCard } from '../../shared/chat'
+import { quoteMarkdown } from '../../shared/quote-markdown'
 import { BACKGROUND_PROMPT, CONTINUE_PROMPT, LIMIT_PROMPT, RESUME_PROMPT } from '../auto-continue'
 import type { Logger } from '../log'
 
@@ -191,12 +192,11 @@ export function explainPrompt(card: HeadsUpCard, topic: string, session: string,
   ].join('\n')
 }
 
-/** the person's words for a card, with the card quoted under them: the message Ask Claude sends to the chat */
+/** the person's words for a card, with the card quoted before them, as the composer quotes: the message Ask Claude sends to the chat */
 export function askMessage(card: HeadsUpCard, text: string): string {
-  const quote = (md: string): string => md.split('\n').map((line) => (line.trim() === '' ? '>' : `> ${line}`)).join('\n')
-  const parts = [text.trim(), '', `> ${card.tag === 'heads-up' ? 'Heads up' : 'You should know'}: ${card.title}`, '>', quote(card.text)]
-  if (card.more !== null) parts.push('>', quote(card.more))
-  return parts.join('\n')
+  const block = [`${card.tag === 'heads-up' ? 'Heads up' : 'You should know'}: ${card.title}`, '', card.text]
+  if (card.more !== null) block.push('', card.more)
+  return quoteMarkdown([block.join('\n')], text.trim())
 }
 
 export interface HeadsUpDeps {
