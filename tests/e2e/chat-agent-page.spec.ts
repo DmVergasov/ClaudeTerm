@@ -193,6 +193,8 @@ test('the back arrow and Esc return to the main conversation at the same top ite
     await expect(page.locator(ROWS)).toHaveCount(1)
     // the reader reads up: the column is no longer stuck to its end
     await page.locator('.chat-host:visible .chat-scroll').evaluate((el) => { el.scrollTop = 400 })
+    // the place is read once the layout has settled: the answer above may still be taking its height
+    await chatSettled(page)
     const before = await topItem(page)
     expect(before).not.toBeNull()
     // the dock is out of view at this scroll, so the row is clicked where it is
@@ -303,6 +305,8 @@ test('switching tabs keeps the page, and the reading place of the conversation',
     await expect(page.locator(ROWS)).toHaveCount(1)
     // the reader reads up in the conversation, then opens the agent from the dock out of view
     await page.locator('.chat-host:visible .chat-scroll').evaluate((el) => { el.scrollTop = 400 })
+    // the place is read once the layout has settled: the answer above may still be taking its height
+    await chatSettled(page)
     const before = await topItem(page)
     await page.locator(ROWS).dispatchEvent('click')
     await expect(page.locator(PAGE)).toBeVisible()
