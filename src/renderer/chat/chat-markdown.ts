@@ -1,16 +1,49 @@
 import markdownit from 'markdown-it'
+import { findPaths, linkPath, pathRefText } from '../../shared/chat-paths'
+
+// the render environment: `paths` marks the paths in the text, `links` counts the links open at this point
+type RenderEnv = { paths?: boolean; links?: number; [key: string]: unknown }
 
 // raw HTML is shown as text; markdown-it leaves out javascript:, vbscript:, file: and data: links
 const md = markdownit({ html: false, linkify: true, breaks: false })
 
 // every link Claude writes gets the chat-link class; only an openable address stays as its href, so any other link is
-// text that cannot navigate (a relative path, a data: URI)
+// text that cannot navigate (a relative path, a data: URI). With the paths option, a link to a file is a chat-path too
 const defaultLinkOpen = md.renderer.rules.link_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
-md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+md.renderer.rules.link_open = (tokens, idx, options, env: RenderEnv | undefined, self) => {
   const t = tokens[idx]!
-  if (!openableLink(String(t.attrGet('href') ?? ''))) t.attrs = (t.attrs ?? []).filter(([name]) => name !== 'href')
-  t.attrSet('class', 'chat-link')
+  const href = String(t.attrGet('href') ?? '')
+  if (!openableLink(href)) t.attrs = (t.attrs ?? []).filter(([name]) => name !== 'href')
+  const file = env?.paths ? linkPath(md.normalizeLinkText(href)) : null
+  t.attrSet('class', file ? 'chat-link chat-path' : 'chat-link')
+  if (file) t.attrSet('data-path', pathRefText(file))
+  if (env) env.links = (env.links ?? 0) + 1
   return defaultLinkOpen(tokens, idx, options, env, self)
+}
+const defaultLinkClose = md.renderer.rules.link_close ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+md.renderer.rules.link_close = (tokens, idx, options, env: RenderEnv | undefined, self) => {
+  if (env) env.links = (env.links ?? 0) - 1
+  return defaultLinkClose(tokens, idx, options, env, self)
+}
+
+// the text escaped, with each path in it (outside a link, which is a path already) as a pending chat-path element for main
+// to resolve
+function wrapPaths(text: string, env: RenderEnv | undefined): string {
+  if (!env?.paths || env.links) return md.utils.escapeHtml(text)
+  let html = ''
+  let last = 0
+  for (const { start, end, ref } of findPaths(text)) {
+    const attr = md.utils.escapeHtml(pathRefText(ref))
+    html += md.utils.escapeHtml(text.slice(last, start)) +
+      `<span class="chat-path" data-path="${attr}">${md.utils.escapeHtml(text.slice(start, end))}</span>`
+    last = end
+  }
+  return html + md.utils.escapeHtml(text.slice(last))
+}
+md.renderer.rules.text = (tokens, idx, _options, env: RenderEnv | undefined) => wrapPaths(tokens[idx]!.content, env)
+md.renderer.rules.code_inline = (tokens, idx, _options, env: RenderEnv | undefined, self) => {
+  const t = tokens[idx]!
+  return `<code${self.renderAttrs(t)}>${wrapPaths(t.content, env)}</code>`
 }
 
 // an image shows its text as a link to its address when that address is openable; otherwise its text alone. The chat
@@ -38,9 +71,14 @@ md.renderer.rules.table_open = (tokens, idx, options, _env, self) =>
 md.renderer.rules.table_close = (tokens, idx, options, _env, self) =>
   self.renderToken(tokens, idx, options) + '</div>'
 
-/** markdown-it's HTML for Claude's text: raw HTML off, linkify on, code fences with a Copy button */
-export function chatMarkdownHtml(text: string): string {
-  return md.render(text)
+/**
+ * markdown-it's HTML for Claude's text: raw HTML off, linkify on, code fences with a Copy button. With `paths`, a path in the
+ * text, in a code span or in a link to a file is a pending chat-path element that carries the path (and its line) for main to
+ * resolve; a path inside another link's text is not wrapped again.
+ */
+export function chatMarkdownHtml(text: string, o: { paths?: boolean } = {}): string {
+  const env: RenderEnv = { paths: o.paths === true, links: 0 }
+  return md.render(text, env)
 }
 
 /** the text Claude's Markdown shows, as Find searches it: rendered into a detached element, which is never drawn or loaded */

@@ -142,3 +142,36 @@ describe('openableLink', () => {
     expect(openableLink('')).toBe(false)
   })
 })
+
+describe('chatMarkdownHtml with paths', () => {
+  it("a path in Claude's text is a pending element that carries the path and its line", () => {
+    expect(chatMarkdownHtml('see src/a.ts:12.', { paths: true }))
+      .toBe('<p>see <span class="chat-path" data-path="src/a.ts:12">src/a.ts:12</span>.</p>\n')
+  })
+  it('a path in an inline code span is one too', () => {
+    expect(chatMarkdownHtml('`src/main/index.ts:120`', { paths: true }))
+      .toBe('<p><code><span class="chat-path" data-path="src/main/index.ts:120">src/main/index.ts:120</span></code></p>\n')
+  })
+  it('a Markdown link to a path carries the path; its text is not wrapped again', () => {
+    expect(chatMarkdownHtml('[spec](docs/spec.md)', { paths: true }))
+      .toBe('<p><a class="chat-link chat-path" data-path="docs/spec.md">spec</a></p>\n')
+    expect(chatMarkdownHtml('[src/a.ts](src/a.ts#L12)', { paths: true }))
+      .toBe('<p><a class="chat-link chat-path" data-path="src/a.ts:12">src/a.ts</a></p>\n')
+    expect(chatMarkdownHtml('[x](<my file.md>)', { paths: true }))
+      .toBe('<p><a class="chat-link chat-path" data-path="my file.md">x</a></p>\n')
+  })
+  it('a web link and its text, a code fence and a word with a dot are not paths', () => {
+    for (const s of ['see https://x.dev/a/b.md', '[x](https://x.dev/a.md)', '[`src/a.ts`](https://x.dev)', '```\nsrc/a.ts\n```', 'node.js and README.md']) {
+      expect(chatMarkdownHtml(s, { paths: true })).not.toContain('chat-path')
+    }
+  })
+  it('a path is escaped in its text and in its attribute', () => {
+    const html = chatMarkdownHtml('see src/a&b.ts', { paths: true })
+    expect(html).toContain('data-path="src/a&amp;b.ts"')
+    expect(html).toContain('>src/a&amp;b.ts</span>')
+  })
+  it('without the paths option nothing is wrapped', () => {
+    expect(chatMarkdownHtml('see src/a.ts and `src/b.ts`')).toBe('<p>see src/a.ts and <code>src/b.ts</code></p>\n')
+    expect(chatMarkdownHtml('[a](src/a.ts)')).toBe('<p><a class="chat-link">a</a></p>\n')
+  })
+})
