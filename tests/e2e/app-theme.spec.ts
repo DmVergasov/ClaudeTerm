@@ -1,0 +1,92 @@
+import { expect, test, type Page } from '@playwright/test'
+import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { FAKE_CLAUDE_SETTINGS, launchClaudeTab } from './helpers'
+
+// The theme colours the whole app: the window's frame, its panels, menus and dialogs, the Settings window and the windows' own
+// chrome. One Half Light is the light theme the tests use; Graphite must look as it always has.
+
+const LIGHT = 'One Half Light'
+const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+
+/** the value a selector's first element computes to for a style property, named as getComputedStyle names it */
+function computed(page: Page, selector: string, property: string): Promise<string> {
+  return page.locator(selector).first().evaluate((el, p) => getComputedStyle(el)[p as 'color'], property)
+}
+
+/** the background a part shows: its own, or that of the nearest ancestor that is not transparent */
+function surface(page: Page, selector: string): Promise<string> {
+  return page.locator(selector).first().evaluate((el) => {
+    for (let at: Element | null = el; at !== null; at = at.parentElement) {
+      const bg = getComputedStyle(at).backgroundColor
+      if (bg !== 'rgba(0, 0, 0, 0)') return bg
+    }
+    return ''
+  })
+}
+
+/** the theme set as the Settings window sets it */
+async function setTheme(page: Page, theme: string): Promise<void> {
+  await page.evaluate((t) => window.ct.setSetting('theme', t), theme)
+}
+
+/** Claude reports a status for the tab: the status bar shows */
+async function showStatusBar(page: Page, pipeName: string, tabId: string): Promise<void> {
+  const status = { v: 1 as const, type: 'status' as const, tabId, sessionId: SID, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh', context: null, fiveHour: null, sevenDay: null }
+  expect(await sendPipeMessage(pipeName, status)).toEqual({ ok: true })
+  await expect(page.locator('#statusbar')).toBeVisible()
+}
+
+test('in a light theme the title bar, the tab bar, the sheet and the status bar are light, with dark text', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, theme: LIGHT })
+  try {
+    await showStatusBar(page, pipeName, tabId)
+    await expect.poll(() => computed(page, '#titlebar', 'backgroundColor')).toBe('rgb(250, 250, 250)')
+    expect(await computed(page, '#tabbar', 'backgroundColor')).toBe('rgb(250, 250, 250)')
+    expect(await computed(page, '#sheet', 'backgroundColor')).toBe('rgb(247, 247, 247)')
+    expect(await surface(page, '#statusbar')).toBe('rgb(247, 247, 247)')
+    expect(await computed(page, '#statusbar', 'color')).toBe('rgb(125, 126, 131)')
+    expect(await computed(page, '.tb-name', 'color')).toBe('rgb(56, 58, 66)')
+    expect(await computed(page, 'html', 'colorScheme')).toBe('light')
+  } finally {
+    await app.close()
+  }
+})
+
+test('Graphite keeps the colours the window has always had', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  try {
+    await showStatusBar(page, pipeName, tabId)
+    expect(await computed(page, '#titlebar', 'backgroundColor')).toBe('rgb(10, 10, 12)')
+    expect(await computed(page, '#tabbar', 'backgroundColor')).toBe('rgb(10, 10, 12)')
+    expect(await computed(page, '#sheet', 'backgroundColor')).toBe('rgb(17, 17, 20)')
+    expect(await computed(page, '#statusbar', 'color')).toBe('rgb(140, 140, 150)')
+    expect(await computed(page, '.tb-name', 'color')).toBe('rgb(237, 237, 240)')
+    expect(await computed(page, '#tabbar .tab.active', 'boxShadow')).toContain('rgb(39, 39, 46)')
+    expect(await computed(page, '#image-panel', 'backgroundColor')).toBe('rgb(15, 15, 18)')
+    expect(await computed(page, 'html', 'colorScheme')).toBe('dark')
+    await page.locator('#tabbar .tab-menu').click()
+    await expect(page.locator('.menu')).toBeVisible()
+    expect(await computed(page, '.menu', 'backgroundColor')).toBe('rgb(22, 22, 26)')
+    await page.locator('.menu-item').first().hover()
+    await expect.poll(() => computed(page, '.menu-item', 'backgroundColor')).toBe('rgb(34, 34, 42)')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a theme change reaches the whole window at once, without a restart', async () => {
+  const { app, page, tabId } = await launchClaudeTab()
+  try {
+    await setTheme(page, LIGHT)
+    await expect.poll(() => computed(page, '#titlebar', 'backgroundColor')).toBe('rgb(250, 250, 250)')
+    expect(await computed(page, '#sheet', 'backgroundColor')).toBe('rgb(247, 247, 247)')
+    expect(await computed(page, 'html', 'colorScheme')).toBe('light')
+    expect(await page.evaluate(() => window.__ct!.activeTabId())).toBe(tabId)
+    await setTheme(page, 'Graphite')
+    await expect.poll(() => computed(page, '#titlebar', 'backgroundColor')).toBe('rgb(10, 10, 12)')
+    expect(await computed(page, '#sheet', 'backgroundColor')).toBe('rgb(17, 17, 20)')
+    expect(await computed(page, 'html', 'colorScheme')).toBe('dark')
+  } finally {
+    await app.close()
+  }
+})

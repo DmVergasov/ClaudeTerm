@@ -43,6 +43,7 @@ import { leftUnfinished } from './unread'
 import { FrontFallback } from './front-fallback'
 import { FolderDialog } from './folder-dialog'
 import { TitleBar } from './title-bar'
+import { applyTheme } from './app-theme'
 import { limitMeters } from './limit-meters'
 import { claudeTitle, folderName } from './util'
 
@@ -1251,6 +1252,7 @@ function applySettings(s: Settings): void {
   // the MCP segment says what needs the person, or only counts the servers
   if (s.chat.mcpAlerts !== prev.chat.mcpAlerts && activeId) renderStatus(activeId)
   if (JSON.stringify(s.theme) !== JSON.stringify(prev.theme)) {
+    applyTheme(s.theme)
     const theme = resolveTheme(s.theme)
     for (const t of tabs.values()) t.view?.setTheme(theme)
     for (const t of tabs.values()) t.chat?.setTheme(theme)
@@ -1292,6 +1294,7 @@ async function boot(): Promise<void> {
   titleBar = new TitleBar(document.getElementById('titlebar')!)
   appInfo = await ct.appInfo()
   settings = await ct.getSettings()
+  applyTheme(settings.theme)
   // the window must come up even when the accounts cannot be listed
   accounts = (await ct.listAccounts().catch(() => null))?.accounts ?? []
   fontSize = settings.font.size

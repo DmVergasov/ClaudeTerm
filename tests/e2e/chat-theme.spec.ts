@@ -89,15 +89,14 @@ test('the native scrollbars follow the theme: the chat and the model picker are 
   }
 })
 
-test('the window frame keeps its colour when the chat changes theme', async () => {
+test('the window frame takes the theme with the chat', async () => {
   const { app, page } = await launchChatTab({ turns: { write: [{ text: 'A plain answer.' }] } })
   try {
     await sendMessage(page, 'write')
     await expect(page.locator('.chat-text', { hasText: 'A plain answer.' })).toHaveCount(1)
-    const frame = await computed(page, '#titlebar', 'backgroundColor')
     await setTheme(page, 'One Half Light')
     await expect.poll(() => computed(page, CHAT, 'backgroundColor')).toBe('rgb(250, 250, 250)')
-    expect(await computed(page, '#titlebar', 'backgroundColor')).toBe(frame)
+    await expect.poll(() => computed(page, '#titlebar', 'backgroundColor')).toBe('rgb(250, 250, 250)')
   } finally {
     await app.close()
   }
