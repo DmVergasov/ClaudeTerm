@@ -3,13 +3,16 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); font: 13px "Inter Variable", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+/* until the theme's palette is on the root the page draws nothing of its own: the window's background, already the theme's, shows */
+html:not(.themed), html:not(.themed) body { background: transparent; }
+html:not(.themed) body { visibility: hidden; }
 body { display: flex; flex-direction: column; }
 
 /* the title bar: as the main window's, 36 px high; the window buttons sit in its right end */
 #settings-titlebar { flex: none; display: flex; align-items: center; height: 36px; padding: 0 calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)) 0 14px; background: var(--ground); border-bottom: 1px solid var(--line); color: var(--text-2); font-size: 12px; font-weight: 500; user-select: none; -webkit-app-region: drag; }
 body.platform-darwin #settings-titlebar { padding-left: 84px; }
 .st-mark { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-right: 8px; background: var(--accent); border-radius: 5px; }
-.st-mark::before { content: '>_'; color: var(--ground); font: 700 10px 'Cascadia Mono', Consolas, monospace; }
+.st-mark::before { content: '>_'; color: #0A0A0C; font: 700 10px 'Cascadia Mono', Consolas, monospace; }
 
 /* the head, above the page and not scrolled: the search field, then the tabs */
 #settings-head { flex: none; padding: 18px 28px 0; border-bottom: 1px solid var(--line); }
@@ -28,7 +31,7 @@ kbd.search-key { padding: 0 6px; border: 1px solid var(--line-2); border-radius:
 .settings-tab:hover:not(:disabled) { border-color: transparent; color: var(--text); }
 .settings-tab[aria-current="page"], .settings-tab[aria-current="page"]:hover:not(:disabled) { color: var(--text); border-bottom-color: var(--accent); }
 .settings-tab .n { min-width: 16px; padding: 0 5px; border-radius: 8px; background: var(--line-2); color: var(--text); font-size: 10.5px; font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
-.settings-tab[data-tab="results"] .n { background: var(--accent); color: var(--ground); }
+.settings-tab[data-tab="results"] .n { background: var(--accent); color: #0A0A0C; }
 .settings-tab.none { opacity: 0.45; cursor: default; }
 /* a search: the matching words are marked in the labels, and each section title shows its tab's name as a crumb */
 mark.search-hit { padding: 0 1px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--text); }

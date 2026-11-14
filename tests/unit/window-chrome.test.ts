@@ -45,6 +45,10 @@ describe('windowChrome', () => {
     expect(windowChrome('Solarized')).toEqual(windowChrome('Graphite'))
     expect(windowChrome({ background: 'rgb(1,2,3)', foreground: 'red' })).toEqual(windowChrome('Graphite'))
   })
+
+  it('a theme object with one colour it cannot read: Graphite', () => {
+    expect(windowChrome({ background: 'white', foreground: '#000000' })).toEqual(windowChrome('Graphite'))
+  })
 })
 
 describe('applyWindowChrome', () => {

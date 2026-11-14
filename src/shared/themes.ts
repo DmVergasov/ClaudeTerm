@@ -90,9 +90,11 @@ function shareOf(hex: string): number {
  * colours are the theme's own.
  */
 export function appPalette(theme: ITheme): Record<string, string> {
-  // a colour the theme gives in a form that is not hex is not read: the Graphite one stands in for it
-  const b = parseHex(theme.background) ?? rgbOf(GRAPHITE_BG)
-  const f = parseHex(theme.foreground) ?? rgbOf(GRAPHITE_FG)
+  // a theme whose background or foreground is not hex is not read at all: Graphite stands in for the whole palette, since one
+  // Graphite colour among the theme's own would leave the text or the title bar buttons unreadable
+  const b = parseHex(theme.background)
+  const f = parseHex(theme.foreground)
+  if (b === null || f === null) return { ...GRAPHITE_PALETTE, 'color-scheme': 'dark' }
   const bg = hexOf(b)
   const fg = hexOf(f)
   if (bg === GRAPHITE_BG && fg === GRAPHITE_FG) return { ...GRAPHITE_PALETTE, 'color-scheme': 'dark' }

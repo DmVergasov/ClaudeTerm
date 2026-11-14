@@ -243,3 +243,54 @@ test('a theme change recolours both windows and their title bar buttons, and a S
     await app.close()
   }
 })
+
+test('until its theme is applied a window draws nothing over its own background, which is the theme\'s', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    const win = await openSettingsWindow(app, page)
+    for (const p of [page, win]) {
+      expect(await p.evaluate(() => document.documentElement.classList.contains('themed'))).toBe(true)
+      // the moment before the renderer applies the theme, brought back: colors.css's Graphite on the root, no class
+      await p.evaluate(() => { document.documentElement.removeAttribute('style'); document.documentElement.classList.remove('themed') })
+      expect(await p.evaluate(() => getComputedStyle(document.documentElement).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+      expect(await p.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+      expect(await p.evaluate(() => getComputedStyle(document.body).visibility)).toBe('hidden')
+    }
+    // what shows meanwhile is each window's own background, in the theme
+    expect(await windowBackground(app, false)).toBe('#FAFAFA')
+    expect(await windowBackground(app, true)).toBe('#FAFAFA')
+  } finally {
+    await app.close()
+  }
+})
+
+test('in a light theme the lightbox caption stays light on its dark backdrop', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    const color = await page.evaluate(() => {
+      const caption = document.createElement('div')
+      caption.className = 'lightbox-caption'
+      document.getElementById('lightbox')!.append(caption)
+      const c = getComputedStyle(caption).color
+      caption.remove()
+      return c
+    })
+    expect(color).toBe('rgb(181, 181, 190)')
+  } finally {
+    await app.close()
+  }
+})
+
+test('in a light theme text on the accent stays dark', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('.tb-mark')!).color)).toBe('rgb(10, 10, 12)')
+    const win = await openSettingsWindow(app, page)
+    expect(await win.evaluate(() => getComputedStyle(document.querySelector('.st-mark')!, '::before').color)).toBe('rgb(10, 10, 12)')
+  } finally {
+    await app.close()
+  }
+})

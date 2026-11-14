@@ -104,6 +104,11 @@ describe('appPalette', () => {
     expect(appPalette({ background: 'red', foreground: 'blue' })).toEqual(GRAPHITE)
   })
 
+  it('a theme with one colour it cannot read is Graphite, whole', () => {
+    expect(appPalette({ background: 'white', foreground: '#000000' })).toEqual(appPalette(THEMES.Graphite))
+    expect(appPalette({ background: '#FFFFFF', foreground: 'black' })).toEqual(appPalette(THEMES.Graphite))
+  })
+
   it('falls back to the Graphite status colour when a light theme gives one it cannot read', () => {
     const palette = appPalette({ background: '#FFFFFF', foreground: '#000000', red: 'red', green: 'rgb(1,2,3)', yellow: 'gold' })
     expect(palette).toMatchObject({ '--red': '#F2867E', '--green': '#63C08F', '--amber': '#E5B567', '--match': '#E5C07B' })

@@ -2,6 +2,9 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; background: var(--ground); color: var(--fg); font: 13px "Inter Variable", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+/* until the theme's palette is on the root the page draws nothing of its own: the window's background, already the theme's, shows */
+html:not(.themed), html:not(.themed) body { background: transparent; }
+html:not(.themed) body { visibility: hidden; }
 #app { display: flex; flex-direction: column; height: 100vh; }
 /* The window's own title bar, the window's drag strip. The system's window buttons sit in its right end: the padding
    keeps the content out of the overlay. On macOS the traffic lights sit at the left, which the padding leaves room for. */
@@ -15,7 +18,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 #titlebar button, #titlebar input, #titlebar a, #titlebar [role=button] { -webkit-app-region: no-drag; }
 /* the overlays and menus cover the window's top strip too: without this, a press there drags the window */
 .menu, #lightbox, #sessions, #folder-dialog, #plan-list, #search, #toasts { -webkit-app-region: no-drag; }
-.tb-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: var(--accent); color: var(--ground); font: 700 11px ui-monospace, Consolas, monospace; }
+.tb-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: var(--accent); color: #0A0A0C; font: 700 11px ui-monospace, Consolas, monospace; }
 .tb-name { color: var(--text); font-weight: 600; white-space: nowrap; }
 .tb-meters { display: flex; align-items: center; gap: 14px; -webkit-app-region: no-drag; }
 /* a usage limit: its label and reset on one line, its % under them, and a bar of the % used with a mark where the time gone by stands */
@@ -251,7 +254,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 #search input { width: 280px; background: var(--bg); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; padding: 4px 8px; font: inherit; }
 .banner { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--raised); color: var(--text); border-bottom: 1px solid var(--line-2); }
 .banner span { flex: 1; }
-.banner button { height: 28px; background: var(--accent); color: var(--ground); border: 0; border-radius: 6px; padding: 0 12px; cursor: pointer; font: inherit; }
+.banner button { height: 28px; background: var(--accent); color: #0A0A0C; border: 0; border-radius: 6px; padding: 0 12px; cursor: pointer; font: inherit; }
 .banner .banner-close { background: none; color: var(--text-3); padding: 0 6px; font-size: 16px; }
 /* What's new opens over the terminals: they keep their size, so Claude Code does not redraw */
 #update-banner { position: relative; z-index: 30; }
@@ -366,7 +369,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .note-grip:hover { color: var(--text-2); }
 #lightbox { position: fixed; inset: 0; z-index: 70; background: #000d; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #lightbox img { max-width: 92vw; max-height: 88vh; cursor: grab; transform-origin: center; }
-.lightbox-caption { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: var(--text-2); }
+.lightbox-caption { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: #B5B5BE; }
 #statusbar { display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); align-items: center; column-gap: 18px; flex-shrink: 0; box-sizing: border-box; height: 32px; padding: 0 calc(14px + var(--status-room, 0px)) 0 14px; background: transparent; border-top: 1px solid var(--line); color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; user-select: none; }
 /* the account at the start, the session in the middle of the bar whatever the sides hold, the changes at the end; the middle gives way first */
 #statusbar .status-zone { display: flex; align-items: center; gap: 18px; min-width: 0; overflow: hidden; }
@@ -431,7 +434,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .folder-item:hover { background: var(--tint-3); }
 .folder-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line-2); }
 .folder-actions button { height: 30px; background: var(--raised-2); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; padding: 0 12px; cursor: pointer; font: inherit; }
-.folder-actions .folder-open { background: var(--accent); color: var(--ground); border-color: var(--accent); }
+.folder-actions .folder-open { background: var(--accent); color: #0A0A0C; border-color: var(--accent); }
 .folder-actions button:disabled { opacity: 0.5; cursor: default; }
 .review-scope { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--line); color: var(--text-3); font-size: 12px; }
 /* the scope switch: a segmented control whose active segment is raised */
@@ -565,7 +568,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .review-count { flex: 1; color: var(--text-3); font-size: 12px; }
 .review-count.error { color: var(--red); }
 /* Send to Claude is the primary button */
-.review-send { height: 30px; padding: 0 14px; background: var(--accent); color: var(--ground); border: 0; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 600; }
+.review-send { height: 30px; padding: 0 14px; background: var(--accent); color: #0A0A0C; border: 0; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 600; }
 .review-send:disabled { opacity: 0.45; cursor: default; }
 /* the Changes counter stands at the bar's right end, as the mockups draw it: a file icon, the files, the added lines in green
    and the removed in red; the separator before it goes, the space says it */
