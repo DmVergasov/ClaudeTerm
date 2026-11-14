@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { settingsWindow } from './account-helpers'
+import { chatReady, launchChatTab } from './chat-helpers'
 import { FAKE_CLAUDE_SETTINGS, KEYS, launchApp, launchClaudeTab, showSettingsTab } from './helpers'
 
 // The theme colours the whole app: the window's frame, its panels, menus and dialogs, the Settings window and the windows' own
@@ -167,6 +168,36 @@ test('in a light theme the side panel is light, with dark text', async () => {
     await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
     expect(await computed(page, '#image-panel', 'backgroundColor')).toBe('rgb(249, 249, 249)')
     expect(await computed(page, '#image-panel .panel-title', 'color')).toBe('rgb(56, 58, 66)')
+  } finally {
+    await app.close()
+  }
+})
+
+test('in a light theme the Settings window\'s fields are light and its card notes dark', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    const win = await openSettingsWindow(app, page)
+    await expect.poll(() => computed(win, 'body', 'backgroundColor')).toBe('rgb(250, 250, 250)')
+    expect(await computed(win, '#setting-defaultFolder', 'backgroundColor')).toBe('rgb(250, 250, 250)')
+    expect(await computed(win, 'select', 'backgroundColor')).toBe('rgb(250, 250, 250)')
+    await showSettingsTab(win, 'appearance')
+    expect(await computed(win, '[data-key="theme"] .cd', 'color')).toBe('rgb(108, 110, 116)')
+  } finally {
+    await app.close()
+  }
+})
+
+test('in a light theme the MCP panel\'s Add a server dialog opens on a light scrim', async () => {
+  const { app, page } = await launchChatTab({ turns: {}, mcp: { context7: { tools: ['resolve-library-id'] } } })
+  try {
+    await setTheme(page, LIGHT)
+    await chatReady(page)
+    await page.locator('#statusbar .status-mcp').click()
+    await expect(page.locator('.panel-mcp')).toBeVisible()
+    await page.locator('.panel-mcp .mcp-footer .mcp-btn.primary').click()
+    await expect(page.locator('.mcp-add')).toBeVisible()
+    expect(luminance(await computed(page, '.mcp-add-scrim', 'backgroundColor'))).toBeGreaterThan(0.7)
   } finally {
     await app.close()
   }

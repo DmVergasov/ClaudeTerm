@@ -7,7 +7,7 @@
 
 .mcp-seg { display: flex; gap: 2px; padding: 3px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 10px; }
 .mcp-seg-btn { flex: 1; min-width: 0; padding: 6px 0; border: 0; border-radius: 7px; background: none; color: var(--text-3); font: 500 12.5px inherit; cursor: pointer; }
-.mcp-seg-btn[aria-pressed="true"] { background: var(--raised-2); color: var(--text); box-shadow: 0 1px 0 #ffffff08 inset; }
+.mcp-seg-btn[aria-pressed="true"] { background: var(--raised-2); color: var(--text); box-shadow: 0 1px 0 var(--tint-1) inset; }
 .mcp-seg-btn:focus-visible, .mcp-btn:focus-visible, .mcp-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mcp-count { margin-left: 4px; font-weight: 400; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .mcp-count:empty { display: none; }
@@ -38,9 +38,9 @@
 .mcp-row[data-status="connected"] .mcp-dot { background: var(--green); }
 .mcp-row[data-status="needs-auth"] .mcp-dot, .mcp-row[data-status="pending-approval"] .mcp-dot { background: var(--amber); }
 .mcp-row[data-status="failed"] .mcp-dot { background: var(--red); }
-.mcp-row[data-status="disabled"] .mcp-dot { background: #55555E; }
+.mcp-row[data-status="disabled"] .mcp-dot { background: var(--text-4); }
 .mcp-icon { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: #fff; font: 600 11px ui-monospace, monospace; }
-.mcp-row[data-status="disabled"] .mcp-icon { background: #3A3A43; color: var(--text-2); }
+.mcp-row[data-status="disabled"] .mcp-icon { background: var(--line-3); color: var(--text-2); }
 .mcp-main { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .mcp-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--text); }
 .mcp-row[data-status="disabled"] .mcp-name { color: var(--text-3); }
@@ -67,7 +67,7 @@
 .mcp-ghost:focus-visible, .mcp-switch:focus-visible, .mcp-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .mcp-switch { position: relative; flex: none; width: 30px; height: 18px; padding: 0; border: 0; border-radius: 999px; background: var(--line-2); cursor: pointer; }
-.mcp-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #9A9AA3; transition: transform 0.15s ease; }
+.mcp-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--knob); transition: transform 0.15s ease; }
 .mcp-switch[aria-checked="true"] { background: var(--green); }
 .mcp-switch[aria-checked="true"]::after { background: #fff; transform: translateX(12px); }
 @media (prefers-reduced-motion: reduce) { .mcp-switch::after { transition: none; } }
@@ -80,7 +80,7 @@
 .mcp-menu-item:hover { background: var(--raised-2); color: var(--text); }
 
 /* the Add an MCP server dialog: a scrim over the window, the dialog, its paste field, the recognised box and the footer */
-.mcp-add-scrim { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: #05050690; backdrop-filter: blur(2px); animation: mcp-add-fade 0.16s ease-out; }
+.mcp-add-scrim { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: var(--scrim-2); backdrop-filter: blur(2px); animation: mcp-add-fade 0.16s ease-out; }
 .mcp-add-scrim [hidden] { display: none !important; }
 .mcp-add { box-sizing: border-box; display: flex; flex-direction: column; width: 600px; max-width: calc(100% - 24px); max-height: calc(100% - 48px); overflow: auto; background: var(--sheet); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 40px 100px #000c; animation: mcp-add-in 0.16s ease-out; }
 .mcp-add button:focus-visible, .mcp-add input:focus-visible, .mcp-add textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -127,7 +127,7 @@
 /* the Plugins section: its sub-tabs, the installed rows, the Discover cards, the marketplaces and the settings form of an install */
 .mcp-subtabs { display: flex; gap: 2px; margin: 4px 0 8px; padding: 3px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 10px; }
 .mcp-subtab { flex: 1; min-width: 0; padding: 5px 12px; border: 0; border-radius: 7px; background: none; color: var(--text-3); font-family: inherit; font-weight: 500; font-size: 12px; cursor: pointer; }
-.mcp-subtab[aria-pressed="true"] { background: var(--raised-2); color: var(--text); box-shadow: 0 1px 0 #ffffff08 inset; }
+.mcp-subtab[aria-pressed="true"] { background: var(--raised-2); color: var(--text); box-shadow: 0 1px 0 var(--tint-1) inset; }
 .mcp-subtab:focus-visible, .mcp-market-add:focus-visible, .mcp-filter-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mcp-empty { padding: 12px 8px; color: var(--text-3); font-size: 12px; line-height: 1.5; }
 .mcp-error-box { margin: 6px 8px; }

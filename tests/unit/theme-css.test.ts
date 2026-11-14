@@ -34,4 +34,24 @@ describe('the stylesheets follow the theme', () => {
     expect(ownVars('styles.css')).toEqual(['--dc', '--elapsed', '--fill', '--group-color', '--held-host', '--meter', '--panel-cover', '--pulse-delay',
       '--row-pulse', '--slide-w', '--spin-delay', '--status', '--status-room', '--term-bg', '--used'])
   })
+
+  it('settings.css keeps only the colours no theme changes: shadows, the accent and its hover, text and tints on fixed hues', () => {
+    expect(literals('settings.css')).toEqual(['rgba(217, 119, 87, 0.25)', '#0006', '#FFFFFF', 'rgba(217, 119, 87, 0.6)', 'rgba(217, 119, 87, 0.6)',
+      '#0A0A0C', '#E08A6B', '#E08A6B', '#E5B5670F', '#E5B56755', '#000a', '#1A1A1A', '#E08A6B', '#E08A6B', '#000c', '#1A1A1A', '#D9775722',
+      '#7FA7F544', '#7FA7F50D', '#E5B56755', '#E5B5670D', '#0008', '#E5B56722', '#F2867E22', '#1A1A1A', '#63C08F1A', '#63C08F66', '#63C08F44',
+      '#63C08F0D', '#E5B56755', '#E5B5670D', '#D9775744'])
+  })
+
+  it('settings.css reads every other colour from the palette', () => {
+    expect(ownVars('settings.css')).toEqual([])
+  })
+
+  it('mcp.css keeps only the colours no theme changes: text and tints on fixed hues, a shadow', () => {
+    expect(literals('mcp/mcp.css')).toEqual(['#fff', '#F2867E33', '#F2867E0D', '#1A1A1A', '#E5B56755', '#E5B5670F', '#fff', '#000c', '#D9775722',
+      '#63C08F44', '#63C08F0D', '#D977570F', '#7FA7F555', '#7FA7F50F'])
+  })
+
+  it('mcp.css reads every other colour from the palette', () => {
+    expect(ownVars('mcp/mcp.css')).toEqual([])
+  })
 })
