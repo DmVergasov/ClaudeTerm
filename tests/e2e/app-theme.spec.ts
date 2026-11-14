@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, launchClaudeTab } from './helpers'
+import { FAKE_CLAUDE_SETTINGS, KEYS, launchApp, launchClaudeTab } from './helpers'
 
 // The theme colours the whole app: the window's frame, its panels, menus and dialogs, the Settings window and the windows' own
 // chrome. One Half Light is the light theme the tests use; Graphite must look as it always has.
@@ -22,6 +22,15 @@ function surface(page: Page, selector: string): Promise<string> {
     }
     return ''
   })
+}
+
+/** the relative luminance of a computed rgb() or rgba() colour, its alpha left out: 0 is black, 1 is white */
+function luminance(css: string): number {
+  const [r = 0, g = 0, b = 0] = (css.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number).map((c) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
 /** the theme set as the Settings window sets it */
@@ -86,6 +95,33 @@ test('a theme change reaches the whole window at once, without a restart', async
     await expect.poll(() => computed(page, '#titlebar', 'backgroundColor')).toBe('rgb(10, 10, 12)')
     expect(await computed(page, '#sheet', 'backgroundColor')).toBe('rgb(17, 17, 20)')
     expect(await computed(page, 'html', 'colorScheme')).toBe('dark')
+  } finally {
+    await app.close()
+  }
+})
+
+test('in a light theme the tab bar and the menus are light: the active tab\'s edge, a menu item under the pointer', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    await expect.poll(() => computed(page, '#tabbar .tab.active', 'boxShadow')).toContain('rgb(224, 224, 225)')
+    await page.locator('#tabbar .tab-menu').click()
+    await page.locator('.menu-item').first().hover()
+    await expect.poll(() => computed(page, '.menu-item', 'backgroundColor')).toBe('rgb(229, 229, 230)')
+  } finally {
+    await app.close()
+  }
+})
+
+test('in a light theme Recent sessions opens on a light scrim, with a light scheme', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    await page.locator('.terminal-host:visible .xterm').click()
+    await page.keyboard.press(KEYS.recentSessions)
+    await expect(page.locator('#sessions')).toBeVisible()
+    expect(luminance(await computed(page, '#sessions', 'backgroundColor'))).toBeGreaterThan(0.7)
+    expect(await computed(page, '.sessions-box', 'colorScheme')).toBe('light')
   } finally {
     await app.close()
   }
