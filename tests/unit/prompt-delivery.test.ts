@@ -45,12 +45,16 @@ function asker() {
   }
 }
 
-function world(o: { view?: TabView | null; prompt?: PromptState | 'manual'; session?: string | null; idle?: boolean; watcher?: boolean; canTake?: boolean; info?: string | null } = {}) {
+/** lets the promises of a try settle, and a rejection reach its handler */
+const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+function world(o: { view?: TabView | null; prompt?: PromptState | 'manual' | 'reject'; session?: string | null; idle?: boolean; watcher?: boolean; canTake?: boolean; info?: string | null; writeThrows?: boolean } = {}) {
   const t = clock()
   const a = asker()
   const writes: [string, string][] = []
   const takes: [string, string][] = []
   const logs: string[] = []
+  const warns: string[] = []
   const state = {
     view: (o.view === undefined ? 'chat' : o.view) as TabView | null,
     session: o.session === undefined ? 's-1' : o.session,
@@ -68,16 +72,22 @@ function world(o: { view?: TabView | null; prompt?: PromptState | 'manual'; sess
       takes.push([tabId, session])
       return state.info === null ? null : { info: state.info }
     },
-    promptState: () => (o.prompt === 'manual' || o.prompt === undefined ? a.ask() : Promise.resolve(o.prompt)),
+    promptState: () => {
+      if (o.prompt === 'reject') return Promise.reject(new Error('window gone'))
+      return o.prompt === 'manual' || o.prompt === undefined ? a.ask() : Promise.resolve(o.prompt)
+    },
     view: () => state.view,
-    write: (tabId, data) => writes.push([tabId, data]),
+    write: (tabId, data) => {
+      if (o.writeThrows) throw new Error('pty closed')
+      writes.push([tabId, data])
+    },
     delayMs: DELAY,
     enterDelayMs: ENTER_DELAY_MS,
     later: (ms, fn) => t.later(ms, fn),
-    log: { info: (m) => logs.push(m) }
+    log: { info: (m) => logs.push(m), warn: (m) => warns.push(m) }
   }
   const delivery = new PromptDelivery(d)
-  return { delivery, t, a, writes, takes, logs, state }
+  return { delivery, t, a, writes, takes, logs, warns, state }
 }
 
 describe('PromptDelivery', () => {
@@ -230,6 +240,49 @@ describe('PromptDelivery', () => {
     await Promise.resolve()
     expect(running.takes).toEqual([])
     expect(running.writes).toEqual([])
+  })
+
+  it('a window answer that fails takes nothing, writes nothing, and is logged for the tab', async () => {
+    const w = world({ prompt: 'reject' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.takes).toEqual([])
+    expect(w.writes).toEqual([])
+    expect(w.warns).toHaveLength(1)
+    expect(w.warns[0]).toContain('tab=tab-1')
+  })
+
+  it('a taken text whose write fails is logged as not written', async () => {
+    const w = world({ prompt: 'empty', writeThrows: true })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.takes).toEqual([['tab-1', 's-1']])
+    expect(w.writes).toEqual([])
+    expect(w.warns).toHaveLength(1)
+    expect(w.warns[0]).toContain('not written')
+  })
+
+  it('a poke while a try waits for the window arms no second try: one paste, then one new try after its Enter', async () => {
+    const w = world({ view: 'terminal', prompt: 'manual', info: 'one' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    expect(w.a.count()).toBe(1)
+    w.delivery.poke('tab-1')
+    expect(w.t.pending()).toBe(0)
+    w.a.answer('empty')
+    await flush()
+    expect(w.takes).toHaveLength(1)
+    expect(w.writes).toEqual([['tab-1', bracketedPaste('one')]])
+    expect(w.t.pending()).toBe(1)
+    w.t.fire(ENTER_DELAY_MS)
+    expect(w.writes).toEqual([['tab-1', bracketedPaste('one')], ['tab-1', '\r']])
+    expect(w.t.pending()).toBe(1)
+    w.t.fire(DELAY)
+    expect(w.a.count()).toBe(1)
+    expect(w.t.pending()).toBe(0)
+    expect(w.takes).toHaveLength(1)
   })
 })
 
