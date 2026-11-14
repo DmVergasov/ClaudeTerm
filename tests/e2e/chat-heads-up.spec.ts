@@ -106,6 +106,54 @@ test('Not relevant closes the card, and a turn of fewer tool calls asks nothing'
   }
 })
 
+test('Ask Claude sends your words with the card to the conversation, and the card closes', async () => {
+  const { app, page, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  try {
+    await sendMessage(page, 'clean up')
+    const card = page.locator(CARD)
+    await expect(card).toBeVisible({ timeout: 20_000 })
+    const field = card.getByRole('textbox', { name: 'Ask Claude about this card' })
+    const ask = card.getByRole('button', { name: 'Ask Claude' })
+    await expect(ask).toBeDisabled()
+    await field.fill('Stop and use the test database')
+    await expect(ask).toBeEnabled()
+    await ask.click()
+    await expect(card).toBeHidden()
+    await expect.poll(() => userMessages(log).find((m) => m.startsWith('Stop and use the test database'))).toBe(
+      'Stop and use the test database\n\n> Heads up: The cleanup runs on production\n>\n> The `.env` the script reads points at the **production** database.'
+    )
+    await expect(page.locator('.chat-host:visible .chat-user', { hasText: 'Stop and use the test database' })).toHaveCount(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test("text typed in the card's field stays when Explain more brings the explanation, and Enter sends it", async () => {
+  const { app, page, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING, explain: MORE } }, { headsUp: true })
+  try {
+    await sendMessage(page, 'clean up')
+    const card = page.locator(CARD)
+    await expect(card).toBeVisible({ timeout: 20_000 })
+    const field = card.getByRole('textbox', { name: 'Ask Claude about this card' })
+    await expect(card.getByRole('button', { name: 'Ask Claude' })).toBeDisabled()
+    await field.fill('Why production?')
+    await card.getByRole('button', { name: 'Explain more' }).click()
+    await expect(card.locator('.chat-heads-up-more')).toHaveText('Set DATABASE_URL to a test database before you run the cleanup again.')
+    await expect(field).toHaveValue('Why production?')
+    // Shift+Enter starts a new line in the field and sends nothing
+    await field.press('Shift+Enter')
+    await expect(card).toBeVisible()
+    await expect(field).toHaveValue('Why production?\n')
+    await field.press('Enter')
+    await expect(card).toBeHidden()
+    await expect.poll(() => userMessages(log).find((m) => m.startsWith('Why production?'))).toBe(
+      'Why production?\n\n> Heads up: The cleanup runs on production\n>\n> The `.env` the script reads points at the **production** database.\n>\n> Set `DATABASE_URL` to a test database before you run the cleanup again.'
+    )
+  } finally {
+    await app.close()
+  }
+})
+
 test('with Heads up turned off, a long turn asks no side question and shows no card', async () => {
   const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY * 2) }, headsUp: { check: FINDING } }, { headsUp: false })
   try {

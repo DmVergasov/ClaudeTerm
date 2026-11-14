@@ -144,6 +144,26 @@
 .chat-heads-up-title { min-width: 0; color: var(--text); font-weight: 600; }
 .chat-heads-up-more { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--chat-edge-3); }
 .chat-heads-up-error { margin-top: 6px; color: var(--red); font-size: 12px; }
+.chat-heads-up-ask { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 10px; }
+.chat-heads-up-input {
+  flex: 1;
+  min-width: 0;
+  max-height: 96px;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: none;
+  outline: none;
+}
+.chat-heads-up-input::placeholder { color: var(--text-3); }
+.chat-heads-up-input:focus-visible { border-color: var(--accent); }
+.chat-heads-up-ask > .chat-heads-up-error { flex: 1 0 100%; margin-top: 0; }
 .chat-heads-up-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .chat-heads-up-btn {
   height: 28px;

@@ -53,6 +53,8 @@ export interface ChatViewOptions {
   copy(text: string): void
   /** the person's answer to the chat's Heads up card */
   headsUp(cardId: string, action: HeadsUpAction): void
+  /** the person's message about the chat's Heads up card; null when it is sent, else an error text to show */
+  headsUpAsk(cardId: string, text: string): Promise<string | null>
   /** an agent's snapshot, for its page; null when the agent is gone */
   agentSnapshot(agentId: string): Promise<AgentSnapshot | null>
   /** the page of an agent's items before `beforeId`; null when the agent is gone */
@@ -297,7 +299,7 @@ export class ChatView {
     })
     this.body.append(this.scroll, this.fade, this.pill)
     this.resize.observe(this.dock)
-    this.headsUpView = new HeadsUpView({ act: (cardId, action) => o.headsUp(cardId, action), openExternal: (url) => o.openExternal(url), copy: (text) => o.copy(text) })
+    this.headsUpView = new HeadsUpView({ act: (cardId, action) => o.headsUp(cardId, action), openExternal: (url) => o.openExternal(url), copy: (text) => o.copy(text), ask: (cardId, text) => o.headsUpAsk(cardId, text) })
     this.composer.element.prepend(this.headsUpView.element)
     this.element.append(this.body, this.composer.element)
     o.container.append(this.element)

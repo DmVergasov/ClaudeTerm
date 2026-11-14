@@ -878,7 +878,8 @@ function makeChat(tabId: string, remote: boolean): ChatView {
     },
     openExternal: (url) => ct.openExternal(url),
     copy: (text) => ct.writeClipboardText(text),
-    headsUp: (cardId, action) => ct.chatHeadsUpAction(tabId, cardId, action)
+    headsUp: (cardId, action) => ct.chatHeadsUpAction(tabId, cardId, action),
+    headsUpAsk: (cardId, text) => ct.chatHeadsUpAsk(tabId, cardId, text)
   })
   chat.setTheme(resolveTheme(settings.theme))
   chat.setFullWidth(settings.chat.fullWidth)
