@@ -38,6 +38,33 @@ describe('the history of a sign-in account is read from its own folder', () => {
     expect(JSON.stringify(messages[1].message)).toContain('In the logs folder.')
   })
 
+  it('a long conversation keeps its history: a transcript over 16 MiB is read too', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ct-account-history-'))
+    roots.push(root)
+    const projects = join(root, 'work', 'projects')
+    const project = join(projects, 'D--work')
+    mkdirSync(project, { recursive: true })
+    // a conversation of long answers, as a session of weeks has: its transcript is past the 16 MiB a config file may have
+    const entries: Record<string, unknown>[] = []
+    let parent: string | null = null
+    const long = 'x'.repeat(1024 * 1024)
+    for (let i = 0; i < 18; i++) {
+      const askId = `00000000-0000-4000-8000-${String(i * 2).padStart(12, '0')}`
+      const answerId = `00000000-0000-4000-8000-${String(i * 2 + 1).padStart(12, '0')}`
+      entries.push(
+        { type: 'user', uuid: askId, parentUuid: parent, sessionId: SID, cwd: 'D:\\work', timestamp: '2026-11-01T10:00:00.000Z', message: { role: 'user', content: `step ${i}` } },
+        { type: 'assistant', uuid: answerId, parentUuid: askId, sessionId: SID, cwd: 'D:\\work', timestamp: '2026-11-01T10:00:05.000Z', message: { role: 'assistant', content: [{ type: 'text', text: `${long} ${i}` }] } }
+      )
+      parent = answerId
+    }
+    writeFileSync(join(project, `${SID}.jsonl`), entries.map((l) => JSON.stringify(l)).join('\n') + '\n')
+
+    const messages = await getSessionMessages(SID, { dir: 'D:\\work', includeSystemMessages: true, sessionStore: accountSessionStore(projects) })
+    expect(messages).toHaveLength(36)
+    expect(JSON.stringify(messages[0].message)).toContain('step 0')
+    expect(JSON.stringify(messages[35].message)).toContain(' 17')
+  })
+
   it('a session the account does not hold reads as no messages', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ct-account-history-'))
     roots.push(root)

@@ -1,9 +1,13 @@
 import { randomBytes } from 'node:crypto'
-import { copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, utimes } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { copyFile, cp, mkdir, readdir, rename, rm, stat, utimes } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { createInterface } from 'node:readline'
 import type { SessionStore, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
-import { MAX_CONFIG_BYTES } from './account-carry-run'
 import { pathKey } from './path-key'
+
+/** the largest transcript the history reads: a conversation of weeks runs to hundreds of MiB */
+export const MAX_TRANSCRIPT_BYTES = 2 * 1024 * 1024 * 1024
 
 /** a `projects` folder of an account: `<config>/projects`; Main account and token accounts: `account` null */
 export interface TranscriptRoot {
@@ -107,8 +111,9 @@ export function copyAt(path: string | null | undefined, copies: TranscriptCopy[]
 /**
  * A session store over one `projects` folder, for the SDK's getSessionMessages: a sign-in account's transcripts are in
  * its own folder, not in the folder the SDK reads by default. `load` returns the newest copy of the session in the
- * folder as its JSONL lines (a line that does not parse is skipped; a file over MAX_CONFIG_BYTES is not read); `append`
- * writes nothing, the history is only read.
+ * folder as its JSONL lines (a line that does not parse is skipped; a file over MAX_TRANSCRIPT_BYTES is not read); `append`
+ * writes nothing, the history is only read. The lines are read as they stream in, so a long transcript is never one string
+ * and the main process gets its turns between the chunks.
  */
 export function accountSessionStore(projects: string): SessionStore {
   return {
@@ -118,9 +123,9 @@ export function accountSessionStore(projects: string): SessionStore {
       const copy = copies.reduce<TranscriptCopy | null>((best, c) => (!best || c.mtimeMs > best.mtimeMs ? c : best), null)
       if (!copy) return null
       try {
-        if ((await stat(copy.path)).size > MAX_CONFIG_BYTES) return null
+        if ((await stat(copy.path)).size > MAX_TRANSCRIPT_BYTES) return null
         const entries: SessionStoreEntry[] = []
-        for (const line of (await readFile(copy.path, 'utf8')).split('\n')) {
+        for await (const line of createInterface({ input: createReadStream(copy.path, 'utf8'), crlfDelay: Infinity })) {
           try {
             const entry: unknown = JSON.parse(line)
             if (typeof entry === 'object' && entry !== null && typeof (entry as { type?: unknown }).type === 'string') entries.push(entry as SessionStoreEntry)
