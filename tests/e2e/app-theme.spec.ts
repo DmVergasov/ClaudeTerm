@@ -202,3 +202,44 @@ test('in a light theme the MCP panel\'s Add a server dialog opens on a light scr
     await app.close()
   }
 })
+
+type MainChrome = { ctChrome?: { backgroundColor: string; overlay: { color: string; symbolColor: string } } }
+const GRAPHITE_CHROME = { backgroundColor: '#0A0A0C', overlay: { color: '#0A0A0C', symbolColor: '#B5B5BE' } }
+const LIGHT_CHROME = { backgroundColor: '#FAFAFA', overlay: { color: '#FAFAFA', symbolColor: '#55575E' } }
+
+/** the colours main last gave its windows: a test run keeps them, as Electron cannot read a title bar's button colours back */
+const chromeGiven = (app: ElectronApplication): Promise<MainChrome['ctChrome'] | null> => app.evaluate(() => (globalThis as MainChrome).ctChrome ?? null)
+
+/** a window's background as Electron reports it: the main window, or the Settings window it owns */
+const windowBackground = (app: ElectronApplication, settings: boolean): Promise<string | null> =>
+  app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows().find((w) => (w.getParentWindow() !== null) === s)?.getBackgroundColor().toUpperCase() ?? null, settings)
+
+test('a window started in a light theme loads on its background, its title bar buttons in its colours', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    expect(await chromeGiven(app)).toEqual(LIGHT_CHROME)
+    expect(await windowBackground(app, false)).toBe('#FAFAFA')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a theme change recolours both windows and their title bar buttons, and a Settings window opened after it opens in it', async () => {
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    expect(await chromeGiven(app)).toEqual(GRAPHITE_CHROME)
+    await setTheme(page, LIGHT)
+    await expect.poll(() => chromeGiven(app)).toEqual(LIGHT_CHROME)
+    expect(await windowBackground(app, false)).toBe('#FAFAFA')
+    await openSettingsWindow(app, page)
+    expect(await windowBackground(app, true)).toBe('#FAFAFA')
+    await setTheme(page, 'Graphite')
+    await expect.poll(() => chromeGiven(app)).toEqual(GRAPHITE_CHROME)
+    expect(await windowBackground(app, false)).toBe('#0A0A0C')
+    expect(await windowBackground(app, true)).toBe('#0A0A0C')
+  } finally {
+    await app.close()
+  }
+})

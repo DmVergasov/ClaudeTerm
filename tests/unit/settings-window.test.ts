@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { IPC } from '../../src/shared/ipc'
 import { SettingsWindow, settingsWindowBounds, type SettingsWindowDeps } from '../../src/main/settings-window'
+import { windowChrome } from '../../src/main/window-chrome'
 
 // the fake Electron: every window the settings window makes is kept in `made`, with what was sent to it
 const electron = vi.hoisted(() => {
@@ -89,6 +90,7 @@ describe('SettingsWindow', () => {
     const deps: SettingsWindowDeps = {
       parent: () => null,
       preload: 'preload.js',
+      chrome: () => windowChrome('Graphite'),
       load: (win, section) => loads.push([win as unknown as Win, section])
     }
     sw = new SettingsWindow(deps)
@@ -132,5 +134,12 @@ describe('SettingsWindow', () => {
     expect(sw.isOpen()).toBe(false)
     sw.open('devices')
     expect(electron.made).toHaveLength(2)
+  })
+
+  it("a new window opens on the theme's colours: its background, and its title bar buttons off macOS", () => {
+    new SettingsWindow({ parent: () => null, preload: 'preload.js', load: () => {}, chrome: () => windowChrome('One Half Light') }).open()
+    const options = electron.made.at(-1)!.options as { backgroundColor?: string; titleBarOverlay?: object }
+    expect(options.backgroundColor).toBe('#FAFAFA')
+    if (process.platform !== 'darwin') expect(options.titleBarOverlay).toEqual({ color: '#FAFAFA', symbolColor: '#55575E', height: 36 })
   })
 })

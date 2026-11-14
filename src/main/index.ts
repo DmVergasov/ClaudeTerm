@@ -41,7 +41,7 @@ import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './e
 import { ReviewHub } from './review-hub'
 import { DocHub, htmlFolderRefused } from './doc-hub'
 import { DOC_SCHEME_PRIVILEGES, frameNavigationAllowed, handleDocProtocol } from './doc-protocol'
-import { chromeOptions } from './window-chrome'
+import { applyWindowChrome, chromeOptions, TITLE_BAR_HEIGHT, windowChrome, type WindowChrome } from './window-chrome'
 import { createSources, nodeIo } from './review-sources'
 import { checkShowableFile, DEFAULT_IMAGE_EXTENSIONS, MEDIA_EXTENSIONS } from '../shared/image-file'
 import { ImageHub, showImageFile } from './image-hub'
@@ -150,7 +150,7 @@ const pipeName = resolvePipeName()
 const settingsPath = join(dataDir, 'settings.json')
 const isTest = process.env.CLAUDETERM_TEST === '1'
 /** what a test run reads back from the main process: the window it would have brought forward, the badge it set */
-const testState = globalThis as { ctFocusRequests?: number; ctBadgeCount?: number }
+const testState = globalThis as { ctFocusRequests?: number; ctBadgeCount?: number; ctChrome?: WindowChrome }
 
 registerImgScheme([DOC_SCHEME_PRIVILEGES])
 
@@ -3362,6 +3362,7 @@ function bootstrap(): void {
   const settingsWindow = new SettingsWindow({
     parent: () => win,
     preload: join(__dirname, '../preload/index.js'),
+    chrome: () => windowChrome(settings.theme),
     // the installed app takes its icon from ClaudeTerm.exe; dev and test runs use electron.exe's own
     icon: app.isPackaged ? undefined : join(__dirname, '..', '..', 'build', 'icon.png'),
     offScreen: isTest,
@@ -3426,6 +3427,12 @@ function bootstrap(): void {
       return null
     }
   }
+  /** every window's background and title bar buttons in the theme's colours; a test run keeps what they were given */
+  const applyThemeChrome = (): void => {
+    const chrome = windowChrome(settings.theme)
+    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) applyWindowChrome(w, chrome, process.platform)
+    if (isTest) testState.ctChrome = chrome
+  }
   const reloadSettings = (): void => {
     const next = loadSettingsSafe(settingsPath)
     lastLoad = next
@@ -3437,6 +3444,7 @@ function bootstrap(): void {
       const noRoom = settings.sidePanel.noRoom
       const devicePortBefore = settings.devices.port
       const testsBefore = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
+      const themeBefore = JSON.stringify(settings.theme)
       const refreshBefore = statusRefreshInterval(settings.claude)
       const watcherBefore = mailWatcher()
       const agentsBefore = JSON.stringify(settings.agentMessages)
@@ -3466,6 +3474,7 @@ function bootstrap(): void {
       profiles = computed.profiles
       notices = [...notices, ...computed.notices]
       send(IPC.evSettings, settings)
+      if (JSON.stringify(settings.theme) !== themeBefore) applyThemeChrome()
       // the active tab's Last turn and Session views list other files now, or give their Markdown files whole or not
       const active = tabs.activeTabId()
       const testsNow = JSON.stringify(settings.review.hideTests ? settings.review.testPatterns : null)
@@ -3499,19 +3508,21 @@ function bootstrap(): void {
 
   const windowStatePath = join(dataDir, 'window-state.json')
   const state = loadWindowState(windowStatePath)
+  const chrome = windowChrome(settings.theme)
   win = new BrowserWindow({
     ...state.bounds,
     minWidth: MIN_WIDTH,
     minHeight: 300,
     show: false,
-    backgroundColor: '#0A0A0C',
+    backgroundColor: chrome.backgroundColor,
     autoHideMenuBar: true,
     title: 'ClaudeTerm',
-    ...chromeOptions(process.platform),
+    ...chromeOptions(process.platform, TITLE_BAR_HEIGHT, chrome),
     // the installed app takes its icon from ClaudeTerm.exe; dev and test runs use electron.exe's own
     ...(app.isPackaged ? {} : { icon: join(__dirname, '..', '..', 'build', 'icon.png') }),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   })
+  if (isTest) testState.ctChrome = chrome
   if (state.maximized) win.maximize()
   trackWindowState(win, windowStatePath, () => panelRoom.added)
   // maximized or full screen the window cannot make room for the side panel; restored, it can again (and gives back the

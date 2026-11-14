@@ -1,7 +1,7 @@
 import { BrowserWindow, screen, shell } from 'electron'
 import { IPC, type SettingsSection } from '../shared/ipc'
 import { showWindow } from './window-show'
-import { chromeOptions, SETTINGS_TITLE_BAR_HEIGHT } from './window-chrome'
+import { chromeOptions, SETTINGS_TITLE_BAR_HEIGHT, type WindowChrome } from './window-chrome'
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
@@ -25,6 +25,8 @@ export function settingsWindowBounds(parent: Rect, work: Rect): Rect {
 export interface SettingsWindowDeps {
   parent(): BrowserWindow | null
   preload: string
+  /** the theme's colours for the window's background and title bar buttons, read as each window opens */
+  chrome(): WindowChrome
   /** the window icon where the app's own .exe does not supply one (dev and test runs) */
   icon?: string
   /** shown off the screen, never brought forward (a test run) */
@@ -56,6 +58,7 @@ export class SettingsWindow {
     const owner = parent && !parent.isDestroyed() ? parent : null
     const around = owner ? owner.getBounds() : screen.getPrimaryDisplay().workArea
     const work = screen.getDisplayMatching(around).workArea
+    const chrome = this.d.chrome()
     const win = new BrowserWindow({
       ...settingsWindowBounds(around, work),
       minWidth: SETTINGS_MIN.width,
@@ -66,8 +69,8 @@ export class SettingsWindow {
       maximizable: false,
       fullscreenable: false,
       title: 'ClaudeTerm Settings',
-      backgroundColor: '#0A0A0C',
-      ...chromeOptions(process.platform, SETTINGS_TITLE_BAR_HEIGHT),
+      backgroundColor: chrome.backgroundColor,
+      ...chromeOptions(process.platform, SETTINGS_TITLE_BAR_HEIGHT, chrome),
       ...(this.d.icon ? { icon: this.d.icon } : {}),
       webPreferences: { preload: this.d.preload, contextIsolation: true, nodeIntegration: false, sandbox: true }
     })
