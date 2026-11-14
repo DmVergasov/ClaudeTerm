@@ -1,7 +1,8 @@
-import type { ChatCallState, ChatItem, ChatSubagent, ChatToolCall } from '../../shared/chat'
+import { type ChatCallState, type ChatItem, isAgentId, type ChatSubagent, type ChatToolCall } from '../../shared/chat'
 import type { ImageCard } from '../../shared/types'
 import { icon } from '../icons'
 import { imageUrl } from '../image-url'
+import { rowAgent } from './agent-text'
 import { formatTokens, modelFamily } from '../status-bar'
 import type { ItemCallbacks } from './chat-items'
 
@@ -9,7 +10,7 @@ import type { ItemCallbacks } from './chat-items'
 // rows are updated in place, so a well the user unfolded stays unfolded. Everything here is text set with textContent,
 // except our own icons.
 
-export type StepCallbacks = Pick<ItemCallbacks, 'revealChange' | 'imageCard' | 'openImages'>
+export type StepCallbacks = Pick<ItemCallbacks, 'revealChange' | 'imageCard' | 'openImages' | 'openAgent'>
 type Step = Extract<ChatItem, { kind: 'tools' }>
 
 /** the lines a folded Bash well shows: the last of its output */
@@ -23,6 +24,11 @@ const LONG_CALL_MS = 2000
 const longTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
 /** the subagents' colours, by a row's place in its card, cycling */
 const AGENT_COLORS = ['#7FA7F5', '#A78BFA', '#5BC0D8', '#E0A458', '#F28FAD', '#6CC5A8']
+
+/** the colour of the agent at `index` of its card: the subagents' colours, cycling */
+export function agentColor(index: number): string {
+  return AGENT_COLORS[index % AGENT_COLORS.length]!
+}
 
 /** a row's text is written only when it differs: an unchanged text node keeps the selection and the Find ranges in it */
 const setText = (node: HTMLElement, text: string): void => {
@@ -248,14 +254,18 @@ function callEntry(id: string, cb: StepCallbacks): HTMLElement {
   entry.dataset.call = id
   const row = el('div', 'chat-step-row')
   row.append(el('span', 'chat-step-state'), el('span', 'chat-tool-name'), el('span', 'chat-tool-subject'), el('span', 'chat-tool-detail'))
-  row.addEventListener('click', () => {
-    if (entry.dataset.edit !== undefined) cb.revealChange(entry.dataset.edit)
-  })
+  // an Agent call's row opens its agent's page; a file's row reveals its change
+  const press = (): void => {
+    if (row.dataset.agent !== undefined) cb.openAgent(row.dataset.agent)
+    else if (entry.dataset.edit !== undefined) cb.revealChange(entry.dataset.edit)
+  }
+  row.addEventListener('click', press)
   row.addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter' || e.key === ' ') && entry.dataset.edit !== undefined) {
-      e.preventDefault()
-      cb.revealChange(entry.dataset.edit)
-    }
+    // Space opens the row without scrolling the conversation
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    if (row.dataset.agent === undefined && entry.dataset.edit === undefined) return
+    e.preventDefault()
+    press()
   })
   entry.append(row)
   return entry
@@ -264,15 +274,26 @@ function callEntry(id: string, cb: StepCallbacks): HTMLElement {
 function fillCall(entry: HTMLElement, call: ChatToolCall): void {
   const row = entry.querySelector<HTMLElement>(':scope > .chat-step-row')
   if (row === null) return
-  row.className = `chat-step-row${call.editPath !== null ? ' edit' : ''}${call.state === 'failed' ? ' failed' : ''}`
-  if (call.editPath !== null) {
-    entry.dataset.edit = call.editPath
+  // an Agent call with its agent known and its id valid: its row opens the agent's page
+  const agentId = call.name === 'Task' || call.name === 'Agent' ? rowAgent(call) : null
+  row.className = `chat-step-row${call.editPath !== null ? ' edit' : ''}${agentId !== null ? ' agent' : ''}${call.state === 'failed' ? ' failed' : ''}`
+  if (call.editPath !== null) entry.dataset.edit = call.editPath
+  else delete entry.dataset.edit
+  if (agentId !== null) row.dataset.agent = agentId
+  else delete row.dataset.agent
+  if (call.editPath !== null || agentId !== null) {
     row.tabIndex = 0
     row.setAttribute('role', 'button')
   } else {
-    delete entry.dataset.edit
     row.removeAttribute('tabindex')
     row.removeAttribute('role')
+  }
+  if (agentId !== null) {
+    row.title = 'Open this agent'
+    if (row.querySelector(':scope > .chat-step-open') === null) row.append(el('span', 'chat-step-open', '›'))
+  } else {
+    row.removeAttribute('title')
+    row.querySelector(':scope > .chat-step-open')?.remove()
   }
   setStateIcon(row.querySelector<HTMLElement>('.chat-step-state')!, call.state)
   setText(row.querySelector<HTMLElement>('.chat-tool-name')!, call.name)
@@ -384,9 +405,10 @@ function fillError(entry: HTMLElement, error: string | null): void {
 
 /**
  * The subagents' card, drawn into `box` (the chat's dock): a head with its count, one row per agent, in the order given. A row is
- * kept by its agent's id, so its ring and bar carry on when the card is drawn again.
+ * kept by its agent's id, so its ring and bar carry on when the card is drawn again. A row is a button that opens the agent's
+ * page through `o.open`; the row of `o.current` is marked as the open one.
  */
-export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[]): void {
+export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[], o: { open?(agentId: string): void; current?: string | null } = {}): void {
   let card = box.querySelector<HTMLElement>(':scope > .chat-agents')
   if (card === null) {
     card = el('div', 'chat-agents')
@@ -398,19 +420,34 @@ export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[]): void {
   card.querySelector<HTMLElement>('.chat-agents-head')!.innerHTML = `${icon('users', 13)}<span>${n} agent${n === 1 ? '' : 's'} · ${done} done</span>`
   const list = card.querySelector<HTMLElement>('.chat-agents-list')!
   let added = false
+  const open = (row: HTMLElement): void => {
+    if (isAgentId(row.dataset.agent)) o.open?.(row.dataset.agent)
+  }
   agents.forEach((agent, index) => {
     let row = childWith(list, 'agent', agent.id)
     if (row === null) {
       row = el('div', 'chat-agent')
       row.dataset.agent = agent.id
+      row.tabIndex = 0
+      row.setAttribute('role', 'button')
+      row.title = 'Open this agent'
+      row.addEventListener('click', () => open(row!))
+      row.addEventListener('keydown', (e) => {
+        // Space opens the row without scrolling the conversation
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        open(row!)
+      })
       row.append(el('span', 'chat-step-state'), el('span', 'chat-agent-type'), el('span', 'chat-agent-desc'), el('span', 'chat-agent-meta'), el('span', 'chat-agent-state'))
       list.append(row)
       added = true
     }
+    if (o.current === agent.id) row.setAttribute('aria-current', 'true')
+    else row.removeAttribute('aria-current')
     // a row keeps its colour and its bar's offset by its place in the card, which does not change when another row ends. The
     // offset is a negative delay: the bar starts that far into its slide, so the bars are staggered and none stands still when
     // its slide starts again (a chat that comes back from another tab starts its animations anew)
-    row.style.setProperty('--agent', AGENT_COLORS[index % AGENT_COLORS.length]!)
+    row.style.setProperty('--agent', agentColor(index))
     row.style.setProperty('--bar-delay', `-${(index * 0.5).toFixed(1)}s`)
     fillAgent(row, agent)
   })

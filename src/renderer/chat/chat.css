@@ -19,13 +19,15 @@
   flex-direction: column;
 }
 
-.chat-scroll {
+.chat-scroll,
+.agent-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
 }
 
-.chat-fade {
+.chat-fade,
+.agent-fade {
   position: absolute;
   top: 0;
   left: 0;
@@ -35,7 +37,8 @@
   pointer-events: none;
 }
 
-.chat-column {
+.chat-column,
+.agent-column {
   box-sizing: border-box;
   max-width: 860px;
   margin: 0 auto;
@@ -47,12 +50,14 @@
 
 /* the working line and the pill are not the item the browser keeps in place while the column changes */
 .chat-working,
-.chat-pill {
+.chat-pill,
+.agent-pill {
   overflow-anchor: none;
 }
 
 /* the new messages below the view: a click brings the user to the bottom */
-.chat-pill {
+.chat-pill,
+.agent-pill {
   position: absolute;
   left: 50%;
   bottom: 14px;
@@ -68,15 +73,18 @@
   cursor: pointer;
 }
 
-.chat-pill:hover {
+.chat-pill:hover,
+.agent-pill:hover {
   border-color: var(--text-3);
 }
 
-.chat-pill[hidden] {
+.chat-pill[hidden],
+.agent-pill[hidden] {
   display: none;
 }
 
-.chat-pill:not([hidden]) {
+.chat-pill:not([hidden]),
+.agent-pill:not([hidden]) {
   animation: chat-pill-in 140ms ease-out;
 }
 
@@ -832,6 +840,27 @@
   background: var(--chat-tone-4);
 }
 
+/* an Agent call's row opens its agent's page: the arrow shows on hover and focus */
+.chat-step-row.agent {
+  cursor: pointer;
+}
+
+.chat-step-row.agent:hover {
+  background: var(--chat-tone-4);
+}
+
+.chat-step-open {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  opacity: 0;
+}
+
+.chat-step-row.agent:hover .chat-step-open,
+.chat-step-row.agent:focus-visible .chat-step-open {
+  opacity: 1;
+}
+
 .chat-tool-name {
   width: 44px;
   flex: none;
@@ -1000,6 +1029,24 @@
   border-top: 1px solid var(--line);
   font-size: 12.5px;
   min-width: 0;
+}
+
+/* a row is a button: it opens the agent's page; the open one is marked */
+.chat-agent {
+  cursor: pointer;
+}
+
+.chat-agent:hover {
+  background: var(--chat-tone-0);
+}
+
+.chat-agent:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.chat-agent[aria-current="true"] {
+  background: var(--chat-tone-0);
 }
 
 .chat-agent-type {
@@ -2032,8 +2079,317 @@
 
 .chat-quote-block:last-child { margin-bottom: 0; }
 
+/* agent page: an agent's conversation in place of the main one. The header is one line; the column takes the main column's measure */
+.agent-page {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+.agent-head {
+  box-sizing: border-box;
+  flex: none;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.agent-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.agent-back:hover {
+  background: var(--chat-tone-0);
+  color: var(--text);
+}
+
+.agent-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-type {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 11.5px;
+  border-radius: 4px;
+  background: var(--chat-tone-0);
+  color: var(--text-3);
+}
+
+.agent-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-state {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-state[data-state="failed"],
+.agent-state[data-state="stopped"] {
+  color: var(--red);
+}
+
+.agent-mark {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* the header's ring is the agent's colour; under reduced motion it stands still */
+.agent-state .chat-ring {
+  border-top-color: var(--agent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-state .chat-ring {
+    animation: none;
+  }
+}
+
+.agent-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-footer {
+  flex: none;
+}
+
+/* the message box under the page: the field, a refusal above it and the hint under it; one line in its place when writing is off */
+.agent-compose {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 10px 36px 16px;
+}
+
+.agent-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 46px;
+  max-height: 40vh;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--chat-tone-0);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+}
+
+.agent-input:focus {
+  border-color: var(--accent);
+}
+
+.agent-input::placeholder {
+  color: var(--text-3);
+}
+
+.agent-refusal {
+  padding: 0 4px 6px;
+  color: var(--red);
+  font-size: 12px;
+}
+
+.agent-hint {
+  padding: 6px 4px 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.agent-off {
+  box-sizing: border-box;
+  padding: 12px 36px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* a forward on the page: the bubble, and its mark under it; a failed one takes the error colour */
+.chat-user-row.forward .agent-mark {
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.agent-mark.error {
+  color: var(--red);
+}
+
+/* a forward in the main conversation: one quiet line, and its mark; a click on it opens the agent's page */
+.chat-forward {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  padding: 2px 4px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.chat-forward.open {
+  cursor: pointer;
+}
+
+.chat-forward.open:hover .chat-forward-line {
+  color: var(--text-2);
+  text-decoration: underline;
+}
+
+.chat-forward.open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chat-forward-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-forward .agent-mark {
+  font-size: 11.5px;
+}
+
+/* the waiting bar: under the header while the main conversation waits for an answer; a click goes back to the card */
+.agent-wait {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--chat-tone-0);
+  color: var(--text-2);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-wait[hidden] {
+  display: none;
+}
+
+.agent-wait strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-wait:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* the column's items: each one lays out only while it is near the view, the browser keeps the size of one it has not drawn */
+.agent-column > [data-item] {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
+/* the empty state: what the page holds while it holds no item */
+.agent-empty {
+  color: var(--text-3);
+  text-align: center;
+  padding: 24px 0;
+}
+
+.agent-empty[hidden] {
+  display: none;
+}
+
+/* Claude's prompts on an agent's page: a quiet block, its head small above its text; a long one is folded to six lines */
+.chat-prompt {
+  padding-left: 12px;
+  border-left: 2px solid var(--line-2);
+}
+
+.chat-prompt-head {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.chat-prompt-body {
+  line-height: 1.6;
+}
+
+.chat-prompt-body.folded {
+  max-height: calc(6 * 1.6em);
+  overflow: hidden;
+}
+
+.chat-prompt-more {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-prompt-more:hover {
+  color: var(--text);
+}
+
+/* the dock while a page is open: it sits under the page, at the column's measure, with no negative margin over the page */
+.chat-host > .chat-agents-dock {
+  margin-top: 0;
+  max-width: 860px;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0 36px;
+}
+
+.chat-host.chat-wide > .chat-agents-dock {
+  max-width: none;
+  padding: 0 24px;
+}
+
 /* full width (the setting): the conversation and the message box take the chat's whole width, with a 24 px gutter, 16 px under 600 px of window */
-.chat-host.chat-wide .chat-column {
+.chat-host.chat-wide .chat-column,
+.chat-host.chat-wide .agent-column {
   max-width: none;
   padding-left: 24px;
   padding-right: 24px;
@@ -2054,6 +2410,7 @@
 
 @media (max-width: 599px) {
   .chat-host.chat-wide .chat-column,
+  .chat-host.chat-wide .agent-column,
   .chat-host.chat-wide .chat-composer {
     padding-left: 16px;
     padding-right: 16px;

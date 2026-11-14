@@ -1,5 +1,5 @@
 import type { AccountBegin, AccountFlowView, AccountResult, AccountsView, CarryPreview, FlowAction, PickedFolder, RemoveInfo, RemoveOptions, RemoveResult } from './accounts'
-import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
+import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { MailConversationView, MailUnread } from './mail'
 import type { McpAction, McpAddRequest, McpResult, McpServersView, PluginAction, PluginsView, ReloadAction } from './mcp'
@@ -174,6 +174,12 @@ export const IPC = {
   chatCommands: 'chat:commands',
   chatModels: 'chat:models',
   chatOlder: 'chat:older',
+  /** the agent page of a subagent in a chat: its snapshot, its older items, and the agent the window watches */
+  chatAgentSnapshot: 'chat:agent-snapshot',
+  chatAgentOlder: 'chat:agent-older',
+  chatAgentWatch: 'chat:agent-watch',
+  /** a message the person wrote on an agent's page, forwarded to the agent through Claude: resolves to why it did not go, or null */
+  chatAgentSend: 'chat:agent-send',
   /** the permission modes a chat offers, Auto among them once Claude Code reported it */
   chatModes: 'chat:modes',
   /** a command handed to the terminal: the tab turns to it and the line is typed into Claude Code's prompt */
@@ -202,7 +208,10 @@ export const IPC = {
   /** the reload card's button: restart the session, or not now */
   mcpReload: 'mcp:reload',
   /** the tab's servers, plugins or reload card changed: the panel asks again */
-  evMcpChanged: 'ev:mcp-changed'
+  evMcpChanged: 'ev:mcp-changed',
+  /** the patches of an agent page, in order; and a member's agent snapshot arrived, so the page asks for it again */
+  evChatAgentPatch: 'ev:chat-agent-patch',
+  evChatAgentReload: 'ev:chat-agent-reload'
 } as const
 
 export interface AppInfo {
@@ -550,6 +559,13 @@ export interface CtApi {
   chatModels(tabId: string): Promise<ChatModelInfo[]>
   /** the page of the conversation before an item, for the chat's older history; null for a chat that is not running */
   chatOlder(tabId: string, beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null>
+  /** the agent page of a subagent of a chat; null for a chat that is not running or an agent it does not know */
+  chatAgentSnapshot(tabId: string, agentId: string): Promise<AgentSnapshot | null>
+  chatAgentOlder(tabId: string, agentId: string, beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null>
+  /** the agent page the window shows for the tab in front; null: none */
+  chatAgentWatch(tabId: string, agentId: string | null): void
+  /** sends the text the person wrote to an agent of a tab, through Claude; resolves to the reason it did not go, or null when it did */
+  chatAgentSend(tabId: string, agentId: string, text: string): Promise<string | null>
   /** the permission modes the chat of a tab offers */
   chatModes(tabId: string): Promise<ChatPermissionMode[]>
   /** switches a local Claude tab to its terminal and types the line there once Claude Code's prompt is empty; null: only the switch. False when the switch is refused */
@@ -584,4 +600,8 @@ export interface CtApi {
   mcpReload(tabId: string, action: ReloadAction): Promise<boolean>
   /** the tab's servers, plugins or card changed: the panel asks again */
   onMcpChanged(cb: (tabId: string) => void): Unsubscribe
+  /** an agent page's patches: from the rev the window had to the rev they make */
+  onChatAgentPatch(cb: (tabId: string, agentId: string, fromRev: number, toRev: number, patches: AgentPatch[]) => void): Unsubscribe
+  /** a member's agent snapshot arrived: the page asks for its snapshot again */
+  onChatAgentReload(cb: (tabId: string, agentId: string) => void): Unsubscribe
 }

@@ -54,10 +54,10 @@ export interface RemoteDeviceView {
   online: boolean
 }
 
-/** a review part is one of the parts of a review too large for one push; an older device drops the kind. chat: a chat's snapshot; chat-patch: a batch of its patches */
-export type PushKind = 'status' | 'plan' | 'review' | 'review-part' | 'images' | 'chat' | 'chat-patch'
+/** a review part is one of the parts of a review too large for one push; an older device drops the kind. chat: a chat's snapshot; chat-patch: a batch of its patches; chat-agent: an agent page's snapshot; chat-agent-patch: a batch of an agent's patches */
+export type PushKind = 'status' | 'plan' | 'review' | 'review-part' | 'images' | 'chat' | 'chat-patch' | 'chat-agent' | 'chat-agent-patch'
 
-export const PUSH_KINDS: readonly PushKind[] = ['status', 'plan', 'review', 'review-part', 'images', 'chat', 'chat-patch']
+export const PUSH_KINDS: readonly PushKind[] = ['status', 'plan', 'review', 'review-part', 'images', 'chat', 'chat-patch', 'chat-agent', 'chat-agent-patch']
 
 export interface RemoteSnapshot {
   data: string

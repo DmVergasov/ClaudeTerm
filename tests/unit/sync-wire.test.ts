@@ -221,3 +221,14 @@ describe('bulk frames', () => {
     expect(() => encodeBulkFrames(m)).toThrow(FrameError)
   })
 })
+
+describe('the hello carries the app version', () => {
+  it('a hello carries the app version, and a hello without one parses', () => {
+    expect(parseMessage({ ...hello, app: '0.18.0' })).toEqual({ ...hello, app: '0.18.0' })
+    expect(parseMessage({ ...hello, app: 'x'.repeat(32) })).toEqual({ ...hello, app: 'x'.repeat(32) })
+    expect(parseMessage({ ...hello, app: 5 })).not.toHaveProperty('app')
+    expect(parseMessage({ ...hello, app: 'x'.repeat(33) })).not.toHaveProperty('app')
+    expect(parseMessage({ ...hello, app: '0.18 beta' })).not.toHaveProperty('app')
+    expect(parseMessage(hello)).toEqual(hello)
+  })
+})

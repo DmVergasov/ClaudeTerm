@@ -2,6 +2,9 @@
 // JSON line with the median of five runs of each. The launch and the terminal are timing.perf.ts. Not part of the test suite
 // (playwright.perf.config.ts).
 import { expect, test, type Page } from '@playwright/test'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import type { FakeTask } from '../fixtures/fake-claude/install'
 import { CHAT_INPUT, chatReady, chatStandIn, launchChatTab, restoredChat, sendMessage } from '../e2e/chat-helpers'
 import { launchApp } from '../e2e/helpers'
 
@@ -15,12 +18,20 @@ const STREAM_RATE = 200
 const STREAM_WORDS = 1000
 const STREAM = Array.from({ length: 10 }, (_, p) => Array.from({ length: STREAM_WORDS / 10 }, (_, i) => `word${p * 100 + i}`).join(' ')).join('\n\n')
 const TYPED = 'abcdefghij'.repeat(4)
+/** the agent page's budget: a background agent of 1,000 text frames, sent at once; its last frame is the one that must be in view */
+const AGENT_FRAMES = 1000
+const AGENT_LAST = `Line ${String(AGENT_FRAMES - 1).padStart(4, '0')}`
+/** the typing budget: ten background agents, each sending a text frame every 20 ms, 1,000 frames each (20 s, longer than the typing) */
+const TYPING_AGENTS = 10
+const TYPING_PACE = 20
+const TYPING_FRAMES = 1000
+const DOCK_ROWS = '.chat-host:visible .chat-agents-dock .chat-agent'
 /** the tabs of the memory numbers */
 const MEMORY_TABS = 20
 const MB = 1024 * 1024
 
 /** the budgets; chatTurnStartMs is the turn's opening frame (the message, the working line), which must stay in one frame */
-const BUDGET = { chatActivateMs: 150, chatScrollLongTaskMs: 50, chatFrameMs: 4, chatTurnStartMs: 16.7, typingLatencyMs: 16.7 }
+const BUDGET = { chatActivateMs: 150, chatScrollLongTaskMs: 50, chatFrameMs: 4, chatTurnStartMs: 16.7, typingLatencyMs: 16.7, agentOpenMs: 150, agentsTypingMs: 16.7 }
 
 const median = (values: number[]): number => {
   const sorted = [...values].sort((a, b) => a - b)
@@ -181,6 +192,81 @@ async function streamingChat(): Promise<{ frameMs: number; turnStartMs: number; 
 }
 
 /**
+ * A chat with a background agent of AGENT_FRAMES text frames, sent at once and held by its gate. The agent's dock row is clicked
+ * once every frame is in the snapshot; the budget is from the click to the last frame in view in the agent page's scroll (the page
+ * opens at its end). Then the gate is released.
+ */
+async function agentPageOpen(): Promise<{ agentOpenMs: number }> {
+  const frames = Array.from({ length: AGENT_FRAMES }, (_, i) => ({ text: `Line ${String(i).padStart(4, '0')}` }))
+  const task: FakeTask = { description: 'Read the release notes', result: 'unused', background: true, agents: [{ type: 'Explore', description: 'Read the release notes', ms: 60_000, gate: 'open-release', pace: 0, frames }] }
+  const { app, page, config } = await launchChatTab({ turns: { team: [{ task }, { text: 'Done.' }] } })
+  try {
+    await sendMessage(page, 'team')
+    await expect(page.locator(DOCK_ROWS)).toHaveCount(1)
+    const agentId = (await page.locator(DOCK_ROWS).getAttribute('data-agent'))!
+    await expect.poll(() => page.evaluate(({ id, last }) => window.ct.chatAgentSnapshot(window.__ct!.activeTabId()!, id).then((s) => JSON.stringify(s?.items ?? []).includes(last)), { id: agentId, last: AGENT_LAST }), { timeout: 30_000 }).toBe(true)
+
+    const t0 = performance.now()
+    await page.locator(DOCK_ROWS).click()
+    await page.waitForFunction((last) => {
+      const host = [...document.querySelectorAll<HTMLElement>('.chat-host')].find((h) => h.offsetParent !== null)
+      const scroll = host?.querySelector<HTMLElement>('.agent-scroll')
+      if (!scroll) return false
+      const view = scroll.getBoundingClientRect()
+      const at = [...scroll.querySelectorAll<HTMLElement>('.chat-text')].filter((el) => el.textContent?.includes(last)).pop()
+      if (!at) return false
+      const box = at.getBoundingClientRect()
+      return box.height > 0 && box.top >= view.top && box.bottom <= view.bottom
+    }, AGENT_LAST, { timeout: 30_000 })
+    const agentOpenMs = performance.now() - t0
+
+    writeFileSync(join(config, 'open-release'), '')
+    return { agentOpenMs }
+  } finally {
+    await app.close()
+  }
+}
+
+/**
+ * Ten background agents of a chat, each sending a text frame every 20 ms, held by a gate. 40 characters are typed into the chat's
+ * composer while they stream: the time from each keydown to the next animation frame, as streamingChat measures it. Then the
+ * gate is released.
+ */
+async function agentsTyping(): Promise<{ typingMs: number; typingMaxMs: number }> {
+  const agents = Array.from({ length: TYPING_AGENTS }, (_, a) => ({
+    type: 'Explore',
+    description: `Search part ${a}`,
+    ms: 60_000,
+    gate: 'typing-release',
+    pace: TYPING_PACE,
+    frames: Array.from({ length: TYPING_FRAMES }, (_, i) => ({ text: `Agent ${a} line ${i}` }))
+  }))
+  const task: FakeTask = { description: 'Search the parts', result: 'unused', background: true, agents }
+  const { app, page, config } = await launchChatTab({ turns: { team: [{ task }, { text: 'Done.' }] } })
+  try {
+    await sendMessage(page, 'team')
+    await expect(page.locator(DOCK_ROWS)).toHaveCount(TYPING_AGENTS)
+    await page.evaluate(() => {
+      const w = window as unknown as { __keys: number[] }
+      w.__keys = []
+      document.addEventListener('keydown', () => {
+        const t0 = performance.now()
+        requestAnimationFrame(() => w.__keys.push(performance.now() - t0))
+      }, true)
+    })
+    await page.locator(CHAT_INPUT).click()
+    await page.keyboard.type(TYPED)
+    await page.waitForFunction((n) => (window as unknown as { __keys: number[] }).__keys.length === n, TYPED.length)
+    const keys = await page.evaluate(() => (window as unknown as { __keys: number[] }).__keys)
+
+    writeFileSync(join(config, 'typing-release'), '')
+    return { typingMs: median(keys), typingMaxMs: Math.max(...keys) }
+  } finally {
+    await app.close()
+  }
+}
+
+/**
  * The renderer's memory growth, in MB, of MEMORY_TABS tabs of a view, each one shown once: the setting names the view new Claude
  * tabs open in (the IPC guard drops a view from openTab), and the views are checked (a terminal has an xterm, a chat none).
  */
@@ -219,6 +305,9 @@ test('chat', async () => {
     chatTurnStartMs: [] as number[],
     typingLatencyMs: [] as number[],
     typingLatencyMaxMs: [] as number[],
+    agentOpenMs: [] as number[],
+    agentsTypingMs: [] as number[],
+    agentsTypingMaxMs: [] as number[],
     chatMemoryMB: [] as number[],
     terminalMemoryMB: [] as number[]
   }
@@ -232,6 +321,10 @@ test('chat', async () => {
     samples.chatTurnStartMs.push(streaming.turnStartMs)
     samples.typingLatencyMs.push(streaming.typingMs)
     samples.typingLatencyMaxMs.push(streaming.typingMaxMs)
+    samples.agentOpenMs.push((await agentPageOpen()).agentOpenMs)
+    const agents = await agentsTyping()
+    samples.agentsTypingMs.push(agents.typingMs)
+    samples.agentsTypingMaxMs.push(agents.typingMaxMs)
     samples.chatMemoryMB.push(await memoryGrowthMB('chat'))
     samples.terminalMemoryMB.push(await memoryGrowthMB('terminal'))
   }
@@ -244,6 +337,9 @@ test('chat', async () => {
     chatTurnStartMs: median(samples.chatTurnStartMs),
     typingLatencyMs: median(samples.typingLatencyMs),
     typingLatencyMaxMs: median(samples.typingLatencyMaxMs),
+    agentOpenMs: median(samples.agentOpenMs),
+    agentsTypingMs: median(samples.agentsTypingMs),
+    agentsTypingMaxMs: median(samples.agentsTypingMaxMs),
     chatMemoryMB: median(samples.chatMemoryMB),
     terminalMemoryMB: median(samples.terminalMemoryMB)
   }
@@ -255,4 +351,6 @@ test('chat', async () => {
   expect(result.chatFrameMs, `chatFrameMs runs ${runs('chatFrameMs')}`).toBeLessThanOrEqual(BUDGET.chatFrameMs)
   expect(result.chatTurnStartMs, `chatTurnStartMs runs ${runs('chatTurnStartMs')}`).toBeLessThanOrEqual(BUDGET.chatTurnStartMs)
   expect(result.typingLatencyMs, `typingLatencyMs runs ${runs('typingLatencyMs')}`).toBeLessThanOrEqual(BUDGET.typingLatencyMs)
+  expect(result.agentOpenMs, `agentOpenMs runs ${runs('agentOpenMs')}`).toBeLessThanOrEqual(BUDGET.agentOpenMs)
+  expect(result.agentsTypingMs, `agentsTypingMs runs ${runs('agentsTypingMs')}`).toBeLessThanOrEqual(BUDGET.agentsTypingMs)
 })

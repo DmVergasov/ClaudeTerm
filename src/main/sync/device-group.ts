@@ -37,6 +37,8 @@ export interface DeviceGroupDeps {
   host: string
   port: number
   platform: DevicePlatform
+  /** this app's version, sent in the hello: a member that has none is an older device */
+  appVersion: string
   hostName(): string
   /** the addresses other devices can reach this one at */
   addresses(): string[]
@@ -340,7 +342,8 @@ export class DeviceGroup {
         platform: this.deps.platform,
         port: net.listeningPort() ?? this.deps.port,
         addresses: this.deps.addresses(),
-        mail: 1
+        mail: 1,
+        app: this.deps.appVersion
       }),
       members: () => this.netMembers(),
       keepListening: () => this.keepsListening(),

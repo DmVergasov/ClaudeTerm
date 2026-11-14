@@ -2,14 +2,14 @@ import { open } from 'node:fs/promises'
 import { checkImageFile, MAX_IMAGE_BYTES } from '../shared/image-file'
 import { hasText } from '../shared/note'
 import { isUuid } from '../shared/protocol'
-import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, TabView } from '../shared/chat'
+import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, TabView } from '../shared/chat'
 import type { DeviceResult } from '../shared/devices'
 import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, REMOTE_COPY, REVIEW_FILE_BYTES, REVIEW_PART_BYTES, type FolderResult, type PushKind, type RemoteTab } from '../shared/remote'
 import { MAX_HASH, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { PlanUpdate } from '../shared/ipc'
 import type { RecentSession, TabInfo, TabPlace } from '../shared/types'
 import type { AccountView } from '../shared/accounts'
-import { capItems, capSnapshot, MAX_CHAT_PATCHES } from './chat/chat-mirror'
+import { capItems, capSnapshot, itemForOlder, MAX_CHAT_PATCHES } from './chat/chat-mirror'
 import type { ImageHub } from './image-hub'
 import { isAbsPath, isHash } from './ipc-guards'
 import { pathKey } from './path-key'
@@ -20,7 +20,7 @@ import type { TabManager } from './tab-manager'
 import { CallError, type CallEntry } from './sync/calls'
 import { CALL_ARGS, type CallArgs } from './sync/remote-shapes'
 import { parsePlace } from './sync/remote-wire'
-import { type HostTabs, nextTurn } from './sync/tab-host'
+import { type HostTabs, nextTurn, type TabHost } from './sync/tab-host'
 import { statusSummary, type TabAttention } from './sync/tab-directory'
 import type { TabSizes } from './sync/tab-sizes'
 import type { FileReceiver } from './sync/file-receiver'
@@ -76,6 +76,12 @@ export interface HostChat {
   setModel(tabId: string, model: string | null, effort: string | null): Promise<void>
   stopTask(tabId: string, taskId: string): Promise<void>
   older(tabId: string, beforeId: string): { items: ChatItem[]; hasOlder: boolean } | null
+  /** an agent's page of the tab, cut to the chat push's cap, not writable; null for an agent the tab does not have */
+  agentSnapshot(tabId: string, agentId: string): Promise<AgentSnapshot | null>
+  /** the items of an agent's page before one of its items; null for an agent the tab does not have */
+  agentOlder(tabId: string, agentId: string, beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null>
+  /** the agent page a member watches on this device (null: none): its batches go to that member only */
+  watchAgent(tabId: string, device: string, agentId: string | null): void
   /** the permission modes the tab offers on this device: a member may set only these */
   modes(tabId: string): ChatPermissionMode[]
   commands(tabId: string): Promise<ChatCommandInfo[]>
@@ -95,6 +101,8 @@ export interface HostContext {
   tabs: Pick<TabManager, 'list' | 'get' | 'isTransient' | 'close' | 'rename' | 'setMuted' | 'restart' | 'switchAccount' | 'size' | 'canFork' | 'fork'>
   /** the chats of this device's Claude tabs; left out, no tab has a chat for a member */
   chat?: HostChat
+  /** the app version of a linked member; null for an older device (or none): it gets the chat in the forms it has */
+  memberApp?(device: string): string | null
   images: Pick<ImageHub, 'list' | 'unseenCount' | 'notice' | 'markSeen' | 'remove' | 'get'>
   /** the extensions of the image files this device shows: the ones the image panel takes */
   imageExtensions(): string[]
@@ -173,6 +181,7 @@ const NOT_COPIED = 'not a file sent to this device'
 const NO_VIEW = 'the tab cannot change its view now'
 const NO_TERMINAL = 'the line cannot be typed into the terminal now'
 const NO_MODE = 'the permission mode is not offered here'
+const NO_AGENT = 'that agent is not on this device'
 /** the chat-sends of each tab in the order they came: by host context, then tab id */
 const chatOrder = new WeakMap<HostContext, Map<string, Promise<unknown>>>()
 
@@ -457,9 +466,35 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
         const { args, chat } = chatCall(ctx, CALL_ARGS['chat-older'](a), true)
         const page = chat.older(args.id, args.beforeId)
         if (!page) throw new CallError(NOT_CHAT)
-        // cut the way a snapshot is cut: the newest items of the page that fit a push, and hasOlder when some were left out
-        const cut = capItems(page.items, MAX_CHAT_PUSH_BYTES - Buffer.byteLength(JSON.stringify({ items: [], hasOlder: true })))
-        return { items: cut.items, hasOlder: page.hasOlder || cut.cut }
+        // an older member has no forward or prompt: its page carries them as notices
+        const older = ctx.memberApp?.(device) === null
+        return cutPage(older ? { ...page, items: page.items.map(itemForOlder) } : page)
+      }
+    },
+    // an agent's page: the newest items of it, as the window of a member gets it; a page is read-only here
+    'chat-agent': {
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-agent'](a), true)
+        const page = await chat.agentSnapshot(args.id, args.agentId)
+        if (!page) throw new CallError(NO_AGENT)
+        return page
+      }
+    },
+    'chat-agent-older': {
+      bulk: true,
+      run: async (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-agent-older'](a), true)
+        const page = await chat.agentOlder(args.id, args.agentId, args.beforeId)
+        if (!page) throw new CallError(NO_AGENT)
+        return cutPage(page)
+      }
+    },
+    // the agent page this member watches: its batches come to this device until it watches another page, or none (null)
+    'chat-agent-watch': {
+      run: (a) => {
+        const { args, chat } = chatCall(ctx, CALL_ARGS['chat-agent-watch'](a), true)
+        chat.watchAgent(args.id, device, args.agentId)
+        return {}
       }
     },
     // a Claude tab in either view can switch view: the handoff of a command switches to the terminal on the same call
@@ -573,6 +608,35 @@ export function chatBatchPush(
   if (batch.patches.length <= MAX_CHAT_PATCHES && Buffer.byteLength(JSON.stringify(batch)) <= MAX_CHAT_PUSH_BYTES) return { k: 'chat-patch', v: batch }
   const s = snapshot()
   return s === null ? null : { k: 'chat', v: s }
+}
+
+/**
+ * A batch of an agent's patches to the members that watch its page: the batch as it is, or the page as a snapshot when the batch is
+ * over what the receiver takes (MAX_CHAT_PUSH_BYTES as JSON, or MAX_CHAT_PATCHES patches). The page is made first, so a device
+ * that no longer watches it then gets nothing.
+ */
+export async function pushAgentBatch(
+  host: Pick<TabHost, 'pushToDevice'>,
+  tabId: string,
+  batch: { agentId: string; fromRev: number; toRev: number; patches: AgentPatch[] },
+  devices: string[],
+  snapshot: () => Promise<AgentSnapshot | null>,
+  watching: (device: string) => boolean
+): Promise<void> {
+  let push: { k: PushKind; v: unknown } | null
+  if (batch.patches.length <= MAX_CHAT_PATCHES && Buffer.byteLength(JSON.stringify(batch)) <= MAX_CHAT_PUSH_BYTES) push = { k: 'chat-agent-patch', v: batch }
+  else {
+    const s = await snapshot()
+    push = s === null ? null : { k: 'chat-agent', v: s }
+  }
+  if (push === null) return
+  for (const device of devices) if (watching(device)) host.pushToDevice(device, tabId, push.k, push.v)
+}
+
+/** a page of items cut the way a snapshot is cut: the newest items that fit a push, and hasOlder when some were left out */
+function cutPage(page: { items: ChatItem[]; hasOlder: boolean }): { items: ChatItem[]; hasOlder: boolean } {
+  const cut = capItems(page.items, MAX_CHAT_PUSH_BYTES - Buffer.byteLength(JSON.stringify({ items: [], hasOlder: true })))
+  return { items: cut.items, hasOlder: page.hasOlder || cut.cut }
 }
 
 /** the chat of a Claude tab in its chat view, as a push; null for any other tab, or a tab with no chat */

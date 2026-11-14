@@ -1,4 +1,4 @@
-import type { ChatAnswer, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPermissionMode, ChatSend, TabView } from '../../shared/chat'
+import type { AgentSnapshot, ChatAnswer, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPermissionMode, ChatSend, TabView } from '../../shared/chat'
 import type { DeviceResult } from '../../shared/devices'
 import { IMAGE_CACHE_BYTES, IMAGE_PART_TIMEOUT_MS, IMAGE_READS_AT_ONCE, LIST_TIMEOUT_MS, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type RemoteTab } from '../../shared/remote'
 import { NOT_RUNNING, type ReviewSendState } from '../../shared/review'
@@ -446,6 +446,28 @@ export class RemoteActions {
     }
   }
 
+  /** an agent page of a remote chat: the page the device sent and kept for the window (once), else the device's answer; null when it refuses or does not answer */
+  async chatAgent(tabId: string, agentId: string): Promise<AgentSnapshot | null> {
+    const kept = this.tabs.takeAgentSnapshot(tabId, agentId)
+    if (kept) return kept
+    try {
+      const page = await this.askTab(tabId, 'chat-agent', { id: tabId, agentId })
+      // a page of another tab or agent than the one asked for is no answer
+      return page.tabId === tabId && page.agentId === agentId ? page : null
+    } catch {
+      return null
+    }
+  }
+
+  /** an older page of an agent's page of a remote chat before an item; null when the device refuses it or does not answer */
+  async chatAgentOlder(tabId: string, agentId: string, beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null> {
+    try {
+      return await this.askTab(tabId, 'chat-agent-older', { id: tabId, agentId, beforeId })
+    } catch {
+      return null
+    }
+  }
+
   /** the permission modes a remote chat's device offers; null when it refuses, does not answer, or is too old to know the call (the caller keeps its own list) */
   async chatModes(tabId: string): Promise<ChatPermissionMode[] | null> {
     try {
@@ -516,6 +538,11 @@ export class RemoteActions {
 
   chatStopTask(tabId: string, taskId: string): void {
     this.fire(tabId, 'chat-stop-task', { id: tabId, taskId })
+  }
+
+  /** the agent page the window watches on the device (null: none); a refusal is not toasted, as the window leaves the page on its own */
+  chatAgentWatch(tabId: string, agentId: string | null): void {
+    this.askTab(tabId, 'chat-agent-watch', { id: tabId, agentId }).catch(() => undefined)
   }
 
   /** a call whose answer is not needed: a failure is toasted */

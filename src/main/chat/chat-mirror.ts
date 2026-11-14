@@ -1,4 +1,5 @@
-import { acceptPatches, type ChatActivity, type ChatCard, type ChatItem, type ChatPatch, type ChatSnapshot, type ChatState, type ChatToolCall } from '../../shared/chat'
+import { acceptPatches, type AgentPatch, type AgentSnapshot, type ChatActivity, type ChatAgentInfo, type ChatCard, type ChatItem, type ChatPatch, type ChatSnapshot, type ChatState, type ChatToolCall, isAgentId } from '../../shared/chat'
+import type { PushKind } from '../../shared/remote'
 import { isChatOrigin, isPermissionMode } from './chat-guards'
 import { cap, PAGE, SUBJECT_CAP } from './chat-model'
 
@@ -17,6 +18,11 @@ const CARD_CAP = 64 * 1024
 /** an attachment's or an image's card id (chat-guards.ts); a suggestion's label (chat-cards.ts LABEL_CAP) */
 const CARD_ID_CAP = 64
 const LABEL_CAP = 500
+/** an agent's type and description, as the host caps them (agent-chats.ts) */
+const AGENT_TEXT_CAP = 500
+/** a forward's label (agent-forward.ts forwardLabel: a type of 40, a description of 120) and its reason (its notice's 300) */
+const FORWARD_LABEL_CAP = 200
+const REASON_CAP = 300
 
 /** the most items a snapshot holds, and the most patches a batch holds */
 export const MAX_CHAT_ITEMS = 2000
@@ -40,6 +46,8 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => list
 const CALL_STATES = ['running', 'done', 'failed'] as const
 const TURNS = ['idle', 'working', 'waiting'] as const
 const NOTICE_ACTIONS = [null, 'restart', 'open-terminal'] as const
+const AGENT_STATES = ['running', 'done', 'failed', 'stopped'] as const
+const FORWARD_STATES = ['queued', 'sending', 'delivered', 'failed', 'skipped'] as const
 
 function isAttachment(v: unknown): boolean {
   return isObj(v) && oneOf(['image', 'file'], v.kind) && str(v.path, PATH_CAP, 1) && str(v.name, PATH_CAP)
@@ -47,7 +55,7 @@ function isAttachment(v: unknown): boolean {
 }
 
 function isSubagent(v: unknown): boolean {
-  return isObj(v) && isId(v.id) && str(v.description, SUBJECT_CAP) && str(v.type, NAME_CAP) && oneOf(CALL_STATES, v.state) && opt(v.ms, isMs)
+  return isObj(v) && isAgentId(v.id) && str(v.description, SUBJECT_CAP) && str(v.type, NAME_CAP) && oneOf(CALL_STATES, v.state) && opt(v.ms, isMs)
     && (v.model === undefined || isId(v.model)) && (v.effort === undefined || isId(v.effort)) && (v.context === undefined || isCount(v.context))
     && (v.startedAt === undefined || isCount(v.startedAt))
 }
@@ -112,6 +120,13 @@ function isItem(v: unknown): v is ChatItem {
         && str(v.body, TEXT_CAP)
     case 'card':
       return isCard(v.card) && opt(v.answered, (s) => str(s, CARD_CAP))
+    case 'prompt':
+      // an agent page only: Claude's prompt to the agent (first) or a later message from Claude
+      return str(v.text, TEXT_CAP) && isBool(v.first)
+    case 'forward':
+      // an agent page only: a message the person sent to the agent, its label, its state and why it did not go (or none)
+      return isAgentId(v.agentId) && str(v.label, FORWARD_LABEL_CAP) && str(v.text, TEXT_CAP) && oneOf(FORWARD_STATES, v.state)
+        && opt(v.reason, (s) => str(s, REASON_CAP))
     default:
       return false
   }
@@ -171,6 +186,44 @@ export function parseChatPush(v: unknown): ChatPush | null {
     return { fromRev, toRev, patches }
   }
   return isSnapshot(v) ? { snapshot: v } : null
+}
+
+/** an agent page's push: the page itself, or a batch of its patches (of one agent, the chat's ops but state, and the agent op) */
+export type AgentPush = { snapshot: AgentSnapshot } | { agentId: string; fromRev: number; toRev: number; patches: AgentPatch[] }
+
+function isAgentInfo(v: unknown): v is ChatAgentInfo {
+  return isObj(v) && isAgentId(v.id) && str(v.type, AGENT_TEXT_CAP) && str(v.description, AGENT_TEXT_CAP)
+    && oneOf(AGENT_STATES, v.state) && opt(v.startedAt, isMs) && opt(v.ms, isMs) && opt(v.parentId, isAgentId)
+}
+
+/** an agent op of a batch: the agent it names is the batch's own agent */
+function isAgentPatch(v: unknown, agentId: string): v is AgentPatch {
+  if (!isObj(v)) return false
+  if (v.op === 'agent') return isAgentInfo(v.agent) && v.agent.id === agentId
+  return v.op !== 'state' && isPatch(v)
+}
+
+/** a page of an agent, checked the way a chat snapshot is, with its agent (the same agent) and whether it is writable; null when it does not fit */
+export function parseAgentSnapshot(v: unknown): AgentSnapshot | null {
+  if (!isObj(v) || !isId(v.tabId) || !isAgentId(v.agentId) || !isCount(v.rev) || !isItems(v.items) || !isBool(v.hasOlder)) return null
+  if (!isAgentInfo(v.agent) || v.agent.id !== v.agentId || !isBool(v.writable)) return null
+  return v as unknown as AgentSnapshot
+}
+
+/**
+ * Checks an agent page's push. A page is given as itself; a batch as { agentId, fromRev, toRev, patches }, whose revisions count
+ * its patches (one revision each). Returns the push, or null when any part of it does not fit.
+ */
+export function parseAgentPush(v: unknown): AgentPush | null {
+  if (!isObj(v)) return null
+  if ('patches' in v) {
+    const { agentId, fromRev, toRev, patches } = v
+    if (!isAgentId(agentId) || !isCount(fromRev) || !isCount(toRev) || !Array.isArray(patches) || patches.length > MAX_CHAT_PATCHES) return null
+    if (toRev - fromRev !== patches.length || !patches.every((p) => isAgentPatch(p, agentId))) return null
+    return { agentId, fromRev, toRev, patches }
+  }
+  const snapshot = parseAgentSnapshot(v)
+  return snapshot ? { snapshot } : null
 }
 
 /**
@@ -329,6 +382,46 @@ export class ChatMirror {
   /** a copy of the snapshot the mirror holds: a caller may change it, and the mirror does not change */
   snapshot(): ChatSnapshot | null {
     return this.current === null ? null : structuredClone(this.current)
+  }
+}
+
+/**
+ * An item as a member of an older app shows it, which has no forward or prompt: a forward is a notice of its first line
+ * (an error when it failed), a prompt a notice of its text. Any other item is returned as it is.
+ */
+export function itemForOlder(item: ChatItem): ChatItem {
+  switch (item.kind) {
+    case 'forward':
+      return { kind: 'notice', id: item.id, tone: item.state === 'failed' ? 'error' : 'info', text: cap(`↗ To ${item.label}: ${item.text.split(/\r?\n/)[0]}`, OUTPUT_CAP), action: null }
+    case 'prompt':
+      return { kind: 'notice', id: item.id, tone: 'info', text: cap(item.text, OUTPUT_CAP), action: null }
+    default:
+      return item
+  }
+}
+
+/** a chat push as a member of an older app takes it: a snapshot's items and the items of its add, set and reset patches mapped by itemForOlder; any other push as it is */
+export function olderChatPush(k: PushKind, v: unknown): unknown {
+  if (k === 'chat') {
+    const s = v as ChatSnapshot
+    return { ...s, items: s.items.map(itemForOlder) }
+  }
+  if (k === 'chat-patch') {
+    const b = v as { fromRev: number; toRev: number; patches: ChatPatch[] }
+    return { ...b, patches: b.patches.map(olderPatch) }
+  }
+  return v
+}
+
+function olderPatch(p: ChatPatch): ChatPatch {
+  switch (p.op) {
+    case 'add':
+    case 'set':
+      return { ...p, item: itemForOlder(p.item) }
+    case 'reset':
+      return { ...p, items: p.items.map(itemForOlder) }
+    default:
+      return p
   }
 }
 

@@ -5,8 +5,10 @@ import type { PeerLink } from '../../src/main/sync/peer-link'
 import { CALL_REPLIES } from '../../src/main/sync/remote-shapes'
 import type { ScreenMirrorsApi } from '../../src/main/sync/screen-mirror'
 import { ScreenMirrors } from '../../src/main/sync/screen-mirror'
+import { olderChatPush } from '../../src/main/chat/chat-mirror'
 import { TabHost } from '../../src/main/sync/tab-host'
 import type { Message } from '../../src/main/sync/wire'
+import type { ChatItem } from '../../src/shared/chat'
 import { MAX_OUT_CHARS, MAX_REMOTE_TABS, REMOTE_COPY, type PushKind, type RemoteSnapshot, type RemoteTab } from '../../src/shared/remote'
 import { replay, textOf } from '../fixtures/screen'
 import { closeLinkPairs, linkPair, until } from '../fixtures/sync'
@@ -573,5 +575,50 @@ describe('tab host', () => {
     host.changed()
     await until(() => got.some((m) => m.t === 'tab' && m.tab.id === all[MAX_REMOTE_TABS].id))
     expect(got.some((m) => m.t === 'tab-closed' && m.id === all[0].id)).toBe(true)
+  })
+})
+
+describe('tab host: members of two app versions', () => {
+  afterEach(async () => {
+    await closeLinkPairs()
+  })
+
+  it('an older member gets forwards as notices, a newer one as forwards', async () => {
+    const OLDER = 'b0000000-0000-4000-8000-000000000002'
+    const NEWER = 'b0000000-0000-4000-8000-000000000003'
+    const fake = fakeTabs()
+    fake.entries = [tab(T1)]
+    const forward: ChatItem = { kind: 'forward', id: 'f1', agentId: 'agent-1', label: 'Reviewer', text: 'Check the parser', state: 'delivered', reason: null }
+    const notice1: ChatItem = { kind: 'notice', id: 'f1', tone: 'info', text: '↗ To Reviewer: Check the parser', action: null }
+    const state = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
+    fake.pushList = [{ k: 'chat', v: { tabId: T1, rev: 0, items: [forward], hasOlder: false, state } }]
+    const host = new TabHost({ tabs: fake, mirrors: noopMirrors(), forOlder: olderChatPush })
+    const older = await linkPair()
+    const newer = await linkPair()
+    const gotOlder: Message[] = []
+    const gotNewer: Message[] = []
+    older.client.on('message', (m: Message) => gotOlder.push(m))
+    newer.client.on('message', (m: Message) => gotNewer.push(m))
+    new Calls(older.server, host.handlers(OLDER))
+    new Calls(newer.server, host.handlers(NEWER))
+    host.addPeer(older.server, OLDER)
+    host.addPeer(newer.server, NEWER, '0.18.0')
+    expect(host.appOf(OLDER)).toBeNull()
+    expect(host.appOf(NEWER)).toBe('0.18.0')
+    host.opened(T1, 40, 10, 1000)
+    await new Calls(older.client, {}).call('attach', { id: T1 })
+    await new Calls(newer.client, {}).call('attach', { id: T1 })
+    host.push(T1, 'chat-patch', { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: forward }] })
+    const pushes = (got: Message[]) => got.filter((m) => m.t === 'push')
+    await until(() => pushes(gotOlder).length === 2 && pushes(gotNewer).length === 2)
+    expect(pushes(gotOlder)).toEqual([
+      { t: 'push', id: T1, k: 'chat', v: { tabId: T1, rev: 0, items: [notice1], hasOlder: false, state } },
+      { t: 'push', id: T1, k: 'chat-patch', v: { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: notice1 }] } }
+    ])
+    expect(pushes(gotNewer)).toEqual([
+      { t: 'push', id: T1, k: 'chat', v: { tabId: T1, rev: 0, items: [forward], hasOlder: false, state } },
+      { t: 'push', id: T1, k: 'chat-patch', v: { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: forward }] } }
+    ])
+    host.dispose()
   })
 })

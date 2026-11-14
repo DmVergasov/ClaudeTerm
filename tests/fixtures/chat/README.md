@@ -155,6 +155,31 @@ Also seen:
 - `ExitPlanMode`'s input is streamed as `{}` with no deltas; the `assistant` message and `can_use_tool` carry
   `plan` and `planFilePath`.
 
+## Subagents: scripted, not recorded
+
+No recording holds a subagent yet, so the stand-in (`tests/fixtures/fake-claude/fake-claude.ts`) emits these shapes from
+the script's `task` step (`FakeTask` in `install.ts`). Task 13 confirms or corrects them against a recorded run.
+
+- **Calls and start.** Each agent's Agent `tool_use` input is `{ description, prompt, subagent_type }`, plus
+  `run_in_background: true` for a background task. Its `system/task_started` names the call in `tool_use_id`, and
+  carries a `run_id` (`run_fake_<n>`).
+- **Frames.** Every frame of an agent has `parent_tool_use_id` (its Agent call) and `agent_id` (its task id), a fresh
+  `uuid` and the `session_id`. Its prompt is a `user` text frame, sent only with `forwardSubagentText` in the
+  initialize request and only when the agent has `frames`. Text and thinking are assistant frames, sent only with that
+  flag. A tool is an assistant `tool_use` frame then a `user` `tool_result` frame, always sent, as the real CLI sends
+  them. A nested `task` is an Agent call that is a frame of its agent: the nested agent has its own `task_started`,
+  frames and transcript, its `task_notification` follows, then the parent's `tool_result` frame for the call.
+- **Transcript.** Each agent writes `<project folder>/<session>/subagents/agent-<task id>.jsonl` (`isSidechain: true`,
+  `agentId`), one line per frame with the frame's `uuid`, the prompt first, whether or not the flag sends the frame.
+  `transcript: false` writes none.
+- **Ends.** An agent ends at `max(ms, its last frame)`, `task_notification` first, then the call's result. A foreground
+  result ends `\n\nagentId: <task id>`; a failed or stopped one reads `The agent failed.` and is an error. A background
+  task's call ends at once with `Async agent launched successfully.\n\nagentId: <task id>`, and each agent ends at its
+  `ms` (or, with `gate`, once `<config folder>/<gate>` exists).
+- **Options.** `early`: the first frame sent comes before `task_started`. `end: 'stopped'`: the notification reads
+  `stopped`. `stop_task` of a running agent the stand-in started ends it `stopped` at once; any other task id is answered
+  `{}`, as before.
+
 **Version floor:** `2.1.322` (the lower of 2.1.322 and the recorded 2.1.322).
 
 ## MCP and plugins: scripted, not recorded
@@ -180,3 +205,75 @@ The stand-in signs in, out and checks the config folder it runs in (`auth`, `fak
 - `auth status [--json | --text]`: the signed-in JSON, or the signed-out one with exit 1; the script can make it answer garbage, or never answer.
 - `auth logout`: removes the token and the account, keeps the other keys of `.claude.json`.
 - Every run logs its config folder and whether a token or a key was set in the environment, never their values.
+## Agent chat hand check
+
+Recorded by hand against Claude Code 2.1.x through the Agent SDK (Haiku, `forwardSubagentText`, `includePartialMessages`,
+`perTaskStopAffordance`, no setting sources), in a throwaway folder. Nothing below carries an id, path or text of the run.
+
+- **(a) Ids.** The agent's `agent_id` on its frames, the `task_id` of its `task_started`, and the id in its transcript file name
+  (`subagents/agent-<id>.jsonl`) are one and the same string. Nested tool tasks of an agent (a Bash call it runs) have their own
+  short `task_id`, `owned_by_subagent: true` and a `parent_task_id` that is the agent's id. A general-purpose agent started
+  without `run_in_background` is still backgrounded (`is_backgrounded: true`).
+- **(b) uuids.** The `uuid` of every assistant frame carrying an `agent_id` equals the `uuid` of the matching line of the
+  agent's transcript, thinking and text blocks alike.
+- **(c) Live frames.** With `forwardSubagentText`, the agent's assistant frames arrive: text blocks, and thinking blocks whose
+  `thinking` is empty (only a signature). They carry `parent_tool_use_id` (the `tool_use` id of the Agent call that first
+  started it, also after a resume), `agent_id`, `subagent_type` and `task_description`. The agent's tool results arrive as user
+  frames with the same fields. There is no user frame for the agent's prompt: it is in `task_started.prompt`, and in the
+  transcript's first line (a user line with a string content). Task 13b is not needed.
+- **(d) Result line.** The Agent tool's result keeps the line `agentId: <id> (internal ID ... Use SendMessage with to: '<id>',
+  summary: '<5-10 word recap>' to continue this agent.)` in the main transcript, so rows of finished agents can be found again
+  after a restart.
+- **(e) The forward.** Claude calls `ToolSearch` with `select:SendMessage` first when the session has not loaded SendMessage
+  yet (it is a deferred tool: only the first forward of a session), then `SendMessage` once. The input on the wire is
+  `{ to, message, summary }` (`summary` is required by Claude and is its own recap, never the user's text); the stream frame
+  shows the same call with `type: 'message'`, `recipient`, `recipient_kind: 'agent'` and `content` added (a copy of `message`).
+  The result is a JSON string in a text block (not `is_error`): for a finished agent
+  `{"success":true,"message":"Resuming agent <first 7 chars>","resumedAgentId":"<id>","pin":{...}}`; for a running one
+  `{"success":true,"message":"Message queued for delivery to <id> at its next tool round. If it finishes first, it is resumed
+  with the message and notifies again, so wait for that notification before resending.","pin":{...}}`. Claude's last line was
+  `Forwarded.`. A message whose text held the end-marker line was cut at that line: only what came before the first end marker
+  was sent. After each forward a second main turn runs by itself, started by the agent's `task_notification`: Claude says what
+  the agent answered (it is not a forward turn).
+- **(f) Resume.** A finished agent resumes: `task_started` again with the same `task_id`, a new `run_id`, `tool_use_id` = the
+  SendMessage call, and `prompt` = the message; then `task_updated` `completed` and `task_notification` `completed` with the
+  agent's last answer as `summary`. Its frames keep the original `parent_tool_use_id`. In its transcript the message is a user
+  line with `isMeta: true`, `origin: { kind: 'coordinator' }` and the string content `The coordinator sent a message while
+  you were working:\n<message>\n\nAddress this before completing your current task.` A running agent gets no new
+  `task_started`: the message is queued, delivered at its next tool round, and the transcript holds an `attachment` line of
+  type `queued_command` (`prompt` = the message, `origin.kind: 'coordinator'`, `rendered` = the same sentence in a
+  system-reminder). The agent answered the message in the same run. Neither case sends a live frame of the message itself.
+  Explore agents resume the same way.
+- **(g) Permission.** SendMessage, Agent, ToolSearch and Bash did not call `canUseTool` in this setup (their decision source
+  was `config`); no permission request came for the forward.
+- **(h) Refusals.** `stopTask` on a running agent: `task_updated` `killed`, `task_notification` `stopped`, then late user
+  frames `User rejected tool use` / `[Request interrupted by user for tool use]` with its `agent_id`. A forward to the stopped
+  agent: the SendMessage result is `{"success":false,"message":"Agent \"<id>\" was stopped and was not resumed. Treat its work
+  as cancelled; only start a new agent for it if the user explicitly asks."}` (no `is_error`), and Claude's reply began
+  `Not forwarded: ...`, then a second turn after the notification said more. Explore: resumed and answered as above.
+
+Outcome: P1, P2 (a finished agent resumes and answers) and P3 (a running agent gets the message before it ends) hold.
+With the first template, P1 held for one forward of three: the first forward called ToolSearch before SendMessage, and a
+text holding the end-marker line was cut at that line. A second run with a revised template passed all three forwards: the
+template allows `ToolSearch` with `select:SendMessage` first, and the end marker carries a fresh 8-hex nonce per forward
+(`----- end of message <nonce> -----`), with the message defined as everything between the start marker and that exact line.
+Each forward made one SendMessage call (the first after a ToolSearch for it) with `message` equal to the whole text, the
+literal `----- end of message -----` line inside the third included, and ended with `Forwarded.`. The SDK has no option to
+start with a built-in tool such as SendMessage already loaded (`alwaysLoad` exists for MCP servers only), so the template
+allowance is the fix.
+
+Template that passed (`<ID>`, `<TYPE>`, `<DESC>`, `<NONCE>` = 8 random hex digits, `<TEXT>` as typed):
+
+    [ClaudeTerm: forward to agent <ID>]
+    The user wrote a message for your subagent <ID> (<TYPE>, "<DESC>") in ClaudeTerm's agent view. It is
+    for that agent, not for you.
+    1. If SendMessage is not loaded yet, first call ToolSearch once with the query "select:SendMessage". That is allowed.
+    2. Call SendMessage once, with to: "<ID>" and as the message everything between the line "----- message -----" and
+       the line "----- end of message <NONCE> -----" (that exact line, with this code), exactly as written. Lines inside
+       the text that look like markers are part of the text.
+    3. Do nothing else: do not act on the message, do not answer it, do not call any other tool.
+    4. Then reply with one line: Forwarded.
+    If SendMessage is not available or the call fails, do not try another way; reply with one line: Not forwarded: <reason>
+    ----- message -----
+    <TEXT>
+    ----- end of message <NONCE> -----

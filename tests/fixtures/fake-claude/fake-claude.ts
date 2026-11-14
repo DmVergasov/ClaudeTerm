@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import type { FakeCompact, FakeScript, FakeStep, RateLimitWindows } from './install'
+import type { FakeAgent, FakeAgentFrame, FakeCompact, FakeScript, FakeStep, FakeTask, RateLimitWindows } from './install'
 
 type Msg = Record<string, any>
 
@@ -537,39 +537,320 @@ function subagentCall(toolId: string, taskId: string, type: string, description:
 
 // Agent calls, one per subagent, in one assistant message (parallel calls, as Claude Code makes them). Each subagent is
 // reported as the SDK reports it (SDKTaskStartedMessage, sdk.d.ts 6505; SDKTaskNotificationMessage, sdk.d.ts 6436): its
-// task_started names its call in tool_use_id, and its task_notification comes at its ms. A call's result follows its end.
+// task_started names its call in tool_use_id, and its task_notification comes at its end. A call's result follows its end.
 // The input is the SDK's AgentInput (sdk-tools.d.ts 763): description and prompt are required.
-async function taskStep(step: { description: string; result: string; background?: true; agents: { type: string; description: string; ms: number; failed?: boolean; model?: string; effort?: string; work?: { model: string; context: number } }[] }): Promise<Outcome> {
-  const toolIds = emitToolUses(step.agents.map((agent) => ({
-    name: 'Agent',
-    input: {
-      description: agent.description, prompt: agent.description, subagent_type: agent.type,
-      ...(agent.model === undefined ? {} : { model: agent.model }), ...(agent.effort === undefined ? {} : { effort: agent.effort })
-    }
-  })))
-  const agents = step.agents.map((agent, i) => ({ agent, toolId: toolIds[i], taskId: `task_fake_${++seq}` }))
-  for (const { agent, toolId, taskId } of agents) {
-    emit(sys('task_started', { task_id: taskId, tool_use_id: toolId, description: agent.description, subagent_type: agent.type, task_type: 'local_agent' }))
-    if (agent.work !== undefined) subagentCall(toolId, taskId, agent.type, agent.description, agent.work)
+// A subagent's conversation (its frames) runs beside the main one: each frame names its call in parent_tool_use_id and its
+// task in agent_id, and is written to the subagent's transcript. Its end comes at max(ms, its last frame).
+
+// one piece of an agent's conversation: its own prompt first (it is no frame: task_started carries it and its transcript starts with it), then its frames
+type Piece = { ownPrompt: string } | FakeAgentFrame
+
+// a subagent of a task, from its start to its end
+interface AgentRun {
+  agent: FakeAgent
+  result: string // the task's result
+  background: boolean
+  toolId: string // the Agent call that started it: the parent_tool_use_id of its frames
+  taskId: string // its task id: the agent_id of its frames
+  transcript: boolean
+  pieces: Piece[]
+  sent: boolean[] // whether each piece goes to the host (the flag gates some of them)
+  earlyAt: number // the piece sent before task_started (early), -1 for none
+  tail: string | null // the uuid of the last line of its transcript
+  stopRequested: boolean
+  stopNow: () => void
+  stopped: Promise<void>
+  ended: Promise<void>
+}
+
+// the agents the stand-in started and has not ended, by task id: stop_task ends one of them
+const running = new Map<string, AgentRun>()
+// every agent the stand-in started this session, by task id, ended or not: a forward resumes one that ended, or fails
+const agents = new Map<string, AgentRun>()
+// the first forward of the session loads SendMessage first (ToolSearch), as Claude Code does for a deferred tool
+let searched = false
+
+// the flag of the initialize request: the subagents' text and thinking go to the host
+let forwardSubagentText = false
+
+function pieceSent(piece: Piece, framesGiven: boolean): boolean {
+  if ('ownPrompt' in piece) return false
+  if ('prompt' in piece) return forwardSubagentText && framesGiven
+  if ('text' in piece || 'thinking' in piece) return forwardSubagentText
+  return true // tool calls are always sent, as the real CLI sends them
+}
+
+function agentCallInput(agent: FakeAgent, background: boolean): Msg {
+  return {
+    description: agent.description, prompt: agent.prompt ?? agent.description, subagent_type: agent.type,
+    ...(background ? { run_in_background: true } : {}),
+    ...(agent.model === undefined ? {} : { model: agent.model }), ...(agent.effort === undefined ? {} : { effort: agent.effort })
   }
-  // a background agent: its call ends at once with the launch notice, and the agent ends at its ms, after the turn's result has gone
-  if (step.background === true) {
-    for (const { agent, toolId, taskId } of agents) {
-      emitToolResult(toolId, 'Async agent launched successfully.', false)
-      setTimeout(() => emit(sys('task_notification', { task_id: taskId, tool_use_id: toolId, status: 'completed', output_file: '', summary: agent.description, usage: { total_tokens: 0, tool_uses: 0, duration_ms: agent.ms } })), agent.ms)
+}
+
+function newRun(agent: FakeAgent, task: FakeTask, background: boolean, toolId: string): AgentRun {
+  const framesGiven = agent.frames !== undefined
+  const pieces: Piece[] = [{ ownPrompt: agent.prompt ?? agent.description }, ...(agent.frames ?? [])]
+  const sent = pieces.map(piece => pieceSent(piece, framesGiven))
+  let stopNow: () => void = () => undefined
+  const stopped = new Promise<void>(resolve => {
+    stopNow = resolve
+  })
+  return {
+    agent, result: task.result, background, toolId, taskId: `task_fake_${++seq}`, transcript: agent.transcript !== false,
+    pieces, sent, earlyAt: agent.early === true ? sent.indexOf(true) : -1, tail: null,
+    stopRequested: false, stopNow, stopped, ended: stopped
+  }
+}
+
+// a stopped agent, or one that ends stopped (end: 'stopped')
+function stoppedOf(run: AgentRun): boolean {
+  return run.stopRequested || run.agent.end === 'stopped'
+}
+
+// a pause of an agent: it ends after ms, at once when the agent is stopped, and, for a foreground agent, when the turn is
+// interrupted (a background agent outlives the turn)
+function pause(run: AgentRun, ms: number): Promise<void> {
+  return new Promise(resolve => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      waiting.delete(finish)
+      resolve()
     }
+    const timer = setTimeout(finish, ms)
+    void run.stopped.then(finish)
+    if (!run.background) waiting.add(finish)
+  })
+}
+
+// the time between two frames: the agent's pace, or one tick for a pace of 0
+function gap(run: AgentRun): Promise<void> {
+  const pace = run.agent.pace ?? 50
+  return pace > 0 ? pause(run, pace) : tick()
+}
+
+// a background agent with a gate ends once the gate's file exists
+async function gateOpen(run: AgentRun, gate: string): Promise<void> {
+  while (!existsSync(join(configDir, gate)) && !run.stopRequested) await pause(run, 20)
+}
+
+// the end of an agent: after its frames and its ms (or its gate), or at once when it is stopped
+function endOf(run: AgentRun, routine: Promise<void>): Promise<void> {
+  const gate = run.background ? run.agent.gate : undefined
+  const last = gate === undefined ? pause(run, run.agent.ms) : gateOpen(run, gate)
+  return Promise.race([run.stopped, Promise.all([routine, last]).then(() => undefined)])
+}
+
+function assistantMessage(content: Msg[], stopReason: string): Msg {
+  return { model: currentModel(), id: `msg_fake_${++seq}`, type: 'message', role: 'assistant', content, stop_reason: stopReason, stop_sequence: null, usage: USAGE }
+}
+
+// a frame of an agent: sent to the host when sent, and always written to the agent's transcript
+// transcriptExtra: the fields only the transcript line carries (a coordinator's message is isMeta there, with its origin)
+function deliver(run: AgentRun, type: 'user' | 'assistant', message: Msg, sent: boolean, extra: Msg = {}, transcriptExtra: Msg = {}): void {
+  const uuid = randomUUID()
+  if (sent) emit({ type, message, parent_tool_use_id: run.toolId, agent_id: run.taskId, session_id: session, uuid, timestamp: stamp(), ...extra })
+  writeSubagentLine(run, type, message, uuid, transcriptExtra)
+}
+
+// the transcript Claude Code writes for a subagent: one line per frame, each chained to the line before it (isSidechain)
+function writeSubagentLine(run: AgentRun, type: string, message: Msg | undefined, uuid: string, extra: Msg = {}): void {
+  if (!run.transcript || has('--no-session-persistence')) return
+  const folder = join(projectDir, session, 'subagents')
+  mkdirSync(folder, { recursive: true })
+  const line = { parentUuid: run.tail, isSidechain: true, agentId: run.taskId, sessionId: session, cwd: process.cwd(), version: VERSION, type, message, uuid, timestamp: stamp(), ...extra }
+  appendFileSync(join(folder, `agent-${run.taskId}.jsonl`), JSON.stringify(line) + '\n')
+  run.tail = uuid
+}
+
+// one piece of an agent's conversation
+async function playPiece(run: AgentRun, piece: Piece, sent: boolean): Promise<void> {
+  if ('ownPrompt' in piece) {
+    deliver(run, 'user', { role: 'user', content: piece.ownPrompt }, false)
+  } else if ('prompt' in piece) {
+    deliver(run, 'user', { role: 'user', content: [{ type: 'text', text: piece.prompt }] }, sent)
+  } else if ('text' in piece) {
+    deliver(run, 'assistant', assistantMessage([{ type: 'text', text: piece.text }], 'end_turn'), sent)
+  } else if ('thinking' in piece) {
+    deliver(run, 'assistant', assistantMessage([{ type: 'thinking', thinking: piece.thinking }], 'end_turn'), sent)
+  } else if ('tool' in piece) {
+    const toolId = `toolu_fake_${++seq}`
+    const { name, input, result, isError } = piece.tool
+    deliver(run, 'assistant', assistantMessage([{ type: 'tool_use', id: toolId, name, input, caller: { type: 'direct' } }], 'tool_use'), true)
+    deliver(run, 'user', { role: 'user', content: [{ tool_use_id: toolId, type: 'tool_result', content: result, is_error: isError ?? false }] }, true, {
+      tool_use_result: isError === true ? result : { type: 'text', content: result }
+    })
+  } else {
+    await runTask(piece.task, run)
+  }
+}
+
+// a subagent's task_started, and the call of its own tool that the SDK forwards with it
+function reportStart(run: AgentRun): void {
+  const { agent } = run
+  emit(sys('task_started', { task_id: run.taskId, tool_use_id: run.toolId, description: agent.description, prompt: agent.prompt ?? agent.description, subagent_type: agent.type, task_type: 'local_agent', run_id: `run_fake_${++seq}` }))
+  if (agent.work !== undefined) subagentCall(run.toolId, run.taskId, agent.type, agent.description, agent.work)
+}
+
+// the conversation of an agent: its pieces, one pace apart; the pieces up to an early one go out at once, before its task_started
+async function playAgent(run: AgentRun): Promise<void> {
+  for (let k = 0; k < run.pieces.length; k++) {
+    if (k > 0 && k > run.earlyAt) await gap(run)
+    if (run.stopRequested || (!run.background && aborted)) return
+    const playing = playPiece(run, run.pieces[k], run.sent[k])
+    if (k === run.earlyAt) reportStart(run)
+    await playing
+  }
+}
+
+// the status of an agent that ended: stopped when it was stopped or ends stopped, failed for a foreground agent that failed
+function endStatus(run: AgentRun): string {
+  return stoppedOf(run) ? 'stopped' : !run.background && run.agent.failed === true ? 'failed' : 'completed'
+}
+
+// the task_notification of an agent that ended; a resumed agent's says what it answered (summary)
+function notify(run: AgentRun, summary = run.agent.description, status = endStatus(run)): void {
+  running.delete(run.taskId)
+  emit(sys('task_notification', { task_id: run.taskId, tool_use_id: run.toolId, status, output_file: '', summary, usage: { total_tokens: 0, tool_uses: 0, duration_ms: run.agent.ms } }))
+}
+
+// a tool_result: the main conversation's, or a frame of the agent that made the call (a nested task)
+function sendResult(from: AgentRun | null, toolId: string, content: string, isError: boolean): void {
+  if (from === null) {
+    emitToolResult(toolId, content, isError)
+    return
+  }
+  deliver(from, 'user', { role: 'user', content: [{ tool_use_id: toolId, type: 'tool_result', content, is_error: isError }] }, true, {
+    tool_use_result: isError ? content : { type: 'text', content }
+  })
+}
+
+// a foreground agent: its notification and its call's result when it ends, unless the turn was interrupted
+async function finishForeground(run: AgentRun, from: AgentRun | null): Promise<void> {
+  await run.ended
+  if (aborted) {
+    running.delete(run.taskId)
+    return
+  }
+  notify(run)
+  const failed = stoppedOf(run) || run.agent.failed === true
+  sendResult(from, run.toolId, `${failed ? 'The agent failed.' : run.result}\n\nagentId: ${run.taskId}`, failed)
+}
+
+// the Agent calls of a nested task: frames of the agent that makes them, one message each
+function nestedCalls(from: AgentRun, calls: { name: string; input: Record<string, unknown> }[]): string[] {
+  return calls.map(call => {
+    const toolId = `toolu_fake_${++seq}`
+    deliver(from, 'assistant', assistantMessage([{ type: 'tool_use', id: toolId, name: call.name, input: call.input, caller: { type: 'direct' } }], 'tool_use'), true)
+    return toolId
+  })
+}
+
+// an Agent call (a task): its subagents start at once and end at their ends; the call ends with its result. A background task's
+// call ends at once with the launch notice, and its agents outlive the turn. from: the agent that makes a nested call, or null
+async function runTask(task: FakeTask, from: AgentRun | null): Promise<Outcome> {
+  const background = task.background === true
+  const calls = task.agents.map(agent => ({ name: 'Agent', input: agentCallInput(agent, background) }))
+  const toolIds = from === null ? emitToolUses(calls) : nestedCalls(from, calls)
+  const runs = task.agents.map((agent, i) => newRun(agent, task, background, toolIds[i]))
+  for (const run of runs) {
+    running.set(run.taskId, run)
+    agents.set(run.taskId, run)
+    if (run.earlyAt < 0) reportStart(run)
+  }
+  if (background) for (const run of runs) sendResult(from, run.toolId, `Async agent launched successfully.\n\nagentId: ${run.taskId}`, false)
+  for (const run of runs) run.ended = endOf(run, playAgent(run).catch(fail))
+  if (background) {
+    for (const run of runs) void run.ended.then(() => notify(run))
     return 'done'
   }
-  let at = 0
-  for (const entry of [...agents].sort((a, b) => a.agent.ms - b.agent.ms)) {
-    await waitFor(Math.max(0, entry.agent.ms - at))
-    at = Math.max(at, entry.agent.ms)
-    if (aborted) return 'interrupted'
-    const failed = entry.agent.failed === true
-    emit(sys('task_notification', { task_id: entry.taskId, tool_use_id: entry.toolId, status: failed ? 'failed' : 'completed', output_file: '', summary: entry.agent.description, usage: { total_tokens: 0, tool_uses: 0, duration_ms: entry.agent.ms } }))
-    emitToolResult(entry.toolId, failed ? 'The agent failed.' : step.result, failed)
+  await Promise.all(runs.map(run => finishForeground(run, from)))
+  return aborted ? 'interrupted' : 'done'
+}
+
+// stop_task: a running agent the stand-in started ends stopped at once; any other task id is answered alike
+function stopTask(taskId: string): void {
+  const run = running.get(taskId)
+  if (run === undefined) return
+  run.stopRequested = true
+  run.stopNow()
+}
+
+// a forward, read as Claude reads its template (src/main/chat/agent-forward.ts, forwardText): the agent's id is in the first line, the
+// nonce in the quoted end line of step 2, and the message is the lines between the first mark line and the last end line. A text
+// without these is not a forward
+function readForward(text: string): { agentId: string; text: string } | null {
+  const lines = text.split(/\r?\n/)
+  const agentId = /^\[ClaudeTerm: forward to agent ([A-Za-z0-9_-]{1,128})\]$/.exec(lines[0] ?? '')?.[1]
+  if (agentId === undefined) return null
+  const first = lines.indexOf('----- message -----')
+  if (first < 0) return null
+  const nonce = /"----- end of message ([0-9a-f]{8}) -----"/.exec(lines.slice(0, first).join('\n'))?.[1]
+  if (nonce === undefined) return null
+  const end = lines.lastIndexOf(`----- end of message ${nonce} -----`)
+  if (end <= first) return null
+  return { agentId, text: lines.slice(first + 1, end).join('\n') }
+}
+
+// a message for an agent that is running: queued_command in its transcript, and its answer (Got:) at once, in the same run
+function queueMessage(run: AgentRun, message: string): void {
+  writeSubagentLine(run, 'attachment', undefined, randomUUID(), { attachment: { type: 'queued_command', prompt: message, origin: { kind: 'coordinator' } } })
+  deliver(run, 'assistant', assistantMessage([{ type: 'text', text: `Got: ${message}` }], 'end_turn'), forwardSubagentText)
+}
+
+// an agent that ended runs again: a new run of its task, started by the SendMessage call; its transcript holds the coordinator's
+// message, then its answer (Got:) with its first parent_tool_use_id. Its notification comes 300 ms later, and Claude answers it
+function resume(run: AgentRun, toolId: string, message: string): void {
+  running.set(run.taskId, run)
+  emit(sys('task_started', { task_id: run.taskId, tool_use_id: toolId, description: run.agent.description, prompt: message, subagent_type: run.agent.type, task_type: 'local_agent', run_id: `run_fake_${++seq}` }))
+  deliver(run, 'user', { role: 'user', content: `The coordinator sent a message while you were working:\n${message}\n\nAddress this before completing your current task.` }, false, {}, { isMeta: true, origin: { kind: 'coordinator' } })
+  deliver(run, 'assistant', assistantMessage([{ type: 'text', text: `Got: ${message}` }], 'end_turn'), forwardSubagentText)
+  setTimeout(() => {
+    notify(run, `Got: ${message}`, 'completed')
+    followUpTurn(`The agent answered: Got: ${message}`)
+  }, 300)
+}
+
+// the turn Claude runs by itself when a resumed agent notifies, as Claude Code does: one text and its result. Claude Code starts it
+// from the notification, so it is not queued behind a turn of the person's
+function followUpTurn(text: string): void {
+  emit(state('running'))
+  const id = startMessage()
+  stream({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
+  stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } })
+  stream({ type: 'content_block_stop', index: 0 })
+  endMessage(id, [{ type: 'text', text }], 'end_turn')
+  emit(resultMessage(templates.result, { subtype: 'success', is_error: false, stop_reason: 'end_turn', terminal_reason: 'completed', result: text, permission_denials: [], api_error_status: null }))
+  if (queue.length === 0) emit(state('idle'))
+}
+
+// the answer to a SendMessage to an agent: an id no agent has, an agent stop_task stopped, a running agent (queued), or an ended one (resumed)
+function forwardTo(agentId: string, message: string, toolId: string): Msg {
+  const run = agents.get(agentId)
+  if (run === undefined) return { success: false, message: `No agent with id "${agentId}".` }
+  if (stoppedOf(run)) return { success: false, message: `Agent "${agentId}" was stopped and was not resumed. Treat its work as cancelled; only start a new agent for it if the user explicitly asks.` }
+  if (running.has(agentId)) {
+    queueMessage(run, message)
+    return { success: true, message: `Message queued for delivery to ${agentId} at its next tool round. If it finishes first, it is resumed with the message and notifies again, so wait for that notification before resending.` }
   }
-  return 'done'
+  resume(run, toolId, message)
+  return { success: true, message: `Resuming agent ${agentId.slice(0, 7)}`, resumedAgentId: agentId }
+}
+
+// a forward turn: what the script's forward says (deliver: SendMessage to the agent, then Forwarded.; fail: the call fails, then
+// Not forwarded:; ignore: Claude leaves the message to the agent). The first forward of the session loads SendMessage first
+async function forwardTurn(forward: { agentId: string; text: string }, turn: Turn): Promise<Outcome> {
+  const mode = script.forward ?? 'deliver'
+  if (mode === 'ignore') return streamText('I will leave that to the agent.', 1, turn)
+  if (!searched) {
+    searched = true
+    emitToolResult(emitToolUse('ToolSearch', { query: 'select:SendMessage' }), 'SendMessage is loaded.', false)
+  }
+  const toolId = emitToolUse('SendMessage', { to: forward.agentId, message: forward.text, summary: 'Forward from the user' })
+  logLine({ forwarded: { to: forward.agentId, message: forward.text } })
+  const answer: Msg = mode === 'fail' ? { success: false, message: 'agent was cancelled' } : forwardTo(forward.agentId, forward.text, toolId)
+  emitToolResult(toolId, JSON.stringify(answer), false)
+  return streamText(answer.success === true ? 'Forwarded.' : `Not forwarded: ${answer.message}`, 1, turn)
 }
 
 async function runStep(step: FakeStep, turn: Turn): Promise<Outcome> {
@@ -618,7 +899,7 @@ async function runStep(step: FakeStep, turn: Turn): Promise<Outcome> {
     return 'done'
   }
   if ('thinking' in step) return thinkingStep(step)
-  if ('task' in step) return taskStep(step.task)
+  if ('task' in step) return runTask(step.task, null)
   if ('fold' in step) {
     if (step.fold === 'result') {
       // the sends still waiting are taken into this turn: the turn's result names them, and no turn of their own runs them
@@ -752,7 +1033,8 @@ function headsUpSteps(text: string): FakeStep[] | undefined {
 
 async function runTurn(text: string): Promise<void> {
   aborted = false
-  const steps = headsUpSteps(text) ?? (Object.hasOwn(script.turns, text) ? script.turns[text] : script.fallback ?? [{ text: 'ok' }])
+  const forward = readForward(text)
+  const steps = forward !== null ? [] : headsUpSteps(text) ?? (Object.hasOwn(script.turns, text) ? script.turns[text] : script.fallback ?? [{ text: 'ok' }])
   if (steps.length === 1 && 'command' in steps[0]) return runLocalTurn(steps[0], text)
   if (steps.length === 1 && 'notAvailable' in steps[0]) return runUnavailableTurn(steps[0].notAvailable, text)
   emit(state('running'))
@@ -760,7 +1042,7 @@ async function runTurn(text: string): Promise<void> {
   record('user', { role: 'user', content: text })
   emit(sys('status', { status: 'requesting' }))
   const turn: Turn = { text: '', denials: [] }
-  const outcome = await runSteps(steps, turn)
+  const outcome = forward !== null ? await forwardTurn(forward, turn) : await runSteps(steps, turn)
   needInit = true
   if (outcome === 'interrupted') {
     emit({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] }, parent_tool_use_id: null, session_id: session, uuid: randomUUID(), timestamp: stamp() })
@@ -812,6 +1094,7 @@ function onControl(msg: Msg): void {
   const request: Msg = msg.request ?? {}
   switch (request.subtype) {
     case 'initialize':
+      forwardSubagentText = request.forwardSubagentText === true
       void initialize(requestId)
       return
     case 'interrupt':
@@ -834,6 +1117,7 @@ function onControl(msg: Msg): void {
       mcpControl(requestId, request)
       return
     case 'stop_task':
+      stopTask(String(request.task_id ?? ''))
       reply(requestId, {})
       return
     case 'get_settings':

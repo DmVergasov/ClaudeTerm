@@ -68,6 +68,7 @@ async function openGroup(name: string, platform: DevicePlatform, opts: OpenOptio
     host: '127.0.0.1',
     port: opts.port ?? 0,
     platform,
+    appVersion: '0.18.0',
     hostName: () => name,
     addresses: opts.addresses ?? (() => ['127.0.0.1']),
     onData: (updates) => sink.data.push(updates),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CALL_ARGS, CALL_REPLIES, type CallMethod, parsePush, reviewRevOf } from '../../src/main/sync/remote-shapes'
 import { MAX_IMAGE_BYTES } from '../../src/shared/image-file'
-import { IMAGE_PART_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_BYTES, MAX_TRANSFER_FILES, MAX_TYPED_TEXT, TRANSFER_PART_BYTES } from '../../src/shared/remote'
+import { IMAGE_PART_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_BYTES, MAX_TRANSFER_FILES, MAX_TYPED_TEXT, PUSH_KINDS, TRANSFER_PART_BYTES } from '../../src/shared/remote'
 import type { ReviewUpdate } from '../../src/shared/review'
 import type { ImageCard } from '../../src/shared/types'
 
@@ -60,6 +60,10 @@ const GOOD_ARGS: Array<[CallMethod, unknown]> = [
   ['chat-model', { id: T1, model: null, effort: 'high' }],
   ['chat-stop-task', { id: T1, taskId: 'task-1' }],
   ['chat-older', { id: T1, beforeId: 'item-1' }],
+  ['chat-agent', { id: T1, agentId: 'agent-1' }],
+  ['chat-agent-older', { id: T1, agentId: 'agent-1', beforeId: 'item-1' }],
+  ['chat-agent-watch', { id: T1, agentId: 'agent-1' }],
+  ['chat-agent-watch', { id: T1, agentId: null }],
   ['chat-view', { id: T1, view: 'chat' }],
   ['chat-commands', { id: T1 }],
   ['chat-models', { id: T1 }],
@@ -139,6 +143,16 @@ const BAD_ARGS: Array<[CallMethod, unknown]> = [
   ['chat-stop-task', { id: T1, taskId: 5 }],
   ['chat-older', { id: T1, beforeId: 5 }],
   ['chat-older', { id: 'x', beforeId: 'item-1' }],
+  ['chat-agent', { id: T1, agentId: '../x' }],
+  ['chat-agent', { id: T1, agentId: 'x'.repeat(129) }],
+  ['chat-agent', { id: 'x', agentId: 'agent-1' }],
+  ['chat-agent-older', { id: T1, agentId: '../x', beforeId: 'item-1' }],
+  ['chat-agent-older', { id: T1, agentId: 'agent-1', beforeId: 5 }],
+  ['chat-agent-older', { id: T1, agentId: 'x'.repeat(129), beforeId: 'item-1' }],
+  ['chat-agent-watch', { id: T1, agentId: '../x' }],
+  ['chat-agent-watch', { id: T1, agentId: 'x'.repeat(129) }],
+  ['chat-agent-watch', { id: T1, agentId: 5 }],
+  ['chat-agent-watch', { id: T1 }],
   ['chat-view', { id: T1, view: 'grid' }],
   ['chat-view', { id: T1, view: 5 }],
   ['chat-commands', { id: 'x' }],
@@ -154,7 +168,7 @@ const BAD_ARGS: Array<[CallMethod, unknown]> = [
 describe('call arguments', () => {
   it('GOOD_ARGS and BAD_ARGS hold a case for every method of the table', () => {
     const methods = Object.keys(CALL_ARGS).sort()
-    expect(methods).toHaveLength(38)
+    expect(methods).toHaveLength(41)
     expect([...new Set(GOOD_ARGS.map(([m]) => m))].sort()).toEqual(methods)
     expect([...new Set(BAD_ARGS.map(([m]) => m))].sort()).toEqual(methods)
   })
@@ -253,6 +267,32 @@ describe('chat call replies', () => {
     expect(CALL_REPLIES['chat-answer']({ ok: false })).toEqual({ ok: false })
     expect(CALL_REPLIES['chat-answer']({})).toBeNull()
     expect(CALL_REPLIES['chat-terminal'](null)).toBeNull()
+  })
+})
+
+const AGENT_INFO = { id: 'agent-1', type: 'Explore', description: 'Find the total', state: 'running', startedAt: 1000, ms: null, parentId: null }
+const agentPage = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  tabId: T1, agentId: 'agent-1', rev: 3, items: [{ kind: 'prompt', id: 'p1', text: 'Look', first: true }], hasOlder: false, agent: AGENT_INFO, writable: false, ...over
+})
+
+describe('agent page calls', () => {
+  it('chat-agent answers an agent page: its items, its agent and writable, each one checked', () => {
+    expect(CALL_REPLIES['chat-agent'](agentPage())).toEqual(agentPage())
+    expect(CALL_REPLIES['chat-agent'](agentPage({ items: [{ kind: 'nope', id: 'x' }] }))).toBeNull()
+    expect(CALL_REPLIES['chat-agent'](agentPage({ agent: { ...AGENT_INFO, state: 'paused' } }))).toBeNull()
+    expect(CALL_REPLIES['chat-agent'](agentPage({ writable: 'no' }))).toBeNull()
+    expect(CALL_REPLIES['chat-agent'](null)).toBeNull()
+  })
+
+  it('chat-agent-older answers a page of items, and a page with a bad item is refused', () => {
+    expect(CALL_REPLIES['chat-agent-older']({ items: [{ kind: 'prompt', id: 'p1', text: 'Look', first: true }], hasOlder: false })).not.toBeNull()
+    expect(CALL_REPLIES['chat-agent-older']({ items: [{ kind: 'nope', id: 'x' }], hasOlder: false })).toBeNull()
+  })
+
+  it('chat-agent-watch answers with nothing; the push kinds of an agent page are both listed', () => {
+    expect(CALL_REPLIES['chat-agent-watch']({})).toEqual({})
+    expect(CALL_REPLIES['chat-agent-watch'](null)).toBeNull()
+    expect(PUSH_KINDS).toEqual(expect.arrayContaining(['chat-agent', 'chat-agent-patch']))
   })
 })
 

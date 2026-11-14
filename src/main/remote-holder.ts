@@ -1,4 +1,5 @@
 import { type PushKind, type RemoteSnapshot } from '../shared/remote'
+import { olderChatPush } from './chat/chat-mirror'
 import { Coalescer } from './coalesce'
 import type { Calls, CallEntry } from './sync/calls'
 import type { PeerLink } from './sync/peer-link'
@@ -148,7 +149,8 @@ export class RemoteHolder {
         onWatchers: () => {
           if (!this.disposed) deps.onWatchers?.()
         },
-        onPushRefused: (tabId, k) => this.pushRefused(tabId, k)
+        onPushRefused: (tabId, k) => this.pushRefused(tabId, k),
+        forOlder: olderChatPush
       })
       this.viewer = new RemoteTabs({
         selfId: () => deps.selfId(),

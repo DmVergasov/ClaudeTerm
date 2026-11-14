@@ -265,6 +265,8 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         includePartialMessages: true,
         perTaskStopAffordance: true,
+        // a subagent's text and thinking come to the chat, each agent's page shows them
+        forwardSubagentText: true,
         extraArgs: o.settingsPath === null ? {} : { settings: o.settingsPath },
         canUseTool: (toolName, input, opts) => {
           const ask = new AbortController()

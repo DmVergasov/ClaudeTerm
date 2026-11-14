@@ -301,6 +301,16 @@ describe('the SDK engine', () => {
     await stop(engine, h)
   })
 
+  it('the initialize request asks for subagent text', async () => {
+    const h = harness()
+    const log = join(dir, 'fake-claude.log')
+    const engine = start(h, { log, script: { turns: {} } })
+    await until(() => h.readies.length === 1, 'the ready')
+    // the text and thinking of a subagent reach the chat only when Claude Code forwards them
+    expect(controlRequests(log, 'initialize')[0]).toMatchObject({ forwardSubagentText: true })
+    await stop(engine, h)
+  })
+
   it('a new session starts with the id the engine is given', async () => {
     const h = harness()
     const log = join(dir, 'fake-claude.log')

@@ -1,4 +1,4 @@
-import type { ChatAnswer, ChatAttachment, ChatEventSource, ChatItem, ChatNoticeAction } from '../../shared/chat'
+import { type ChatAnswer, type ChatAttachment, type ChatEventSource, type ChatItem, type ChatNoticeAction, isAgentId } from '../../shared/chat'
 import type { ReloadAction } from '../../shared/mcp'
 import { icon } from '../icons'
 import type { ImageCard } from '../../shared/types'
@@ -7,6 +7,7 @@ import { chatMarkdownHtml, markdownClick, splitStable } from './chat-markdown'
 import { renderCard } from './chat-cards'
 import { renderImages, renderSteps, type StepKeep } from './chat-steps'
 import { splitQuotes } from './chat-quote'
+import { forwardMark } from './agent-text'
 
 export interface ItemCallbacks {
   answer(cardId: string, a: ChatAnswer): void | Promise<boolean>
@@ -20,6 +21,8 @@ export interface ItemCallbacks {
   /** the Media card of an image, from the tab's last images update; null when the panel has no such card */
   imageCard(cardId: string): ImageCard | null
   openImages(cards: ImageCard[], index: number): void
+  /** an agent's row in the dock: its page opens in place of the conversation */
+  openAgent(agentId: string): void
   revealChange(path: string): void
   /** an http(s) address Claude wrote, opened in the browser */
   openExternal(url: string): void
@@ -43,8 +46,11 @@ const button = (label: string, onClick: () => void): HTMLButtonElement => {
 /** how many blocks of a streaming text are drawn already: the stable part only grows, a block is drawn once */
 const drawnStable = new WeakMap<HTMLElement, number>()
 
+/** a prompt's fold as its column keeps it: unfolded is whether Show all was clicked, and unfold() keeps that for the item's redraws */
+export interface PromptFold { unfolded: boolean; unfold(): void }
+
 /** one item of the column, drawn plainly: the text is always set as text, never as markup, except Claude's Markdown */
-export function renderItem(item: ChatItem, cb: ItemCallbacks, keep: StepKeep | null = null, settled = true): HTMLElement {
+export function renderItem(item: ChatItem, cb: ItemCallbacks, keep: StepKeep | null = null, settled = true, prompt: PromptFold = { unfolded: false, unfold: () => undefined }): HTMLElement {
   switch (item.kind) {
     case 'user': return userItem(item, cb)
     case 'text': return textNode(item, cb)
@@ -57,7 +63,38 @@ export function renderItem(item: ChatItem, cb: ItemCallbacks, keep: StepKeep | n
     case 'images': return renderImages(item, cb)
     case 'command': return commandItem(item.command, item.output)
     case 'event': return eventItem(item.source, item.title, item.status, item.body)
+    case 'prompt': return promptItem(item, cb, prompt)
+    case 'forward': return forwardNote(item, cb)
   }
+}
+
+/** a prompt longer than this many lines or characters is folded to six lines, with Show all */
+const PROMPT_FOLD_LINES = 6
+const PROMPT_FOLD_CHARS = 600
+
+/**
+ * A prompt on an agent's page: what Claude asked the agent (its first, "Claude asked") or a later message from Claude ("From Claude").
+ * A quiet block with its text as Markdown; a long one is folded, and Show all unfolds it, for good as the column keeps it.
+ */
+function promptItem(item: Extract<ChatItem, { kind: 'prompt' }>, cb: ItemCallbacks, fold: PromptFold): HTMLElement {
+  const box = el('div', 'chat-prompt')
+  box.append(el('div', 'chat-prompt-head', item.first ? 'Claude asked' : 'From Claude'))
+  const body = el('div', 'chat-prompt-body')
+  body.innerHTML = chatMarkdownHtml(item.text)
+  body.addEventListener('click', (e) => markdownClick(e, cb))
+  box.append(body)
+  if ((item.text.split('\n').length > PROMPT_FOLD_LINES || item.text.length > PROMPT_FOLD_CHARS) && !fold.unfolded) {
+    body.classList.add('folded')
+    const more = el('button', 'chat-prompt-more', 'Show all') as HTMLButtonElement
+    more.type = 'button'
+    more.addEventListener('click', () => {
+      body.classList.remove('folded')
+      more.remove()
+      fold.unfold()
+    })
+    box.append(more)
+  }
+  return box
 }
 
 /**
@@ -111,6 +148,44 @@ function userBubble(text: string): HTMLElement {
   for (const quote of quotes) bubble.append(el('div', 'chat-quote-block', quote))
   if (rest !== '') bubble.append(rest)
   return bubble
+}
+
+/**
+ * A forward in the main conversation: one quiet line, `↗ To <label>: <first line of its text>`, then its mark. A click opens the
+ * agent's page, for an id that is an agent id.
+ */
+function forwardNote(item: Extract<ChatItem, { kind: 'forward' }>, cb: ItemCallbacks): HTMLElement {
+  const row = el('div', 'chat-forward')
+  row.append(el('span', 'chat-forward-line', `↗ To ${item.label}: ${item.text.split('\n')[0]}`), forwardMarkNode(item))
+  if (isAgentId(item.agentId)) {
+    row.classList.add('open')
+    // a button for the keyboard, as the step rows are: Enter and Space open the page, as a click does
+    row.tabIndex = 0
+    row.setAttribute('role', 'button')
+    const open = (): void => cb.openAgent(item.agentId)
+    row.addEventListener('click', open)
+    row.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return
+      e.preventDefault()
+      open()
+    })
+  }
+  return row
+}
+
+/**
+ * A forward on an agent's page: the person's message as a bubble, and under it its mark (how it goes through Claude). The page
+ * draws it; the main conversation draws a note (forwardNote).
+ */
+export function forwardBubble(item: Extract<ChatItem, { kind: 'forward' }>): HTMLElement {
+  const row = el('div', 'chat-item chat-user-row forward')
+  row.append(userBubble(item.text), forwardMarkNode(item))
+  return row
+}
+
+/** a forward's mark: its state as the text says it, in the error tone when Claude did not send it */
+function forwardMarkNode(item: Extract<ChatItem, { kind: 'forward' }>): HTMLElement {
+  return el('span', item.state === 'failed' ? 'agent-mark error' : 'agent-mark', forwardMark(item.state, item.reason))
 }
 
 /** the files of a message: an image with its Media card shows as a thumbnail, anything else as a chip with its name */

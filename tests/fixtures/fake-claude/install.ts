@@ -16,7 +16,7 @@ export type FakeStep =
   | { compact: true | FakeCompact }
   | { wait: number }
   | { thinking: string; ms: number } // a thinking block of the message: its summary ("" for none); Claude thinks for ms
-  | { task: { description: string; result: string; background?: true; agents: { type: string; description: string; ms: number; failed?: boolean; model?: string; effort?: string; work?: { model: string; context: number } }[] } } // an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ms (failed: they end failed); the call ends with its result; background: the call ends at once with the launch notice, and each agent ends at its ms after that, outliving the turn. model, effort: what the call asks for (AgentInput); work: the subagent's own call, passed on as Claude Code does (its model, and its usage with this many tokens)
+  | { task: FakeTask } // an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ms (failed: they end failed); the call ends with its result; background: the call ends at once with the launch notice, and each agent ends at its ms after that, outliving the turn. model, effort: what the call asks for (AgentInput); work: the subagent's own call, passed on as Claude Code does (its model, and its usage with this many tokens)
   | { crash: number; once?: boolean } // exit with this code; once: only on the first run (a marker file beside the script)
   | { noise: string } // a raw stdout line that is not a message
   | { dialog: string } // a control_request { subtype: 'request_user_dialog', dialog_kind: <it>, payload: {} }; goes on when answered
@@ -26,6 +26,35 @@ export type FakeStep =
   | { inject: { text: string; origin?: Record<string, unknown> } } // a user-role message Claude Code puts in the conversation itself (a background task's notice, another session's message); origin: the SDK's origin of it, none when not given
   | { rateLimit: { type: 'five_hour' | 'seven_day'; utilization: number; resetsAt: number; status?: 'allowed' | 'rejected'; windows?: RateLimitWindows } } // a rate_limit_event of the stream, shaped as the recorded one (utilization 0.42 is 42 %); windows: what unifiedWindows carries, every window the account has; left out, the event has no unifiedWindows and names its own window alone
   | { cli: string[] } // Claude runs `claude <args>` with Bash: a Bash tool_use (input.command = 'claude ' + args joined by spaces), then the stand-in's own CLI runs in-process, then the tool_result with its stdout
+
+/** a frame of a subagent's conversation, in order: what it says or does (its text and thinking reach the host only with forwardSubagentText) */
+export type FakeAgentFrame =
+  | { text: string }
+  | { thinking: string }
+  | { prompt: string } // a later user message to the agent (a message from Claude); the agent's own prompt is not one of these: it is task_started's prompt
+  | { tool: { name: string; input: Record<string, unknown>; result: string; isError?: boolean } } // a tool call and its result: always sent
+  | { task: FakeTask } // a nested agent: its Agent call is a frame of this agent
+
+/** one subagent of an Agent call: what it is asked, how long it runs, and its conversation (frames) */
+export interface FakeAgent {
+  type: string
+  description: string
+  ms: number
+  failed?: boolean
+  model?: string // what the call asks for (AgentInput)
+  effort?: string
+  work?: { model: string; context: number } // the subagent's own call, passed on as Claude Code does (its model, and its usage with this many tokens)
+  prompt?: string // the prompt Claude gives it; its description when not given
+  frames?: FakeAgentFrame[] // its conversation, after its prompt (which its task_started carries and its transcript starts with)
+  pace?: number // ms between two frames (default 50; 0: one tick)
+  end?: 'stopped' // it ends stopped
+  gate?: string // with a background task: it ends once <config folder>/<gate> exists (else at ms)
+  early?: boolean // its first frame comes before its task_started
+  transcript?: false // no transcript file is written for it
+}
+
+/** an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ends; the call ends with its result. background: the call ends at once with the launch notice, and each agent runs on, outliving the turn */
+export interface FakeTask { description: string; result: string; background?: true; agents: FakeAgent[] }
 
 /** a compaction (compact: true is one with the defaults): gate holds it until the file <config folder>/<gate> exists; fail ends it as a failure with this error; the numbers go in its boundary */
 export interface FakeCompact { trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; gate?: string; fail?: string }
@@ -78,6 +107,8 @@ export interface FakeScript {
   cliFail?: Record<string, string>
   /** a CLI call whose arguments start with the key waits, after it is logged, until the file <config folder>/<gate> exists: a test holds it while it does something else */
   cliGate?: Record<string, string>
+  /** what the stand-in does with a forward (a user message whose first line is a forward header): deliver it to the agent, fail it, or leave it to the agent */
+  forward?: 'deliver' | 'fail' | 'ignore'
 }
 
 export interface FakeMarketplace { name: string; source: string; plugins: FakePlugin[] }

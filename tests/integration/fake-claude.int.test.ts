@@ -7,6 +7,7 @@ import type { PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agen
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { fixtureLines } from '../fixtures/chat-fixtures'
 import { FAKE_CREDENTIAL, installFakeClaude, type FakeScript } from '../fixtures/fake-claude/install'
+import { forwardText } from '../../src/main/chat/agent-forward'
 
 // The stand-in Claude Code (tests/fixtures/fake-claude/fake-claude.ts) run as the installed command
 
@@ -1053,5 +1054,467 @@ describe('the stand-in\'s claude mcp, claude plugin and the session\'s MCP reque
     expect(result).toMatchObject({ tool_use_id: call.id, content: 'Added http MCP server docs to user config', is_error: false })
     expect(readJson(join(config, '.claude.json')).mcpServers).toEqual({ docs: { type: 'http', url: 'https://docs.example/mcp' } })
     await finish(run)
+  })
+})
+
+describe('the stand-in Claude Code runs subagents', () => {
+  // the initialize request, with the flag ClaudeTerm sends to forward the subagents' text
+  function initWith(forwardSubagentText: boolean): Msg {
+    return { ...initLine, request: { ...initLine.request, forwardSubagentText } }
+  }
+
+  async function turn(run: Run, text: string): Promise<void> {
+    send(run, user(text))
+    await until(() => run.out.some(m => m.type === 'result'), 'the result')
+  }
+
+  // the ids of the top-level Agent calls, in the order the turn made them
+  function callIds(run: Run): string[] {
+    return run.out
+      .filter(m => m.type === 'assistant' && m.parent_tool_use_id === null && m.message?.content?.[0]?.name === 'Agent')
+      .map(m => m.message.content[0].id as string)
+  }
+
+  function taskIdOf(run: Run, call: string): string | undefined {
+    return run.out.find(m => m.type === 'system' && m.subtype === 'task_started' && m.tool_use_id === call)?.task_id
+  }
+
+  function notificationOf(run: Run, task: string): Msg | undefined {
+    return run.out.find(m => m.type === 'system' && m.subtype === 'task_notification' && m.task_id === task)
+  }
+
+  // the subagent's transcript, as Claude Code writes it under the project folder of the work folder
+  function subagentFile(session: string, task: string): string {
+    return join(config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'), session, 'subagents', `agent-${task}.jsonl`)
+  }
+
+  function transcriptLines(file: string): Msg[] {
+    return readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as Msg)
+  }
+
+  // the tool_result of a call the main conversation makes (not a frame of an agent)
+  function resultOf(run: Run, call: string): Msg | undefined {
+    return run.out.find(m => m.type === 'user' && m.parent_tool_use_id === null && m.message?.content?.[0]?.tool_use_id === call)
+  }
+
+  it('an agent\'s frames carry parent_tool_use_id, agent_id and a uuid; text and thinking come only with forwardSubagentText', async () => {
+    const script: FakeScript = {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Look', result: 'Found it.',
+            agents: [{ type: 'Explore', description: 'Find the total', ms: 200, frames: [{ text: 'Looking' }, { thinking: 'Hmm' }, { tool: { name: 'Grep', input: { pattern: 'total' }, result: 'a.ts:1' } }] }]
+          }
+        }]
+      }
+    }
+    for (const flag of [true, false]) {
+      const session = randomUUID()
+      const run = start([...STREAM, '--session-id', session], script)
+      send(run, initWith(flag))
+      await turn(run, 'Go')
+      await finish(run)
+
+      const call = callIds(run)[0]
+      const task = taskIdOf(run, call) as string
+      const frames = run.out.filter(m => m.parent_tool_use_id === call)
+      for (const frame of frames) expect(frame).toMatchObject({ agent_id: task, session_id: session, uuid: expect.any(String) })
+      expect(new Set(frames.map(frame => frame.uuid)).size).toBe(frames.length)
+      // text and thinking are forwarded only with the flag; the tool is always sent; the prompt is no frame (task_started carries it)
+      const kinds = frames.map(frame => frame.message.content[0].type)
+      expect(kinds).toEqual(flag ? ['text', 'thinking', 'tool_use', 'tool_result'] : ['tool_use', 'tool_result'])
+    }
+  })
+
+  it('the agent\'s transcript holds its prompt and frames with the frames\' uuids, and the Agent result ends with agentId', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Look', result: 'Found it.',
+            agents: [{ type: 'Explore', description: 'Find the total', prompt: 'Find where the total is computed', ms: 150, frames: [{ text: 'Looking' }, { tool: { name: 'Grep', input: { pattern: 'total' }, result: 'a.ts:1' } }] }]
+          }
+        }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+    await finish(run)
+
+    const call = callIds(run)[0]
+    const task = taskIdOf(run, call) as string
+    const frames = run.out.filter(m => m.parent_tool_use_id === call)
+    const lines = transcriptLines(subagentFile(session, task))
+    expect(lines.map(line => line.type)).toEqual(['user', 'assistant', 'assistant', 'user'])
+    expect(lines[0].message.content).toBe('Find where the total is computed')
+    expect(lines.slice(1).map(line => line.uuid)).toEqual(frames.map(frame => frame.uuid))
+    for (const line of lines) expect(line).toMatchObject({ isSidechain: true, agentId: task, sessionId: session })
+    expect(lines[1].parentUuid).toBe(lines[0].uuid)
+
+    expect(resultOf(run, call)?.message.content[0]).toMatchObject({ content: `Found it.\n\nagentId: ${task}`, is_error: false })
+  })
+
+  it('an agent\'s prompt is in its task_started and its transcript\'s first line, not a frame', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Look', result: 'Found it.',
+            agents: [{ type: 'Explore', description: 'Find the total', prompt: 'Find where the total is computed', ms: 150, frames: [{ text: 'Looking' }] }]
+          }
+        }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+    await finish(run)
+
+    const call = callIds(run)[0]
+    const task = taskIdOf(run, call) as string
+    const started = run.out.find(m => m.type === 'system' && m.subtype === 'task_started' && m.task_id === task)
+    expect(started?.prompt).toBe('Find where the total is computed')
+    const frames = run.out.filter(m => m.parent_tool_use_id === call)
+    expect(frames.filter(frame => frame.type === 'user')).toEqual([])
+    const lines = transcriptLines(subagentFile(session, task))
+    expect(lines[0]).toMatchObject({ type: 'user', message: { role: 'user', content: 'Find where the total is computed' } })
+    expect(lines.slice(1).map(line => line.uuid)).toEqual(frames.map(frame => frame.uuid))
+  })
+
+  it('early sends one frame before task_started, and end stopped reports stopped', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Two looks', result: 'Found it.',
+            agents: [
+              { type: 'Explore', description: 'Early look', ms: 300, early: true, frames: [{ text: 'Early words' }] },
+              { type: 'Plan', description: 'Stopped look', ms: 100, end: 'stopped', frames: [{ text: 'Late words' }] }
+            ]
+          }
+        }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+    await finish(run)
+
+    const [early, stopped] = callIds(run)
+    const earlyTask = taskIdOf(run, early) as string
+    const started = run.out.findIndex(m => m.type === 'system' && m.subtype === 'task_started' && m.tool_use_id === early)
+    const before = run.out.slice(0, started).filter(m => m.parent_tool_use_id === early)
+    expect(before).toHaveLength(1)
+    expect(notificationOf(run, earlyTask)?.status).toBe('completed')
+
+    const stoppedTask = taskIdOf(run, stopped) as string
+    expect(notificationOf(run, stoppedTask)?.status).toBe('stopped')
+    expect(resultOf(run, stopped)?.message.content[0]).toMatchObject({ content: `The agent failed.\n\nagentId: ${stoppedTask}`, is_error: true })
+  })
+
+  it('a background agent: the turn ends, its frames go on, and it ends when its gate exists', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Watch the folder', result: 'unused', background: true,
+            agents: [{ type: 'Explore', description: 'Watch the folder', ms: 0, gate: 'release.flag', pace: 200, frames: [{ text: 'First look' }, { text: 'Second look' }] }]
+          }
+        }, { text: 'Started.' }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+
+    const call = callIds(run)[0]
+    const task = taskIdOf(run, call) as string
+    const resultIndex = run.out.findIndex(m => m.type === 'result')
+    expect(resultOf(run, call)?.message.content[0]).toMatchObject({ content: `Async agent launched successfully.\n\nagentId: ${task}`, is_error: false })
+
+    // the frames go on after the turn's result, and the agent has not ended: its gate is not there yet
+    await until(() => run.out.some(m => m.parent_tool_use_id === call && textOf(m) === 'Second look'), 'the second frame')
+    expect(run.out.findIndex(m => m.parent_tool_use_id === call && textOf(m) === 'Second look')).toBeGreaterThan(resultIndex)
+    expect(notificationOf(run, task)).toBeUndefined()
+
+    writeFileSync(join(config, 'release.flag'), '')
+    await until(() => notificationOf(run, task) !== undefined, 'the agent ends')
+    expect(notificationOf(run, task)?.status).toBe('completed')
+    await finish(run)
+  })
+
+  it('stop_task stops a running agent', async () => {
+    const run = start([...STREAM, '--session-id', randomUUID()], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Long audit', result: 'unused', background: true,
+            agents: [{ type: 'general-purpose', description: 'Long audit', ms: 60_000 }]
+          }
+        }, { text: 'Started.' }]
+      }
+    })
+    send(run, initWith(false))
+    await turn(run, 'Go')
+    const task = taskIdOf(run, callIds(run)[0]) as string
+
+    send(run, { type: 'control_request', request_id: 'stop_1', request: { subtype: 'stop_task', task_id: task } })
+    await until(() => notificationOf(run, task) !== undefined, 'the agent stops', 3000)
+    expect(notificationOf(run, task)?.status).toBe('stopped')
+    expect(run.out.find(m => m.type === 'control_response' && m.response?.request_id === 'stop_1')?.response.response).toEqual({})
+    await finish(run)
+  })
+
+  it('a nested agent has its own task, frames and transcript, and its call is a frame of its parent', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Outer plan', result: 'Outer done.',
+            agents: [{
+              type: 'Plan', description: 'Outer plan', ms: 400,
+              frames: [{ task: { description: 'Inner look', result: 'inner done', agents: [{ type: 'Explore', description: 'Inner look', prompt: 'Look inside', ms: 60, frames: [{ text: 'Inside words' }] }] } }]
+            }]
+          }
+        }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+    await finish(run)
+
+    const outerCall = callIds(run)[0]
+    const outerTask = taskIdOf(run, outerCall) as string
+    const nestedCall = run.out.find(m => m.type === 'assistant' && m.parent_tool_use_id === outerCall && m.message?.content?.[0]?.name === 'Agent')?.message.content[0].id as string
+    expect(nestedCall).toBeDefined()
+    expect(run.out.find(m => m.parent_tool_use_id === outerCall && m.message?.content?.[0]?.tool_use_id === nestedCall)).toMatchObject({ agent_id: outerTask })
+
+    // the nested agent has its own task and frames, and its own transcript
+    const innerTask = taskIdOf(run, nestedCall) as string
+    expect(innerTask).toBeDefined()
+    expect(innerTask).not.toBe(outerTask)
+    const innerFrames = run.out.filter(m => m.parent_tool_use_id === nestedCall)
+    expect(innerFrames.map(frame => textOf(frame))).toEqual(['Inside words'])
+    for (const frame of innerFrames) expect(frame.agent_id).toBe(innerTask)
+    expect(run.out.find(m => m.type === 'system' && m.subtype === 'task_started' && m.task_id === innerTask)?.prompt).toBe('Look inside')
+    const innerLines = transcriptLines(subagentFile(session, innerTask))
+    expect(innerLines.slice(1).map(line => line.uuid)).toEqual(innerFrames.map(frame => frame.uuid))
+    expect(innerLines[0].message.content).toBe('Look inside')
+
+    // its task_notification comes before the outer agent's tool_result frame for the call, which carries the result
+    expect(notificationOf(run, innerTask)?.status).toBe('completed')
+    const innerResult = run.out.findIndex(m => m.parent_tool_use_id === outerCall && m.message?.content?.[0]?.tool_use_id === nestedCall)
+    expect(run.out[innerResult].message.content[0]).toMatchObject({ content: `inner done\n\nagentId: ${innerTask}`, is_error: false })
+    expect(run.out.indexOf(notificationOf(run, innerTask) as Msg)).toBeLessThan(innerResult)
+
+    // the outer agent's transcript holds its own frames, the nested call and its result
+    const outerUuids = transcriptLines(subagentFile(session, outerTask)).map(line => line.uuid)
+    expect(outerUuids).toContain(run.out.find(m => m.parent_tool_use_id === outerCall && m.message?.content?.[0]?.name === 'Agent')?.uuid)
+    expect(outerUuids).toContain(run.out[innerResult].uuid)
+  })
+
+  it('transcript: false writes no transcript', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Quiet look', result: 'Found it.',
+            agents: [{ type: 'Explore', description: 'Quiet look', ms: 100, transcript: false, frames: [{ text: 'Silent words' }] }]
+          }
+        }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+    await finish(run)
+
+    const call = callIds(run)[0]
+    const task = taskIdOf(run, call) as string
+    expect(run.out.some(m => m.parent_tool_use_id === call && textOf(m) === 'Silent words')).toBe(true)
+    expect(resultOf(run, call)?.message.content[0]).toMatchObject({ content: `Found it.\n\nagentId: ${task}` })
+    expect(existsSync(subagentFile(session, task))).toBe(false)
+  })
+
+  // a forward of the person's message to an agent, as main writes it (agent-forward.ts)
+  function forwardOf(agent: string, text: string): string {
+    return forwardText({ agentId: agent, type: 'Explore', description: 'Find the total', text }, 'a1b2c3d4') as string
+  }
+
+  // a user message that runs its turn, and the wait for that turn's result
+  async function nextTurn(run: Run, text: string): Promise<void> {
+    const before = run.out.filter(m => m.type === 'result').length
+    send(run, user(text))
+    await until(() => run.out.filter(m => m.type === 'result').length > before, 'the result')
+  }
+
+  // the SendMessage calls of the main conversation, in order
+  function sendCalls(run: Run): Msg[] {
+    return run.out.filter(m => m.type === 'assistant' && m.parent_tool_use_id === null && m.message?.content?.[0]?.name === 'SendMessage')
+  }
+
+  // the answer of a SendMessage call: its result is JSON in a text block, never an error
+  function sendAnswer(run: Run, call: string): Msg {
+    const block = resultOf(run, call)?.message.content[0] as Msg
+    expect(block.is_error).toBe(false)
+    return JSON.parse(block.content as string) as Msg
+  }
+
+  function mainText(run: Run, text: string): boolean {
+    return run.out.some(m => m.type === 'assistant' && m.parent_tool_use_id === null && textOf(m) === text)
+  }
+
+  it('a forward is delivered: ToolSearch then SendMessage with to, message and summary, Forwarded., the log line, and a finished agent runs again', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Look', result: 'Found it.',
+            agents: [{ type: 'Explore', description: 'Find the total', ms: 100, frames: [{ text: 'Looking' }] }]
+          }
+        }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+    const call = callIds(run)[0]
+    const task = taskIdOf(run, call) as string
+
+    // the first forward of the session loads SendMessage first, then sends it
+    const message = 'Use the staging branch'
+    await nextTurn(run, forwardOf(task, message))
+    const search = run.out.find(m => m.type === 'assistant' && m.message?.content?.[0]?.name === 'ToolSearch')
+    expect(search?.message.content[0].input).toEqual({ query: 'select:SendMessage' })
+    expect(run.out.indexOf(search as Msg)).toBeLessThan(run.out.indexOf(sendCalls(run)[0]))
+    expect(sendCalls(run)).toHaveLength(1)
+    const first = sendCalls(run)[0].message.content[0] as Msg
+    expect(first.input).toEqual({ to: task, message, summary: 'Forward from the user' })
+    expect(sendAnswer(run, first.id)).toEqual({ success: true, message: `Resuming agent ${task.slice(0, 7)}`, resumedAgentId: task })
+    expect(mainText(run, 'Forwarded.')).toBe(true)
+    expect(logEntries()).toContainEqual({ forwarded: { to: task, message } })
+
+    // the finished agent runs again: a new run of the same task, started by the SendMessage call
+    const starts = run.out.filter(m => m.type === 'system' && m.subtype === 'task_started' && m.task_id === task)
+    expect(starts).toHaveLength(2)
+    expect(starts[1]).toMatchObject({ tool_use_id: first.id, prompt: message })
+    expect(starts[1].run_id).not.toBe(starts[0].run_id)
+
+    // no live frame carries the message as a user frame; its Got: frame keeps the agent's first parent_tool_use_id and agent_id
+    expect(run.out.some(m => m.type === 'user' && m.parent_tool_use_id === call && JSON.stringify(m).includes(message))).toBe(false)
+    const got = run.out.find(m => m.type === 'assistant' && m.parent_tool_use_id === call && textOf(m) === `Got: ${message}`)
+    expect(got).toMatchObject({ agent_id: task, session_id: session })
+
+    // the transcript: the coordinator's line, then the Got: line with the same uuid as the live frame
+    const lines = transcriptLines(subagentFile(session, task))
+    const coordinator = lines.find(l => l.message?.content === `The coordinator sent a message while you were working:\n${message}\n\nAddress this before completing your current task.`)
+    expect(coordinator).toMatchObject({ type: 'user', isMeta: true, origin: { kind: 'coordinator' } })
+    const gotLine = lines.find(l => l.type === 'assistant' && l.message?.content?.[0]?.text === `Got: ${message}`)
+    expect(gotLine?.uuid).toBe(got?.uuid)
+    expect(lines.indexOf(coordinator as Msg)).toBeLessThan(lines.indexOf(gotLine as Msg))
+
+    // the resumed run notifies 300 ms later with Got: as its summary, and Claude answers that in one more turn of its own
+    await until(() => run.out.some(m => m.type === 'system' && m.subtype === 'task_notification' && m.task_id === task && m.summary === `Got: ${message}`), 'the resumed agent notifies')
+    expect(run.out.find(m => m.type === 'system' && m.subtype === 'task_notification' && m.summary === `Got: ${message}`)).toMatchObject({ status: 'completed' })
+    await until(() => run.out.filter(m => m.type === 'result').length === 3, 'the follow-up turn')
+    expect(mainText(run, `The agent answered: Got: ${message}`)).toBe(true)
+
+    // the second forward of the session has no ToolSearch, and resumes the finished agent again
+    const second = 'And the tests too'
+    await nextTurn(run, forwardOf(task, second))
+    expect(run.out.filter(m => m.type === 'assistant' && m.message?.content?.[0]?.name === 'ToolSearch')).toHaveLength(1)
+    expect(sendCalls(run)).toHaveLength(2)
+    expect(sendAnswer(run, (sendCalls(run)[1].message.content[0] as Msg).id)).toMatchObject({ success: true, resumedAgentId: task })
+    await finish(run)
+  })
+
+  it('a running agent gets a forward without a new run: a queued_command line and its Got: frame', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Watch the folder', result: 'unused', background: true,
+            agents: [{ type: 'Explore', description: 'Watch the folder', ms: 0, gate: 'release.flag', pace: 50, frames: [{ text: 'Still looking' }] }]
+          }
+        }, { text: 'Started.' }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+    const call = callIds(run)[0]
+    const task = taskIdOf(run, call) as string
+
+    const message = 'Check the empty folder too'
+    await nextTurn(run, forwardOf(task, message))
+    const sent = sendCalls(run)[0].message.content[0] as Msg
+    expect(sendAnswer(run, sent.id)).toEqual({
+      success: true,
+      message: `Message queued for delivery to ${task} at its next tool round. If it finishes first, it is resumed with the message and notifies again, so wait for that notification before resending.`
+    })
+    expect(run.out.filter(m => m.type === 'system' && m.subtype === 'task_started' && m.task_id === task)).toHaveLength(1)
+
+    // the message reaches the agent in its own run: a queued_command line in its transcript, and its Got: frame at once
+    await until(() => run.out.some(m => m.type === 'assistant' && m.parent_tool_use_id === call && textOf(m) === `Got: ${message}`), 'the Got: frame')
+    expect(run.out.find(m => m.type === 'assistant' && m.parent_tool_use_id === call && textOf(m) === `Got: ${message}`)).toMatchObject({ agent_id: task })
+    const lines = transcriptLines(subagentFile(session, task))
+    expect(lines.find(l => l.type === 'attachment')).toMatchObject({ attachment: { type: 'queued_command', prompt: message, origin: { kind: 'coordinator' } } })
+
+    writeFileSync(join(config, 'release.flag'), '')
+    await until(() => notificationOf(run, task) !== undefined, 'the agent ends')
+    expect(run.out.filter(m => m.type === 'system' && m.subtype === 'task_started' && m.task_id === task)).toHaveLength(1)
+    await finish(run)
+  })
+
+  it('a forward to a stopped agent fails: success false, Not forwarded:', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{
+          task: {
+            description: 'Long audit', result: 'unused', background: true,
+            agents: [{ type: 'general-purpose', description: 'Long audit', ms: 60_000 }]
+          }
+        }, { text: 'Started.' }]
+      }
+    })
+    send(run, initWith(false))
+    await turn(run, 'Go')
+    const task = taskIdOf(run, callIds(run)[0]) as string
+    send(run, { type: 'control_request', request_id: 'stop_1', request: { subtype: 'stop_task', task_id: task } })
+    await until(() => notificationOf(run, task) !== undefined, 'the agent stops', 3000)
+
+    const stopped = `Agent "${task}" was stopped and was not resumed. Treat its work as cancelled; only start a new agent for it if the user explicitly asks.`
+    await nextTurn(run, forwardOf(task, 'Too late'))
+    expect(sendAnswer(run, (sendCalls(run)[0].message.content[0] as Msg).id)).toEqual({ success: false, message: stopped })
+    expect(mainText(run, `Not forwarded: ${stopped}`)).toBe(true)
+    expect(run.out.filter(m => m.type === 'system' && m.subtype === 'task_started' && m.task_id === task)).toHaveLength(1)
+
+    // an id no agent has
+    await nextTurn(run, forwardOf('task_nobody_1', 'Hello?'))
+    expect(sendAnswer(run, (sendCalls(run)[1].message.content[0] as Msg).id)).toEqual({ success: false, message: 'No agent with id "task_nobody_1".' })
+    expect(mainText(run, 'Not forwarded: No agent with id "task_nobody_1".')).toBe(true)
+    await finish(run)
+  })
+
+  it('forward fail and ignore answer as scripted', async () => {
+    const message = 'Use the staging branch'
+    const failing = start([...STREAM, '--session-id', randomUUID()], { forward: 'fail', turns: {} })
+    send(failing, initWith(false))
+    await nextTurn(failing, forwardOf('task_fake_9', message))
+    expect(sendCalls(failing)).toHaveLength(1)
+    expect((sendCalls(failing)[0].message.content[0] as Msg).input).toEqual({ to: 'task_fake_9', message, summary: 'Forward from the user' })
+    expect(sendAnswer(failing, (sendCalls(failing)[0].message.content[0] as Msg).id)).toEqual({ success: false, message: 'agent was cancelled' })
+    expect(mainText(failing, 'Not forwarded: agent was cancelled')).toBe(true)
+    await finish(failing)
+
+    const ignoring = start([...STREAM, '--session-id', randomUUID()], { forward: 'ignore', turns: {} })
+    send(ignoring, initWith(false))
+    await nextTurn(ignoring, forwardOf('task_fake_9', message))
+    expect(mainText(ignoring, 'I will leave that to the agent.')).toBe(true)
+    expect(ignoring.out.some(m => m.message?.content?.[0]?.type === 'tool_use')).toBe(false)
+    await finish(ignoring)
   })
 })

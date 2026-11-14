@@ -2,13 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ChatHub, type ChatHubDeps } from '../../src/main/chat/chat-hub'
+import { ChatHub, WINDOW_VIEWER, type ChatHubDeps } from '../../src/main/chat/chat-hub'
 import { ChatMirror } from '../../src/main/chat/chat-mirror'
 import { attachmentOf } from '../../src/main/chat/chat-attachments'
 import type { ChatEngine, ChatEngineHandlers, ChatEngineStart, McpLiveServer } from '../../src/main/chat/chat-engine'
-import type { ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode } from '../../src/shared/chat'
+import type { AgentPatch, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode } from '../../src/shared/chat'
 import type { ImageCard, TabInfo } from '../../src/shared/types'
 import type { ChatStartRequest } from '../../src/main/tab-manager'
+import { forwardText, parseForward } from '../../src/main/chat/agent-forward'
+import { TEXT_CAP } from '../../src/main/chat/chat-fold'
 import { fixtureHistory } from '../fixtures/chat-fixtures'
 
 const TAB = 'tab-1'
@@ -140,13 +142,16 @@ function fakeAttach(files: Map<string, Buffer>): ChatHubDeps['attach'] {
 }
 
 /** a hub with fake dependencies: the engines it started, the window's batches, and what it told the tabs */
-function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessionReady'>> & { attach?: (files: Map<string, Buffer>) => ChatHubDeps['attach'] } = {}) {
+function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessionReady' | 'transcript'>> & { attach?: (files: Map<string, Buffer>) => ChatHubDeps['attach'] } = {}) {
   const clock = { t: 1000 }
   const engines: FakeEngine[] = []
   const windows: { tabId: string; fromRev: number; toRev: number; patches: ChatPatch[] }[] = []
   /** the batches sent to the members of the tabs they watch, and the tabs watched */
   const remotes: { tabId: string; fromRev: number; toRev: number; patches: ChatPatch[] }[] = []
   const watched = new Set<string>()
+  /** the agent batches sent to the window, and to the members that watch an agent */
+  const agentWindows: { tabId: string; agentId: string; fromRev: number; toRev: number; patches: AgentPatch[] }[] = []
+  const agentRemotes: { tabId: string; agentId: string; devices: string[]; fromRev: number; toRev: number; patches: AgentPatch[] }[] = []
   const calls = {
     setSession: [] as [string, string][],
     setWorking: [] as [string, boolean][],
@@ -169,6 +174,7 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessio
     },
     support: over.support ?? (async () => ({ launch: LAUNCH })),
     history: over.history ?? (async () => []),
+    transcript: over.transcript ?? (async () => null),
     window: (tabId, fromRev, toRev, patches) => {
       windows.push({ tabId, fromRev, toRev, patches })
     },
@@ -176,6 +182,12 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessio
       remotes.push({ tabId, fromRev, toRev, patches })
     },
     watched: tabId => watched.has(tabId),
+    agentWindow: (tabId, agentId, fromRev, toRev, patches) => {
+      agentWindows.push({ tabId, agentId, fromRev, toRev, patches })
+    },
+    agentRemote: (tabId, agentId, devices, fromRev, toRev, patches) => {
+      agentRemotes.push({ tabId, agentId, devices, fromRev, toRev, patches })
+    },
     activeTabId: () => env.active,
     exists: tabId => alive.has(tabId),
     setSession: (tabId, sessionId) => calls.setSession.push([tabId, sessionId]),
@@ -188,7 +200,7 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessio
     log: { warn: m => calls.warn.push(m) },
     ...(over.sessionReady ? { sessionReady: over.sessionReady } : {}),
   }
-  return { hub: new ChatHub(deps), engines, windows, remotes, watched, calls, env, cards, files, alive, clock }
+  return { hub: new ChatHub(deps), engines, windows, remotes, agentWindows, agentRemotes, watched, calls, env, cards, files, alive, clock }
 }
 
 /** an assistant message that reads one file: a Read of an image shows it in the chat */
@@ -1808,6 +1820,455 @@ describe('ChatHub', () => {
     expect(dividerDrawn).toBeNull()
     h.engines[0].h.ready({ permissionMode: 'default' })
     expect(dividerDrawn).toBe(true)
+  })
+})
+
+/** a subagent's message as Claude Code sends it: its agent_id, and the Agent call it runs under */
+let frameNo = 0
+const subFrame = (agent: string, content: unknown[], call = 'toolu_a'): Record<string, unknown> => ({
+  type: 'assistant', agent_id: agent, parent_tool_use_id: call, session_id: SID, message: { id: `msg-${++frameNo}`, role: 'assistant', content },
+})
+
+/** the task_notification of an agent that ended, as Claude Code sends it */
+const agentNotified = (task: string): Record<string, unknown> => ({ type: 'system', subtype: 'task_notification', task_id: task, status: 'completed', output_file: '', summary: 'Got' })
+
+/** the task_started Claude Code sends for an agent that runs under the call */
+const agentStarted = (task: string, call = 'toolu_a'): Record<string, unknown> => ({
+  type: 'system', subtype: 'task_started', task_id: task, tool_use_id: call, description: 'Look', subagent_type: 'Explore', task_type: 'local_agent',
+})
+
+/** the history of a resumed chat that ran an agent (task_a, under the call toolu_a) and ended it */
+const agentHistory = (): Record<string, unknown>[] => [
+  { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Agent', input: { description: 'Look', subagent_type: 'Explore', prompt: 'find it' } }] } },
+  { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'Done.\nagentId: task_a' }] } },
+]
+
+/** the transcript of a session, with the agent's own file beside it under a temp folder; returns the transcript's path */
+function writeAgentTranscript(root: string, session: string, agent: string, lines: Record<string, unknown>[]): string {
+  const project = join(root, 'projects', 'acme')
+  mkdirSync(join(project, session, 'subagents'), { recursive: true })
+  const transcript = join(project, `${session}.jsonl`)
+  writeFileSync(transcript, '')
+  writeFileSync(join(project, session, 'subagents', `agent-${agent}.jsonl`), lines.map(l => JSON.stringify(l) + '\n').join(''))
+  return transcript
+}
+
+/** the agent's own transcript lines: the prompt it was given, and its answer */
+const agentLines = (): Record<string, unknown>[] => [
+  { type: 'user', uuid: 'p1', message: { role: 'user', content: 'Find it' } },
+  { type: 'assistant', uuid: 'a1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Found it' }] } },
+]
+
+describe('ChatHub agents', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** a chat started in the tab, its engine up: the messages of the tab go to the engine's handlers */
+  async function running(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'transcript'>> = {}) {
+    const made = harness(over)
+    made.hub.start(startReq().req)
+    await settle()
+    return { ...made, h: made.engines[0].h }
+  }
+
+  it('a subagent frame goes to its agent, never to the main conversation', async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    h.message(subFrame('task_a', [{ type: 'text', text: 'Sub text' }]))
+    const page = await hub.agentSnapshot(TAB, 'task_a')
+    expect(page?.items).toEqual([expect.objectContaining({ kind: 'text', markdown: 'Sub text' })])
+    expect(JSON.stringify(hub.snapshot(TAB)!.items)).not.toContain('Sub text')
+  })
+
+  it('an agent snapshot asked while the history loads answers once the history names the agent', async () => {
+    let release: (messages: unknown[]) => void = () => undefined
+    const { hub } = harness({ history: () => new Promise(resolve => { release = resolve }) })
+    hub.start(startReq(SID).req)
+    await settle()
+    // the restarted window asks for its agent's page while the history is still read: the agent is not known yet
+    const page = hub.agentSnapshot(TAB, 'task_a')
+    await settle()
+    release(agentHistory())
+    expect(await page).toMatchObject({ tabId: TAB, agentId: 'task_a', agent: { id: 'task_a', type: 'Explore' } })
+  })
+
+  it("a member's agent snapshot asked while the history loads answers once the history names the agent", async () => {
+    let release: (messages: unknown[]) => void = () => undefined
+    const { hub } = harness({ history: () => new Promise(resolve => { release = resolve }) })
+    hub.start(startReq(SID).req)
+    await settle()
+    const page = hub.remoteAgentSnapshot(TAB, 'task_a')
+    await settle()
+    release(agentHistory())
+    expect(await page).toMatchObject({ tabId: TAB, agentId: 'task_a', agent: { id: 'task_a' } })
+  })
+
+  it('an agent snapshot asked while the history loads answers null when its tab is removed meanwhile', async () => {
+    let release: (messages: unknown[]) => void = () => undefined
+    const { hub } = harness({ history: () => new Promise(resolve => { release = resolve }) })
+    hub.start(startReq(SID).req)
+    await settle()
+    const page = hub.agentSnapshot(TAB, 'task_a')
+    await settle()
+    hub.removeTab(TAB)
+    release(agentHistory())
+    expect(await page).toBeNull()
+  })
+
+  it('an agent snapshot asked while the history is still read answers null as soon as its tab is removed', async () => {
+    const { hub } = harness({ history: () => new Promise(() => {}) })
+    hub.start(startReq(SID).req)
+    await settle()
+    const page = hub.agentSnapshot(TAB, 'task_a')
+    await settle()
+    // the history never comes: the removed tab alone must answer the caller
+    hub.removeTab(TAB)
+    await settle()
+    expect(await page).toBeNull()
+  })
+
+  it("only the watched agent's patches are sent, batched, while its tab is in front", async () => {
+    const { hub, h, agentWindows, env } = await running()
+    h.message(agentStarted('task_a', 'toolu_a'))
+    h.message(agentStarted('task_b', 'toolu_b'))
+    hub.watchAgent(TAB, WINDOW_VIEWER, 'task_a')
+    const before = (await hub.agentSnapshot(TAB, 'task_a'))!.rev
+    h.message(subFrame('task_a', [{ type: 'text', text: 'one' }], 'toolu_a'))
+    h.message(subFrame('task_a', [{ type: 'text', text: 'two' }], 'toolu_a'))
+    h.message(subFrame('task_b', [{ type: 'text', text: 'other' }], 'toolu_b'))
+    expect(agentWindows).toEqual([])
+    vi.advanceTimersByTime(16)
+    expect(agentWindows).toHaveLength(1)
+    expect(agentWindows[0]).toMatchObject({ tabId: TAB, agentId: 'task_a', fromRev: before, toRev: before + 2 })
+    expect(agentWindows[0].patches).toEqual([
+      expect.objectContaining({ op: 'add', item: expect.objectContaining({ markdown: 'one' }) }),
+      expect.objectContaining({ op: 'add', item: expect.objectContaining({ markdown: 'two' }) }),
+    ])
+
+    // the window shows another tab: the agent's patches stop there
+    env.active = 'tab-2'
+    h.message(subFrame('task_a', [{ type: 'text', text: 'hidden' }], 'toolu_a'))
+    vi.advanceTimersByTime(16)
+    expect(agentWindows).toHaveLength(1)
+  })
+
+  it('an agent a member watches gets its patches whatever tab the window shows', async () => {
+    const { hub, h, agentWindows, agentRemotes, env } = await running()
+    env.active = 'tab-2'
+    h.message(agentStarted('task_a'))
+    hub.watchAgent(TAB, 'device-1', 'task_a')
+    h.message(subFrame('task_a', [{ type: 'text', text: 'member sees' }]))
+    vi.advanceTimersByTime(50)
+    expect(agentRemotes).toEqual([expect.objectContaining({ tabId: TAB, agentId: 'task_a', devices: ['device-1'], fromRev: 0, toRev: 1 })])
+    expect(agentRemotes[0].patches).toEqual([expect.objectContaining({ op: 'add', item: expect.objectContaining({ markdown: 'member sees' }) })])
+    expect(agentWindows).toEqual([])
+
+    // an agent nobody watches sends nothing
+    h.message(agentStarted('task_b', 'toolu_b'))
+    h.message(subFrame('task_b', [{ type: 'text', text: 'unwatched' }], 'toolu_b'))
+    vi.advanceTimersByTime(50)
+    expect(agentRemotes).toHaveLength(1)
+  })
+
+  it('a member watches an agent page only until it watches another page or none', async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    h.message(agentStarted('task_b', 'toolu_b'))
+    expect(hub.watchesAgent('device-1', TAB, 'task_a')).toBe(false)
+    hub.watchAgent(TAB, 'device-1', 'task_a')
+    expect(hub.watchesAgent('device-1', TAB, 'task_a')).toBe(true)
+    expect(hub.watchesAgent('device-1', TAB, 'task_b')).toBe(false)
+    expect(hub.watchesAgent('device-2', TAB, 'task_a')).toBe(false)
+    hub.watchAgent(TAB, 'device-1', 'task_b')
+    expect(hub.watchesAgent('device-1', TAB, 'task_a')).toBe(false)
+    hub.watchAgent(TAB, 'device-1', null)
+    expect(hub.watchesAgent('device-1', TAB, 'task_b')).toBe(false)
+  })
+
+  it('agentSnapshot gives the newest items, the header and writable false', async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    for (let i = 0; i < 205; i++) h.message(subFrame('task_a', [{ type: 'text', text: `line ${i}` }]))
+    const page = await hub.agentSnapshot(TAB, 'task_a')
+    expect(page).toMatchObject({ tabId: TAB, agentId: 'task_a', writable: false, hasOlder: true, agent: { id: 'task_a', type: 'Explore', description: 'Look', state: 'running' } })
+    expect(page!.items).toHaveLength(200)
+    expect(page!.items.at(-1)).toMatchObject({ kind: 'text', markdown: 'line 204' })
+    expect(page!.rev).toBeGreaterThan(0)
+  })
+
+  it('agent calls with a bad id are refused', async () => {
+    const { hub, h, agentWindows } = await running()
+    h.message(agentStarted('task_a'))
+    expect(await hub.agentSnapshot(TAB, '../escape')).toBeNull()
+    expect(await hub.agentSnapshot(TAB, 'task_missing')).toBeNull()
+    expect(await hub.agentSnapshot('no-such-tab', 'task_a')).toBeNull()
+    expect(await hub.agentOlder(TAB, 'bad id!', 'item-1')).toBeNull()
+    expect(await hub.agentOlder(TAB, 'task_missing', 'item-1')).toBeNull()
+    hub.watchAgent(TAB, WINDOW_VIEWER, 'bad id!')
+    h.message(subFrame('task_a', [{ type: 'text', text: 'not watched' }]))
+    vi.advanceTimersByTime(16)
+    expect(agentWindows).toEqual([])
+  })
+
+  it("a restarted chat counts its agents' revisions on from the last one", async () => {
+    const { hub, engines } = await running()
+    engines[0].h.message(agentStarted('task_a'))
+    engines[0].h.message(subFrame('task_a', [{ type: 'text', text: 'first' }]))
+    const last = (await hub.agentSnapshot(TAB, 'task_a'))!.rev
+    hub.start(startReq().req)
+    await settle()
+    engines[1].h.message(agentStarted('task_b'))
+    engines[1].h.message(subFrame('task_b', [{ type: 'text', text: 'again' }]))
+    expect((await hub.agentSnapshot(TAB, 'task_b'))!.rev).toBeGreaterThan(last)
+  })
+
+  it('an agent of a resumed chat opens with its transcript', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'chat-hub-agents-'))
+    try {
+      const transcript = writeAgentTranscript(root, SID, 'task_a', agentLines())
+      const { hub } = harness({ history: async () => agentHistory(), transcript: async (_tab, sid) => (sid === SID ? transcript : null) })
+      hub.start(startReq(SID).req)
+      await settle()
+      const page = await hub.agentSnapshot(TAB, 'task_a')
+      expect(page?.items).toEqual([
+        expect.objectContaining({ kind: 'prompt', text: 'Find it', first: true }),
+        expect.objectContaining({ kind: 'text', markdown: 'Found it' }),
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('the older lines of an agent come from its transcript, a page at a time, down to the first line', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'chat-hub-agents-'))
+    try {
+      // more lines than one transcript page holds, each one text item of the agent
+      const lines = Array.from({ length: 2500 }, (_, n) => ({ type: 'assistant', uuid: `u${n}`, message: { id: `m${n}`, role: 'assistant', content: [{ type: 'text', text: `line ${n}` }] } }))
+      const transcript = writeAgentTranscript(root, SID, 'task_a', lines)
+      const { hub } = harness({ history: async () => agentHistory(), transcript: async (_tab, sid) => (sid === SID ? transcript : null) })
+      hub.start(startReq(SID).req)
+      await settle()
+      hub.watchAgent(TAB, WINDOW_VIEWER, 'task_a')
+      const page = await hub.agentSnapshot(TAB, 'task_a')
+      expect(page?.hasOlder).toBe(true)
+      let shown = page!.items
+      let texts = shown.map(item => (item.kind === 'text' ? item.markdown : ''))
+      let hasOlder = page!.hasOlder
+      for (let step = 0; hasOlder && step < 30; step++) {
+        const answer = await hub.agentOlder(TAB, 'task_a', shown[0].id)
+        expect(answer).not.toBeNull()
+        texts = [...answer!.items.map(item => (item.kind === 'text' ? item.markdown : '')), ...texts]
+        shown = [...answer!.items, ...shown]
+        hasOlder = answer!.hasOlder
+      }
+      expect(hasOlder).toBe(false)
+      expect(texts).toEqual(lines.map(l => l.message.content[0].text))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('watching the agent whose page is open again keeps its items, read from the transcript, with their ids', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'chat-hub-agents-'))
+    try {
+      const transcript = writeAgentTranscript(root, SID, 'task_a', agentLines())
+      const { hub } = harness({ history: async () => agentHistory(), transcript: async (_tab, sid) => (sid === SID ? transcript : null) })
+      hub.start(startReq(SID).req)
+      await settle()
+      hub.watchAgent(TAB, WINDOW_VIEWER, 'task_a')
+      const before = (await hub.agentSnapshot(TAB, 'task_a'))!.items.map(item => item.id)
+      hub.watchAgent(TAB, WINDOW_VIEWER, 'task_a')
+      const after = (await hub.agentSnapshot(TAB, 'task_a'))!.items.map(item => item.id)
+      expect(before).toHaveLength(2)
+      expect(after).toEqual(before)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an agent whose page was left and opened again keeps its items, read from the transcript, with their ids', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'chat-hub-agents-'))
+    try {
+      const transcript = writeAgentTranscript(root, SID, 'task_a', agentLines())
+      const { hub } = harness({ history: async () => agentHistory(), transcript: async (_tab, sid) => (sid === SID ? transcript : null) })
+      hub.start(startReq(SID).req)
+      await settle()
+      hub.watchAgent(TAB, WINDOW_VIEWER, 'task_a')
+      const before = (await hub.agentSnapshot(TAB, 'task_a'))!.items.map(item => item.id)
+      hub.watchAgent(TAB, WINDOW_VIEWER, null)
+      hub.watchAgent(TAB, WINDOW_VIEWER, 'task_a')
+      const after = (await hub.agentSnapshot(TAB, 'task_a'))!.items.map(item => item.id)
+      expect(before).toHaveLength(2)
+      expect(after).toEqual(before)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an agent keeps the session it started in', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'chat-hub-agents-'))
+    try {
+      const transcript = writeAgentTranscript(root, SID, 'task_a', agentLines())
+      const asked: [string, string][] = []
+      const { hub } = harness({
+        history: async () => agentHistory(),
+        transcript: async (tab, sid) => {
+          asked.push([tab, sid])
+          return sid === SID ? transcript : null
+        },
+      })
+      hub.start(startReq(SID).req)
+      await settle()
+      // a /clear makes a new session; the agent's file is still in the folder of the session it ran in
+      hub.sessionChanged(TAB, OTHER, 'clear')
+      const page = await hub.agentSnapshot(TAB, 'task_a')
+      expect(asked).toEqual([[TAB, SID]])
+      expect(page?.items).toHaveLength(2)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+  it('sendToAgent sends the template through the send path', async () => {
+    const { hub, h, engines } = await running()
+    h.message(agentStarted('task_a'))
+    expect(await hub.sendToAgent(TAB, 'task_a', 'Look in src/charts too.')).toBeNull()
+    expect(engines[0].sent).toHaveLength(1)
+    expect(engines[0].sent[0].startsWith('[ClaudeTerm: forward to agent task_a]\n')).toBe(true)
+    expect(parseForward(engines[0].sent[0])).toEqual({ agentId: 'task_a', type: 'Explore', description: 'Look', text: 'Look in src/charts too.' })
+  })
+
+  it('sendToAgent refuses: not running, unknown agent, plan mode', async () => {
+    const idle = harness()
+    expect(await idle.hub.sendToAgent(TAB, 'task_a', 'Look')).toBe('Claude Code is not running in this tab')
+    expect(await idle.hub.sendToAgent(TAB, 'bad id!', 'Look')).toBe('Unknown agent')
+
+    const { hub, h, engines } = await running()
+    h.message(agentStarted('task_a'))
+    expect(await hub.sendToAgent(TAB, 'task_missing', 'Look')).toBe('Unknown agent')
+    expect(await hub.sendToAgent(TAB, '../escape', 'Look')).toBe('Unknown agent')
+    await hub.setMode(TAB, 'plan')
+    expect(await hub.sendToAgent(TAB, 'task_a', 'Look')).toBe('Not sent: plan mode')
+    expect(engines[0].sent).toEqual([])
+  })
+
+  it("the forward's bubble is on the agent's page with the same state", async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    await hub.sendToAgent(TAB, 'task_a', 'Look in src/charts too.')
+    const bubble = expect.objectContaining({ kind: 'forward', agentId: 'task_a', label: 'Explore agent · Look', text: 'Look in src/charts too.', state: 'sending' })
+    const main = hub.snapshot(TAB)!.items.find(item => item.kind === 'forward')
+    const page = await hub.agentSnapshot(TAB, 'task_a')
+    expect(main).toEqual(bubble)
+    expect(page!.items).toEqual([bubble])
+    expect(page!.items[0].id).toBe(main!.id)
+  })
+
+  it("quietTurn is true while the last turn is a forward's", async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    expect(hub.quietTurn(TAB)).toBe(false)
+    await hub.sendToAgent(TAB, 'task_a', 'Look in src/charts too.')
+    expect(hub.quietTurn(TAB)).toBe(true)
+    h.message(result())
+    expect(hub.quietTurn(TAB)).toBe(true)
+    await hub.send(TAB, { text: 'Thanks', attachments: [] })
+    expect(hub.quietTurn(TAB)).toBe(false)
+    expect(hub.quietTurn('no-such-tab')).toBe(false)
+  })
+
+  it('a chat that ends fails its waiting forwards: Claude Code stopped', async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    await hub.sendToAgent(TAB, 'task_a', 'Look in src/charts too.')
+    h.exit(0)
+    const failed = expect.objectContaining({ kind: 'forward', state: 'failed', reason: 'Claude Code stopped' })
+    expect(hub.snapshot(TAB)!.items).toEqual(expect.arrayContaining([failed]))
+    expect((await hub.agentSnapshot(TAB, 'task_a'))!.items).toEqual([failed])
+  })
+
+  it('quietTurn is false once the chat has ended', async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    await hub.sendToAgent(TAB, 'task_a', 'Look in src/charts too.')
+    expect(hub.quietTurn(TAB)).toBe(true)
+    h.exit(0)
+    expect(hub.quietTurn(TAB)).toBe(false)
+  })
+
+  it('quietTurn is true for the follow-up turn a resumed agent starts, and a typed turn after it is not', async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    h.message(agentNotified('task_a'))
+    await hub.sendToAgent(TAB, 'task_a', 'Look in src/charts too.')
+    h.message({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_s', name: 'SendMessage', input: { to: 'task_a', message: 'Look in src/charts too.', summary: 'Forward from the user' } }] } })
+    const answer = { success: true, message: 'Resuming agent task_a', resumedAgentId: 'task_a' }
+    h.message({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_s', content: [{ type: 'text', text: JSON.stringify(answer) }] }] } })
+    h.message(result())
+    expect(hub.quietTurn(TAB)).toBe(true)
+    // the resumed agent notifies; Claude answers it on its own
+    h.message(agentNotified('task_a'))
+    h.message({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'The agent answered.' }] } })
+    h.message(result())
+    expect(hub.quietTurn(TAB)).toBe(true)
+    await hub.send(TAB, { text: 'Thanks', attachments: [] })
+    expect(hub.quietTurn(TAB)).toBe(false)
+  })
+
+  it('sendToAgent refuses a forward too long to send whole', async () => {
+    const { hub, h, engines } = await running()
+    h.message(agentStarted('task_a'))
+    expect(await hub.sendToAgent(TAB, 'task_a', 'x'.repeat(TEXT_CAP))).toBe('Not sent: the message is too long')
+    expect(engines[0].sent).toEqual([])
+  })
+
+  it('a chat that exits before it is ready fails its waiting forwards too', async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    await hub.sendToAgent(TAB, 'task_a', 'Look in src/charts too.')
+    h.exit(127)
+    expect(hub.snapshot(TAB)!.items).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'forward', state: 'failed', reason: 'Claude Code stopped' })]))
+  })
+
+  it('a forward the history settles is settled on its agent page too', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'chat-hub-agents-'))
+    try {
+      // a forward whose turn the history ends with no result: the history settles it as interrupted
+      const sent = forwardText({ agentId: 'task_a', type: 'Explore', description: 'Look', text: 'Look in src/charts too.' }, '0f1e2d3c') as string
+      const history = [
+        ...agentHistory(),
+        { type: 'user', message: { role: 'user', content: sent } },
+        { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_s', name: 'SendMessage', input: { to: 'task_a', message: 'Look in src/charts too.', summary: 'Forward from the user' } }] } },
+      ]
+      const transcript = writeAgentTranscript(root, SID, 'task_a', [{
+        type: 'user', uuid: 'c1', isMeta: true, origin: { kind: 'coordinator' },
+        message: { role: 'user', content: 'The coordinator sent a message while you were working:\nLook in src/charts too.\n\nAddress this before completing your current task.' },
+      }])
+      const { hub } = harness({ history: async () => history, transcript: async (_tab, sid) => (sid === SID ? transcript : null) })
+      hub.start(startReq(SID).req)
+      await settle()
+      const main = hub.snapshot(TAB)!.items.find(item => item.kind === 'forward')
+      expect(main).toMatchObject({ state: 'failed', reason: 'Interrupted' })
+      const page = await hub.agentSnapshot(TAB, 'task_a')
+      expect(page!.items).toEqual([expect.objectContaining({ kind: 'forward', id: main!.id, state: 'failed', reason: 'Interrupted' })])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('agentSnapshot is writable for the window while the chat runs, never for members', async () => {
+    const { hub, h } = await running()
+    h.message(agentStarted('task_a'))
+    expect((await hub.agentSnapshot(TAB, 'task_a'))!.writable).toBe(false)
+    h.ready({ permissionMode: 'default' })
+    expect((await hub.agentSnapshot(TAB, 'task_a'))!.writable).toBe(true)
+    expect((await hub.remoteAgentSnapshot(TAB, 'task_a'))!.writable).toBe(false)
+    h.exit(0)
+    expect((await hub.agentSnapshot(TAB, 'task_a'))!.writable).toBe(false)
   })
 })
 

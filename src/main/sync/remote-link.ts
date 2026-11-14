@@ -16,7 +16,7 @@ export function connectPeer(
   handlers: Record<string, CallEntry>
 ): Calls {
   const calls = new Calls(link, { ...handlers, ...host.handlers(hello.id) })
-  host.addPeer(link, hello.id)
+  host.addPeer(link, hello.id, hello.app ?? null)
   viewer.addPeer(link, hello, calls)
   link.on('close', () => {
     // separate: a throw from close() must not skip removing the device from the viewer

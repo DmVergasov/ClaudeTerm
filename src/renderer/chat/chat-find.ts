@@ -3,7 +3,23 @@ import type { FindTarget } from '../search'
 import { chatMarkdownText } from './chat-markdown'
 import { splitQuotes } from './chat-quote'
 import { openForMatch } from './chat-steps'
-import type { ChatView } from './chat-view'
+
+/**
+ * What Find searches: a chat's conversation (ChatView) or an agent page's column (AgentColumn). It gives the items it holds, the nodes
+ * it draws, the items it can bring into its view, and the older pages it can ask for.
+ */
+export interface FindView {
+  itemCount(): number
+  itemAt(i: number): ChatItem | undefined
+  indexOfItem(id: string): number
+  drawnNode(id: string): HTMLElement | null
+  drawnNodes(): HTMLElement[]
+  reveal(id: string): boolean
+  isShown(): boolean
+  hasOlderItems(): boolean
+  loadOlder(): Promise<boolean>
+  hasCard(cardId: string | null): boolean
+}
 
 /** the highlights of the page: every match in the drawn items, and the current one over them */
 const ALL = 'chat-find'
@@ -14,8 +30,16 @@ const MAX_HIGHLIGHTS = 1000
 /** the match Find is on: its item, and the index of the match within the item's visible text */
 interface Cursor { id: string; k: number }
 
-/** the find that painted the page's highlights last: only it may delete them, so a chat in the background leaves them be */
-let painter: ChatFind | null = null
+/** the view whose find painted the page's highlights last: only it may delete them, so a chat in the background leaves them be */
+let painted: FindView | null = null
+
+/** a view that is closed (an agent's page) takes its highlights with it, when its find painted them last */
+export function unpaint(view: FindView): void {
+  if (painted !== view) return
+  CSS.highlights.delete(ALL)
+  CSS.highlights.delete(CURRENT)
+  painted = null
+}
 
 /**
  * The text as Find compares it: lower case, character by character, so the offsets hold. A character whose lower case is
@@ -68,6 +92,8 @@ function searchText(item: ChatItem, hasCard: (cardId: string | null) => boolean)
     case 'reload': return `${item.title}\n${item.text}`
     // a row shows its title; its folded text is text of the conversation only when it is unfolded, as a thinking block's
     case 'event': return item.title
+    case 'prompt': return item.text
+    case 'forward': return item.text
     case 'card': return item.answered ?? cardText(item.card)
     // a thinking block shows its summary when it is open, which is its start; a folded one draws no summary, and the search reads a drawn
     // item first, so the summary is not found then. An image shows no text.
@@ -90,7 +116,7 @@ function shownText(item: ChatItem, caseSensitive: boolean, hasCard: (cardId: str
     const raw = bubbleText(item, hasCard)
     return caseSensitive ? raw : fold(raw)
   }
-  const raw = item.kind === 'text' ? chatMarkdownText(item.markdown) : searchText(item, hasCard)
+  const raw = item.kind === 'text' ? chatMarkdownText(item.markdown) : item.kind === 'prompt' ? chatMarkdownText(item.text) : searchText(item, hasCard)
   if (caseSensitive) return raw
   let folded = foldedTexts.get(item)
   if (folded === undefined) {
@@ -144,6 +170,9 @@ function matchesIn(node: HTMLElement, needle: string, caseSensitive: boolean): R
   return ranges
 }
 
+/** the range is in a prompt that is folded: its text beyond the fold is clipped, though it has boxes */
+const inFoldedPrompt = (range: Range): boolean => range.startContainer.parentElement?.closest('.chat-prompt-body.folded') != null
+
 /** the current match is in a Bash well: the well scrolls to it, so the match is in its box */
 function showInWell(range: Range): void {
   const pre = range.startContainer.parentElement?.closest<HTMLElement>('.chat-well-text')
@@ -170,7 +199,7 @@ export class ChatFind implements FindTarget {
   /** a search's generation: a walk for older pages stops when a newer search or a close has started */
   private gen = 0
 
-  constructor(private readonly view: ChatView) {}
+  constructor(private readonly view: FindView) {}
 
   findNext(term: string, opts?: { caseSensitive?: boolean; incremental?: boolean }): boolean {
     return this.find(term, opts?.caseSensitive === true, true, opts?.incremental === true)
@@ -185,11 +214,11 @@ export class ChatFind implements FindTarget {
     this.cursor = null
     this.term = ''
     this.needle = ''
-    // the page's highlights go only with the find that set them: another chat's clearing leaves the chat in front its own
-    if (painter === this) {
+    // the page's highlights go only with the view that set them: another chat's clearing leaves the chat in front its own
+    if (painted === this.view) {
       CSS.highlights.delete(ALL)
       CSS.highlights.delete(CURRENT)
-      painter = null
+      painted = null
     }
   }
 
@@ -310,6 +339,12 @@ export class ChatFind implements FindTarget {
     const node = this.view.drawnNode(id)
     if (node === null) return false
     let ranges = matchesIn(node, this.needle, this.caseSensitive)
+    // a match in a folded Claude asked is clipped out of the view: its Show all is clicked, as the reader would, and the column is brought to it again
+    if (ranges.some(inFoldedPrompt)) {
+      node.querySelector<HTMLElement>('.chat-prompt-more')?.click()
+      this.view.reveal(id)
+      ranges = matchesIn(node, this.needle, this.caseSensitive)
+    }
     const item = this.view.itemAt(this.view.indexOfItem(id))
     let undo: (() => void) | null = null
     if (ranges.length === 0 && item?.kind === 'tools' && node.classList.contains('chat-steps') && this.shownTextOf(item).includes(this.needle)) {
@@ -363,6 +398,6 @@ export class ChatFind implements FindTarget {
       CSS.highlights.set(CURRENT, new Highlight(current))
       showInWell(current)
     }
-    painter = this
+    painted = this.view
   }
 }

@@ -145,6 +145,10 @@ While Claude works, a side agent reads the conversation now and then (after ever
 
 A Claude tab on another of your computers shows its chat too, and you can send messages and answer its cards from there.
 
+Click a subagent in the agents dock above the message box, or its row in a step of the conversation, and the chat shows that agent's own conversation in place of the main one, live while it runs and from its transcript afterwards. A nested agent's row on that page opens its own page the same way. **Esc** or the back arrow returns to the same place in the main conversation. While Claude waits for your answer there, a bar on the agent's page leads back to the card. A member device can open and read an agent's page, but cannot write to it.
+
+The message box on an agent's page sends your message to that agent. Claude forwards it with its `SendMessage` tool, which uses one turn of the main conversation. The box is off while Claude Code is not running in the tab, and in plan mode a message is not sent. The bubble on the page shows **Queued**, **Sending…**, **Delivered** or **Not delivered**, and a message Claude did not pass on says **Claude did not forward it**; the main conversation gets a one-line note about the message that opens the page on a click.
+
 The chat runs on Anthropic's Claude Agent SDK (its license is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) and needs **Claude Code 2.1.322 or later**. An older Claude Code, or one whose version cannot be read, opens the tab in the terminal as before. A folder Claude Code does not trust yet opens its Claude tab in the terminal for the trust dialog, whatever the setting.
 
 <p align="center"><img src="docs/images/chat.png" width="820" alt="Chat: a message, Claude's answer with a tool step and two finished subagents, and the composer with its mode and model chips"></p>

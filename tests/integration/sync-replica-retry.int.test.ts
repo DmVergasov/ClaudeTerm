@@ -22,6 +22,7 @@ function openGroup(dir: string, errors: string[]): Promise<DeviceGroup> {
     host: '127.0.0.1',
     port: 0,
     platform: 'linux',
+    appVersion: '0.18.0',
     hostName: () => 'Test device',
     addresses: () => ['127.0.0.1'],
     onData: () => {},

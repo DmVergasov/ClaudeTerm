@@ -1,4 +1,4 @@
-import { isTabView, type ChatAnswer, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPermissionMode, type ChatSend, type TabView } from '../../shared/chat'
+import { isAgentId, isTabView, type AgentSnapshot, type ChatAnswer, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPermissionMode, type ChatSend, type TabView } from '../../shared/chat'
 import { MAX_IMAGE_BYTES } from '../../shared/image-file'
 import type { ImagesUpdate, StatusUpdate } from '../../shared/ipc'
 import { isUuid } from '../../shared/protocol'
@@ -48,7 +48,7 @@ import type {
   TabKind
 } from '../../shared/types'
 import { isChatAnswer, isChatSend, isPermissionMode } from '../chat/chat-guards'
-import { isItems } from '../chat/chat-mirror'
+import { isItems, parseAgentSnapshot } from '../chat/chat-mirror'
 import { isAccountRef, isPtySize } from '../ipc-guards'
 import { isChunk, isNonNegativeSafeInteger, isPositiveSafeInteger, isString, isTitle, orNull, parseCounter } from './remote-wire'
 import { isPlainObject } from './views'
@@ -136,6 +136,9 @@ export interface CallArgs {
   'chat-model': { id: string; model: string | null; effort: string | null }
   'chat-stop-task': { id: string; taskId: string }
   'chat-older': { id: string; beforeId: string }
+  'chat-agent': { id: string; agentId: string }
+  'chat-agent-older': { id: string; agentId: string; beforeId: string }
+  'chat-agent-watch': { id: string; agentId: string | null }
   'chat-view': { id: string; view: TabView }
   'chat-commands': { id: string }
   'chat-models': { id: string }
@@ -178,6 +181,9 @@ export interface CallReplies {
   'chat-model': Empty
   'chat-stop-task': Empty
   'chat-older': { items: ChatItem[]; hasOlder: boolean }
+  'chat-agent': AgentSnapshot
+  'chat-agent-older': { items: ChatItem[]; hasOlder: boolean }
+  'chat-agent-watch': Empty
   'chat-view': Empty
   'chat-commands': ChatCommandInfo[]
   'chat-models': ChatModelInfo[]
@@ -251,6 +257,14 @@ const CHAT_GROUPS: readonly ChatCommandInfo['group'][] = ['builtin', 'project', 
 function chatPageOf(v: unknown): { items: ChatItem[]; hasOlder: boolean } | null {
   if (!isPlainObject(v) || !isItems(v.items) || typeof v.hasOlder !== 'boolean') return null
   return { items: v.items, hasOlder: v.hasOlder }
+}
+
+/** an agent's page, checked as a chat snapshot is, with its agent and writable: a copy of its known fields; a page of another shape is null */
+function agentPageOf(v: unknown): AgentSnapshot | null {
+  const s = parseAgentSnapshot(v)
+  if (s === null) return null
+  const { tabId, agentId, rev, items, hasOlder, agent, writable } = s
+  return { tabId, agentId, rev, items, hasOlder, agent, writable }
 }
 
 function chatCommandOf(v: unknown): ChatCommandInfo | null {
@@ -411,6 +425,25 @@ export const CALL_ARGS: { [M in CallMethod]: (a: unknown) => CallArgs[M] | null 
     if (!isUuid(id) || !isString(beforeId, 1, MAX_CHAT_ID)) return null
     return { id, beforeId }
   },
+  'chat-agent': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, agentId } = a
+    if (!isUuid(id) || !isAgentId(agentId)) return null
+    return { id, agentId }
+  },
+  'chat-agent-older': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, agentId, beforeId } = a
+    if (!isUuid(id) || !isAgentId(agentId) || !isString(beforeId, 1, MAX_CHAT_ID)) return null
+    return { id, agentId, beforeId }
+  },
+  // null: the agent is not watched any more (the window left its page)
+  'chat-agent-watch': (a) => {
+    if (!isPlainObject(a)) return null
+    const { id, agentId } = a
+    if (!isUuid(id) || !(agentId === null || isAgentId(agentId))) return null
+    return { id, agentId }
+  },
   'chat-view': (a) => {
     if (!isPlainObject(a)) return null
     const { id, view } = a
@@ -468,6 +501,9 @@ export const CALL_REPLIES: { [M in CallMethod]: (v: unknown) => CallReplies[M] |
   'chat-model': emptyOf,
   'chat-stop-task': emptyOf,
   'chat-older': chatPageOf,
+  'chat-agent': agentPageOf,
+  'chat-agent-older': chatPageOf,
+  'chat-agent-watch': emptyOf,
   'chat-view': emptyOf,
   'chat-commands': (v) => listOf(v, MAX_CHAT_LIST, chatCommandOf),
   'chat-models': (v) => listOf(v, MAX_CHAT_LIST, chatModelOf),

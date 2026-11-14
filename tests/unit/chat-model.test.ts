@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { forwardText } from '../../src/main/chat/agent-forward'
+import { resultAgentId } from '../../src/main/chat/chat-fold'
 import { ChatModel, toolSubject } from '../../src/main/chat/chat-model'
 import { typedMessages, type ChatItem, type ChatPatch, type ChatToolCall } from '../../src/shared/chat'
 import { fixtureHistory, fixtureLines } from '../fixtures/chat-fixtures'
@@ -133,15 +135,22 @@ describe('ChatModel', () => {
     expect(callsOf(m)[0].agents[0].type.length).toBe(500)
   })
 
-  it('a task id is capped', () => {
+  it('a task id over 128 characters is no agent id, so no call lists it', () => {
     const { m } = model()
     const id = 'k'.repeat(600)
     m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't4', name: 'Task', input: { description: 'Find it' } }] } })
     m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't4', task_id: id, description: 'Find it', task_type: 'local_agent' })
-    expect(callsOf(m)[0].agents[0].id).toBe('k'.repeat(500))
-    // the notification names the same long id: it still finds its subagent and ends it
+    expect(callsOf(m)[0].agents).toEqual([])
     m.apply({ type: 'system', subtype: 'task_notification', task_id: id, tool_use_id: 't4', status: 'completed', usage: { duration_ms: 900 } })
-    expect(callsOf(m)[0].agents[0]).toMatchObject({ id: 'k'.repeat(500), state: 'done', ms: 900 })
+    expect(callsOf(m)[0].agents).toEqual([])
+  })
+
+  it('a task id that is not an agent id (the mirror refuses it) is listed on no call', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't5', name: 'Task', input: { description: 'Find it' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't5', task_id: 'odd id!', description: 'Find it', task_type: 'local_agent' })
+    expect(callsOf(m)[0].agents).toEqual([])
+    expect(m.agents()).toEqual([])
   })
   it('the model named by init is capped at 200 characters', () => {
     const { m } = model()
@@ -808,6 +817,101 @@ describe('ChatModel', () => {
     expect(m.apply({ type: 'assistant', parent_tool_use_id: 't1', message: { role: 'assistant', model: 'claude-opus-5-5', content: [], usage } })).toEqual([])
   })
 
+  it('a frame with an agent_id never adds a main item', () => {
+    const { m } = model()
+    const patches = [
+      m.apply({ type: 'assistant', agent_id: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'from the agent' }] } }),
+      m.apply({ type: 'user', agent_id: 'a1', message: { role: 'user', content: 'hi' } }),
+      m.apply({ type: 'stream_event', agent_id: 'a1', event: { type: 'message_start', message: {} } }),
+    ]
+    expect(patches).toEqual([[], [], []])
+    expect(m.items()).toEqual([])
+  })
+
+  it('a task_started for an agent the chat knows sets it running again', () => {
+    const { m, clock } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find the config', prompt: 'look' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find the config', task_type: 'local_agent' })
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'a1', tool_use_id: 't1', status: 'completed', usage: { duration_ms: 1500 } })
+    // the person sends the finished agent a message: Claude Code resumes it under its task id, and this time names no call
+    clock.t = 9_000
+    const patches = m.apply({ type: 'system', subtype: 'task_started', task_id: 'a1', description: 'Find the config', task_type: 'local_agent' })
+    expect(patches).toEqual([{ op: 'call', id: expect.any(String), call: expect.objectContaining({ id: 't1' }) }])
+    expect(m.agents()).toEqual([{ id: 'a1', description: 'Find the config', type: 'local_agent', state: 'running', ms: null, startedAt: 9_000 }])
+    // its end lands on the call that holds it
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'a1', status: 'completed', usage: { duration_ms: 400 } })
+    expect(m.agents()).toEqual([expect.objectContaining({ id: 'a1', state: 'done', ms: 400 })])
+  })
+
+  it('a stopped agent stays apart from a failed one', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find it', prompt: 'look' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find it', subagent_type: 'Explore' })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a2', description: 'Find it too', subagent_type: 'Explore' })
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'a1', status: 'stopped' })
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'a2', status: 'failed' })
+    expect(m.agents()).toEqual([
+      expect.objectContaining({ id: 'a1', state: 'failed', stopped: true }),
+      expect.objectContaining({ id: 'a2', state: 'failed' }),
+    ])
+    expect(m.agents()[1]).not.toHaveProperty('stopped')
+    // a stopped agent that runs again is no longer stopped
+    m.apply({ type: 'system', subtype: 'task_started', task_id: 'a1', description: 'Find it', task_type: 'local_agent' })
+    expect(m.agents()[0]).toMatchObject({ id: 'a1', state: 'running', ms: null })
+    expect(m.agents()[0]).not.toHaveProperty('stopped')
+  })
+
+  it('in history, the agent id comes from the agentId line', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', description: 'Find the chart code', prompt: 'look' } }] } })
+    m.apply({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Found it.\n\nagentId: a1b2c3 (use SendMessage to continue)' }] } })
+    expect(m.agents()).toEqual([{ id: 'a1b2c3', type: 'Explore', description: 'Find the chart code', state: 'done', ms: null }])
+  })
+
+  it('an agent found in history is resumed by a SendMessage call, and listed once', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', description: 'Find it', prompt: 'look' } }] } })
+    m.apply({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'agentId: a1b2c3' }] } })
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't9', name: 'SendMessage', input: { to: 'a1b2c3', message: 'and more' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't9', task_id: 'a1b2c3', description: 'Find it', task_type: 'local_agent' })
+    expect(callsOf(m).find(c => c.id === 't9')?.agents).toEqual([expect.objectContaining({ id: 'a1b2c3', state: 'running' })])
+    expect(m.agents()).toEqual([expect.objectContaining({ id: 'a1b2c3', state: 'running' })])
+  })
+
+  it('the structured result\'s agentId wins over the text', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', description: 'Find it', prompt: 'look' } }] } })
+    m.apply({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'agentId: a1' }] }, tool_use_result: { agentId: 'b2', status: 'completed' } })
+    expect(m.agents()).toEqual([expect.objectContaining({ id: 'b2', type: 'Explore', state: 'done' })])
+  })
+
+  it('an agentId line with a bad id gives the call no agent', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find it', prompt: 'look' } }] } })
+    m.apply({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Done.\nagentId: ../x' }] } })
+    expect(m.agents()).toEqual([])
+    expect(callsOf(m)[0]).toMatchObject({ state: 'done' })
+  })
+
+  it('a call that has its agent takes no second one from its result', () => {
+    const { m } = model()
+    m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { description: 'Find it', prompt: 'look' } }] } })
+    m.apply({ type: 'system', subtype: 'task_started', tool_use_id: 't1', task_id: 'a1', description: 'Find it', subagent_type: 'Explore' })
+    m.apply({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'agentId: a2' }] } })
+    expect(callsOf(m)[0].agents.map(a => a.id)).toEqual(['a1'])
+    expect(m.agents().map(a => a.id)).toEqual(['a1'])
+  })
+
+  it('a long run of blank lines in a result is read in linear time', () => {
+    expect(resultAgentId('\n'.repeat(200_000) + 'x', null)).toBeNull()
+    expect(resultAgentId('ok\n\n\n\n\n\nagentId: a1b2c3', null)).toBe('a1b2c3')
+  })
+
+  it('SendMessage\'s subject is the agent it writes to', () => {
+    expect(toolSubject('SendMessage', { to: 'a1b2c3', message: 'x' }, '/w')).toBe('to a1b2c3')
+    expect(toolSubject('SendMessage', { message: 'x' }, '/w')).toBe('')
+  })
+
   it('a Read of a png adds an images item', () => {
     const { m } = model()
     m.apply({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/work/acme/shot.PNG' } }] } })
@@ -1061,5 +1165,322 @@ describe('messages Claude Code puts in the conversation', () => {
     m.apply(userMessage(TASK_NOTICE, { kind: 'task-notification' }))
     m.apply(userMessage('peer text', { kind: 'peer', from: 's-2', body: 'peer text' }))
     expect(typedMessages(m.items())).toEqual(['first'])
+  })
+
+  it('a frame with a malformed agent_id never adds a main item', () => {
+    const { m } = model()
+    for (const agent of [7, '', 'bad id!', {}, ['x']]) {
+      run(m, [{ type: 'assistant', agent_id: agent, message: { id: 'msg_x', content: [{ type: 'text', text: 'leak' }] } }])
+      run(m, [{ type: 'user', agent_id: agent, message: { role: 'user', content: 'leak' } }])
+    }
+    expect(m.items()).toEqual([])
+  })
+})
+
+describe('a forward in the main conversation', () => {
+  const NONCE = '0f1e2d3c'
+  const forwardTo = (agentId = 'a1b2c3', text = 'Look in src/charts too.'): string =>
+    forwardText({ agentId, type: 'Explore', description: 'Find the chart code', text }, NONCE) as string
+  const done = { type: 'result', subtype: 'success', is_error: false, result: 'done' }
+  const says = (text: string) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } })
+  const sendMessage = (callId: string, to: string) => ({ type: 'assistant', message: { role: 'assistant', content: [
+    { type: 'tool_use', id: callId, name: 'SendMessage', input: { to, message: 'Look in src/charts too.', summary: 'Forward from the user' } },
+  ] } })
+  const sendResult = (callId: string, json: string) => ({ type: 'user', message: { role: 'user', content: [
+    { type: 'tool_result', tool_use_id: callId, content: [{ type: 'text', text: json }] },
+  ] } })
+  const delivered = '{"success":true,"message":"Resuming agent a1b2c3","resumedAgentId":"a1b2c3"}'
+
+  it('a sent forward is a forward item, not a bubble, and its echo adds nothing', () => {
+    const { m } = model()
+    const patches = m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    expect(patches).toContainEqual({ op: 'add', item: {
+      kind: 'forward', id: 'f1', agentId: 'a1b2c3', label: 'Explore agent · Find the chart code', text: 'Look in src/charts too.', state: 'sending', reason: null,
+    } })
+    expect(m.apply({ type: 'user', message: { role: 'user', content: forwardTo() } })).toEqual([])
+    expect(m.items()).toEqual([expect.objectContaining({ kind: 'forward', id: 'f1', state: 'sending' })])
+  })
+
+  it('a forward queued behind a turn is queued, then sending when its turn begins', () => {
+    const { m } = model()
+    m.userSent({ text: 'first', attachments: [] }, 'u1')
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'queued' })])
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'sending' })])
+  })
+
+  it('SendMessage to the agent and its result: delivered', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendResult('t1', delivered))
+    m.apply(says('Forwarded.'))
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'delivered', reason: null })])
+  })
+
+  it('an error result: failed with its first line', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendResult('t1', '{"success":false,"message":"agent was cancelled\\nmore"}'))
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'agent was cancelled' })])
+
+    const long = new ChatModel({ now: () => 0, newId: () => 'x', folder: () => '/work/acme' })
+    long.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    long.apply(sendMessage('t1', 'a1b2c3'))
+    long.apply(sendResult('t1', JSON.stringify({ success: false, message: 'e'.repeat(400) })))
+    expect(long.forwards()[0]).toMatchObject({ state: 'failed', reason: 'e'.repeat(300) })
+  })
+
+  it('no SendMessage in the turn: skipped, with the Not forwarded: line as the reason', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(says('Not forwarded: the agent is gone'))
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'skipped', reason: 'the agent is gone' })])
+  })
+
+  it('a SendMessage to another agent does not count', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'd4e5f6'))
+    m.apply(sendResult('t1', delivered))
+    m.apply(says('Forwarded.'))
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'skipped', reason: null })])
+  })
+
+  it('an interrupted forward turn: failed, Interrupted', () => {
+    const interrupted = new ChatModel({ now: () => 0, newId: () => 'x', folder: () => '/work/acme' })
+    interrupted.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    interrupted.markInterrupted()
+    interrupted.apply({ ...done, terminal_reason: 'aborted_tools' })
+    expect(interrupted.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'Interrupted' })])
+
+    // a call that has no result when its turn ends is interrupted too
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'Interrupted' })])
+  })
+
+  it('endForwards fails the forwards still waiting', () => {
+    const { m } = model()
+    m.userSent({ text: 'first', attachments: [] }, 'u1')
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.endForwards('The agent page was closed')
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'failed', reason: 'The agent page was closed' })])
+    // the turn that ends after it does not take the failed forward into a turn
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'failed' })])
+  })
+
+  it('a forward from history is a forward item, settled by its turn', () => {
+    const { m } = model()
+    m.apply({ type: 'user', message: { role: 'user', content: forwardTo() } })
+    expect(m.forwards()).toEqual([expect.objectContaining({ agentId: 'a1b2c3', label: 'Explore agent · Find the chart code', text: 'Look in src/charts too.', state: 'sending' })])
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendResult('t1', delivered))
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'delivered' })])
+    expect(m.items().some(item => item.kind === 'user')).toBe(false)
+  })
+
+  it('lastTurnWasForward is true after a forward\'s turn and false after a typed one', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    expect(m.lastTurnWasForward()).toBe(true)
+    m.apply(done)
+    expect(m.lastTurnWasForward()).toBe(true)
+    m.userSent({ text: 'typed', attachments: [] }, 'u1')
+    m.apply(done)
+    expect(m.lastTurnWasForward()).toBe(false)
+  })
+
+  it('recall with ↑ leaves forwards out', () => {
+    const { m } = model()
+    m.userSent({ text: 'first', attachments: [] }, 'u1')
+    m.apply(done)
+    // a forward from history: it is a forward item, so recall must not offer it
+    m.apply({ type: 'user', message: { role: 'user', content: forwardTo() } })
+    m.apply(done)
+    expect(typedMessages(m.items())).toEqual(['first'])
+  })
+
+  it('a SendMessage result that is plain text is not delivered: failed with its first line', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendResult('t1', 'agent is busy\nmore'))
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'agent is busy' })])
+  })
+
+  it('an empty SendMessage result is not delivered: failed, Not delivered', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: [] }] } })
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'Not delivered' })])
+  })
+
+  it('only the first text block of a SendMessage result is read: success:false then a second block is failed', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply({ type: 'user', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 't1', content: [
+        { type: 'text', text: '{"success":false,"message":"agent was cancelled"}' },
+        { type: 'text', text: '{"success":true}' },
+      ] },
+    ] } })
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'agent was cancelled' })])
+  })
+
+  it('a forward folded into a typed turn and named on its result is settled by that turn\'s SendMessage; that turn is no forward turn', () => {
+    const { m } = model()
+    m.userSent({ text: 'first', attachments: [] }, 'u1')
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendResult('t1', delivered))
+    m.apply({ ...done, user_message_uuids: ['f1'] })
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'delivered' })])
+    expect(m.lastTurnWasForward()).toBe(false)
+  })
+
+  it('a forward named on its turn\'s result, with no SendMessage to its agent, is skipped with the turn\'s reason, not left sending', () => {
+    const { m } = model()
+    m.userSent({ text: 'first', attachments: [] }, 'u1')
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(says('Not forwarded: agent was cancelled'))
+    m.apply({ ...done, user_message_uuids: ['f1'] })
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'skipped', reason: 'agent was cancelled' })])
+    expect(m.state().turn).toBe('idle')
+  })
+
+  it('a SendMessage of the history is no call of a live forward: the live call\'s result settles it', () => {
+    const { m } = model()
+    run(m, [
+      { type: 'user', message: { role: 'user', content: 'Please check' } },
+      sendMessage('h1', 'a1b2c3'),
+    ])
+    m.historyLoaded()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('l1', 'a1b2c3'))
+    m.apply(sendResult('l1', delivered))
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'delivered' })])
+  })
+
+  it('two forwards taken together are both open, each settled by its own SendMessage; endForwards fails only the one still open', () => {
+    const { m } = model()
+    m.userSent({ text: 'first', attachments: [] }, 'u1')
+    m.userSent({ text: forwardTo('a1b2c3'), attachments: [], from: 'agent' }, 'f1')
+    m.userSent({ text: forwardTo('d4e5f6'), attachments: [], from: 'agent' }, 'f2')
+    m.userSent({ text: forwardTo('e7f8a9'), attachments: [], from: 'agent' }, 'f3')
+    m.apply({ type: 'stream_event', user_message_uuids: ['f1', 'f2', 'f3'], event: { type: 'message_stop' } })
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendMessage('t2', 'd4e5f6'))
+    m.apply(sendResult('t1', delivered))
+    m.apply(sendResult('t2', '{"success":false,"message":"agent is gone"}'))
+    expect(m.forwards().map(f => [f.id, f.state, f.reason])).toEqual([['f1', 'delivered', null], ['f2', 'failed', 'agent is gone'], ['f3', 'sending', null]])
+    m.endForwards('The agent page was closed')
+    expect(m.forwards().map(f => [f.id, f.state, f.reason])).toEqual([['f1', 'delivered', null], ['f2', 'failed', 'agent is gone'], ['f3', 'failed', 'The agent page was closed']])
+  })
+
+  it('a typed turn after a forward turn, with a self-started turn between, is not a forward turn', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(done)
+    // a turn Claude starts by itself: its first frame names no send
+    m.apply({ type: 'stream_event', user_message_uuids: [], event: { type: 'message_start' } })
+    expect(m.lastTurnWasForward()).toBe(false)
+    m.apply(done)
+    m.userSent({ text: 'typed', attachments: [] }, 'u1')
+    expect(m.lastTurnWasForward()).toBe(false)
+  })
+
+  it('a call id longer than a name is ignored: no match, so no false settle', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('x'.repeat(501), 'a1b2c3'))
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'skipped', reason: null })])
+  })
+
+  it('the Not forwarded: reason is read from the first 1 MiB of Claude\'s text only', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(says('x'.repeat(1024 * 1024) + '\nNot forwarded: late'))
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'skipped', reason: null })])
+  })
+
+  /** the task_notification of an agent that ended, as Claude Code sends it */
+  const notified = (task: string): Record<string, unknown> => ({ type: 'system', subtype: 'task_notification', task_id: task, status: 'completed', output_file: '', summary: 'Got' })
+  const selfStart = { type: 'stream_event', user_message_uuids: [], event: { type: 'message_start' } }
+
+  it('the turn Claude starts when a resumed agent notifies is quiet; the next self-started turn and a typed turn are not', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendResult('t1', delivered))
+    m.apply(says('Forwarded.'))
+    m.apply(done)
+    m.apply(notified('a1b2c3'))
+    m.apply(selfStart)
+    m.apply(says('The agent answered.'))
+    m.apply(done)
+    expect(m.lastTurnWasForward()).toBe(true)
+    m.apply(selfStart)
+    m.apply(says('Again.'))
+    m.apply(done)
+    expect(m.lastTurnWasForward()).toBe(false)
+    m.userSent({ text: 'typed', attachments: [] }, 'u1')
+    m.apply(done)
+    expect(m.lastTurnWasForward()).toBe(false)
+  })
+
+  it('a notification of an agent no forward resumed leaves the next self-started turn a turn of its own', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendResult('t1', delivered))
+    m.apply(done)
+    m.apply(notified('d4e5f6'))
+    m.apply(selfStart)
+    m.apply(says('Something else.'))
+    m.apply(done)
+    expect(m.lastTurnWasForward()).toBe(false)
+  })
+
+  it('a queued forward that a frame names is sending', () => {
+    const { m } = model()
+    m.userSent({ text: 'first', attachments: [] }, 'u1')
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply({ type: 'stream_event', user_message_uuids: ['f1'], event: { type: 'message_stop' } })
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'sending' })])
+  })
+
+  it('a queued forward is sending when a message starts the turn after a result that names no turn after', () => {
+    const { m } = model()
+    m.userSent({ text: 'first', attachments: [] }, 'u1')
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.apply({ ...done, queued_turn_count: 0 })
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'queued' })])
+    m.apply({ type: 'stream_event', event: { type: 'message_start' } })
+    expect(m.forwards()).toEqual([expect.objectContaining({ id: 'f1', state: 'sending' })])
+  })
+
+  it('endForwards fails a forward that is sending, and a later SendMessage result does not revive it', () => {
+    const { m } = model()
+    m.userSent({ text: forwardTo(), attachments: [], from: 'agent' }, 'f1')
+    m.endForwards('The agent page was closed')
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'The agent page was closed' })])
+    m.apply(sendMessage('t1', 'a1b2c3'))
+    m.apply(sendResult('t1', delivered))
+    m.apply(done)
+    expect(m.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'The agent page was closed' })])
   })
 })

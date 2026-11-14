@@ -5,6 +5,7 @@ import { Calls, type CallEntry } from '../../src/main/sync/calls'
 import type { MirrorOpen, ScreenMirrorsApi } from '../../src/main/sync/screen-mirror'
 import type { ViewerEvents } from '../../src/main/sync/tab-viewer'
 import type { HelloMessage, Message } from '../../src/main/sync/wire'
+import type { ChatItem } from '../../src/shared/chat'
 import type { DevicePlatform } from '../../src/shared/devices'
 import { type RemoteSnapshot, type RemoteTab } from '../../src/shared/remote'
 import type { TabInfo } from '../../src/shared/types'
@@ -573,6 +574,21 @@ describe('RemoteHolder', () => {
     pair.server.close('test: closed')
     await until(() => h.holder.linkCount() === 0)
     expect(h.signals.watchers).toBe(before + 4)
+  })
+
+  it('a member whose hello has no app gets a forward as a notice', async () => {
+    const h = harness()
+    const { pair } = await connectB(h)
+    const seen: Message[] = []
+    pair.server.on('message', (m: Message) => seen.push(m))
+    await attachT1(h)
+    const forward: ChatItem = { kind: 'forward', id: 'f1', agentId: 'agent-1', label: 'Reviewer', text: 'Check the parser', state: 'delivered', reason: null }
+    h.holder.host.push(T1, 'chat-patch', { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: forward }] })
+    await until(() => seen.some((m) => m.t === 'push' && m.k === 'chat-patch'))
+    const notice: ChatItem = { kind: 'notice', id: 'f1', tone: 'info', text: '↗ To Reviewer: Check the parser', action: null }
+    expect(seen.filter((m) => m.t === 'push')).toEqual([
+      { t: 'push', id: T1, k: 'chat-patch', v: { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: notice }] } }
+    ])
   })
 
   it('after dispose the window is told of nothing more', async () => {

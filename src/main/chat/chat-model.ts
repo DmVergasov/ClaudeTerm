@@ -1,53 +1,30 @@
-import { commandWord, isHandoffLine, type ChatCallState, type ChatCard, type ChatEventSource, type ChatItem, type ChatNoticeAction, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatState, type ChatSubagent, type ChatToolCall } from '../../shared/chat'
-import { DEFAULT_IMAGE_EXTENSIONS, hasImageExtension } from '../../shared/image-file'
-import { isUuid } from '../../shared/protocol'
-import type { ImageCard } from '../../shared/types'
-import { isWithin, nativePath, pathKey } from '../path-key'
-
 // The chat of one tab: folds the SDK messages (live or from history) into the items the chat view draws.
 // Everything here is untrusted input: a field of the wrong type is ignored, an unknown kind gives no patch.
 
-const TEXT_CAP = 1024 * 1024
-const OUTPUT_CAP = 64 * 1024
-export const SUBJECT_CAP = 500
-/** names and ids Claude Code gives: tools, tasks, subagent types, typed commands */
-const NAME_CAP = 500
-const PATH_CAP = 4096
-const MODEL_CAP = 200
-const MCP_INPUT_CAP = 80
-export const PAGE = 200
+import { commandWord, isHandoffLine, type ChatCard, type ChatEventSource, type ChatItem, type ChatNoticeAction, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatState } from '../../shared/chat'
+import { isUuid } from '../../shared/protocol'
+import { forwardLabel, notForwardedReason, parseForward } from './agent-forward'
+import { ChatFold, EFFORTS, MODEL_CAP, NAME_CAP, OUTPUT_CAP, SUBJECT_CAP, TEXT_CAP, cap, elapsed, isClaudeCodeFlag, isClaudeCodeText, isObj, num, resultText, str, type ChatFoldOptions, type Obj, type OpenBlock } from './chat-fold'
+export { PAGE, SUBJECT_CAP, cap, toolSubject } from './chat-fold'
+
 const LIMIT_MS_FROM = 1e11
-/** the ends of background tasks the chat remembers, oldest dropped first */
-const MAX_ENDED_TASKS = 500
 /** the leading tag of a message Claude Code sends in the conversation for something other than the person's typing */
 const ENVELOPE = /^\s*<(task-notification|agent-message|cross-session-message|channel)(?=[\s>])/
 
-const FILE_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']
-const EDIT_TOOLS = ['Write', 'Edit', 'MultiEdit']
 const PERMISSION_MODES: readonly ChatPermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']
-/** the effort levels Claude Code has */
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+/** the resumed agents kept until their notifications come */
+const MAX_RESUMED = 64
 
-export interface ChatModelOptions { now(): number; newId(): string; folder(): string }
+export type ChatModelOptions = ChatFoldOptions
 
-/** a stream block still open: a text item being streamed, or a thinking block with its stream start and length */
-type OpenBlock = { kind: 'text'; id: string } | { kind: 'thinking'; startedAt: number; ms: number | null }
-
-/** what an Agent call asks of its subagents: a model (an alias) and an effort, each only when it names one */
-interface AgentAsk { model?: string; effort?: string }
-/** a tool call's link to its tools item, when it started, the image it shows (null: none), and what an Agent call asks */
-interface CallLink { itemId: string; start: number; image: string | null; ask?: AgentAsk }
-/** a subagent's link to the Task call that started it */
-interface TaskLink { itemId: string; callId: string; start: number }
 /** a prompt we sent: `started` once its turn has begun, so it is dropped when that turn's result comes */
 interface SentEntry { text: string; started: boolean; id: string }
-type ToolsItem = Extract<ChatItem, { kind: 'tools' }>
+/** a forward taken into a turn, until its SendMessage's result or its turn settles it: its item, its agent, the call that sends it (null: none claimed yet) */
+interface Open { itemId: string; agentId: string; callId: string | null }
+/** a SendMessage call of the turn that runs: its agent, its id, its result once it came, whether an open forward has claimed it */
+interface Send { agentId: string; callId: string; result: Obj | null; claimed: boolean }
 type Limit = { usedPct: number; resetsAt: number }
 
-type Obj = Record<string, unknown>
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
-const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
-const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 /** one limit of a rate_limit_event: utilization as a fraction or a percent, resetsAt in seconds or ms; null when a field is not a number */
 const limitOf = (window: unknown): Limit | null => {
   if (!isObj(window)) return null
@@ -57,37 +34,8 @@ const limitOf = (window: unknown): Limit | null => {
   const percent = utilization > 1 ? utilization : utilization * 100
   return { usedPct: Math.round(Math.min(100, Math.max(0, percent))), resetsAt: reset > LIMIT_MS_FROM ? Math.floor(reset / 1000) : reset }
 }
-export const cap = (s: string, max: number): string => (s.length > max ? s.slice(0, max) : s)
-const pathOf = (v: unknown): string | null => {
-  const s = str(v)
-  return s === null ? null : cap(s, PATH_CAP)
-}
-const lines = (s: string): number => (s === '' ? 0 : s.split('\n').length)
 export const isPermissionMode = (v: unknown): v is ChatPermissionMode => PERMISSION_MODES.includes(v as ChatPermissionMode)
 const pad = (n: number): string => String(n).padStart(2, '0')
-/** the time from a moment to a later one, in milliseconds: a clock that stepped back gives none, never a negative time */
-const elapsed = (from: number, to: number): number => Math.max(0, to - from)
-const isCount = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0
-/** the model and effort an Agent call's input names (sdk-tools.d.ts AgentInput): a level Claude Code does not have is left out */
-const agentAsk = (input: Obj): AgentAsk => ({
-  ...(typeof input.model === 'string' && input.model !== '' ? { model: cap(input.model, MODEL_CAP) } : {}),
-  ...(typeof input.effort === 'string' && EFFORTS.includes(input.effort) ? { effort: input.effort } : {}),
-})
-/**
- * The tokens of a conversation at one API call, from its usage: what it sent (input, cache written and read) and what came back;
- * null when the input count is missing or a count is not one
- */
-const contextOf = (usage: unknown): number | null => {
-  if (!isObj(usage) || !isCount(usage.input_tokens)) return null
-  let total = usage.input_tokens
-  for (const key of ['cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens']) {
-    const n = usage[key]
-    if (n === undefined || n === null) continue
-    if (!isCount(n)) return null
-    total += n
-  }
-  return total
-}
 
 /** a token count as a compaction's divider shows it: 950, 3.9k, 27k */
 function tokenCount(n: number): string {
@@ -98,15 +46,6 @@ function tokenCount(n: number): string {
 
 /** a duration as a compaction's divider shows it: 640 ms, 10 s */
 const durationText = (ms: number): string => (ms < 1000 ? `${Math.round(ms)} ms` : `${Math.round(ms / 1000)} s`)
-
-/** the text of a tool result: a string, or the text blocks joined with a line break */
-function resultText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
-  for (const block of content) if (isObj(block) && typeof block.text === 'string' && block.type === 'text') parts.push(block.text)
-  return parts.join('\n')
-}
 
 /** the text of a user message whose content is plain text (a string, or text blocks only); null for anything else */
 function plainText(content: unknown): string | null {
@@ -189,58 +128,6 @@ function eventOf(origin: unknown, text: string): EventDraft | null {
   return { source: 'message', title: cap(first, SUBJECT_CAP), status: null, body: cap(body, TEXT_CAP), task: null }
 }
 
-/** a file path as a path inside the folder ('/'-separated, relative), or as it was given when outside it */
-function relativePath(folder: string, file: string): string {
-  const f = file.replace(/\\/g, '/')
-  const dir = folder.replace(/\\/g, '/')
-  if (!isWithin(dir, f)) return f
-  const rel = nativePath.relative(dir, f)
-  return rel === '' ? f : rel.split(nativePath.sep).join('/')
-}
-
-/** what a tool call is about, as a step row and a permission card show it (the rule below); Task 5 imports it */
-export function toolSubject(name: string, input: unknown, folder: string): string {
-  const i: Obj = isObj(input) ? input : {}
-  let subject = ''
-  if (FILE_TOOLS.includes(name)) subject = relativePath(folder, str(i.file_path) ?? '')
-  else if (name === 'Bash') subject = (str(i.command) ?? '').split('\n')[0]
-  else if (name === 'Glob' || name === 'Grep') subject = str(i.pattern) ?? ''
-  else if (name === 'WebFetch') subject = str(i.url) ?? ''
-  else if (name === 'WebSearch') subject = str(i.query) ?? ''
-  else if (name === 'Task' || name === 'Agent') subject = str(i.description) ?? ''
-  else if (name.startsWith('mcp__')) subject = (JSON.stringify(input) ?? '').slice(0, MCP_INPUT_CAP)
-  return cap(subject, SUBJECT_CAP)
-}
-
-/** the detail a call shows when it starts: from its input (Edit, Write) */
-function startDetail(name: string, input: Obj): string | null {
-  if (name === 'Edit') {
-    const added = str(input.new_string)
-    const removed = str(input.old_string)
-    return added === null || removed === null ? null : `+${lines(added)} −${lines(removed)}`
-  }
-  if (name === 'Write') {
-    const content = str(input.content)
-    return content === null ? null : `+${lines(content)}`
-  }
-  return null
-}
-
-/** the detail a call shows once it has its result (Read: the lines read; Bash: the seconds), null when it keeps its own */
-function resultDetail(name: string, output: string, ms: number): string | null {
-  if (name === 'Read') return `${lines(output)} lines`
-  if (name === 'Bash') return `${(ms / 1000).toFixed(1)}s`
-  return null
-}
-
-/** the image a call shows once it runs: a Read or Write of an image file, or show_image; an absolute path, else null */
-function imageOf(name: string, input: Obj): string | null {
-  let path: string | null = null
-  if ((name === 'Read' || name === 'Write') && hasImageExtension(str(input.file_path) ?? '', DEFAULT_IMAGE_EXTENSIONS)) path = pathOf(input.file_path)
-  else if (name === 'mcp__claudeterm__show_image') path = pathOf(input.path)
-  return path !== null && path !== '' && nativePath.isAbsolute(path) ? path : null
-}
-
 /** the first word of a typed command: '/context' of '/context now' */
 const firstWord = (text: string): string => cap(commandWord(text), NAME_CAP)
 
@@ -252,30 +139,52 @@ const firstWord = (text: string): string => cap(commandWord(text), NAME_CAP)
 const UNAVAILABLE = /^\/(\S+) isn't available in this environment\.$/
 const SYNTHETIC = '<synthetic>'
 
-export class ChatModel {
-  private readonly o: ChatModelOptions
-  private readonly list: ChatItem[] = []
-  private readonly at = new Map<string, number>()
-  /** stream blocks of the message being streamed, by their index in it */
-  private readonly open = new Map<number, OpenBlock>()
-  /** tool calls by their tool_use id: the tools item holding them and when they started */
-  private readonly calls = new Map<string, CallLink>()
-  /** when the first call of each step started */
-  private readonly stepStart = new Map<string, number>()
-  /** the steps' open tools item: a tool_use joins it until a text item closes it */
-  private step: string | null = null
+/** the first line of a text, trimmed and capped at 300 */
+const firstLine = (s: string): string => (s.split(/\r?\n/)[0] ?? '').trim().slice(0, 300).trim()
+
+/** the first text block of a result's content (or its string content); '' when there is none */
+function firstText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const block = content.find((b): b is Obj => isObj(b) && b.type === 'text' && typeof b.text === 'string')
+  return block === undefined ? '' : (block.text as string)
+}
+
+/** the agent a delivered SendMessage resumed: its result says `Resuming agent` and names the agent (resumedAgentId); null for any other result */
+function resumedAgent(block: Obj): string | null {
+  const text = cap(firstText(block.content), OUTPUT_CAP)
+  let parsed: unknown = null
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    parsed = null
+  }
+  const json = isObj(parsed) ? parsed : null
+  if (json === null || !(str(json.message) ?? '').startsWith('Resuming agent')) return null
+  const id = str(json.resumedAgentId)
+  return id === null || id.length > NAME_CAP ? null : id
+}
+
+/** a SendMessage result: delivered only when its first text is JSON with success true and the result is no error; else failed, with the first line of the message, else of the text */
+function sendOutcome(block: Obj): { ok: true } | { ok: false; reason: string } {
+  const text = cap(firstText(block.content), OUTPUT_CAP)
+  let parsed: unknown = null
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    parsed = null
+  }
+  const json = isObj(parsed) ? parsed : null
+  if (json !== null && json.success === true && block.is_error !== true) return { ok: true }
+  const reason = firstLine(json === null ? '' : (str(json.message) ?? '')) || firstLine(text) || 'Not delivered'
+  return { ok: false, reason }
+}
+
+export class ChatModel extends ChatFold {
   /** the prompts we sent that no echo has come back for yet, oldest first */
   private readonly sent: SentEntry[] = []
   /** the ids of the user items queued while a turn ran, oldest first */
   private readonly queue: string[] = []
-  /** the subagents started by a Task call, by their task id */
-  private readonly tasks = new Map<string, TaskLink>()
-  /** the background tasks whose end the chat has drawn from a system message: their notice in the conversation adds no row */
-  private readonly ended = new Set<string>()
-  /** the images item of each step, by the step's tools item */
-  private readonly stepImages = new Map<string, string>()
-  /** the ids of all images items, so a change of the Media cards does not scan the whole chat */
-  private readonly imageItems = new Set<string>()
   private readonly st: ChatState = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
   /** a result came and no message has started the next turn yet */
   private afterResult = false
@@ -294,23 +203,41 @@ export class ChatModel {
   private sevenDay: Limit | null = null
   /** the reset time of the usage limit we said was reached, so it is said once */
   private rejectedAt: number | null = null
+  /** the forwards taken into a turn that no result has settled yet, oldest first */
+  private openForwards: Open[] = []
+  /** the SendMessage calls of the turn that runs: an open forward claims the first unclaimed call to its agent */
+  private sends: Send[] = []
+  /** the text Claude wrote in the turn that runs, capped: the reason of a forward the turn did not send */
+  private turnText = ''
+  /** the turn that began last carried only forwards */
+  private forwardTurn = false
+  /** the agents a delivered forward resumed, until each one's notification comes: past MAX_RESUMED, the oldest goes */
+  private readonly resumed = new Set<string>()
+  /** a resumed agent notified: the next turn Claude starts by itself is quiet, as the forward's answer to the notice */
+  private quietNext = false
 
   constructor(o: ChatModelOptions) {
-    this.o = o
+    super(o)
   }
 
   /** one SDK message, live or from history; anything malformed or unknown gives [] */
   apply(msg: unknown): ChatPatch[] {
     if (!isObj(msg)) return []
-    // a message of a subagent (parent_tool_use_id set) is not part of the main conversation: its own calls tell its model and context
-    if (typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id !== '') return msg.type === 'assistant' ? this.subagentCall(msg) : []
+    // a message of a subagent (parent_tool_use_id or agent_id set, whatever the agent_id's type) is not part of the main conversation: its own calls tell its model and context
+    const ofSubagent = (typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id !== '') || (msg.agent_id !== undefined && msg.agent_id !== null)
+    if (ofSubagent) return msg.type === 'assistant' ? this.subagentCall(msg) : []
     switch (msg.type) {
       case 'stream_event': {
-        const folded = this.taken(msg)
+        // a frame that begins a turn after a result: the flag of the turn before is over, and a forward this frame takes sets it again
+        const begins = this.afterResult
+        if (begins) this.selfStarted()
+        const folded = this.taken(msg, begins)
         return [...folded.patches, ...(isObj(msg.event) ? [...this.turnBegins(folded.named), ...this.stream(msg.event)] : [])]
       }
       case 'assistant': {
-        const folded = this.taken(msg)
+        const begins = this.afterResult
+        if (begins) this.selfStarted()
+        const folded = this.taken(msg, begins)
         return [...folded.patches, ...this.assistant(msg, folded.named)]
       }
       case 'user': return this.user(msg)
@@ -333,9 +260,16 @@ export class ChatModel {
       this.command = firstWord(text)
       this.typed = text
     }
-    const item: ChatItem = { kind: 'user', id, text, attachments: send.attachments, queued: waits, ...(send.from === undefined ? {} : { from: send.from }) }
-    const patches = this.add(item)
+    // a forward the agent page sent is a forward item; a text the parser refuses is a plain message
+    const forward = send.from === 'agent' ? parseForward(text) : null
+    const item: ChatItem = forward === null
+      ? { kind: 'user', id, text, attachments: send.attachments, queued: waits, ...(send.from === undefined ? {} : { from: send.from }) }
+      : { kind: 'forward', id, agentId: forward.agentId, label: forwardLabel(forward.type, forward.description), text: forward.text, state: waits ? 'queued' : 'sending', reason: null }
+    // a send that starts a turn ends the open forward first: that forward's turn is over
+    const patches: ChatPatch[] = waits ? [] : this.settleOpen(false)
+    patches.push(...this.add(item))
     if (!waits) {
+      this.begin(item)
       patches.push(...this.beginTurn())
     } else {
       this.queue.push(item.id)
@@ -407,20 +341,6 @@ export class ChatModel {
     return { ...this.st }
   }
 
-  /** the newest `count` items, and whether older ones exist */
-  page(count = PAGE): { items: ChatItem[]; hasOlder: boolean } {
-    const start = Math.max(0, this.list.length - count)
-    return { items: this.list.slice(start), hasOlder: start > 0 }
-  }
-
-  /** up to `count` items before the item `beforeId`; nothing for an id the chat does not hold */
-  older(beforeId: string, count = PAGE): { items: ChatItem[]; hasOlder: boolean } {
-    const end = this.at.get(beforeId)
-    if (end === undefined) return { items: [], hasOlder: false }
-    const start = Math.max(0, end - count)
-    return { items: this.list.slice(start, end), hasOlder: start > 0 }
-  }
-
   /** what the stream said of the status bar; null fields: not said yet */
   status(): { model: string | null; effort: string | null; contextPct: number | null; contextUsed: number | null; contextSize: number | null; fiveHour: Limit | null; sevenDay: Limit | null } {
     return { model: this.st.model, effort: this.st.effort, contextPct: this.contextPct, contextUsed: this.contextUsed, contextSize: this.contextSize, fiveHour: this.fiveHour, sevenDay: this.sevenDay }
@@ -443,11 +363,9 @@ export class ChatModel {
 
   /** the history of a resumed chat is in: a call still running in it was cut off, so it ends as interrupted, and its turn ends with it */
   historyLoaded(): ChatPatch[] {
-    return [...this.failRunning('Interrupted'), ...this.setState({ turn: 'idle', turnStartedAt: null })]
-  }
-
-  items(): readonly ChatItem[] {
-    return this.list
+    const patches = [...this.settleOpen(false), ...this.failRunning('Interrupted'), ...this.setState({ turn: 'idle', turnStartedAt: null })]
+    this.resetTurnCalls()
+    return patches
   }
 
   private beginTurn(): ChatPatch[] {
@@ -455,8 +373,127 @@ export class ChatModel {
     return this.setState({ turn: 'working', turnStartedAt: this.o.now() })
   }
 
+  /** a turn begins with this item: a forward it carries is open until its turn settles it; a user item makes the turn no forward turn */
+  private begin(item: ChatItem): void {
+    this.forwardTurn = item.kind === 'forward'
+    if (item.kind === 'forward') this.openForwards.push({ itemId: item.id, agentId: item.agentId, callId: null })
+  }
+
+  /** a turn takes a send: a user item is no longer queued and makes the turn no forward turn; a queued forward is sending and open, and begins the turn only when begins */
+  private unqueue(id: string, begins: boolean): ChatPatch[] {
+    const item = this.get(id)
+    if (item?.kind === 'user') {
+      this.forwardTurn = false
+      return this.set({ ...item, queued: false })
+    }
+    if (item?.kind === 'forward' && item.state === 'queued') {
+      const sending: ChatItem = { ...item, state: 'sending' }
+      if (begins) this.forwardTurn = true
+      this.openForwards.push({ itemId: id, agentId: item.agentId, callId: null })
+      return this.set(sending)
+    }
+    return []
+  }
+
+  /** the open forwards end with their turn: one whose call has no result fails, and so does each when the turn was interrupted; one without a call is skipped, with Claude's reason */
+  private settleOpen(interrupted: boolean): ChatPatch[] {
+    const patches: ChatPatch[] = []
+    for (const open of this.openForwards.splice(0)) {
+      const item = this.get(open.itemId)
+      if (item?.kind !== 'forward') continue
+      if (interrupted || open.callId !== null) patches.push(...this.set({ ...item, state: 'failed', reason: 'Interrupted' }))
+      else patches.push(...this.set({ ...item, state: 'skipped', reason: notForwardedReason(this.turnText) }))
+    }
+    return patches
+  }
+
+  /** the SendMessage calls of the turn that runs, and the text Claude wrote in it; an id longer than a name is no call to match */
+  private recordSends(content: unknown[]): void {
+    for (const block of content) {
+      if (!isObj(block) || block.type !== 'tool_use' || block.name !== 'SendMessage' || !isObj(block.input)) continue
+      const to = block.input.to
+      if (typeof block.id !== 'string' || block.id.length > NAME_CAP || typeof to !== 'string') continue
+      this.sends.push({ agentId: to, callId: block.id, result: null, claimed: false })
+    }
+    const said = content.flatMap(block => (isObj(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : []))
+    if (said.length > 0) this.turnText = cap(said.join('\n'), TEXT_CAP)
+  }
+
+  /** a delivered forward resumed its agent: the agent's notification, when it comes, marks the next self-started turn as a forward turn */
+  private noteResumed(block: Obj): void {
+    const id = resumedAgent(block)
+    if (id === null) return
+    this.resumed.add(id)
+    if (this.resumed.size > MAX_RESUMED) this.resumed.delete(this.resumed.values().next().value as string)
+  }
+
+  /** each open forward without a call claims the first unclaimed call of the turn to its agent; one whose call has its result is settled by it */
+  private attach(): ChatPatch[] {
+    for (const open of this.openForwards) {
+      if (open.callId !== null) continue
+      const send = this.sends.find(s => !s.claimed && s.agentId === open.agentId)
+      if (send === undefined) continue
+      send.claimed = true
+      open.callId = send.callId
+    }
+    const patches: ChatPatch[] = []
+    for (const open of [...this.openForwards]) {
+      const result = this.sends.find(s => s.callId === open.callId)?.result ?? null
+      if (result === null) continue
+      this.openForwards.splice(this.openForwards.indexOf(open), 1)
+      const item = this.get(open.itemId)
+      if (item?.kind !== 'forward') continue
+      const outcome = sendOutcome(result)
+      if (outcome.ok) this.noteResumed(result)
+      patches.push(...this.set({ ...item, state: outcome.ok ? 'delivered' : 'failed', reason: outcome.ok ? null : outcome.reason }))
+    }
+    return patches
+  }
+
+  /** a tool result of the turn: the result of a SendMessage call is its send's, and settles the forward that call sends */
+  private forwardResult(content: unknown[]): ChatPatch[] {
+    for (const block of content) {
+      if (!isObj(block) || block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue
+      const send = this.sends.find(s => s.callId === block.tool_use_id && s.result === null)
+      if (send !== undefined) send.result = block
+    }
+    return this.attach()
+  }
+
+  /** the calls and text of a turn are done with: the history's turns hold no result to end them, so each history turn resets them */
+  private resetTurnCalls(): void {
+    this.sends = []
+    this.turnText = ''
+  }
+
+  /** a forward with no call of its own ends with the turn that took it, when no next turn is queued for it: skipped, with Claude's reason */
+  private skipUnclaimed(reason: string | null): ChatPatch[] {
+    const patches: ChatPatch[] = []
+    for (const open of this.openForwards.filter(o => o.callId === null)) {
+      this.openForwards.splice(this.openForwards.indexOf(open), 1)
+      const item = this.get(open.itemId)
+      if (item?.kind !== 'forward') continue
+      patches.push(...this.set({ ...item, state: 'skipped', reason }))
+    }
+    return patches
+  }
+
+  /** a message of the person's the transcript holds: a forward's header makes a forward item, its turn settles it; any other is a user item */
+  private historyMessage(text: string): ChatPatch[] {
+    const forward = parseForward(text)
+    const newTurn = this.st.turn === 'idle' || this.afterResult
+    const patches = newTurn ? this.settleOpen(false) : []
+    if (newTurn) this.resetTurnCalls()
+    const id = this.o.newId()
+    const item: ChatItem = forward === null
+      ? { kind: 'user', id, text, attachments: [], queued: false }
+      : { kind: 'forward', id, agentId: forward.agentId, label: forwardLabel(forward.type, forward.description), text: forward.text, state: 'sending', reason: null }
+    this.begin(item)
+    return [...patches, ...this.add(item)]
+  }
+
   /** the sends Claude Code took into the turn, as a frame of the turn names them by their uuids: those stop being queued; named: the frame carries a valid uuid field */
-  private taken(msg: Obj): { patches: ChatPatch[]; named: boolean; ids: string[] } {
+  private taken(msg: Obj, begins: boolean): { patches: ChatPatch[]; named: boolean; ids: string[] } {
     const many = msg.user_message_uuids
     const named = Array.isArray(many)
       ? many.length <= 64 && many.every(id => typeof id === 'string')
@@ -469,8 +506,7 @@ export class ChatModel {
       this.queue.splice(at, 1)
       const entry = this.sent.find(e => e.id === id)
       if (entry) entry.started = true
-      const item = this.get(id)
-      if (item?.kind === 'user') patches.push(...this.set({ ...item, queued: false }))
+      patches.push(...this.unqueue(id, begins))
     }
     return { patches, named, ids }
   }
@@ -490,8 +526,7 @@ export class ChatModel {
     const entry = this.sent.find(e => !e.started)
     if (entry) entry.started = true
     const id = this.queue.shift()
-    const item = id === undefined ? undefined : this.get(id)
-    if (item?.kind === 'user') patches.push(...this.set({ ...item, queued: false }))
+    if (id !== undefined) patches.push(...this.unqueue(id, true))
     return patches
   }
 
@@ -548,17 +583,6 @@ export class ChatModel {
     return patches
   }
 
-  /** the oldest open stream block of a kind, taken out of the open map: an assistant block is matched by kind, not by position */
-  private takeOpen(kind: OpenBlock['kind']): OpenBlock | undefined {
-    for (const [index, entry] of this.open) {
-      if (entry.kind === kind) {
-        this.open.delete(index)
-        return entry
-      }
-    }
-    return undefined
-  }
-
   private assistant(msg: Obj, named = false): ChatPatch[] {
     const message = msg.message
     if (!isObj(message) || !Array.isArray(message.content)) return []
@@ -566,14 +590,11 @@ export class ChatModel {
     // a local command's answer (/context, /config): its own item, not a message of Claude's
     if (typeof msg.local_command_source === 'string') {
       const text = resultText(message.content)
-      return [...patches, ...(this.unavailableNotice(text, message.model === SYNTHETIC, undefined) ?? this.commandItem(text))]
+      return [...patches, ...(this.notAvailable(text, message.model === SYNTHETIC, undefined) ?? this.commandItem(text))]
     }
-    message.content.forEach((block: unknown) => {
-      if (!isObj(block)) return
-      if (block.type === 'text') patches.push(...this.settleText(block, message.model === SYNTHETIC))
-      else if (block.type === 'thinking') patches.push(...this.thinking(block))
-      else if (block.type === 'tool_use') patches.push(...this.toolUse(block))
-    })
+    this.recordSends(message.content)
+    patches.push(...this.attach())
+    patches.push(...this.assistantBlocks(message.content, message.model === SYNTHETIC))
     return patches
   }
 
@@ -582,7 +603,7 @@ export class ChatModel {
    * line in the terminal, in the place of the text (an open text item is set). Null when the text is not that answer. The name is
    * kept for the session: the next time that command goes to the terminal.
    */
-  private unavailableNotice(text: string, synthetic: boolean, entry: OpenBlock | undefined): ChatPatch[] | null {
+  protected override notAvailable(text: string, synthetic: boolean, entry: OpenBlock | undefined): ChatPatch[] | null {
     const unavailable = synthetic ? UNAVAILABLE.exec(text) : null
     if (unavailable === null || this.typed === null || commandWord(this.typed) !== `/${unavailable[1]!}`) return null
     const name = `/${unavailable[1]!}`
@@ -594,94 +615,6 @@ export class ChatModel {
       ? { kind: 'notice', id, tone: 'info', text: cap(text, OUTPUT_CAP), action: 'open-terminal', line: typed }
       : { kind: 'notice', id, tone: 'info', text: cap(text, OUTPUT_CAP), action: null }
     return entry?.kind === 'text' ? this.set(notice) : this.add(notice)
-  }
-
-  /** the whole text of a text block: sets the item a stream opened, or adds it (history) */
-  private settleText(block: Obj, synthetic: boolean): ChatPatch[] {
-    const text = str(block.text)
-    if (text === null) return []
-    const markdown = cap(text, TEXT_CAP)
-    const entry = this.takeOpen('text')
-    const notice = this.unavailableNotice(text, synthetic, entry)
-    if (notice !== null) return notice
-    if (entry?.kind === 'text') return this.set({ kind: 'text', id: entry.id, markdown, streaming: false })
-    return this.addText({ kind: 'text', id: this.o.newId(), markdown, streaming: false })
-  }
-
-  /** a thinking block: its time is the stream's, up to its stop or, when the message comes first, up to now */
-  private thinking(block: Obj): ChatPatch[] {
-    const entry = this.takeOpen('thinking')
-    const text = str(block.thinking)
-    const ms = entry?.kind === 'thinking' ? (entry.ms ?? elapsed(entry.startedAt, this.o.now())) : null
-    return this.add({ kind: 'thinking', id: this.o.newId(), ms, summary: text ? cap(text, TEXT_CAP) : null })
-  }
-
-  /** a tool_use joins the open step, or opens one; the call starts running */
-  private toolUse(block: Obj): ChatPatch[] {
-    const rawId = str(block.id)
-    const rawName = str(block.name)
-    if (rawId === null || rawName === null) return []
-    const id = cap(rawId, NAME_CAP)
-    const name = cap(rawName, NAME_CAP)
-    if (this.calls.has(id)) return []
-    const input: Obj = isObj(block.input) ? block.input : {}
-    const start = this.o.now()
-    const image = imageOf(name, input)
-    const call: ChatToolCall = {
-      id, name, subject: toolSubject(name, input, this.o.folder()), detail: startDetail(name, input), state: 'running',
-      output: null, error: null, editPath: EDIT_TOOLS.includes(name) ? pathOf(input.file_path) : null, agents: [], ms: null,
-    }
-    const ask = name === 'Task' || name === 'Agent' ? { ask: agentAsk(input) } : {}
-    const open = this.step === null ? undefined : this.get(this.step)
-    if (open?.kind === 'tools') {
-      this.calls.set(id, { itemId: open.id, start, image, ...ask })
-      return [...this.callPatch(open, [...open.calls, call], call), ...this.showImage(open.id, image)]
-    }
-    const item: ChatItem = { kind: 'tools', id: this.o.newId(), calls: [call], ms: null }
-    this.step = item.id
-    this.stepStart.set(item.id, start)
-    this.calls.set(id, { itemId: item.id, start, image, ...ask })
-    return [...this.add(item), ...this.showImage(item.id, image)]
-  }
-
-  /** an image a step shows: its images item follows the step's tools item, one path once */
-  private showImage(stepId: string, path: string | null): ChatPatch[] {
-    if (path === null) return []
-    const key = pathKey(path)
-    const id = this.stepImages.get(stepId)
-    const item = id === undefined ? undefined : this.get(id)
-    if (item?.kind === 'images') {
-      if (item.images.some(image => pathKey(image.path) === key)) return []
-      return this.set({ ...item, images: [...item.images, { path, cardId: null }] })
-    }
-    const created: ChatItem = { kind: 'images', id: this.o.newId(), images: [{ path, cardId: null }] }
-    this.stepImages.set(stepId, created.id)
-    this.imageItems.add(created.id)
-    return this.add(created)
-  }
-
-  /** the Media cards of the tab as they stand: an image of the chat without a card takes the card of its path, unless the card is deleted; one set patch per item that changed */
-  attachCards(cards: readonly Pick<ImageCard, 'id' | 'path' | 'deleted'>[]): ChatPatch[] {
-    const byPath = new Map<string, string>()
-    for (const card of cards) {
-      const key = pathKey(card.path)
-      if (!card.deleted && !byPath.has(key)) byPath.set(key, card.id)
-    }
-    if (byPath.size === 0) return []
-    const patches: ChatPatch[] = []
-    for (const id of this.imageItems) {
-      const item = this.get(id)
-      if (item?.kind !== 'images') continue
-      let changed = false
-      const images = item.images.map(image => {
-        const cardId = image.cardId === null ? byPath.get(pathKey(image.path)) ?? null : image.cardId
-        if (cardId === image.cardId) return image
-        changed = true
-        return { ...image, cardId }
-      })
-      if (changed) patches.push(...this.set({ ...item, images }))
-    }
-    return patches
   }
 
   /** a local command's output: the item of the command the user typed last */
@@ -696,9 +629,9 @@ export class ChatModel {
     if (!isObj(msg.message)) return []
     const content = msg.message.content
     if (Array.isArray(content) && content.some(block => isObj(block) && block.type === 'tool_result')) {
-      return this.toolResults(content)
+      return [...this.forwardResult(content), ...this.toolResults(content, msg.tool_use_result ?? msg.toolUseResult)]
     }
-    if (msg.isReplay === true || msg.isMeta === true || msg.isSynthetic === true) return []
+    if (isClaudeCodeFlag(msg)) return []
     const text = plainText(content)
     if (text === null || text === '') return []
     // a message Claude Code puts in the conversation that the person did not type: a row, not a bubble; a background task whose end
@@ -711,8 +644,7 @@ export class ChatModel {
       return this.add({ kind: 'event', id: this.o.newId(), source: event.source, title: event.title, status: event.status, body: event.body })
     }
     // Claude Code's own messages: the interrupt notice, a command's output and its name, the compaction summary
-    if (text.startsWith('[Request interrupted by user')) return []
-    if (/^<command-(name|message|args)>/.test(text)) return []
+    if (isClaudeCodeText(text)) return []
     const output = /^<local-command-(stdout|stderr)>([\s\S]*?)<\/local-command-(stdout|stderr)>/.exec(text)
     if (output !== null) return this.commandItem(output[2])
     const drawn = cap(text, TEXT_CAP)
@@ -726,36 +658,7 @@ export class ChatModel {
       this.typed = drawn
     }
     this.step = null
-    return this.add({ kind: 'user', id: this.o.newId(), text: drawn, attachments: [], queued: false })
-  }
-
-  /** the results of a user message: each running call it answers becomes done, or failed with its error */
-  private toolResults(content: unknown[]): ChatPatch[] {
-    const patches: ChatPatch[] = []
-    for (const block of content) {
-      if (!isObj(block) || block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue
-      const callId = cap(block.tool_use_id, NAME_CAP)
-      const link = this.calls.get(callId)
-      const item = link ? this.get(link.itemId) : undefined
-      const call = item?.kind === 'tools' ? item.calls.find(c => c.id === callId) : undefined
-      if (!link || item?.kind !== 'tools' || !call || call.state !== 'running') continue
-      const now = this.o.now()
-      const output = cap(resultText(block.content), OUTPUT_CAP)
-      const failed = block.is_error === true
-      const ms = elapsed(link.start, now)
-      const next: ChatToolCall = {
-        ...call, state: failed ? 'failed' : 'done', output, error: failed ? output : null, ms,
-        detail: failed ? call.detail : (resultDetail(call.name, output, ms) ?? call.detail),
-      }
-      const calls = item.calls.map(c => (c.id === next.id ? next : c))
-      // the step's own time goes out when its last call ends; until then the call that changed is all the window gets
-      if (calls.every(c => c.state !== 'running')) {
-        patches.push(...this.set({ ...item, calls, ms: elapsed(this.stepStart.get(item.id) ?? link.start, now) }))
-      } else {
-        patches.push(...this.callPatch(item, calls, next))
-      }
-    }
-    return patches
+    return this.historyMessage(drawn)
   }
 
   /** a system message: the session's init and status, a local command's output, compaction, retries, subagents */
@@ -768,9 +671,22 @@ export class ChatModel {
       case 'session_state_changed': return this.sessionState(msg.state)
       case 'api_retry': return this.retry(msg)
       case 'task_started': return this.taskStarted(msg)
-      case 'task_notification': return this.taskNotification(msg)
+      case 'task_notification': return this.agentNotified(msg)
       default: return []
     }
+  }
+
+  /** a task's notification: a resumed agent's makes the next turn Claude starts by itself a quiet one */
+  private agentNotified(msg: Obj): ChatPatch[] {
+    const taskId = str(msg.task_id)
+    if (taskId !== null && this.resumed.delete(taskId)) this.quietNext = true
+    return this.taskNotification(msg)
+  }
+
+  /** a turn Claude starts by itself is a forward turn only when a resumed agent's notification came before it */
+  private selfStarted(): void {
+    this.forwardTurn = this.quietNext
+    this.quietNext = false
   }
 
   /** a status of Claude Code: its mode, and a compaction that runs (the chat's activity) or fails (a notice) */
@@ -830,87 +746,21 @@ export class ChatModel {
     return this.notice(`Retrying in ${Math.ceil(delay / 1000)}s · attempt ${attempt} of ${max}`, 'info', null)
   }
 
-  /** a subagent of a Task (or Agent) call: it is listed on that call; a finished one that a SendMessage call resumes is listed on that call too */
-  private taskStarted(msg: Obj): ChatPatch[] {
-    const callId = typeof msg.tool_use_id === 'string' ? cap(msg.tool_use_id, NAME_CAP) : null
-    const taskId = typeof msg.task_id === 'string' ? cap(msg.task_id, NAME_CAP) : null
-    if (callId === null || taskId === null) return []
-    const link = this.calls.get(callId)
-    const item = link ? this.get(link.itemId) : undefined
-    if (item?.kind !== 'tools') return []
-    const call = item.calls.find(c => c.id === callId)
-    if (!call || !['Task', 'Agent', 'SendMessage'].includes(call.name) || call.agents.some(a => a.id === taskId)) return []
-    const start = this.o.now()
-    const agent: ChatSubagent = {
-      id: taskId, description: cap(str(msg.description) ?? '', SUBJECT_CAP),
-      type: cap(str(msg.subagent_type) ?? str(msg.task_type) ?? 'agent', NAME_CAP), state: 'running', ms: null, ...link?.ask, startedAt: start,
-    }
-    this.tasks.set(taskId, { itemId: item.id, callId, start })
-    const agents = [...call.agents, agent]
-    const next: ChatToolCall = { ...call, agents, detail: agents.length > 1 ? `${agents.length} agents` : call.detail }
-    return this.callPatch(item, item.calls.map(c => (c.id === callId ? next : c)), next)
-  }
-
-  /**
-   * A call of a running subagent, as Claude Code passes it on (its tool_use blocks, parent_tool_use_id set): the model it runs on and
-   * the tokens of its conversation, on its row. The agent is the one agent_id names; an older Claude Code names none, and then it is
-   * the one agent running for the call parent_tool_use_id names, when there is one.
-   */
-  private subagentCall(msg: Obj): ChatPatch[] {
-    const message = isObj(msg.message) ? msg.message : null
-    if (message === null) return []
-    let taskId = typeof msg.agent_id === 'string' ? cap(msg.agent_id, NAME_CAP) : null
-    if (taskId === null || !this.tasks.has(taskId)) {
-      const callId = cap(msg.parent_tool_use_id as string, NAME_CAP)
-      const running = [...this.tasks].filter(([, link]) => link.callId === callId)
-      taskId = running.length === 1 ? running[0]![0] : null
-    }
-    const link = taskId === null ? undefined : this.tasks.get(taskId)
-    const item = link ? this.get(link.itemId) : undefined
-    if (!link || item?.kind !== 'tools') return []
-    const call = item.calls.find(c => c.id === link.callId)
-    const agent = call?.agents.find(a => a.id === taskId)
-    if (!call || !agent) return []
-    // a message Claude Code makes itself (an error) names the model <synthetic>: it runs on no model
-    const named = typeof message.model === 'string' && message.model !== '' && !message.model.startsWith('<') ? cap(message.model, MODEL_CAP) : null
-    const context = contextOf(message.usage)
-    const model = named ?? agent.model
-    if (model === agent.model && (context === null || context === agent.context)) return []
-    const next: ChatSubagent = { ...agent, ...(model === undefined ? {} : { model }), ...(context === null ? {} : { context }) }
-    const updated: ChatToolCall = { ...call, agents: call.agents.map(a => (a.id === taskId ? next : a)) }
-    return this.callPatch(item, item.calls.map(c => (c.id === updated.id ? updated : c)), updated)
-  }
-
-  /** a subagent finished, failed or was stopped: its state on the call that started it */
-  private taskNotification(msg: Obj): ChatPatch[] {
-    const taskId = typeof msg.task_id === 'string' ? cap(msg.task_id, NAME_CAP) : null
-    const link = taskId === null ? undefined : this.tasks.get(taskId)
-    if (taskId === null || !link) return []
-    const status = str(msg.status)
-    const state: ChatCallState | null = status === 'completed' ? 'done' : status === 'failed' || status === 'stopped' ? 'failed' : null
-    const item = this.get(link.itemId)
-    if (state === null || item?.kind !== 'tools') return []
-    const call = item.calls.find(c => c.id === link.callId)
-    if (!call) return []
-    // the stream's own duration when it gives one, never below zero; the clock's time when it gives none
-    const reported = isObj(msg.usage) ? num(msg.usage.duration_ms) : null
-    const ms = reported !== null ? Math.max(0, reported) : elapsed(link.start, this.o.now())
-    this.tasks.delete(taskId)
-    // the end of an agent the chat draws here: its notice in the conversation (a user message) adds no row of its own; any other task keeps its row
-    this.ended.add(taskId)
-    if (this.ended.size > MAX_ENDED_TASKS) this.ended.delete(this.ended.values().next().value as string)
-    const next: ChatToolCall = { ...call, agents: call.agents.map(a => (a.id === taskId ? { ...a, state, ms } : a)) }
-    return this.callPatch(item, item.calls.map(c => (c.id === next.id ? next : c)), next)
-  }
-
   /** a result ends its turn; an interrupted one says so, a failed one says why */
   private result(msg: Obj): ChatPatch[] {
     const interrupted = this.interrupted || msg.terminal_reason === 'aborted_streaming' || msg.terminal_reason === 'aborted_tools'
     this.interrupted = false
     this.afterResult = true
+    // the forwards this turn carried settle first: a forward the result names is the next turn's, so it waits for its SendMessage
+    const patches: ChatPatch[] = this.settleOpen(interrupted)
     // the sends the result names were folded into this turn: they leave the queue, and their prompts are no longer waiting
-    const folded = this.taken(msg)
-    const patches: ChatPatch[] = [...folded.patches]
+    const folded = this.taken(msg, false)
+    patches.push(...folded.patches)
+    // the calls of this turn claim the forwards it took, then the turn's calls and text are done with
+    patches.push(...this.attach())
+    // the reason of a forward the turn did not send is read before the turn's text goes
+    const reason = notForwardedReason(this.turnText)
+    this.resetTurnCalls()
     if (folded.named) {
       for (const id of folded.ids) this.dropSent(id)
     } else {
@@ -928,14 +778,14 @@ export class ChatModel {
     if (this.st.activity?.kind === 'compacting') patches.push(...this.setState({ activity: undefined }))
     const next = noTurnAfter ? undefined : this.queue.shift()
     if (next === undefined) {
+      patches.push(...this.skipUnclaimed(reason))
       patches.push(...this.setState({ turn: 'idle', turnStartedAt: null }))
     } else {
       // the frames of that turn must not take another send: the first one is taken here
       this.afterResult = false
       const entry = this.sent.find(e => !e.started)
       if (entry) entry.started = true
-      const item = this.get(next)
-      if (item?.kind === 'user') patches.push(...this.set({ ...item, queued: false }))
+      patches.push(...this.unqueue(next, true))
       patches.push(...this.setState({ turn: 'working', turnStartedAt: this.o.now() }))
     }
     if (interrupted) {
@@ -959,19 +809,29 @@ export class ChatModel {
     return this.failRunning('Interrupted')
   }
 
-  /** every call still running fails with the reason, and so does every agent still running: none is left animating */
-  private failRunning(reason: string): ChatPatch[] {
+  /** the forwards of the chat, oldest first */
+  forwards(): Extract<ChatItem, { kind: 'forward' }>[] {
+    return this.list.filter((item): item is Extract<ChatItem, { kind: 'forward' }> => item.kind === 'forward')
+  }
+
+  /** whether the turn that began last carried only forwards */
+  lastTurnWasForward(): boolean {
+    return this.forwardTurn
+  }
+
+  /** a forward still waiting or sending ends with the reason: its queue entry and prompt go, and it is no longer open */
+  endForwards(reason: string): ChatPatch[] {
+    const open = this.forwards().filter(f => f.state === 'queued' || f.state === 'sending')
     const patches: ChatPatch[] = []
-    for (const [callId, link] of this.calls) {
-      const item = this.get(link.itemId)
-      const call = item?.kind === 'tools' ? item.calls.find(c => c.id === callId) : undefined
-      if (item?.kind !== 'tools' || call === undefined) continue
-      const agents = call.agents.map(a => (a.state === 'running' ? { ...a, state: 'failed' as const } : a))
-      const agentsChanged = agents.some((a, i) => a !== call.agents[i])
-      if (call.state !== 'running' && !agentsChanged) continue
-      const next: ChatToolCall = call.state === 'running' ? { ...call, state: 'failed', error: reason, agents } : { ...call, agents }
-      patches.push(...this.callPatch(item, item.calls.map(c => (c.id === callId ? next : c)), next))
+    for (const item of open) {
+      if (item.state === 'queued') {
+        const at = this.queue.indexOf(item.id)
+        if (at >= 0) this.queue.splice(at, 1)
+        this.dropSent(item.id)
+      }
+      patches.push(...this.set({ ...item, state: 'failed', reason }))
     }
+    this.openForwards.splice(0)
     return patches
   }
 
@@ -999,37 +859,4 @@ export class ChatModel {
     return this.notice(`Usage limit reached · resets at ${pad(at.getHours())}:${pad(at.getMinutes())}`, 'info', null)
   }
 
-  private get(id: string): ChatItem | undefined {
-    const i = this.at.get(id)
-    return i === undefined ? undefined : this.list[i]
-  }
-
-  /** replaces an item in place, without a patch: the caller sends it */
-  private store(item: ChatItem): void {
-    const i = this.at.get(item.id)
-    if (i !== undefined) this.list[i] = item
-  }
-
-  private add(item: ChatItem): ChatPatch[] {
-    this.at.set(item.id, this.list.length)
-    this.list.push(item)
-    return [{ op: 'add', item }]
-  }
-
-  /** a text item closes the open step */
-  private addText(item: ChatItem): ChatPatch[] {
-    this.step = null
-    return this.add(item)
-  }
-
-  private set(item: ChatItem): ChatPatch[] {
-    this.store(item)
-    return [{ op: 'set', item }]
-  }
-
-  /** the calls of a tools item change: the item keeps them, and the window gets the one call that changed */
-  private callPatch(item: ToolsItem, calls: ChatToolCall[], call: ChatToolCall): ChatPatch[] {
-    this.store({ ...item, calls })
-    return [{ op: 'call', id: item.id, call }]
-  }
 }

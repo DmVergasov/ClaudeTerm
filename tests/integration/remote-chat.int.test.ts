@@ -6,7 +6,7 @@ import { attachmentOf } from '../../src/main/chat/chat-attachments'
 import { ChatHub } from '../../src/main/chat/chat-hub'
 import type { ChatEngine, ChatEngineHandlers, McpLiveServer } from '../../src/main/chat/chat-engine'
 import { openInTerminal } from '../../src/main/chat/terminal-handoff'
-import { chatBatchPush, forgetCopiedBy, hostHandlers, hostTabs } from '../../src/main/remote-host'
+import { chatBatchPush, forgetCopiedBy, hostHandlers, hostTabs, pushAgentBatch } from '../../src/main/remote-host'
 import { FileReceiver } from '../../src/main/sync/file-receiver'
 import { sendFiles } from '../../src/main/sync/file-sender'
 import { RemoteActions } from '../../src/main/sync/remote-actions'
@@ -15,7 +15,7 @@ import { ScreenMirrors } from '../../src/main/sync/screen-mirror'
 import { TabHost } from '../../src/main/sync/tab-host'
 import { RemoteTabs, type ViewerEvents } from '../../src/main/sync/tab-viewer'
 import type { HelloMessage } from '../../src/main/sync/wire'
-import type { ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch } from '../../src/shared/chat'
+import type { AgentPatch, AgentSnapshot, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch } from '../../src/shared/chat'
 import { MAX_CHAT_PUSH_BYTES } from '../../src/shared/remote'
 import type { DevicePlatform } from '../../src/shared/devices'
 import { B_ID, T1, T2, T3, T9, fakeHost, tabInfo, type FakeHost } from '../fixtures/host-context'
@@ -115,6 +115,15 @@ let actions: RemoteActions
 let links: Awaited<ReturnType<typeof linkPair>>
 let chats: [string, number, number, ChatPatch[]][]
 let reloads: string[]
+/** the agent batches and the agent reloads the member's window got, in order */
+let agentPatches: { agentId: string; fromRev: number; toRev: number; patches: AgentPatch[] }[]
+let agentReloads: string[]
+/** the host's agent page calls a member makes (not the pushes), and a change the host makes to the page it answers with */
+let hostAgentCalls: number
+let agentSkew: Partial<AgentSnapshot> | null
+/** the pages made for pushes, and while a test holds `agentGate` they wait for it */
+let pushedPages: number
+let agentGate: Promise<void> | null
 let logs: string[]
 let typed: string[]
 /** while set, a message that carries files waits here before the host attaches them (the order test holds a send up) */
@@ -126,6 +135,13 @@ let receiver: FileReceiver | null
 /** the member's chat of T1 is the host's: the same items, state and revision */
 function sameAsHost(): boolean {
   return JSON.stringify(viewerB.chatSnapshot(T1)) === JSON.stringify(hub.remoteSnapshot(T1))
+}
+
+/** the host's page of an agent for a push; while a test holds agentGate, the page waits for it */
+async function pushedPage(tabId: string, agentId: string): Promise<AgentSnapshot | null> {
+  pushedPages++
+  if (agentGate) await agentGate
+  return hub.remoteAgentSnapshot(tabId, agentId)
 }
 
 /** the member attaches T1 (it is in front on the member) and its chat arrives */
@@ -155,8 +171,8 @@ async function connect(): Promise<void> {
 }
 
 /** a second member, C, linked to the host: its own viewer, and A's handlers for it */
-async function joinSecond(): Promise<RemoteTabs> {
-  const viewerC = new RemoteTabs({ selfId: () => C_ID, isLocal: () => false, events: quietEvents, reattachMs: 20 })
+async function joinSecond(events: ViewerEvents = quietEvents): Promise<RemoteTabs> {
+  const viewerC = new RemoteTabs({ selfId: () => C_ID, isLocal: () => false, events, reattachMs: 20 })
   const hostC = new TabHost({ tabs: hostTabs(fakeHost().ctx), mirrors: new ScreenMirrors({ maxSnapshotBytes: MB }) })
   const ac = await linkPair()
   connectPeer(ac.client, helloOf(A_ID, 'Studio'), hostC, viewerC, {})
@@ -180,7 +196,13 @@ async function setUp(): Promise<void> {
     },
     support: async () => ({ launch: { how: 'direct', file: '/usr/bin/claude' } }),
     history: async () => [],
+    transcript: async () => null,
     window: () => {},
+    agentWindow: () => undefined,
+    // what index.ts does with a member's agent batch: the batch, or the page as a snapshot, to each device that still watches it
+    agentRemote: (tabId, agentId, devices, fromRev, toRev, patches) => {
+      void pushAgentBatch(hostA, tabId, { agentId, fromRev, toRev, patches }, devices, () => pushedPage(tabId, agentId), (device) => hub.watchesAgent(device, tabId, agentId))
+    },
     remote: (tabId, fromRev, toRev, patches) => {
       const push = chatBatchPush({ fromRev, toRev, patches }, () => hub.remoteSnapshot(tabId))
       if (push) hostA.push(tabId, push.k, push.v)
@@ -212,6 +234,13 @@ async function setUp(): Promise<void> {
     setModel: (tabId, model, effort) => hub.setModel(tabId, model, effort),
     stopTask: (tabId, taskId) => hub.stopTask(tabId, taskId),
     older: (tabId, beforeId) => hub.older(tabId, beforeId),
+    agentSnapshot: async (tabId, agentId) => {
+      hostAgentCalls++
+      const page = await hub.remoteAgentSnapshot(tabId, agentId)
+      return page !== null && agentSkew !== null ? { ...page, ...agentSkew } : page
+    },
+    agentOlder: (tabId, agentId, beforeId) => hub.agentOlder(tabId, agentId, beforeId),
+    watchAgent: (tabId, device, agentId) => hub.watchAgent(tabId, device, agentId),
     commands: (tabId) => hub.commands(tabId),
     models: (tabId) => hub.models(tabId),
     modes: (tabId) => hub.modes(tabId),
@@ -239,11 +268,20 @@ async function setUp(): Promise<void> {
 
   chats = []
   reloads = []
+  agentPatches = []
+  agentReloads = []
+  hostAgentCalls = 0
+  agentSkew = null
+  pushedPages = 0
+  agentGate = null
   logs = []
   hostA = new TabHost({
     tabs: hostTabs(a.ctx),
     mirrors: new ScreenMirrors({ maxSnapshotBytes: MB }),
-    onPeerGone: (device) => forgetCopiedBy(a.ctx, device),
+    onPeerGone: (device) => {
+      forgetCopiedBy(a.ctx, device)
+      hub.forgetViewer(device)
+    },
   })
   // the tab has its screen copy here, as the app opens one for every tab it has
   hostA.opened(T1, 80, 24, 1000)
@@ -258,6 +296,12 @@ async function setUp(): Promise<void> {
       },
       chatReload: (tabId) => {
         reloads.push(tabId)
+      },
+      chatAgent: (tabId, agentId, fromRev, toRev, patches) => {
+        agentPatches.push({ agentId, fromRev, toRev, patches })
+      },
+      chatAgentReload: (tabId, agentId) => {
+        agentReloads.push(agentId)
       },
     },
     reattachMs: 20,
@@ -399,6 +443,163 @@ describe('a chat tab of another device, mirrored by the member', () => {
     await until(() => sameAsHost())
     await until(() => JSON.stringify(viewerC.chatSnapshot(T1)) === JSON.stringify(hub.remoteSnapshot(T1)))
     expect(viewerC.chatSnapshot(T1)!.items.find((i) => i.kind === 'text')).toMatchObject({ markdown: 'pqr' })
+  })
+})
+
+/** an agent of the chat starts, as Claude Code's task_started says */
+const agentStart = (id: string) => ({ type: 'system', subtype: 'task_started', task_id: id, subagent_type: 'Explore', description: `Look ${id}` })
+/** one step of an agent: a text of its own message, under the agent's id */
+const agentStep = (id: string, n: number, text: string) => ({
+  type: 'assistant', agent_id: id, uuid: `${id}-uuid-${n}`, message: { id: `${id}-msg-${n}`, content: [{ type: 'text', text }] },
+})
+
+describe('a member opens an agent page, read-only', () => {
+  it("a member opens an agent page: the host's snapshot, then the patches of that agent only", async () => {
+    await attach()
+    engine!.h.message(agentStart('agent-one'))
+    engine!.h.message(agentStart('agent-two'))
+    engine!.h.message(agentStep('agent-one', 1, 'First step'))
+    const page = await actions.chatAgent(T1, 'agent-one')
+    expect(page).toMatchObject({ tabId: T1, agentId: 'agent-one', agent: { id: 'agent-one' } })
+    expect(JSON.stringify(page!.items)).toContain('First step')
+
+    actions.chatAgentWatch(T1, 'agent-one')
+    let step = 2
+    // the watch is a call of its own: steps go on until one of the agent reaches the member
+    await until(() => {
+      engine!.h.message(agentStep('agent-one', step++, 'Second step'))
+      return agentPatches.length > 0
+    })
+    engine!.h.message(agentStep('agent-two', 1, 'Other step'))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    expect(agentPatches.length).toBeGreaterThan(0)
+    expect(agentPatches.every((p) => p.agentId === 'agent-one')).toBe(true)
+  })
+
+  it('an agent page of a member is read-only: the host says so', async () => {
+    await attach()
+    engine!.h.message(agentStart('agent-one'))
+    engine!.h.message(agentStep('agent-one', 1, 'Read me'))
+    const page = await actions.chatAgent(T1, 'agent-one')
+    expect(page?.writable).toBe(false)
+  })
+
+  it('a member that leaves the page gets no more agent patches', async () => {
+    await attach()
+    engine!.h.message(agentStart('agent-one'))
+    actions.chatAgentWatch(T1, 'agent-one')
+    let step = 1
+    await until(() => {
+      engine!.h.message(agentStep('agent-one', step++, 'Tick'))
+      return agentPatches.length > 0
+    })
+    actions.chatAgentWatch(T1, null)
+    // the calls of one link are served in order: the watch is off once this answers
+    await actions.chatModes(T1)
+    const seen = agentPatches.length
+    engine!.h.message(agentStep('agent-one', step++, 'Gone'))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(agentPatches.length).toBe(seen)
+  })
+
+  it('a batch over the cap reaches the member as a reload, and the page it keeps is the host\'s newest', async () => {
+    await attach()
+    engine!.h.message(agentStart('agent-big'))
+    actions.chatAgentWatch(T1, 'agent-big')
+    let step = 0
+    await until(() => {
+      engine!.h.message(agentStep('agent-big', step++, 'Tick'))
+      return agentPatches.length > 0
+    })
+    const before = agentReloads.length
+    // more patches than one batch takes, in one tick: they leave as one batch, which becomes the page as a snapshot
+    for (let i = 0; i < 510; i++) engine!.h.message(agentStep('agent-big', 1000 + i, `part ${i}`))
+    await until(() => agentReloads.length > before)
+
+    expect(agentReloads.slice(before)).toEqual(['agent-big'])
+    expect(agentPatches.every((p) => p.patches.length <= 500)).toBe(true)
+    // the page the device sent is given once, with no call to the host; the next ask is the host's
+    const calls = hostAgentCalls
+    const kept = await actions.chatAgent(T1, 'agent-big')
+    expect(hostAgentCalls).toBe(calls)
+    expect(kept).toMatchObject({ agentId: 'agent-big', writable: false })
+    expect(JSON.stringify(kept!.items)).toContain('part 509')
+    await actions.chatAgent(T1, 'agent-big')
+    expect(hostAgentCalls).toBe(calls + 1)
+  })
+
+  it('an agent page reaches only the members that watch it, though another member is attached to the tab', async () => {
+    const otherEvents: string[] = []
+    const viewerC = await joinSecond({ ...quietEvents, chatAgent: (_tabId, agentId) => void otherEvents.push(agentId) })
+    await attach()
+    viewerC.activated(T1)
+    await until(() => viewerC.chatSnapshot(T1) !== null)
+    engine!.h.message(agentStart('agent-one'))
+    actions.chatAgentWatch(T1, 'agent-one')
+    let step = 1
+    await until(() => {
+      engine!.h.message(agentStep('agent-one', step++, 'Tick'))
+      return agentPatches.length > 0
+    })
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(agentPatches.length).toBeGreaterThan(0)
+    expect(otherEvents).toEqual([])
+  })
+
+  it('an agent page goes to no member that is not attached to the tab, though it watches the page', async () => {
+    await attach()
+    engine!.h.message(agentStart('agent-one'))
+    actions.chatAgentWatch(T1, 'agent-one')
+    let step = 1
+    await until(() => {
+      engine!.h.message(agentStep('agent-one', step++, 'Tick'))
+      return agentPatches.length > 0
+    })
+    // the tab's copy closes here: no member stays attached to it
+    hostA.closed(T1)
+    const seen = agentPatches.length
+    engine!.h.message(agentStep('agent-one', step++, 'Gone'))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(agentPatches.length).toBe(seen)
+  })
+
+  it('a page made for a batch over the cap reaches no member that has moved on from it meanwhile', async () => {
+    await attach()
+    engine!.h.message(agentStart('agent-big'))
+    actions.chatAgentWatch(T1, 'agent-big')
+    let step = 0
+    await until(() => {
+      engine!.h.message(agentStep('agent-big', step++, 'Tick'))
+      return agentPatches.length > 0
+    })
+    let release: () => void = () => undefined
+    agentGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const made = pushedPages
+    for (let i = 0; i < 510; i++) engine!.h.message(agentStep('agent-big', 1000 + i, `part ${i}`))
+    // the page is being made, and the member leaves it before it is sent
+    await until(() => pushedPages > made)
+    const reloads = agentReloads.length
+    actions.chatAgentWatch(T1, null)
+    await actions.chatModes(T1)
+    release()
+    agentGate = null
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(agentReloads.length).toBe(reloads)
+  })
+
+  it('a page the device answers for another agent or another tab than asked is no page', async () => {
+    await attach()
+    engine!.h.message(agentStart('agent-one'))
+    const agentTwo = { id: 'agent-two', type: 'Explore', description: 'Look agent-one', state: 'running', startedAt: null, ms: null, parentId: null }
+    agentSkew = { agentId: 'agent-two', agent: agentTwo as AgentSnapshot['agent'] }
+    expect(await actions.chatAgent(T1, 'agent-one')).toBeNull()
+    agentSkew = { tabId: T2 }
+    expect(await actions.chatAgent(T1, 'agent-one')).toBeNull()
+    agentSkew = null
+    expect(await actions.chatAgent(T1, 'agent-one')).toMatchObject({ tabId: T1, agentId: 'agent-one' })
   })
 })
 

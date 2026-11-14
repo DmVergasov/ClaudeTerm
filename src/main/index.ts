@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, promises as fsPromises, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, hostname, release, tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { MAIN_ACCOUNT, type AccountFlowView, type AccountResult, type AccountView, type AccountsView, type CarryLine, type CarryPreview, type PickedFolder, type RemoveInfo, type RemoveResult } from '../shared/accounts'
-import { commandWord, isTabView, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSnapshot } from '../shared/chat'
+import { commandWord, isAgentId, isTabView, type AgentSnapshot, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSnapshot } from '../shared/chat'
 import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import type { DocRead } from '../shared/docs'
 import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
@@ -66,13 +66,13 @@ import { resourcePath } from './resources'
 import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
 import { Coalescer } from './coalesce'
 import { SettingsWindow } from './settings-window'
-import { SessionHistory } from './session-history'
-import { ChatHub } from './chat/chat-hub'
+import { claudeProjectsDir, SessionHistory } from './session-history'
+import { ChatHub, WINDOW_VIEWER } from './chat/chat-hub'
 import { ChatSessions } from './chat/chat-sessions'
 import { isHandoffLine, openInTerminal, type HandoffDeps } from './chat/terminal-handoff'
 import { chatPromptState, planChatResume, routeChatResume, type ChatResumeDeps } from './chat/chat-routing'
 import { scaleChatImage } from './chat/chat-image'
-import { isChatAnswer, isChatSend, isHeadsUpAction, isPermissionMode } from './chat/chat-guards'
+import { isAgentText, isChatAnswer, isChatSend, isHeadsUpAction, isPermissionMode } from './chat/chat-guards'
 import { canonicalFolder, readTrustFile } from './chat/chat-files'
 import { attachFiles, attachmentOf, isChatPaths, isChatQuery, type AttachDeps } from './chat/chat-attachments'
 import { matchFiles, projectFiles } from './chat/project-files'
@@ -124,7 +124,7 @@ import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager, type ConversationMove } from './tab-manager'
 import { TabPlaces } from './tab-places'
-import { chatBatchPush, clampPush, forgetCopiedBy, hostHandlers, hostTabs, planPush, pruneListedMembers, reviewPushes, withoutTabId, type HostContext } from './remote-host'
+import { chatBatchPush, clampPush, forgetCopiedBy, hostHandlers, hostTabs, planPush, pruneListedMembers, pushAgentBatch, reviewPushes, withoutTabId, type HostContext } from './remote-host'
 import { clearFlag, frontClears, presentViewers, RemoteFront } from './remote-front'
 import { RemoteHolder, type RemoteHolderDeps } from './remote-holder'
 import { readAgentMeta } from './transcript-agent-info'
@@ -1107,9 +1107,25 @@ function bootstrap(): void {
       const sessionStore = accountFolder === null ? undefined : accountSessionStore(join(accountFolder, 'projects'))
       return (await loadSdk()).getSessionMessages(sessionId, { dir: folder, includeSystemMessages: true, ...(sessionStore ? { sessionStore } : {}) })
     },
+    // the transcript of a session in a tab: the hook's path when it is that session's file, else the tab's project folder under the
+    // tab's own Claude config (its environment: a sign-in account's folder for a tab on one)
+    transcript: async (tabId, sessionId) => {
+      const hooked = sources.get(tabId)?.transcriptPath
+      if (hooked && basename(hooked) === `${sessionId}.jsonl`) return findTranscript(hooked, sessionId)
+      const cwd = tabs.get(tabId)?.cwd
+      if (!cwd) return null
+      return findTranscript(join(claudeProjectsDir(tabs.claudeEnv(tabId) ?? process.env, homedir()), cwd.replace(/[^A-Za-z0-9]/g, '-'), `${sessionId}.jsonl`), sessionId)
+    },
     window: (tabId, fromRev, toRev, patches) => send(IPC.evChatPatch, tabId, fromRev, toRev, patches),
     // the patches of a tab a member watches go to its members, whatever tab the window shows
     remote: (tabId, fromRev, toRev, patches) => pushChatBatch(tabId, fromRev, toRev, patches),
+    // the agent page the window watches: its patches go to the window in a batch of their own
+    agentWindow: (tabId, agentId, fromRev, toRev, patches) => send(IPC.evChatAgentPatch, tabId, agentId, fromRev, toRev, patches),
+    // the patches of an agent page its members watch: to each of those devices, or the page as a snapshot when the batch is too large
+    agentRemote: (tabId, agentId, devices, fromRev, toRev, patches) => {
+      const host = remote?.host
+      if (host) pushAgentBatch(host, tabId, { agentId, fromRev, toRev, patches }, devices, () => chatHub.remoteAgentSnapshot(tabId, agentId), (device) => chatHub.watchesAgent(device, tabId, agentId)).catch((err: unknown) => log.warn(`agent push failed: ${String(err)}`))
+    },
     watched: (tabId) => (remote?.host.watchers(tabId).length ?? 0) > 0,
     activeTabId: () => tabs.activeTabId(),
     exists: (tabId) => tabs.get(tabId) !== null,
@@ -1435,6 +1451,9 @@ function bootstrap(): void {
     ring: (tabId, reason) => attention.ringInFront(tabId, reason),
     chat: (tabId, fromRev, toRev, patches) => send(IPC.evChatPatch, tabId, fromRev, toRev, patches),
     chatReload: (tabId) => send(IPC.evChatReload, tabId),
+    // an agent page of a remote tab, as a local tab's agent page reaches the window (index.ts has no unit harness: no test of these two lines)
+    chatAgent: (tabId, agentId, fromRev, toRev, patches) => send(IPC.evChatAgentPatch, tabId, agentId, fromRev, toRev, patches),
+    chatAgentReload: (tabId, agentId) => send(IPC.evChatAgentReload, tabId, agentId),
     push: (tabId, value) => {
       if (value.k === 'status') {
         send(IPC.evStatus, { tabId, ...value.v })
@@ -1483,6 +1502,7 @@ function bootstrap(): void {
 
   /** what this device serves its members of its own tabs: the tabs, their sizes, the pushes and the calls */
   const hostCtx: HostContext = {
+    memberApp: (device) => remote?.host.appOf(device) ?? null,
     tabs: {
       list: () => tabs.list(),
       get: (tabId) => tabs.get(tabId),
@@ -1532,6 +1552,9 @@ function bootstrap(): void {
         statusHub.dropBackground(tabId, taskId)
       },
       older: (tabId, beforeId) => chatHub.olderForMembers(tabId, beforeId),
+      agentSnapshot: (tabId, agentId) => chatHub.remoteAgentSnapshot(tabId, agentId),
+      agentOlder: (tabId, agentId, beforeId) => chatHub.agentOlder(tabId, agentId, beforeId),
+      watchAgent: (tabId, device, agentId) => chatHub.watchAgent(tabId, device, agentId),
       commands: (tabId) => chatHub.commands(tabId),
       models: (tabId) => chatHub.models(tabId),
       modes: (tabId) => chatHub.modes(tabId),
@@ -1624,6 +1647,8 @@ function bootstrap(): void {
       remoteFronts.delete(device)
       // a member that left takes the files it copied with it: a message may not name them again
       forgetCopiedBy(hostCtx, device)
+      // a member that left watches no agent page any more
+      chatHub.forgetViewer(device)
       peerGoneReceived(device)
       for (const [tabId, s] of sizes.dropViewer(device)) applySize(tabId, s)
     },
@@ -2254,6 +2279,8 @@ function bootstrap(): void {
       } else review.dialogOpened(msg.tabId, msg.agentId ?? null)
       // an answer typed or fronted while the turn's end is read makes the attention void: it starts nowhere
       const inputsAtEnd = tabInputs.of(msg.tabId)
+      // the follow-up turn of a forward is quiet: its end is no notification, mark or badge (the agent's answer is on its page)
+      const quiet = msg.reason === 'done' && chatHub.quietTurn(msg.tabId)
       const signal = (): void => {
         if (!isClaudeTab(msg.tabId)) return
         if (tabInputs.of(msg.tabId) !== inputsAtEnd) {
@@ -2264,7 +2291,7 @@ function bootstrap(): void {
         const reason = msg.reason === 'done' && (mailTurn || turns.lastTurnIsPeer(msg.tabId)) ? 'peer' : msg.reason
         // a done with background work still running gives no signal while doneWithBackgroundWork is off: no tab waits for it
         const share = msg.reason !== 'done' || msg.background !== true || settings.notifications.doneWithBackgroundWork
-        raiseAttention(msg.tabId, reason, { background: msg.background === true, share })
+        raiseAttention(msg.tabId, reason, { background: msg.background === true, share: share && !quiet })
         if (msg.error) log.info(`attention ${reason} tab=${msg.tabId} error=${msg.error}`)
       }
       // the end of a turn waits for the main transcript to be read up to it: the pipe answers at once, the signal follows
@@ -2398,6 +2425,7 @@ function bootstrap(): void {
         host: testDeviceHost ?? '::',
         port: testDevicePort ?? settings.devices.port,
         platform: devicePlatform,
+        appVersion: app.getVersion(),
         hostName: () => hostname().slice(0, MAX_DEVICE_NAME),
         addresses: testDeviceHost ? () => [testDeviceHost] : localAddresses,
         onData: (updates) => bridge?.applied(updates),
@@ -2768,6 +2796,11 @@ function bootstrap(): void {
     if (remote?.viewer.has(tabId)) return remote.actions.chatSend(tabId, s)
     return chatHub.send(tabId, s)
   })
+  ipcMain.handle(IPC.chatAgentSend, (_e, tabId: unknown, agentId: unknown, text: unknown): Promise<string | null> => {
+    if (!isId(tabId) || !isAgentId(agentId) || !isAgentText(text)) return Promise.resolve('Invalid message')
+    if (remote?.viewer.has(tabId)) return Promise.resolve('Read-only on this device')
+    return isLocalClaudeTab(tabId) ? chatHub.sendToAgent(tabId, agentId, text) : Promise.resolve('Claude Code is not running in this tab')
+  })
   ipcMain.on(IPC.chatInterrupt, (_e, tabId: unknown) => {
     if (isLocalClaudeTab(tabId)) chatHub.interrupt(tabId)
     else if (isId(tabId) && remote?.viewer.has(tabId)) remote.actions.chatInterrupt(tabId)
@@ -2820,6 +2853,23 @@ function bootstrap(): void {
     if (!isId(tabId) || !isChatRef(beforeId)) return Promise.resolve(null)
     if (remote?.viewer.has(tabId)) return remote.actions.chatOlder(tabId, beforeId)
     return Promise.resolve(isLocalClaudeTab(tabId) ? chatHub.older(tabId, beforeId) : null)
+  })
+  // an agent's page of a local Claude tab: its snapshot, the items before one of them, and the agent the window watches (null: none)
+  // an agent's page of a local Claude tab, or of a remote tab the member's device serves
+  ipcMain.handle(IPC.chatAgentSnapshot, (_e, tabId: unknown, agentId: unknown): Promise<AgentSnapshot | null> => {
+    if (!isAgentId(agentId)) return Promise.resolve(null)
+    if (isId(tabId) && remote?.viewer.has(tabId)) return remote.actions.chatAgent(tabId, agentId)
+    return Promise.resolve(isLocalClaudeTab(tabId) ? chatHub.agentSnapshot(tabId, agentId) : null)
+  })
+  ipcMain.handle(IPC.chatAgentOlder, (_e, tabId: unknown, agentId: unknown, beforeId: unknown): Promise<{ items: ChatItem[]; hasOlder: boolean } | null> => {
+    if (!isAgentId(agentId) || !isChatRef(beforeId)) return Promise.resolve(null)
+    if (isId(tabId) && remote?.viewer.has(tabId)) return remote.actions.chatAgentOlder(tabId, agentId, beforeId)
+    return Promise.resolve(isLocalClaudeTab(tabId) ? chatHub.agentOlder(tabId, agentId, beforeId) : null)
+  })
+  ipcMain.on(IPC.chatAgentWatch, (_e, tabId: unknown, agentId: unknown) => {
+    if (agentId !== null && !isAgentId(agentId)) return
+    if (isId(tabId) && remote?.viewer.has(tabId)) remote.actions.chatAgentWatch(tabId, agentId)
+    else if (isLocalClaudeTab(tabId)) chatHub.watchAgent(tabId, WINDOW_VIEWER, agentId)
   })
   ipcMain.handle(IPC.chatModes, (_e, tabId: unknown): Promise<ChatPermissionMode[]> => {
     if (isLocalClaudeTab(tabId)) return Promise.resolve(chatHub.modes(tabId))

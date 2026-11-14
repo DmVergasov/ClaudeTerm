@@ -27,6 +27,7 @@ const MAX_VERSION_ENTRIES = 1024
 const MAX_UPDATES = 10_000
 const MAX_SIBLINGS = 64
 const PROOF_RE = /^[0-9a-f]{64}$/
+const APP_RE = /^[0-9A-Za-z.+-]{1,32}$/
 const PAIR_FAIL_REASONS = ['code', 'expired', 'no-code'] as const
 
 export interface HelloMessage {
@@ -40,6 +41,8 @@ export interface HelloMessage {
   reachedYou: boolean | null
   /** 1 when the device speaks the mail protocol; absent from a device that does not */
   mail?: 1
+  /** this app's version; absent from a device that predates it */
+  app?: string
 }
 
 export type Message = HelloMessage
@@ -238,7 +241,9 @@ function parseHello(v: Record<string, unknown>): HelloMessage | null {
   if (reachedYou !== null && typeof reachedYou !== 'boolean') return null
   // only mail: 1 counts: a device that sends another value is taken as one that does not speak the mail protocol
   const mail = v.mail === 1 ? { mail: 1 as const } : {}
-  return { t: 'hello', v: v.v, id, name, platform: known, port: port as number, addresses: list, reachedYou, ...mail }
+  // the app version: a string of 1 to 32 characters of a version, anything else is dropped
+  const app = typeof v.app === 'string' && APP_RE.test(v.app) ? { app: v.app } : {}
+  return { t: 'hello', v: v.v, id, name, platform: known, port: port as number, addresses: list, reachedYou, ...mail, ...app }
 }
 
 function parseRecords(v: Record<string, unknown>): Message | null {

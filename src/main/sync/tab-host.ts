@@ -34,11 +34,14 @@ export interface TabHostDeps {
   onWatchers?(): void
   /** a push the member's link refused (send returned false): the tab and the kind of the push */
   onPushRefused?(tabId: string, k: PushKind): void
+  /** the value a member of an older app gets for a push of this kind (the attach pushes and the live ones alike); left out, a push goes as it is */
+  forOlder?(k: PushKind, v: unknown): unknown
 }
 
-/** a member of the group, linked on one link; `watching`: the tabs it is attached to */
+/** a member of the group, linked on one link; `watching`: the tabs it is attached to; `app`: its app version, null for an older device */
 interface Member {
   device: string
+  app: string | null
   link: PeerLink
   watching: Set<string>
   onMessage: (m: Message) => void
@@ -67,8 +70,8 @@ export class TabHost {
     this.detachBacklogBytes = deps.detachBacklogBytes ?? DETACH_BACKLOG_BYTES
   }
 
-  /** sends the whole directory, reads in / claim / front, and removes the member on the link's 'close' */
-  addPeer(link: PeerLink, device: string): void {
+  /** sends the whole directory, reads in / claim / front, and removes the member on the link's 'close'; app: the member's app version, null for an older device */
+  addPeer(link: PeerLink, device: string, app: string | null = null): void {
     if (this.disposed) return
     const old = this.members.get(device)
     if (old?.link === link) return
@@ -89,7 +92,7 @@ export class TabHost {
         // the link is closed already; nothing more to do with the error
       }
     }
-    const member: Member = { device, link, watching: new Set(), onMessage, onClose }
+    const member: Member = { device, app, link, watching: new Set(), onMessage, onClose }
     this.members.set(device, member)
     link.on('message', onMessage)
     link.on('close', onClose)
@@ -220,6 +223,13 @@ export class TabHost {
     for (const m of this.watchersOf(tabId)) this.pushTo(m, tabId, k, v)
   }
 
+  /** a hub update of the tab for one member: sent only when that member watches the tab, and nothing goes to any other device */
+  pushToDevice(device: string, tabId: string, k: PushKind, v: unknown): void {
+    if (this.disposed) return
+    const m = this.members.get(device)
+    if (m && m.watching.has(tabId)) this.pushTo(m, tabId, k, v)
+  }
+
   /** the members attached to the tab */
   watchers(tabId: string): string[] {
     return this.watchersOf(tabId).map((m) => m.device)
@@ -227,6 +237,11 @@ export class TabHost {
 
   peers(): string[] {
     return [...this.members.keys()]
+  }
+
+  /** the app version of a member; null: an older member (its hello had none), or no member of that device */
+  appOf(device: string): string | null {
+    return this.members.get(device)?.app ?? null
   }
 
   /** removes every member and its listeners; the links stay open, their owner closes them */
@@ -304,7 +319,9 @@ export class TabHost {
    * A review push replaces a queued older one for the same tab, and a review part the older part of its index, so the
    * parts of a newer review take the place of an older review's unsent parts; the other kinds are sent at once.
    */
-  private pushTo(member: Member, id: string, k: PushKind, v: unknown): void {
+  private pushTo(member: Member, id: string, k: PushKind, value: unknown): void {
+    // an older member has no kind of its own for some pushes: its value is the one the older app shows
+    const v = member.app === null && this.deps.forOlder ? this.deps.forOlder(k, value) : value
     const m: Message = { t: 'push', id, k, v }
     let sent: boolean
     if (k === 'review') sent = member.link.sendBulk(m, `push:review:${id}`)

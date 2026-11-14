@@ -35,7 +35,7 @@ import { TabPanel } from './tab-panel'
 import { orderToWrite, tabBarOrder } from './tab-groups'
 import { TerminalView } from './terminal-view'
 import { ChatView } from './chat/chat-view'
-import { ChatFind } from './chat/chat-find'
+import { ChatFind, type FindView } from './chat/chat-find'
 import { resolveTheme } from './themes'
 import { showToast } from './toasts'
 import { promptText } from './claude-screen'
@@ -621,22 +621,30 @@ function selectionEnds(): SelectionEnds {
 const sameEnds = (a: SelectionEnds, b: SelectionEnds): boolean =>
   a.anchor === b.anchor && a.anchorOffset === b.anchorOffset && a.focus === b.focus && a.focusOffset === b.focusOffset
 
-/** the chats' finds: one per chat, so a Find keeps its place while its chat is in front */
-const chatFinds = new WeakMap<ChatView, ChatFind>()
+/** the chats' finds, by what each searches: a chat's conversation, or an agent page in its place; one per view, so a Find keeps its place while it is in front */
+const chatFinds = new WeakMap<FindView, ChatFind>()
 
-/** the find target of the tab in front: its chat's find in the chat view, its terminal's search otherwise */
+/** the find target of the tab in front: its chat's find in the chat view (the agent page's while one shows), its terminal's search otherwise */
 function findTarget(): FindTarget | null {
   const t = activeId ? tabs.get(activeId) : undefined
   if (!t) return null
   if (t.chat && isChatView(t)) {
-    let find = chatFinds.get(t.chat)
+    const view = t.chat.agentFindView() ?? t.chat
+    let find = chatFinds.get(view)
     if (!find) {
-      find = new ChatFind(t.chat)
-      chatFinds.set(t.chat, find)
+      find = new ChatFind(view)
+      chatFinds.set(view, find)
     }
     return find
   }
   return t.view?.search ?? null
+}
+
+/** clears the highlights of a chat's finds: its conversation's, and its agent page's while one shows */
+function clearChatFinds(chat: ChatView): void {
+  chatFinds.get(chat)?.clearDecorations()
+  const page = chat.agentFindView()
+  if (page !== null) chatFinds.get(page)?.clearDecorations()
 }
 
 async function paste(t: TabState, allowImage: boolean): Promise<void> {
@@ -828,6 +836,12 @@ function makeChat(tabId: string, remote: boolean): ChatView {
     // the reload card's buttons act on this tab's session; a member's tab has none (its host's Claude Code loads the servers)
     reload: remote ? null : (action) => { void ct.mcpReload(tabId, action) },
     older: (beforeId) => ct.chatOlder(tabId, beforeId),
+    agentSnapshot: (agentId) => ct.chatAgentSnapshot(tabId, agentId),
+    agentOlder: (agentId, beforeId) => ct.chatAgentOlder(tabId, agentId, beforeId),
+    watchAgent: (agentId) => ct.chatAgentWatch(tabId, agentId),
+    // a message on an agent's page goes to the agent through the main conversation; a member's device reads the host's agents only
+    sendToAgent: (agentId, text) => ct.chatAgentSend(tabId, agentId, text),
+    readOnly: remote,
     // a card the Media panel marked deleted is no card: its picture is not drawn, as one with no card is not
     imageCard: (cardId) => imageUpdates.get(tabId)?.cards.find((c) => c.id === cardId && !c.deleted) ?? null,
     openImages: (cards, index) => lightbox.open(cards, index),
@@ -870,7 +884,7 @@ function showTab(t: TabState, visible: boolean, focus: boolean): void {
   t.view?.show(visible && !chat, focus)
   t.chat?.show(chat, focus)
   // a chat left, or out of its chat view, takes its Find's highlights and walk with it: a Find in another tab searches that tab
-  if (!chat && t.chat) chatFinds.get(t.chat)?.clearDecorations()
+  if (!chat && t.chat) clearChatFinds(t.chat)
 }
 
 /** the tab's view changed: its terminal is made before the process's first output can come, or goes with the chat */
@@ -880,6 +894,8 @@ function applyView(t: TabState): void {
     t.view = null
   } else if (t.info.view === 'terminal') {
     ensureTerminal(t)
+    // an agent page is left for the terminal: the conversation is back before the view changes
+    t.chat?.closeAgent()
   }
   // the MCP · Plugins panel is the chat view's: a switch of the view changes whether it is offered
   syncMcpPanel()
@@ -1344,7 +1360,7 @@ async function boot(): Promise<void> {
     findTarget,
     () => {
       // a closed Find leaves no highlight on any chat, whichever tab its search was in
-      for (const t of tabs.values()) if (t.chat) chatFinds.get(t.chat)?.clearDecorations()
+      for (const t of tabs.values()) if (t.chat) clearChatFinds(t.chat)
       // the card moves back up under the top right corner, where Find's box was
       noteOverlay.relayout()
       if (activeId) focusTab(activeId)
@@ -1352,7 +1368,8 @@ async function boot(): Promise<void> {
   )
   document.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement | null
-    const onComposer = target?.classList.contains('chat-input') === true
+    // the agent page's message box is a composer too
+    const onComposer = target?.classList.contains('chat-input') === true || target?.classList.contains('agent-input') === true
     // AltGr types a character on many layouts (AltGr+7 is { on German). Windows sends it as Ctrl+Alt, so a character key with
     // Ctrl+Alt stays with the composer; a digit is still a tab switch
     if (onComposer && (e.getModifierState('AltGraph') || (e.ctrlKey && e.altKey && [...e.key].length === 1 && !/^\d$/.test(e.key)))) return
@@ -1680,6 +1697,15 @@ async function boot(): Promise<void> {
     const t = tabs.get(tabId)
     if (t && tabId === activeId && isChatView(t)) loadChat(tabId)
   })
+  // an agent's patches go to the chat of their tab, not only the one in front; a gap in the page shown asks for its snapshot again
+  ct.onChatAgentPatch((tabId, agentId, fromRev, toRev, patches) => {
+    const chat = tabs.get(tabId)?.chat
+    if (chat && !chat.agentPatch(agentId, fromRev, toRev, patches)) chat.reloadAgent()
+  })
+  ct.onChatAgentReload((tabId, agentId) => {
+    const chat = tabs.get(tabId)?.chat
+    if (chat && chat.shownAgent() === agentId) chat.reloadAgent()
+  })
   ct.onTabClosed((id) => {
     closeBanner(id)
     const t = tabs.get(id)
@@ -1689,7 +1715,7 @@ async function boot(): Promise<void> {
     if (wasFront) planList.close()
     t.view?.dispose()
     // the closed chat's Find clears the page's highlights when it painted them last
-    if (t.chat) chatFinds.get(t.chat)?.clearDecorations()
+    if (t.chat) clearChatFinds(t.chat)
     t.chat?.dispose()
     chatLoads.delete(id)
     tabs.delete(id)

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } fro
 import { createServer, connect, type AddressInfo, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { FakeScript } from '../fixtures/fake-claude/install'
+import type { FakeScript, FakeTask } from '../fixtures/fake-claude/install'
 import { chatReady, chatStandIn, CHAT_INPUT, controlResponses, sendMessage, userMessages } from './chat-helpers'
 import { closePaired, type Device, pairedApps, SLOW, startApps } from './device-pair'
 import { bufferText, launchApp, writeTranscript } from './helpers'
@@ -11,6 +11,7 @@ import { bufferText, launchApp, writeTranscript } from './helpers'
 test.afterEach(closePaired)
 
 // a member's chat: the card, the composer's keys and the sheet header's switch are the member's own
+const ROWS = '.chat-host:visible .chat-agents-dock .chat-agent'
 const PERMISSION = '.chat-host:visible .chat-card-permission'
 const ANSWERED = '.chat-host:visible .chat-card.answered'
 const CARD_BUTTON = '.chat-host:visible .chat-card button'
@@ -440,4 +441,39 @@ test("a member's /mcp goes to the host's Claude Code and says where to manage MC
   await expect(b.page.locator(COMPOSER_NOTE)).toHaveText(`Manage MCP on ${a.name}`, SLOW)
   await expect.poll(() => userMessages(stand.log).includes('/mcp'), SLOW).toBe(true)
   await expect(b.page.locator('.tab-mcp-toggle')).toBeHidden()
+})
+
+test("a member's agent page says Read-only on this device", async () => {
+  test.setTimeout(180_000)
+  const task: FakeTask = { description: 'Search the sales folder', result: 'unused', background: true, agents: [{ type: 'Explore', description: 'Search the sales folder', ms: 60_000, gate: 'member-off', frames: [{ text: 'Looking at the sales folder' }] }] }
+  const { a, b, tabId, stand } = await chatTab({ turns: { team: [{ task }, { text: 'Done.' }] } })
+  await frontOnMember(b, tabId)
+  await sendMessage(a.page, 'team')
+  await expect(b.page.locator(ROWS)).toHaveCount(1, SLOW)
+  await b.page.locator(ROWS).click()
+  await expect(b.page.locator('.chat-host:visible .agent-page')).toBeVisible(SLOW)
+  await expect(b.page.locator('.chat-host:visible .agent-footer .agent-off')).toHaveText('Read-only on this device')
+  await expect(b.page.locator('.chat-host:visible .agent-footer .agent-input')).toHaveCount(0)
+  writeFileSync(join(stand.config, 'member-off'), '')
+})
+
+test("a member opens a host's agent page read-only, and its live frames arrive", async () => {
+  test.setTimeout(180_000)
+  // a background agent with a frame every 300 ms, running until the host releases its gate: the member's page follows it live
+  const frames = Array.from({ length: 30 }, (_, i) => ({ text: `Step ${i + 1} of the search` }))
+  const task: FakeTask = { description: 'Search the sales folder', result: 'unused', background: true, agents: [{ type: 'Explore', description: 'Search the sales folder', ms: 60_000, gate: 'member-release', pace: 300, frames }] }
+  const { a, b, tabId, stand } = await chatTab({ turns: { team: [{ task }, { text: 'Done.' }] } })
+  await frontOnMember(b, tabId)
+  await sendMessage(a.page, 'team')
+  await expect(b.page.locator(ROWS)).toHaveCount(1, SLOW)
+  await b.page.locator(ROWS).click()
+  const page = b.page.locator('.chat-host:visible .agent-page')
+  await expect(page).toBeVisible(SLOW)
+  await expect(page.locator('.agent-desc')).toHaveText('Search the sales folder')
+  // read-only: the page has no field to type in, and the member's composer is not in its way
+  await expect(page.locator('input, textarea, [contenteditable="true"]')).toHaveCount(0)
+  // the host's agent keeps running: its later frames come to the member's open page, and its end does too
+  await expect(page.locator('.chat-text', { hasText: 'Step 30 of the search' })).toHaveCount(1, SLOW)
+  writeFileSync(join(stand.config, 'member-release'), '')
+  await expect(page.locator('.agent-state')).toHaveAttribute('data-state', 'done', SLOW)
 })

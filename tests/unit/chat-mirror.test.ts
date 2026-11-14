@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { capItems, capSnapshot, ChatMirror, itemForMembers, MAX_CHAT_ITEMS, parseChatPush, patchForMembers } from '../../src/main/chat/chat-mirror'
+import { capItems, capSnapshot, ChatMirror, itemForMembers, itemForOlder, MAX_CHAT_ITEMS, olderChatPush, parseAgentPush, parseAgentSnapshot, parseChatPush, patchForMembers } from '../../src/main/chat/chat-mirror'
 import { SUBJECT_CAP } from '../../src/main/chat/chat-model'
+import { hostHandlers, type HostChat } from '../../src/main/remote-host'
 import type { ChatItem, ChatPatch, ChatSnapshot, ChatState, ChatToolCall } from '../../src/shared/chat'
 import { MAX_CHAT_PUSH_BYTES } from '../../src/shared/remote'
+import { B_ID, T1, fakeHost, tabInfo } from '../fixtures/host-context'
 
 const TAB = '0a1b2c3d-0000-4000-8000-000000000001'
 const STATE: ChatState = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
@@ -50,6 +52,21 @@ describe("a subagent's model, effort and context are optional, and checked when 
     expect(parseChatPush(withAgent({ startedAt: '10:00' }))).toBeNull()
     expect(parseChatPush(withAgent({ startedAt: -5 }))).toBeNull()
     expect(parseChatPush(withAgent({ startedAt: Number.NaN }))).toBeNull()
+  })
+})
+
+describe("a subagent's id is an agent id: letters, digits, _ and -, 1 to 128 characters", () => {
+  const agent = (id: string): Record<string, unknown> => ({ id, description: 'Find it', type: 'Explore', state: 'running', ms: null })
+  const withAgent = (id: string): ChatSnapshot => snapshot([{ kind: 'tools', id: 't', calls: [call('c1', { name: 'Agent', agents: [agent(id)] })], ms: null }])
+
+  it('the mirror takes an agent whose id is a valid agent id', () => {
+    expect(parseChatPush(withAgent('task_a-1'))).not.toBeNull()
+    expect(parseChatPush(withAgent('x'.repeat(128)))).not.toBeNull()
+  })
+
+  it('the mirror refuses an agent whose id has a slash, a dot-dot or more than 128 characters', () => {
+    expect(parseChatPush(withAgent('a/../b'))).toBeNull()
+    expect(parseChatPush(withAgent('x'.repeat(129)))).toBeNull()
   })
 })
 
@@ -453,5 +470,111 @@ describe('a chat for the members', () => {
     const reset = patchForMembers({ op: 'reset', items: [reload, divider], hasOlder: false })
     if (reset.op !== 'reset') throw new Error('reset expected')
     expect(parseChatPush(snapshot(reset.items))).not.toBeNull()
+  })
+})
+
+describe("an agent page's pushes, checked by the member", () => {
+  const AGENT = { id: 'agent-1', type: 'Explore', description: 'Find', state: 'running', startedAt: 1, ms: null, parentId: null }
+  const page = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    tabId: TAB, agentId: 'agent-1', rev: 2, items: [text('t1')], hasOlder: false, agent: AGENT, writable: false, ...over,
+  })
+  const prompt = (first: unknown, body: string = 'Look'): unknown => ({ kind: 'prompt', id: 'p1', text: body, first })
+
+  it('a page of an agent is a snapshot; a batch of its patches, the agent op among them, is a batch', () => {
+    expect(parseAgentPush(page())).toEqual({ snapshot: page() })
+    const patches = [{ op: 'add', item: prompt(true) }, { op: 'agent', agent: { ...AGENT, state: 'done', ms: 5 } }]
+    expect(parseAgentPush({ agentId: 'agent-1', fromRev: 2, toRev: 4, patches })).toEqual({ agentId: 'agent-1', fromRev: 2, toRev: 4, patches })
+  })
+
+  it('a batch with a state op is refused, and so is one whose revisions do not count its patches', () => {
+    expect(parseAgentPush({ agentId: 'agent-1', fromRev: 0, toRev: 1, patches: [{ op: 'state', state: STATE }] })).toBeNull()
+    expect(parseAgentPush({ agentId: 'agent-1', fromRev: 0, toRev: 2, patches: [{ op: 'remove', id: 'x' }] })).toBeNull()
+  })
+
+  it('a batch of more than MAX_CHAT_PATCHES is refused, and so is an agent id that is not one', () => {
+    const patches = Array.from({ length: 501 }, (_, i) => ({ op: 'remove', id: `r${i}` }))
+    expect(parseAgentPush({ agentId: 'agent-1', fromRev: 0, toRev: 501, patches })).toBeNull()
+    expect(parseAgentPush({ agentId: '../x', fromRev: 0, toRev: 1, patches: [{ op: 'remove', id: 'r' }] })).toBeNull()
+  })
+
+  it('a page with an agent state the protocol does not know, a writable that is not a flag, or a bad agent id is refused', () => {
+    expect(parseAgentPush(page({ agent: { ...AGENT, state: 'paused' } }))).toBeNull()
+    expect(parseAgentPush(page({ writable: 'yes' }))).toBeNull()
+    expect(parseAgentPush(page({ agentId: '../x' }))).toBeNull()
+  })
+
+  it('an agent description over 500 characters is refused; a prompt item takes a text of the item cap and a first flag', () => {
+    expect(parseAgentSnapshot(page({ agent: { ...AGENT, description: 'x'.repeat(501) } }))).toBeNull()
+    expect(parseAgentSnapshot(page({ items: [prompt(false, 'x'.repeat(1024 * 1024))] }))).not.toBeNull()
+    expect(parseAgentSnapshot(page({ items: [prompt(false, 'x'.repeat(1024 * 1024 + 1))] }))).toBeNull()
+    expect(parseAgentSnapshot(page({ items: [prompt('yes')] }))).toBeNull()
+    expect(parseChatPush(snapshot([prompt(true) as ChatItem]))).not.toBeNull()
+  })
+
+  it('a forward item reaches a member; one with a bad agent id, a bad state or a reason over 300 is refused', () => {
+    const forward = (over: Record<string, unknown> = {}): ChatItem => ({ kind: 'forward', id: 'f1', agentId: 'a1b2c3', label: 'Explore agent · Find it', text: 'Look.', state: 'queued', reason: null, ...over } as ChatItem)
+    expect(parseChatPush(snapshot([forward()]))).not.toBeNull()
+    expect(parseChatPush(snapshot([forward({ state: 'failed', reason: 'Not forwarded: no such agent' })]))).not.toBeNull()
+    expect(parseChatPush(snapshot([forward({ agentId: '../x' })]))).toBeNull()
+    expect(parseChatPush(snapshot([forward({ state: 'lost' })]))).toBeNull()
+    expect(parseChatPush(snapshot([forward({ reason: 'r'.repeat(301) })]))).toBeNull()
+    expect(parseChatPush(snapshot([forward({ label: 'l'.repeat(201) })]))).toBeNull()
+  })
+
+  it("an agent's parent is an agent id or none: a parent that is not one is refused", () => {
+    expect(parseAgentSnapshot(page({ agent: { ...AGENT, parentId: 'agent-0' } }))).not.toBeNull()
+    expect(parseAgentSnapshot(page({ agent: { ...AGENT, parentId: null } }))).not.toBeNull()
+    expect(parseAgentSnapshot(page({ agent: { ...AGENT, parentId: 'not an id' } }))).toBeNull()
+  })
+
+  it('a page whose agent is another agent than its agentId is refused, and so is an agent op of another agent in a batch', () => {
+    expect(parseAgentSnapshot(page({ agent: { ...AGENT, id: 'agent-2' } }))).toBeNull()
+    const other = { ...AGENT, id: 'agent-2', state: 'done', ms: 5 }
+    expect(parseAgentPush({ agentId: 'agent-1', fromRev: 0, toRev: 1, patches: [{ op: 'agent', agent: other }] })).toBeNull()
+    expect(parseAgentPush({ agentId: 'agent-1', fromRev: 0, toRev: 1, patches: [{ op: 'agent', agent: { ...AGENT, state: 'done', ms: 5 } }] })).not.toBeNull()
+  })
+})
+
+describe('an older member gets a forward as a notice', () => {
+  const forward = (state: 'delivered' | 'failed' = 'delivered'): ChatItem => ({ kind: 'forward', id: 'f1', agentId: 'agent-1', label: 'Reviewer', text: 'Check the parser\nthen the rest', state, reason: null })
+  const notice1: ChatItem = { kind: 'notice', id: 'f1', tone: 'info', text: '↗ To Reviewer: Check the parser', action: null }
+
+  it('itemForOlder turns a forward into a notice', () => {
+    expect(itemForOlder(forward())).toEqual(notice1)
+    expect(itemForOlder(forward('failed'))).toEqual({ ...notice1, tone: 'error' })
+    expect(itemForOlder({ kind: 'prompt', id: 'p1', text: 'Look at it', first: true })).toEqual({ kind: 'notice', id: 'p1', tone: 'info', text: 'Look at it', action: null })
+    expect(itemForOlder(text('t1'))).toEqual(text('t1'))
+  })
+
+  it('olderChatPush maps the items of a snapshot and of the add, set and reset patches; other pushes pass as they are', () => {
+    expect(olderChatPush('chat', snapshot([forward()]))).toEqual(snapshot([notice1]))
+    const batch = { fromRev: 0, toRev: 4, patches: [{ op: 'add', item: forward() }, { op: 'set', item: forward() }, { op: 'reset', items: [forward()], hasOlder: false }, { op: 'remove', id: 'f1' }] }
+    expect(olderChatPush('chat-patch', batch)).toEqual({
+      fromRev: 0,
+      toRev: 4,
+      patches: [{ op: 'add', item: notice1 }, { op: 'set', item: notice1 }, { op: 'reset', items: [notice1], hasOlder: false }, { op: 'remove', id: 'f1' }]
+    })
+    const other = { tabId: TAB, agentId: 'agent-1' }
+    expect(olderChatPush('chat-agent', other)).toBe(other)
+  })
+
+  it("a forward whose first line is over the notice's cap still gives a notice the older member accepts", () => {
+    const long: ChatItem = { kind: 'forward', id: 'f2', agentId: 'agent-1', label: 'Reviewer', text: 'x'.repeat(70 * 1024), state: 'delivered', reason: null }
+    const prompt: ChatItem = { kind: 'prompt', id: 'p2', text: 'y'.repeat(70 * 1024), first: true }
+    expect(parseChatPush(olderChatPush('chat', snapshot([long, prompt])))).not.toBeNull()
+  })
+})
+
+describe('chat-older to an older member', () => {
+  it('chat-older answers an older member with notices, and a newer one with forwards', () => {
+    const f = fakeHost()
+    f.infos.set(T1, tabInfo(T1, { view: 'chat' }))
+    const forward: ChatItem = { kind: 'forward', id: 'f1', agentId: 'agent-1', label: 'Reviewer', text: 'Check the parser', state: 'delivered', reason: null }
+    f.ctx.chat = { older: () => ({ items: [forward], hasOlder: false }) } as unknown as HostChat
+    const notice1: ChatItem = { kind: 'notice', id: 'f1', tone: 'info', text: '↗ To Reviewer: Check the parser', action: null }
+    f.ctx.memberApp = () => null
+    expect(hostHandlers(f.ctx, B_ID)['chat-older']!.run({ id: T1, beforeId: 'x' })).toEqual({ items: [notice1], hasOlder: false })
+    f.ctx.memberApp = () => '0.18.0'
+    expect(hostHandlers(f.ctx, B_ID)['chat-older']!.run({ id: T1, beforeId: 'x' })).toEqual({ items: [forward], hasOlder: false })
   })
 })

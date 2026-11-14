@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { ChatAnswer, ChatAttachment, ChatCard, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot } from '../../shared/chat'
+import { isAgentId, type AgentPatch, type AgentSnapshot, type ChatAnswer, type ChatAttachment, type ChatCard, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot } from '../../shared/chat'
 import type { ReloadAction } from '../../shared/mcp'
 import { isUuid } from '../../shared/protocol'
 import { MAX_CHAT_PUSH_BYTES } from '../../shared/remote'
@@ -9,9 +9,13 @@ import type { ImageCard, TabInfo } from '../../shared/types'
 import type { ChatHandle, ChatStartRequest } from '../tab-manager'
 import { touchesConfig } from '../mcp/mcp-config'
 import { AttachedFiles, prepareMessage, type AttachDeps } from './chat-attachments'
-import { capSnapshot, itemForMembers, patchForMembers } from './chat-mirror'
+import { capItems, capSnapshot, itemForMembers, patchForMembers } from './chat-mirror'
+import { AgentChats, type AgentChange } from './agent-chats'
+import { agentTranscriptPath, readAgentPage, resolveAgentTranscript, type TranscriptPage } from './agent-history'
+import { forwardNonce, forwardText } from './agent-forward'
 import { answeredLine, cardFor, resultFor, type PermissionAsk, type SdkPermissionResult } from './chat-cards'
 import type { ChatEngine, ChatEngineHandlers, McpLiveServer, StartChatEngine } from './chat-engine'
+import { TEXT_CAP } from './chat-fold'
 import { ChatModel, isPermissionMode } from './chat-model'
 import { sessionFolderOf, startFolderOf } from './chat-folder'
 import type { ChatLaunch } from './claude-spawn'
@@ -23,7 +27,13 @@ import type { ChatLaunch } from './claude-spawn'
 const BATCH_MS = 16
 /** the patches of a tab a member watches go out together at most this often, whatever tab the window shows */
 const REMOTE_BATCH_MS = 50
+/** the viewer name of the window in the agent pages it watches; a member's viewer is its device id */
+export const WINDOW_VIEWER = 'window'
 const NOT_RUNNING = 'Claude Code is not running in this tab'
+const UNKNOWN_AGENT = 'Unknown agent'
+const PLAN_MODE = 'Not sent: plan mode'
+const TOO_LONG = 'Not sent: the message is too long'
+const ENDED_FORWARD = 'Claude Code stopped'
 const STARTING = 'Starting Claude…'
 const CANCELLED = 'Cancelled'
 /** exit codes of a command that cannot run: 126 and 127 (POSIX), 9009 (cmd.exe "not recognized") */
@@ -59,11 +69,17 @@ export interface ChatHubDeps {
   engine: StartChatEngine
   support(tab: TabInfo, env: Record<string, string>): Promise<{ launch: Exclude<ChatLaunch, { how: 'none' }> } | { reason: string }>
   history(sessionId: string, folder: string, account: string | null): Promise<unknown[]>     // getSessionMessages with includeSystemMessages; the tab's account
+  /** the tab's transcript of that session: the hook's path, else ruling 8's; null when none is found */
+  transcript(tabId: string, sessionId: string): Promise<string | null>
   window(tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]): void
   /** the patches of a tab a member watches, in a batch of their own: the members get them whatever tab the window shows */
   remote(tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]): void
   /** whether a member watches the tab now: its patches are gathered for `remote` */
   watched(tabId: string): boolean
+  /** the patches of the agent the window shows (its tab in front), in a batch of their own */
+  agentWindow(tabId: string, agentId: string, fromRev: number, toRev: number, patches: AgentPatch[]): void
+  /** the patches of an agent its members watch, to the devices that watch it */
+  agentRemote(tabId: string, agentId: string, devices: string[], fromRev: number, toRev: number, patches: AgentPatch[]): void
   activeTabId(): string | null
   exists(tabId: string): boolean                                     // the app still has the tab (tabs.get, index.ts)
   cards(tabId: string): ImageCard[]                                  // the Media-panel cards of the tab (images.list)
@@ -92,6 +108,9 @@ interface PendingCard {
   signal: AbortSignal
   onAbort(): void
 }
+
+/** the patches of one agent waiting for their batch: the revision before the first of them, and the batch's timer */
+interface AgentBatch { agentId: string; from: number; patches: AgentPatch[]; timer: ReturnType<typeof setTimeout> | null }
 
 /** a Claude tab's chat, from its start to its end */
 interface Live {
@@ -128,6 +147,8 @@ interface Live {
   restarted: boolean
   /** while the history loads: what the process said meanwhile, run in order once the history is in */
   early: (() => void)[] | null
+  /** agent snapshots asked while the history loads: they answer once the history names the agents */
+  historyWaiters: (() => void)[]
   /** asks that came while the history loads: their card opens once it is in; cancelled if the chat ends first */
   queued: Map<string, { resolve(result: SdkPermissionResult): void; signal: AbortSignal; onAbort(): void }>
   /** the tab asked the process to end (stop or kill): its exit is not an error */
@@ -147,6 +168,12 @@ interface Live {
   remoteFrom: number
   remoteTimer: ReturnType<typeof setTimeout> | null
   cards: Map<string, PendingCard>
+  /** the agents of the chat: one conversation per subagent, folded from the stream's frames */
+  agents: AgentChats
+  /** the patches of the agent the window shows, waiting for their batch */
+  agentWindow: AgentBatch | null
+  /** the patches of the agents members watch, waiting for their batches, by agent id */
+  agentRemote: Map<string, AgentBatch>
   /** when the context fill was last asked for (the hub's clock); null before the first ask */
   contextAt: number | null
   /** the chat's one reload card, when it has one: its item's id */
@@ -189,6 +216,10 @@ export class ChatHub {
   private readonly touched = new Map<string, number>()
   /** the divider a tab's restart ends with, when the restart names one (a switch of account says whom the tab continues as) */
   private readonly restartDividers = new Map<string, string>()
+  /** the agent page each viewer watches: the window (WINDOW_VIEWER) or a member's device; one page per viewer */
+  private readonly views = new Map<string, { tabId: string; agentId: string }>()
+  /** the revision each tab's agents stood at when its chat ended: the next chat's agents count on from it */
+  private readonly agentRevs = new Map<string, number>()
 
   constructor(private readonly d: ChatHubDeps) {}
 
@@ -230,10 +261,11 @@ export class ChatHub {
     const newSessionId = resume === null ? randomUUID() : ''
     const live: Live = {
       tabId, req, engine: null, launch: null, waiting: [], ended: false, ready: false, inited: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
-      kept: null, restarted: restart,
+      historyWaiters: [], kept: null, restarted: restart,
       queued: new Map(), stopping: false, exitDue: false, working: false,
       rev: this.revs.get(tabId) ?? 0, batch: [], batchFrom: 0, timer: null, remoteBatch: [], remoteFrom: 0, remoteTimer: null, cards: new Map(), contextAt: null,
       reloadId: null, restartDivider: null,
+      agents: new AgentChats({ now: () => this.d.now(), newId: () => randomUUID(), folder: () => req.tab.cwd, firstRev: this.agentRevs.get(tabId) ?? 0 }), agentWindow: null, agentRemote: new Map(),
       model: new ChatModel({ now: () => this.d.now(), newId: () => randomUUID(), folder: () => req.tab.cwd }),
     }
     this.tabs.set(tabId, live)
@@ -505,6 +537,72 @@ export class ChatHub {
     return run ? run.engine.models() : []
   }
 
+  /** the agent page a viewer watches: the window (WINDOW_VIEWER) or a member's device; one page per viewer, and null shows none */
+  watchAgent(tabId: string, viewer: string, agentId: string | null): void {
+    // the page the viewer already watches stays as it is: a re-watch would rebuild its items from the transcript, with new ids
+    const held = this.views.get(viewer)
+    if (agentId !== null && held?.tabId === tabId && held.agentId === agentId) return
+    this.unwatch(viewer)
+    // the window's page changed: the batch of the page it left goes no further
+    if (viewer === WINDOW_VIEWER) for (const live of this.tabs.values()) this.clearAgentWindow(live)
+    if (agentId === null || !isAgentId(agentId)) return
+    const live = this.tabs.get(tabId)
+    if (!live || live.agents.info(agentId) === null) return
+    live.agents.watch(agentId, true)
+    this.views.set(viewer, { tabId, agentId })
+  }
+
+  /** a viewer is gone: the page it watched is no longer watched */
+  forgetViewer(viewer: string): void {
+    this.unwatch(viewer)
+  }
+
+  /** whether the viewer watches that agent's page of the tab now: a batch made for the page goes to it only while this holds */
+  watchesAgent(viewer: string, tabId: string, agentId: string): boolean {
+    const view = this.views.get(viewer)
+    return view !== undefined && view.tabId === tabId && view.agentId === agentId
+  }
+
+  /** an agent's page as the window gets it: the newest items, its header, writable while the chat runs; null for a tab with no chat or an unknown agent */
+  async agentSnapshot(tabId: string, agentId: string): Promise<AgentSnapshot | null> {
+    if (!(await this.agentsKnown(tabId))) return null
+    await this.loadAgent(tabId, agentId)
+    return this.agentPage(tabId, agentId, true)
+  }
+
+  /** an agent's page as a member's push takes it: cut to the push's cap, like the chat's snapshot */
+  async remoteAgentSnapshot(tabId: string, agentId: string): Promise<AgentSnapshot | null> {
+    if (!(await this.agentsKnown(tabId))) return null
+    await this.loadAgent(tabId, agentId)
+    const s = this.agentPage(tabId, agentId, false)
+    if (s === null) return null
+    const cut = capItems(s.items, MAX_CHAT_PUSH_BYTES - Buffer.byteLength(JSON.stringify({ ...s, items: [] })))
+    return cut.cut ? { ...s, items: cut.items, hasOlder: true } : s
+  }
+
+  /**
+   * Whether a tab's agents can be asked about: an agent the history names is known only once the history is in, so an answer waits for
+   * it; false when the tab has no chat, or its chat is replaced or removed meanwhile
+   */
+  private async agentsKnown(tabId: string): Promise<boolean> {
+    const live = this.tabs.get(tabId)
+    if (!live) return false
+    if (live.early !== null) await new Promise<void>(resolve => live.historyWaiters.push(resolve))
+    return this.tabs.get(tabId) === live
+  }
+
+  /** the items of an agent before one of its items, as an answer to the one who asked: no revision, no patch; an older transcript page is read for it */
+  async agentOlder(tabId: string, agentId: string, beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null> {
+    const live = this.tabs.get(tabId)
+    if (!live || !isAgentId(agentId)) return null
+    const found = live.agents.older(agentId, beforeId)
+    if (found === null || !('cursor' in found)) return found
+    const file = await this.agentFile(live, agentId)
+    const page = file === null ? null : await this.readAgentLines(file, found.cursor)
+    if (this.tabs.get(tabId) !== live || page === null) return { items: [], hasOlder: false }
+    return live.agents.olderPage(agentId, page)
+  }
+
   /** the page before an item, as an answer to the one who asked: no revision, no patch */
   older(tabId: string, beforeId: string): { items: ChatItem[]; hasOlder: boolean } | null {
     const live = this.tabs.get(tabId)
@@ -539,10 +637,37 @@ export class ChatHub {
     })
   }
 
+  /**
+   * A message the person wrote on an agent's page, forwarded to the agent through the main conversation (a forward turn of Claude Code).
+   * It queues behind a running turn like any message. null: sent or queued; else why not.
+   */
+  async sendToAgent(tabId: string, agentId: string, text: string): Promise<string | null> {
+    if (!isAgentId(agentId)) return UNKNOWN_AGENT
+    const run = this.running(tabId)
+    if (run === null) return NOT_RUNNING
+    const info = run.live.agents.info(agentId)
+    if (info === null) return UNKNOWN_AGENT
+    if (run.live.model.state().mode === 'plan') return PLAN_MODE
+    const forward = forwardText({ agentId, type: info.type, description: info.description, text }, forwardNonce())
+    if (forward === null) return UNKNOWN_AGENT
+    // the chat cuts a message at TEXT_CAP: a forward cut there loses its end line, so it is refused whole
+    if (forward.length > TEXT_CAP) return TOO_LONG
+    return this.send(tabId, { text: forward, attachments: [], from: 'agent' })
+  }
+
+  /** the turn that began last in the tab's chat carried only forwards: its end gives no notification, mark or badge; a chat that ended has none */
+  quietTurn(tabId: string): boolean {
+    const live = this.tabs.get(tabId)
+    return live !== undefined && !live.ended && live.model.lastTurnWasForward()
+  }
+
   /** the window shows this tab now: the batches of the others stop */
   activated(tabId: string): void {
     for (const live of this.tabs.values()) {
-      if (live.tabId !== tabId) this.clearBatch(live)
+      if (live.tabId !== tabId) {
+        this.clearBatch(live)
+        this.clearAgentWindow(live)
+      }
     }
   }
 
@@ -551,6 +676,7 @@ export class ChatHub {
     this.remove(tabId, 'close')
     this.revs.delete(tabId)
     this.attached.forget(tabId)
+    this.agentRevs.delete(tabId)
     this.autoTabs.delete(tabId)
     this.restarts.delete(tabId)
     this.restartDividers.delete(tabId)
@@ -563,7 +689,12 @@ export class ChatHub {
     const live = this.tabs.get(tabId)
     if (!live) return
     this.tabs.delete(tabId)
+    // a snapshot that waits for this tab's history answers now: the tab is gone, and its history may never come
+    this.releaseHistoryWaiters(live)
     this.revs.set(tabId, live.rev)
+    this.agentRevs.set(tabId, live.agents.maxRev())
+    this.dropViews(tabId)
+    this.clearAgents(live)
     this.clearBatch(live)
     this.clearRemote(live)
     if (live.ended) return
@@ -675,6 +806,7 @@ export class ChatHub {
     this.dropStarting(live)
     // a compaction or a restart that never ends is over with the process
     this.publish(live, live.model.setState({ activity: undefined }))
+    this.publish(live, live.model.endForwards(ENDED_FORWARD))
     // the messages that were shown but never reached a started process say so: those still waiting, and those handed to the engine
     if (live.unready > 0) {
       live.waiting = []
@@ -705,22 +837,38 @@ export class ChatHub {
       this.cancelQueued(live)
       return
     }
-    for (const msg of messages) live.model.apply(msg)
-    // the history is in: a call it left running was cut off, so it ends here (its patches are in the reset below)
-    live.model.historyLoaded()
-    // the images of the history take the cards the panel holds; their change is in the reset below
-    live.model.attachCards(this.d.cards(live.tabId))
-    const page = live.model.page()
-    live.kept = null
-    this.emit(live, [{ op: 'reset', items: this.withStarting(live, page.items), hasOlder: page.hasOlder }])
-    this.syncWorking(live)
-    const early = live.early ?? []
-    live.early = null
-    for (const run of early) run()
-    if (live.exitDue) this.drawEnd(live)
+    try {
+      for (const msg of messages) live.model.apply(msg)
+      // the history is in: a call it left running was cut off, so it ends here (its patches are in the reset below)
+      live.model.historyLoaded()
+      // the forwards the history holds reach their agents, settled, before the agents are known: their transcripts place their bubbles
+      for (const item of live.model.forwards()) for (const change of live.agents.forward(item)) this.emitAgent(live, change)
+      // the agents the history names are known: their items are read from their transcripts when their pages open
+      for (const agent of live.model.agents()) live.agents.known(agent, sessionId)
+      // the images of the history take the cards the panel holds; their change is in the reset below
+      live.model.attachCards(this.d.cards(live.tabId))
+      const page = live.model.page()
+      live.kept = null
+      this.emit(live, [{ op: 'reset', items: this.withStarting(live, page.items), hasOlder: page.hasOlder }])
+      this.syncWorking(live)
+      const early = live.early ?? []
+      live.early = null
+      for (const run of early) run()
+      if (live.exitDue) this.drawEnd(live)
+    } finally {
+      // the agent snapshots that waited answer now, also when the history threw
+      this.releaseHistoryWaiters(live)
+    }
+  }
+
+  /** the agent snapshots that waited for the history answer now: the agents are known, or the tab has gone */
+  private releaseHistoryWaiters(live: Live): void {
+    for (const resolve of live.historyWaiters.splice(0)) resolve()
   }
 
   private apply(live: Live, msg: unknown): void {
+    // a subagent's frame, or a task that starts or ends, changes its agent's page: those changes go out first; the main model reads the message too
+    for (const change of live.agents.apply(msg, live.model.state().sessionId)) this.emitAgent(live, change)
     const patches = live.model.apply(msg)
     this.publish(live, patches)
     // an image the chat shows may have its card already: the panel does not change again to bring it
@@ -883,6 +1031,7 @@ export class ChatHub {
 
   /** the end of the process in the chat: its state, and the notice unless the tab asked for the stop */
   private drawEnd(live: Live): void {
+    this.publish(live, live.model.endForwards(ENDED_FORWARD))
     this.publish(live, live.model.processEnded())
     this.publish(live, live.model.setState({ turn: 'idle', turnStartedAt: null, exited: true, activity: undefined }))
     if (!live.stopping) this.publish(live, live.model.notice('Claude Code stopped', 'error', 'restart'))
@@ -901,8 +1050,19 @@ export class ChatHub {
 
   /** model patches: they go to the window and tell the tab whether a turn runs */
   private publish(live: Live, patches: ChatPatch[]): void {
+    this.forwardBubbles(live, patches)
     this.emit(live, patches)
     this.syncWorking(live)
+  }
+
+  /** every add or set of a forward goes to its agent's page too: the bubble there has the same state */
+  private forwardBubbles(live: Live, patches: ChatPatch[]): void {
+    if (this.tabs.get(live.tabId) !== live) return
+    for (const p of patches) {
+      if ((p.op === 'add' || p.op === 'set') && p.item.kind === 'forward') {
+        for (const change of live.agents.forward(p.item)) this.emitAgent(live, change)
+      }
+    }
   }
 
   private syncWorking(live: Live): void {
@@ -968,6 +1128,163 @@ export class ChatHub {
     if (live.timer !== null) clearTimeout(live.timer)
     live.timer = null
     live.batch = []
+  }
+
+  /** an agent whose items left memory, or come from a transcript, reads its newest page before its page is answered; a failure draws the live items only */
+  private async loadAgent(tabId: string, agentId: string): Promise<void> {
+    const live = this.tabs.get(tabId)
+    if (!live || !isAgentId(agentId) || live.agents.info(agentId) === null || !live.agents.needsHistory(agentId)) return
+    const file = await this.agentFile(live, agentId)
+    const page = file === null ? null : await this.readAgentLines(file, null)
+    // the tab may have ended while the file was read: nothing is drawn for it then
+    if (this.tabs.get(tabId) !== live || live.agents.info(agentId) === null) return
+    for (const change of live.agents.history(agentId, page)) this.emitAgent(live, change)
+  }
+
+  /** the agent's transcript file, in the session the agent started in; null, with a warning, when none is found */
+  private async agentFile(live: Live, agentId: string): Promise<string | null> {
+    try {
+      const session = live.agents.sessionOf(agentId) ?? live.model.state().sessionId
+      const transcript = session === null ? null : await this.d.transcript(live.tabId, session)
+      const path = session === null || transcript === null ? null : agentTranscriptPath(transcript, session, agentId)
+      const file = path === null ? null : await resolveAgentTranscript(path)
+      if (file === null) this.d.log.warn(`no transcript found for agent ${agentId}`)
+      return file
+    } catch (e) {
+      this.d.log.warn(`cannot find the transcript of agent ${agentId}: ${errorText(e)}`)
+      return null
+    }
+  }
+
+  /** a page of an agent's transcript, from its end or from a cursor; null, with a warning, when it cannot be read */
+  private async readAgentLines(file: string, end: number | null): Promise<TranscriptPage | null> {
+    try {
+      return await readAgentPage(file, end)
+    } catch (e) {
+      this.d.log.warn(`cannot read an agent's transcript: ${errorText(e)}`)
+      return null
+    }
+  }
+
+  /** the agent's page; writable for the window only, and only while the tab's chat runs */
+  private agentPage(tabId: string, agentId: string, forWindow: boolean): AgentSnapshot | null {
+    const live = this.tabs.get(tabId)
+    if (!live || !isAgentId(agentId)) return null
+    const page = live.agents.page(agentId)
+    const agent = live.agents.info(agentId)
+    if (page === null || agent === null) return null
+    const writable = forWindow && live.ready && !live.ended
+    return { tabId, agentId, rev: page.rev, items: page.items, hasOlder: page.hasOlder, agent, writable }
+  }
+
+  private unwatch(viewer: string): void {
+    const view = this.views.get(viewer)
+    if (view === undefined) return
+    this.views.delete(viewer)
+    this.tabs.get(view.tabId)?.agents.watch(view.agentId, false)
+  }
+
+  /** the viewers that are members and watch the agent of the tab */
+  private devicesOf(tabId: string, agentId: string): string[] {
+    const devices: string[] = []
+    for (const [viewer, view] of this.views) {
+      if (viewer !== WINDOW_VIEWER && view.tabId === tabId && view.agentId === agentId) devices.push(viewer)
+    }
+    return devices
+  }
+
+  /** a tab's chat ended: the pages its viewers watched are no longer watched */
+  private dropViews(tabId: string): void {
+    for (const [viewer, view] of [...this.views]) if (view.tabId === tabId) this.views.delete(viewer)
+  }
+
+  /** an agent's change goes to the window when the window watches that agent, and to the members that watch it */
+  private emitAgent(live: Live, change: AgentChange): void {
+    this.emitAgentToWindow(live, change)
+    this.emitAgentToMembers(live, change)
+  }
+
+  private emitAgentToWindow(live: Live, change: AgentChange): void {
+    const view = this.views.get(WINDOW_VIEWER)
+    if (view === undefined || view.tabId !== live.tabId || view.agentId !== change.agentId) return
+    if (this.d.activeTabId() !== live.tabId) {
+      this.clearAgentWindow(live)
+      return
+    }
+    // a change that does not follow the batch's last patch sends the batch first, so each batch is one run of revisions
+    let batch = live.agentWindow
+    if (batch !== null && batch.from + batch.patches.length !== change.fromRev) {
+      this.flushAgentWindow(live)
+      batch = null
+    }
+    if (batch === null) {
+      batch = { agentId: change.agentId, from: change.fromRev, patches: [], timer: null }
+      batch.timer = setTimeout(() => this.flushAgentWindow(live), BATCH_MS)
+      live.agentWindow = batch
+    }
+    batch.patches.push(...change.patches)
+  }
+
+  private emitAgentToMembers(live: Live, change: AgentChange): void {
+    const agentId = change.agentId
+    // nothing goes out for an agent nobody watches, and what waited for it is no longer sent
+    if (this.devicesOf(live.tabId, agentId).length === 0) {
+      this.clearAgentRemote(live, agentId)
+      return
+    }
+    let batch = live.agentRemote.get(agentId) ?? null
+    if (batch !== null && batch.from + batch.patches.length !== change.fromRev) {
+      this.flushAgentRemote(live, agentId)
+      batch = null
+    }
+    if (batch === null) {
+      batch = { agentId, from: change.fromRev, patches: [], timer: null }
+      batch.timer = setTimeout(() => this.flushAgentRemote(live, agentId), REMOTE_BATCH_MS)
+      live.agentRemote.set(agentId, batch)
+    }
+    batch.patches.push(...change.patches)
+  }
+
+  /** sends the window's agent batch waiting, when its tab is still in front and the window still watches the agent */
+  private flushAgentWindow(live: Live): void {
+    const batch = live.agentWindow
+    live.agentWindow = null
+    if (batch === null) return
+    if (batch.timer !== null) clearTimeout(batch.timer)
+    const view = this.views.get(WINDOW_VIEWER)
+    if (this.d.activeTabId() !== live.tabId || this.tabs.get(live.tabId) !== live) return
+    if (view === undefined || view.tabId !== live.tabId || view.agentId !== batch.agentId) return
+    this.d.agentWindow(live.tabId, batch.agentId, batch.from, batch.from + batch.patches.length, batch.patches)
+  }
+
+  /** sends a member agent's batch waiting, when a member still watches the agent */
+  private flushAgentRemote(live: Live, agentId: string): void {
+    const batch = live.agentRemote.get(agentId)
+    if (batch === undefined) return
+    live.agentRemote.delete(agentId)
+    if (batch.timer !== null) clearTimeout(batch.timer)
+    if (this.tabs.get(live.tabId) !== live) return
+    const devices = this.devicesOf(live.tabId, agentId)
+    if (devices.length === 0) return
+    this.d.agentRemote(live.tabId, agentId, devices, batch.from, batch.from + batch.patches.length, batch.patches)
+  }
+
+  private clearAgentWindow(live: Live): void {
+    const timer = live.agentWindow?.timer ?? null
+    if (timer !== null) clearTimeout(timer)
+    live.agentWindow = null
+  }
+
+  private clearAgentRemote(live: Live, agentId: string): void {
+    const batch = live.agentRemote.get(agentId)
+    if (batch === undefined) return
+    if (batch.timer !== null) clearTimeout(batch.timer)
+    live.agentRemote.delete(agentId)
+  }
+
+  private clearAgents(live: Live): void {
+    this.clearAgentWindow(live)
+    for (const agentId of [...live.agentRemote.keys()]) this.clearAgentRemote(live, agentId)
   }
 
   private clearRemote(live: Live): void {

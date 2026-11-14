@@ -165,6 +165,10 @@ const api: CtApi = {
   chatCommands: (tabId) => ipcRenderer.invoke(IPC.chatCommands, tabId),
   chatModels: (tabId) => ipcRenderer.invoke(IPC.chatModels, tabId),
   chatOlder: (tabId, beforeId) => ipcRenderer.invoke(IPC.chatOlder, tabId, beforeId),
+  chatAgentSnapshot: (tabId, agentId) => ipcRenderer.invoke(IPC.chatAgentSnapshot, tabId, agentId),
+  chatAgentOlder: (tabId, agentId, beforeId) => ipcRenderer.invoke(IPC.chatAgentOlder, tabId, agentId, beforeId),
+  chatAgentWatch: (tabId, agentId) => ipcRenderer.send(IPC.chatAgentWatch, tabId, agentId),
+  chatAgentSend: (tabId, agentId, text) => ipcRenderer.invoke(IPC.chatAgentSend, tabId, agentId, text),
   chatModes: (tabId) => ipcRenderer.invoke(IPC.chatModes, tabId),
   chatOpenInTerminal: (tabId, line) => ipcRenderer.invoke(IPC.chatOpenInTerminal, tabId, line),
   chatResume: (tabId, sessionId, cwd) => ipcRenderer.invoke(IPC.chatResume, tabId, sessionId, cwd),
@@ -183,7 +187,9 @@ const api: CtApi = {
   mcpPlugins: (tabId) => ipcRenderer.invoke(IPC.mcpPlugins, tabId),
   mcpPluginAction: (tabId, a) => ipcRenderer.invoke(IPC.mcpPluginAction, tabId, a),
   mcpReload: (tabId, action) => ipcRenderer.invoke(IPC.mcpReload, tabId, action),
-  onMcpChanged: (cb) => on(IPC.evMcpChanged, cb)
+  onMcpChanged: (cb) => on(IPC.evMcpChanged, cb),
+  onChatAgentPatch: (cb) => on(IPC.evChatAgentPatch, cb),
+  onChatAgentReload: (cb) => on(IPC.evChatAgentReload, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

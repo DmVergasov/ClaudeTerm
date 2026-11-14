@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { toolSubject } from '../../src/main/chat/chat-model'
 import { answeredLine, cardFor, resultFor, suggestionLabel, type PermissionAsk } from '../../src/main/chat/chat-cards'
-import { isChatAnswer, isChatSend, isPermissionMode } from '../../src/main/chat/chat-guards'
+import { isAgentText, isChatAnswer, isChatSend, isPermissionMode } from '../../src/main/chat/chat-guards'
 import type { ChatAnswer, ChatCard } from '../../src/shared/chat'
 import { fixtureLines } from '../fixtures/chat-fixtures'
 
@@ -379,5 +379,17 @@ describe('chat guards', () => {
     for (const m of ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']) expect(isPermissionMode(m)).toBe(true)
     expect(isPermissionMode('yolo')).toBe(false)
     expect(isPermissionMode(undefined)).toBe(false)
+  })
+
+  it("isChatSend refuses from: agent: the forward's origin is main's own, never the window's", () => {
+    expect(isChatSend({ text: 'hi', attachments: [], from: 'agent' })).toBe(false)
+  })
+
+  it('isAgentText takes a text that is not blank and at most 1 MiB', () => {
+    expect(isAgentText('hi')).toBe(true)
+    expect(isAgentText('x'.repeat(1024 * 1024))).toBe(true)
+    expect(isAgentText('  ')).toBe(false)
+    expect(isAgentText('x'.repeat(1024 * 1024 + 1))).toBe(false)
+    expect(isAgentText(7)).toBe(false)
   })
 })

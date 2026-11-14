@@ -1,13 +1,16 @@
-import { acceptPatches, commandWord, typedMessages, type ChatAnswer, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type ChatState, type ChatSubagent, type HeadsUpAction, type HeadsUpCard } from '../../shared/chat'
+import { acceptPatches, commandWord, typedMessages, type AgentPatch, type AgentSnapshot, type ChatAnswer, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type ChatState, type ChatSubagent, type HeadsUpAction, type HeadsUpCard } from '../../shared/chat'
 import type { McpSection, ReloadAction } from '../../shared/mcp'
 import type { ImageCard } from '../../shared/types'
 import { spinner } from '../tab-row'
 import { ChatComposer } from './chat-composer'
 import { QuoteButton, splitQuotes } from './chat-quote'
 import { HeadsUpView } from './heads-up-card'
-import { renderItem, streamText, type ItemCallbacks } from './chat-items'
+import { renderItem, type ItemCallbacks } from './chat-items'
 import { focusCard, renderCard, waitingCard } from './chat-cards'
-import { elapsedText, fillAgentsCard, setSettled, stepKeep, tickAgentTimes, updateSteps, type StepKeep } from './chat-steps'
+import { agentColor, elapsedText, fillAgentsCard, setSettled, tickAgentTimes, type StepKeep } from './chat-steps'
+import { AgentPage } from './agent-page'
+import { BOTTOM_SLACK, drawCallInPlace, drawInPlace, drawSafely, EDGE_ZONE, FrameQueue, joinSnapshot, keepAtNode, keepFold, OlderPages, pageDownWin, pageUpInView, pageUpWin, revealWin, scrollToMiddle, settledAfter, stepBefore, tailWin, topItemOf, windowAt } from './column-draw'
+import type { FindView } from './chat-find'
 import { chatPalette } from '../themes'
 import { countdown, resetClock } from '../limit-meters'
 import './chat.css'
@@ -50,6 +53,16 @@ export interface ChatViewOptions {
   copy(text: string): void
   /** the person's answer to the chat's Heads up card */
   headsUp(cardId: string, action: HeadsUpAction): void
+  /** an agent's snapshot, for its page; null when the agent is gone */
+  agentSnapshot(agentId: string): Promise<AgentSnapshot | null>
+  /** the page of an agent's items before `beforeId`; null when the agent is gone */
+  agentOlder(agentId: string, beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null>
+  /** the agent whose page is shown is watched (its patches come); null: no page is shown any more */
+  watchAgent(agentId: string | null): void
+  /** a message to an agent of this chat, through the main conversation as a forward: the refusal, or null when it went */
+  sendToAgent(agentId: string, text: string): Promise<string | null>
+  /** a member's device: the host's agents are read here, not written */
+  readOnly: boolean
 }
 
 const NO_STATE: ChatState = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
@@ -62,16 +75,8 @@ const DOCK_LINGER_MS = 4000
 
 type CardItem = Extract<ChatItem, { kind: 'card' }>
 
-/** a pixel of slack when deciding the column is at its bottom */
-const BOTTOM_SLACK = 24
-/** closer than this to either end of the view, the items beyond that end are drawn (the window moves) */
-const EDGE_ZONE = 400
-/** the most items the column holds in the DOM at once */
-const WINDOW = 120
-/** the items the window moves by, at a time */
-const PAGE_STEP = 60
-/** a queued drawing that no animation frame has taken by then is drawn by a timer */
-const FRAME_FALLBACK_MS = 100
+/** an agent's patches that came while its page was opening, as they came */
+interface PendingBatch { fromRev: number; toRev: number; patches: AgentPatch[] }
 
 /**
  * The chat of a Claude tab in its chat view: the conversation as a column of items, and the composer under it. It holds
@@ -121,9 +126,19 @@ export class ChatView {
   private fresh = new Set<string>()
   /** the revision of the snapshot the view holds; -1 until a snapshot is loaded */
   private rev = -1
-  private hasOlder = false
-  /** a page of older items is being asked for: one request at a time, until its answer comes */
-  private olderAsked: Promise<{ count: number } | null> | null = null
+  /** the older pages of the conversation, asked for one at a time (column-draw.ts) */
+  private readonly pages = new OlderPages({
+    ask: (beforeId) => this.o.older(beforeId),
+    first: () => this.items[0],
+    take: (items) => {
+      this.items = [...items, ...this.items]
+      this.from += items.length
+      this.to += items.length
+    },
+    ready: () => this.drawing(),
+    nearTop: () => this.nearTop(),
+    grow: () => this.growUp()
+  })
   private state: ChatState = NO_STATE
   private visible = false
   /** the column follows new items while the user is at its bottom; scrolling up stops it */
@@ -134,20 +149,36 @@ export class ChatView {
   private unseen = false
   /** the scroll position when the view was hidden: kept for its showing */
   private top = 0
-  /** the drawing waiting for the next animation frame, by what it draws: an item is drawn once per frame, however many patches changed it */
-  private queued = new Map<string, () => void>()
+  /** the drawings waiting for the next animation frame: an item is drawn once per frame, however many patches changed it */
+  private readonly frames = new FrameQueue({
+    ready: () => this.drawing(),
+    label: 'chat',
+    begin: () => {
+      performance.mark('chat-frame:start')
+      this.catchScroll()
+    },
+    end: () => this.flushed()
+  })
   /** a card was added, changed or removed: the flush puts the cards in their order again */
   private cardsDirty = false
   /** the card that was made active last: it takes the keyboard when it changes */
   private activeCard: string | null = null
-  /** the pending flush: its animation frame, and the timer that stands in for it */
-  private frame: { raf: number; timer: ReturnType<typeof setTimeout> } | null = null
   /** the elapsed time of the working line ticks while it shows */
   private clock: ReturnType<typeof setInterval> | null = null
   /** a turn the usage limit stopped: when (ms) Claude goes on by itself after the reset; null when the chat does not wait */
   private limitWait: number | null = null
   /** the working line says when Claude goes on after the usage limit */
   private waitShown = false
+  /** an agent's page, in place of the conversation and its composer, while one is open */
+  private page: AgentPage | null = null
+  /** the message box's draft of each agent, kept while the tab lives: a page opened again starts with it */
+  private readonly drafts = new Map<string, string>()
+  /** the top item of the column when the page opened (null when the column was stuck to its end): the column goes back to it */
+  private pageAnchor: { id: string; offset: number } | null = null
+  /** the last agent asked for: an answer that comes after a later request is not drawn */
+  private agentAsk = 0
+  /** the page being opened: its agent is watched while its snapshot is taken, and the patches that come meanwhile wait here */
+  private agentOpening: { ask: number; agentId: string; batches: PendingBatch[] } | null = null
   /** the column stays at its bottom while the scroll area or the column changes size: the composer grows, the window resizes */
   private readonly resize = new ResizeObserver(() => {
     // a plan card is at most half the conversation's height
@@ -201,6 +232,9 @@ export class ChatView {
       reload: o.reload,
       imageCard: (cardId) => o.imageCard(cardId),
       openImages: (cards, index) => o.openImages(cards, index),
+      openAgent: (agentId) => {
+        void this.openAgent(agentId)
+      },
       revealChange: (path) => o.revealChange(path),
       openExternal: (url) => o.openExternal(url),
       copy: (text) => o.copy(text)
@@ -245,6 +279,14 @@ export class ChatView {
       e.preventDefault()
       focusCard(node)
     })
+    // Esc on the agent page goes back to the conversation; it never interrupts a turn, and it stops here, not in the window's keys
+    this.element.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || e.repeat || e.isComposing || this.page === null) return
+      if (!(e.target instanceof Node) || !this.page.owns(e.target)) return
+      e.preventDefault()
+      e.stopPropagation()
+      this.closeAgent()
+    })
     // files dropped anywhere on the sheet are attached to the composer
     this.element.addEventListener('dragover', (e) => {
       if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
@@ -265,14 +307,24 @@ export class ChatView {
   show(visible: boolean, focus = true): void {
     const was = this.visible
     if (!visible && was) this.top = this.scroll.scrollTop
+    // the page's column keeps its reading place: it is told before the view is hidden, while its scroll position can still be read
+    if (!visible) this.page?.show(false)
     this.visible = visible
-    this.quote.setActive(visible)
+    this.quote.setActive(visible && this.page === null)
     this.element.style.display = visible ? 'flex' : 'none'
     this.syncClock()
     if (!visible) {
       // a hidden chat has no menu or picker open: they close, and do not come back with the chat
       this.composer.closePickers()
-      this.dropQueued()
+      this.frames.drop()
+      return
+    }
+    if (this.page !== null) {
+      // the page is shown again: its agent is watched again and its snapshot taken again, as the conversation's is
+      this.page.show(true)
+      this.syncWaiting()
+      this.reloadAgent()
+      if (focus) this.page.focus()
       return
     }
     // the column is drawn from its window: what came in while the view was hidden is in it
@@ -298,27 +350,34 @@ export class ChatView {
    */
   load(s: ChatSnapshot): void {
     if (s.rev === this.rev && lastId(this.items) === lastId(s.items)) return
-    const first = s.items[0]
-    const at = first === undefined || this.items.length === 0 ? -1 : this.indexOf(first.id)
+    const { items, at } = joinSnapshot(this.items, s.items)
     if (at < 0) {
       this.replaceAll(s)
       return
     }
-    this.dropQueued()
-    for (const [id, node] of this.drawn) this.keepFold(id, node)
+    // an agent page open is reloaded with the conversation: the agent may have ended, or gone
+    if (this.page !== null) this.reloadAgent()
+    this.frames.drop()
+    for (const [id, node] of this.drawn) keepFold(this.folds, id, node)
     // the item at the top of the view, and its offset from the top: kept while the user reads up
-    const anchor = this.stick || !this.visible ? null : this.topItem()
+    const anchor = this.stick || !this.drawing() ? null : this.topItem()
     const lastChanged = lastId(this.items) !== lastId(s.items)
-    this.items = [...this.items.slice(0, at), ...s.items]
+    this.items = items
+    this.syncWaiting()
     this.syncDock()
     // the older pages held stay, and their hasOlder with them; a snapshot that starts the chat tells whether there are more
-    if (at === 0) this.hasOlder = s.hasOlder
+    if (at === 0) this.pages.hasOlder = s.hasOlder
     this.rev = s.rev
     this.state = s.state
+    this.page?.setChatExited(s.state.exited)
     this.composer.setState(s.state)
     this.pruneFolds()
     const kept = anchor !== null && this.indexOf(anchor.id) >= 0 ? anchor : null
-    if (kept === null) {
+    if (this.page !== null) {
+      // an agent page is in place of the conversation: the reading place and the window wait for its close (closeAgent)
+      if (this.stick) this.toTail()
+      else this.unseen = this.unseen || lastChanged
+    } else if (kept === null) {
       this.stick = true
       this.unseen = false
       this.toTail()
@@ -326,7 +385,7 @@ export class ChatView {
       this.unseen = this.unseen || lastChanged
       this.windowAround(kept.id)
     }
-    if (!this.visible) return
+    if (!this.drawing()) return
     this.redraw()
     this.settleCards()
     if (kept !== null) this.keepAt(kept)
@@ -336,22 +395,28 @@ export class ChatView {
 
   /** the view takes the snapshot as the whole chat: its window is the newest items, and it sticks to the bottom */
   private replaceAll(s: ChatSnapshot): void {
-    this.dropQueued()
-    for (const [id, node] of this.drawn) this.keepFold(id, node)
+    if (this.page !== null) this.reloadAgent()
+    this.frames.drop()
+    for (const [id, node] of this.drawn) keepFold(this.folds, id, node)
     this.rev = s.rev
-    this.hasOlder = s.hasOlder
+    this.pages.hasOlder = s.hasOlder
     this.items = [...s.items]
+    this.syncWaiting()
     // a chat drawn again from its snapshot starts with the dock as its agents run now, and a dock that was open is closed first
     this.stopDockTimer()
     this.closeDock()
     this.syncDock()
     this.pruneFolds()
     this.state = s.state
+    this.page?.setChatExited(s.state.exited)
     this.composer.setState(s.state)
-    this.stick = true
-    this.unseen = false
-    this.toTail()
-    if (!this.visible) return
+    // with an agent page in place, the reading place waits for its close: a stuck column keeps its end, another keeps its window
+    if (this.page === null || this.stick) {
+      this.stick = true
+      this.unseen = false
+      this.toTail()
+    }
+    if (!this.drawing()) return
     this.redraw()
     this.settleCards()
     this.showState()
@@ -370,7 +435,179 @@ export class ChatView {
     this.catchScroll()
     for (const p of patches.slice(accept.skip)) this.apply(p)
     this.rev = toRev
+    this.syncWaiting()
     return true
+  }
+
+  /**
+   * Opens an agent's page in place of the conversation and its composer. The snapshot is taken first; the last call wins. The
+   * column keeps its place: the top item when the page opens (null when the column is stuck to its end), so closing goes back to it.
+   */
+  async openAgent(agentId: string): Promise<void> {
+    const ask = ++this.agentAsk
+    // the agent is watched before its snapshot is taken: a patch made in between is held, and applied once the snapshot is in
+    const opening = { ask, agentId, batches: [] as PendingBatch[] }
+    this.agentOpening = opening
+    this.watch(agentId)
+    // a snapshot that fails opens no page, as a gone agent does: the watch and the held patches are let go below
+    const s = await this.o.agentSnapshot(agentId).catch(() => null)
+    // a later call, or a close, owns the watch now
+    if (ask !== this.agentAsk) return
+    this.agentOpening = null
+    if (s === null) {
+      // the agent is gone, or its snapshot failed: the page shown (if any) is watched again
+      this.watch(this.page?.agentId ?? null)
+      return
+    }
+    const shown = this.page
+    const anchor = shown !== null ? this.pageAnchor : this.drawing() && !this.stick ? this.topItem() : null
+    shown?.dispose()
+    this.pageAnchor = anchor
+    const index = this.dockRows.findIndex((row) => row.id === agentId)
+    const page = new AgentPage({
+      agentId,
+      cb: this.cb,
+      color: agentColor(Math.max(0, index)),
+      back: () => this.closeAgent(),
+      backToCard: () => this.closeAgent(true),
+      older: (beforeId) => this.o.agentOlder(agentId, beforeId),
+      send: (text) => this.o.sendToAgent(agentId, text),
+      draft: this.drafts.get(agentId) ?? '',
+      keepDraft: (text) => this.keepDraft(agentId, text),
+      sent: (draft) => this.draftSent(agentId, draft),
+      readOnly: this.o.readOnly
+    })
+    this.page = page
+    this.element.insertBefore(page.element, this.body)
+    this.element.insertBefore(page.footer, this.composer.element)
+    this.placeDock()
+    this.body.style.display = 'none'
+    this.composer.element.style.display = 'none'
+    this.quote.setActive(false)
+    page.load(s)
+    page.setChatExited(this.state.exited)
+    page.show(this.visible)
+    this.syncWaiting()
+    for (const batch of opening.batches) {
+      if (!page.patch(batch.fromRev, batch.toRev, batch.patches)) {
+        this.reloadAgent()
+        break
+      }
+    }
+    this.syncDock()
+    this.syncClock()
+    if (this.visible) page.focus()
+  }
+
+  /** the dock sits between the page and its footer while a page is open, so the open row is in sight; else in the column, before the working line */
+  private placeDock(): void {
+    if (this.page !== null) this.element.insertBefore(this.dock, this.page.footer)
+    else this.column.insertBefore(this.dock, this.working)
+  }
+
+  /** the agent is watched by the window only while this chat is the one in front: a hidden chat's page does not take the watch from the front one */
+  private watch(agentId: string | null): void {
+    if (this.visible) this.o.watchAgent(agentId)
+  }
+
+  /** the main conversation's waiting card, if any, is the page's bar: shown while a card waits, and not on a page that is not open */
+  private syncWaiting(): void {
+    this.page?.setWaiting(this.cardOrder().active !== null)
+  }
+
+  /**
+   * Closes the agent page: the conversation and its composer come back, and the column goes to where it was when the page opened, to
+   * its end when it was stuck there, else to the same top item at the same offset. The agent is no longer watched. `takeCard` (the
+   * waiting bar's click) gives the keyboard to the card that waits, as the conversation's own cards do.
+   */
+  closeAgent(takeCard = false): void {
+    // a page that is still opening is cancelled: its snapshot, when it comes, is not drawn
+    const pending = this.agentOpening !== null
+    this.agentAsk++
+    this.agentOpening = null
+    const page = this.page
+    if (page === null) {
+      if (pending) this.watch(null)
+      return
+    }
+    this.page = null
+    page.dispose()
+    this.body.style.display = ''
+    this.composer.element.style.display = ''
+    this.quote.setActive(this.visible)
+    this.placeDock()
+    this.watch(null)
+    const anchor = this.pageAnchor
+    this.pageAnchor = null
+    this.syncDock()
+    this.syncClock()
+    if (!this.visible) return
+    if (anchor === null || this.indexOf(anchor.id) < 0) {
+      this.stick = true
+      this.unseen = false
+      this.toTail()
+      this.redraw()
+      this.settle()
+    } else {
+      this.windowAround(anchor.id)
+      this.redraw()
+      this.keepAt(anchor)
+    }
+    this.showState()
+    this.settleCards(takeCard)
+    this.updatePill()
+    // the card that took the keyboard keeps it; else the composer (or the view's own focus) takes it
+    if (!takeCard || this.activeCard === null) this.focus()
+  }
+
+  /** an agent's draft in its message box: kept for the page opened again, and dropped when it is empty */
+  private keepDraft(agentId: string, text: string): void {
+    if (text === '') this.drafts.delete(agentId)
+    else this.drafts.set(agentId, text)
+  }
+
+  /** a message went from an agent's draft: the draft is dropped when it is still that text, and the page that shows it empties; a draft edited since stays */
+  private draftSent(agentId: string, draft: string): void {
+    if (this.drafts.get(agentId) !== draft) return
+    this.drafts.delete(agentId)
+    if (this.page?.agentId === agentId) this.page.clearSent(draft)
+  }
+
+  /** the agent whose page is shown; null when no page is open */
+  shownAgent(): string | null {
+    return this.page?.agentId ?? null
+  }
+
+  /**
+   * An agent's patches. Only the page shown takes them: another agent's are not its page's and are ignored (true). False only on a gap
+   * of the page shown; the caller then asks for its snapshot again (reloadAgent).
+   */
+  agentPatch(agentId: string, fromRev: number, toRev: number, patches: AgentPatch[]): boolean {
+    // a page that is opening holds its agent's patches until its snapshot is in
+    if (this.agentOpening !== null && this.agentOpening.agentId === agentId) {
+      this.agentOpening.batches.push({ fromRev, toRev, patches })
+      return true
+    }
+    if (this.page === null || this.page.agentId !== agentId) return true
+    return this.page.patch(fromRev, toRev, patches)
+  }
+
+  /**
+   * The page shown takes its agent's snapshot again: its agent is watched again first, as the hub drops the watches of a chat that
+   * ends or restarts. A snapshot that is gone closes the page.
+   */
+  reloadAgent(): void {
+    const page = this.page
+    if (page === null) return
+    this.watch(page.agentId)
+    this.o.agentSnapshot(page.agentId).then(
+      (s) => {
+        if (this.page !== page) return
+        if (s === null) this.closeAgent()
+        else page.load(s)
+      },
+      () => undefined
+    )
   }
 
   /**
@@ -379,19 +616,19 @@ export class ChatView {
    */
   imagesChanged(): void {
     this.composer.imagesChanged()
-    if (!this.visible) return
+    if (!this.drawing()) return
     for (let i = this.from; i < this.to; i++) {
       const item = this.items[i]!
       if (item.kind === 'images') {
         // the images item shows the cards it has: one drawn for each card that is known now
         const found = item.images.filter((image) => this.hasCard(image.cardId)).length
         const shown = this.drawn.get(item.id)?.querySelectorAll('.chat-image-card').length ?? 0
-        if (found !== shown) this.queue(`item:${item.id}`, () => this.drawItem(item.id))
+        if (found !== shown) this.frames.add(`item:${item.id}`, () => this.drawItem(item.id))
       } else if (item.kind === 'user') {
         // a bubble's pictures with a card are thumbnails: the bubble is drawn again when their number changed
         const known = item.attachments.filter((a) => a.kind === 'image' && this.hasCard(a.cardId)).length
         const thumbs = this.drawn.get(item.id)?.querySelectorAll('.chat-thumb').length ?? 0
-        if (known !== thumbs) this.queue(`item:${item.id}`, () => this.drawItem(item.id))
+        if (known !== thumbs) this.frames.add(`item:${item.id}`, () => this.drawItem(item.id))
       }
     }
   }
@@ -401,9 +638,14 @@ export class ChatView {
     return this.items.length
   }
 
-  /** whether the chat is shown: a hidden chat is not searched for older pages */
+  /** whether the conversation is shown: a hidden chat, or one with an agent page in its place, is not searched for older pages */
   isShown(): boolean {
-    return this.visible
+    return this.drawing()
+  }
+
+  /** whether the conversation is drawn: the chat is shown, and no agent page is in its place */
+  private drawing(): boolean {
+    return this.visible && this.page === null
   }
 
   /** whether a chat image's Media card is known: its picture shows as a thumbnail */
@@ -430,16 +672,17 @@ export class ChatView {
 
   /** whether items older than the ones held are on the chat's side */
   hasOlderItems(): boolean {
-    return this.hasOlder
+    return this.pages.hasOlder
   }
 
   /** asks for the page of items before the first one held: resolves to whether items came in above the window */
   loadOlder(): Promise<boolean> {
-    const counted = (a: { count: number } | null): boolean => a !== null && a.count > 0
-    if (this.olderAsked !== null) return this.olderAsked.then(counted, () => false)
-    const first = this.items[0]
-    if (!this.hasOlder || first === undefined) return Promise.resolve(false)
-    return this.older(first.id).then(counted, () => false)
+    return this.pages.load()
+  }
+
+  /** the agent page in place of the conversation, as a find's view; null while the conversation is shown */
+  agentFindView(): FindView | null {
+    return this.page?.findView() ?? null
   }
 
   /**
@@ -448,16 +691,15 @@ export class ChatView {
    */
   reveal(id: string): boolean {
     const i = this.indexOf(id)
-    if (i < 0 || !this.visible) return false
+    if (i < 0 || !this.drawing()) return false
     const len = this.items.length
-    this.from = Math.max(0, Math.min(i - WINDOW / 2, len - WINDOW))
-    this.to = Math.min(len, this.from + WINDOW)
+    const w = revealWin(len, i)
+    this.from = w.from
+    this.to = w.to
     this.reconcile()
     const node = this.drawn.get(id)
     if (node === undefined) return false
-    const frame = this.scroll.getBoundingClientRect()
-    const box = node.getBoundingClientRect()
-    this.scroll.scrollTop += box.top + box.height / 2 - (frame.top + this.scroll.clientHeight / 2)
+    scrollToMiddle(this.scroll, node)
     this.stick = this.to === len && this.distanceToBottom() <= BOTTOM_SLACK
     this.updatePill()
     return true
@@ -478,8 +720,10 @@ export class ChatView {
     this.element.classList.toggle('chat-wide', on)
   }
 
+  /** the chat's keyboard: the agent page while one is open (its composer is hidden), else the composer */
   focus(): void {
-    this.composer.focus()
+    if (this.page !== null) this.page.focus()
+    else this.composer.focus()
   }
 
   /** a line goes to the terminal as a notice's line does: it waits for the turn, and asks first when background tasks would stop */
@@ -504,11 +748,20 @@ export class ChatView {
   }
 
   dispose(): void {
+    // a page still opening is cancelled, as closeAgent does
+    if (this.agentOpening !== null) this.watch(null)
+    this.agentAsk++
+    this.agentOpening = null
+    if (this.page !== null) {
+      this.page.dispose()
+      this.page = null
+      this.watch(null)
+    }
     this.visible = false
     this.resize.disconnect()
     this.composer.dispose()
     this.quote.dispose()
-    this.dropQueued()
+    this.frames.drop()
     this.stopClock()
     this.stopDockTimer()
     this.element.remove()
@@ -523,15 +776,15 @@ export class ChatView {
         this.resettleBefore(this.items.length - 1)
         if (this.stick) this.toTail()
         else this.unseen = true
-        if (this.visible) this.fresh.add(p.item.id)
-        this.queue(`item:${p.item.id}`, () => this.drawItem(p.item.id))
+        if (this.drawing()) this.fresh.add(p.item.id)
+        this.frames.add(`item:${p.item.id}`, () => this.drawItem(p.item.id))
         break
       case 'set': {
         const i = this.indexOf(p.item.id)
         if (i < 0) break
         this.items[i] = p.item
         if (p.item.kind === 'card') this.cardsDirty = true
-        this.queue(`item:${p.item.id}`, () => this.drawItem(p.item.id))
+        this.frames.add(`item:${p.item.id}`, () => this.drawItem(p.item.id))
         break
       }
       case 'append': {
@@ -541,7 +794,7 @@ export class ChatView {
         if (item.kind !== 'text') break
         this.items[i] = { ...item, markdown: item.markdown + p.text }
         if (!this.stick) this.unseen = true
-        this.queue(`item:${p.id}`, () => this.drawItem(p.id))
+        this.frames.add(`item:${p.id}`, () => this.drawItem(p.id))
         break
       }
       case 'remove': {
@@ -552,7 +805,7 @@ export class ChatView {
         if (i < this.from) this.from--
         if (i < this.to) this.to--
         this.folds.delete(p.id)
-        this.schedule()
+        this.frames.request()
         break
       }
       case 'call': {
@@ -564,14 +817,15 @@ export class ChatView {
           ? item.calls.map(c => (c.id === p.call.id ? p.call : c))
           : [...item.calls, p.call]
         this.items[i] = { ...item, calls }
-        this.queue(`call:${p.id}:${p.call.id}`, () => this.drawCall(p.id, p.call.id))
+        this.frames.add(`call:${p.id}:${p.call.id}`, () => this.drawCall(p.id, p.call.id))
         break
       }
       case 'state':
         this.state = p.state
+        this.page?.setChatExited(p.state.exited)
         this.composer.setState(p.state)
         this.resettleBefore(this.items.length)
-        this.queue('state', () => this.showState())
+        this.frames.add('state', () => this.showState())
         break
       case 'reset':
         this.replaceAll({ tabId: this.o.tabId, rev: this.rev, items: p.items, hasOlder: p.hasOlder, state: this.state })
@@ -592,16 +846,21 @@ export class ChatView {
       this.stopDockTimer()
       this.dockOpen = true
       this.dockRows = agents
-      fillAgentsCard(this.dock, agents)
+      this.fillDock(agents)
       this.dock.classList.add('shown')
       this.syncClock()
       return
     }
     if (!this.dockOpen) return
     this.dockRows = this.dockRows.map((row) => this.agentNow(row.id) ?? row)
-    fillAgentsCard(this.dock, this.dockRows)
+    this.fillDock(this.dockRows)
     this.syncClock()
     if (this.dockTimer === null) this.dockTimer = setTimeout(() => this.closeDock(), DOCK_LINGER_MS)
+  }
+
+  /** the dock's card: its rows open the agents' pages, and the row of the open page is marked */
+  private fillDock(agents: ChatSubagent[]): void {
+    fillAgentsCard(this.dock, agents, { open: (agentId) => this.cb.openAgent(agentId), current: this.page?.agentId ?? null })
   }
 
   /** the subagents of the Agent calls from the person's last message on, in the order they started; an agent of an earlier turn stays while it runs, as a background one outlives its turn */
@@ -657,68 +916,27 @@ export class ChatView {
 
   /** the window is the last items: the column's end */
   private toTail(): void {
-    this.to = this.items.length
-    this.from = Math.max(0, this.to - WINDOW)
+    const w = tailWin(this.items.length)
+    this.from = w.from
+    this.to = w.to
   }
 
-  /** queues a drawing for the next animation frame; a drawing queued under the same key again is done once, in its first place */
-  private queue(key: string, op: () => void): void {
-    if (!this.visible) return
-    this.queued.set(key, op)
-    this.schedule()
-  }
-
-  /** the flush comes at the next animation frame, or from a timer when no frame does */
-  private schedule(): void {
-    if (!this.visible || this.frame !== null) return
-    this.frame = {
-      raf: requestAnimationFrame(() => this.flush()),
-      // Chromium pauses animation frames in an occluded window, and a chat behind another window must stay current:
-      // when no frame has come by then, the timer draws the queue
-      timer: setTimeout(() => this.flush(), FRAME_FALLBACK_MS)
-    }
-  }
-
-  private flush(): void {
-    performance.mark('chat-frame:start')
-    this.cancelFrame()
-    this.catchScroll()
-    const ops = [...this.queued.entries()]
-    this.queued.clear()
-    for (const [key, op] of ops) {
-      // one drawing that throws does not lose the rest of the batch
-      try {
-        op()
-      } catch (e) {
-        console.error(`chat: drawing ${key} failed`, e)
-      }
-    }
+  /**
+   * What a frame does after its queued drawings: the window is drawn, the cards are put in order, and the column settles. The
+   * measure is the frame's work, for the perf harness (tests/perf/chat.perf.ts), which observes the measures; the buffer is cleared
+   * so a long chat does not keep every frame's entries. The measure ends with the flush, so it holds settle's forced layout but not
+   * the frame's own style, layout and paint after it: if a later change stops settle forcing the layout, the number drops it silently
+   */
+  private flushed(): void {
     this.reconcile()
     if (this.cardsDirty) this.cardsDirty = !this.refreshCards()
     this.fresh.clear()
     this.settle()
     this.syncClock()
     this.updatePill()
-    // the frame's work, measured for the perf harness (tests/perf/chat.perf.ts), which observes the measures; the buffer
-    // is cleared so a long chat does not keep every frame's entries. The measure ends with the flush, so it holds settle's
-    // forced layout but not the frame's own style, layout and paint after it: if a later change stops settle forcing the
-    // layout, the number drops it silently
     performance.measure('chat-frame', 'chat-frame:start')
     performance.clearMarks('chat-frame:start')
     performance.clearMeasures('chat-frame')
-  }
-
-  /** the drawing queued before a snapshot is drawn by the snapshot instead */
-  private dropQueued(): void {
-    this.cancelFrame()
-    this.queued.clear()
-  }
-
-  private cancelFrame(): void {
-    if (this.frame === null) return
-    cancelAnimationFrame(this.frame.raf)
-    clearTimeout(this.frame.timer)
-    this.frame = null
   }
 
   /**
@@ -735,7 +953,7 @@ export class ChatView {
       const item = this.items[i]
       let node = this.drawn.get(item.id)
       if (node === undefined) {
-        node = this.drawSafely(item)
+        node = drawSafely(item, (it) => this.draw(it), 'chat')
         if (this.fresh.has(item.id)) node.classList.add('chat-new')
         this.drawn.set(item.id, node)
         this.column.insertBefore(node, before)
@@ -744,21 +962,9 @@ export class ChatView {
     }
   }
 
-  /** an item drawn on its own: one that throws leaves an empty node in its place, so the rest of the column is still drawn */
-  private drawSafely(item: ChatItem): HTMLElement {
-    try {
-      return this.draw(item)
-    } catch (e) {
-      console.error(`chat: drawing ${item.id} failed`, e)
-      const node = document.createElement('div')
-      node.dataset.item = item.id
-      return node
-    }
-  }
-
   /** the column drawn again from its window, every node made new: the steps' choices and the thinking blocks' are kept */
   private redraw(): void {
-    this.dropQueued()
+    this.frames.drop()
     this.fresh.clear()
     for (const id of [...this.drawn.keys()]) this.unmount(id)
     this.reconcile()
@@ -767,23 +973,9 @@ export class ChatView {
   private unmount(id: string): void {
     const node = this.drawn.get(id)
     if (node === undefined) return
-    this.keepFold(id, node)
+    keepFold(this.folds, id, node)
     node.remove()
     this.drawn.delete(id)
-  }
-
-  /** a tool step's choices, or a thinking block's unfolding, as its node shows them, are kept by the item's id when the node goes */
-  private keepFold(id: string, node: HTMLElement): void {
-    if (node.classList.contains('chat-thinking')) {
-      // open is a thinking block's default: only the user's fold is kept
-      if (node.querySelector('.chat-thinking-head[aria-expanded="false"]') !== null) this.folds.set(id, { open: false, wells: [] })
-      else this.folds.delete(id)
-      return
-    }
-    if (!node.classList.contains('chat-steps')) return
-    const keep = stepKeep(node)
-    if (keep.open !== null || keep.wells.length > 0) this.folds.set(id, keep)
-    else this.folds.delete(id)
   }
 
   /**
@@ -795,16 +987,7 @@ export class ChatView {
     const node = this.drawn.get(id)
     // an item out of the window has no node: the window draws it when it comes in
     if (!item || !node) return
-    if (item.kind === 'text' && item.streaming && node.classList.contains('streaming')) {
-      streamText(node, item.markdown)
-      return
-    }
-    // a tool step is updated where it is: its rows, and the well the user unfolded, stay as they are
-    if (item.kind === 'tools' && node.classList.contains('chat-steps')) {
-      updateSteps(node, item, this.cb)
-      return
-    }
-    this.paint(item, node)
+    drawInPlace(item, node, this.cb, () => this.paint(item, node))
   }
 
   /** a call's patch: its row is filled where it is, and the rest of the step is left as it is */
@@ -812,13 +995,12 @@ export class ChatView {
     const item = this.get(id)
     const node = this.drawn.get(id)
     if (!item || !node) return
-    if (item.kind === 'tools' && node.classList.contains('chat-steps')) updateSteps(node, item, this.cb, callId)
-    else this.drawItem(id)
+    drawCallInPlace(item, node, callId, this.cb, () => this.drawItem(id))
   }
 
   private paint(item: ChatItem, old: HTMLElement): void {
     // the fold choices of the node it replaces are kept for the new one
-    this.keepFold(item.id, old)
+    keepFold(this.folds, item.id, old)
     const node = this.draw(item)
     this.drawn.set(item.id, node)
     old.replaceWith(node)
@@ -829,11 +1011,7 @@ export class ChatView {
    * images items that follow a step do not count: a step that shows a picture stays open until an item that is not one comes.
    */
   private settledAt(id: string): boolean {
-    const i = this.indexOf(id)
-    if (i < 0 || this.state.turn === 'idle') return true
-    let j = i + 1
-    while (j < this.items.length && this.items[j]!.kind === 'images') j++
-    return j < this.items.length
+    return settledAfter(this.items, id, this.state.turn === 'idle')
   }
 
   /**
@@ -841,12 +1019,10 @@ export class ChatView {
    * is new or the turn changes. The images items between them do not settle a step, so the step before them is the one.
    */
   private resettleBefore(end: number): void {
-    let i = end - 1
-    while (i >= 0 && this.items[i]!.kind === 'images') i--
-    const item = this.items[i]
-    if (item?.kind !== 'tools') return
+    const item = stepBefore(this.items, end)
+    if (item === null) return
     // queued like the drawing: a hidden view changes nothing, and the step is settled when it is drawn again
-    this.queue(`settle:${item.id}`, () => {
+    this.frames.add(`settle:${item.id}`, () => {
       const node = this.drawn.get(item.id)
       if (node?.classList.contains('chat-steps')) setSettled(node, this.settledAt(item.id))
     })
@@ -937,75 +1113,28 @@ export class ChatView {
   /** the window moves up by a page; at the first item held, the page before it is asked for, once */
   private growUp(): void {
     if (this.from === 0) {
-      const first = this.items[0]
-      if (this.hasOlder && this.olderAsked === null && first !== undefined) this.askOlder(first.id)
+      this.pages.askFirst()
       return
     }
-    // the browser keeps the item in view in place, except at the very top: there it does not anchor, so the first item is
-    // held here, or the view would stay at the top with nothing left to scroll to
-    const atTop = this.scroll.scrollTop === 0 ? this.column.firstElementChild : null
-    const before = atTop?.getBoundingClientRect().top
-    this.from = Math.max(0, this.from - PAGE_STEP)
-    this.to = Math.min(this.to, this.from + WINDOW)
-    this.reconcile()
-    if (atTop !== null && before !== undefined && atTop.isConnected) {
-      this.scroll.scrollTop += atTop.getBoundingClientRect().top - before
-    }
+    pageUpInView(this.scroll, this.column, () => {
+      const w = pageUpWin({ from: this.from, to: this.to })
+      this.from = w.from
+      this.to = w.to
+      this.reconcile()
+    })
   }
 
   /** the window moves down by a page, toward the newest items */
   private growDown(): void {
-    this.to = Math.min(this.items.length, this.to + PAGE_STEP)
-    this.from = Math.max(this.from, this.to - WINDOW)
+    const w = pageDownWin({ from: this.from, to: this.to }, this.items.length)
+    this.from = w.from
+    this.to = w.to
     this.reconcile()
-  }
-
-  /**
-   * asks for the page before the first item; its answer is taken only while that item is still the first. A dropped or empty
-   * answer is asked for once more while the view is still held at the top; a refusal is not asked again by itself
-   */
-  private askOlder(beforeId: string, again = true): void {
-    this.older(beforeId).then(
-      taken => {
-        if (!this.visible || !this.nearTop()) return
-        if (taken !== null && taken.count > 0) this.growUp()
-        else if (again && this.hasOlder && this.items[0] !== undefined) this.askOlder(this.items[0].id, false)
-      },
-      // a refused request is not asked again by itself
-      () => undefined,
-    )
-  }
-
-  /**
-   * The page before `beforeId`, asked for once at a time. Its answer is taken only while that item is still the first: the
-   * result is the count taken, or null when nothing was taken. A refusal rejects.
-   */
-  private older(beforeId: string): Promise<{ count: number } | null> {
-    const asked = this.o.older(beforeId).then(
-      page => {
-        this.olderAsked = null
-        if (page === null || this.items[0]?.id !== beforeId) return null
-        this.hasOlder = page.hasOlder
-        // the page goes in above the window; the window moves up into it as the user reads up
-        if (page.items.length > 0) {
-          this.items = [...page.items, ...this.items]
-          this.from += page.items.length
-          this.to += page.items.length
-        }
-        return { count: page.items.length }
-      },
-      (e: unknown) => {
-        this.olderAsked = null
-        throw e
-      },
-    )
-    this.olderAsked = asked
-    return asked
   }
 
   /** the composer and the working line show the turn as the state has it, and what the chat does between its turns */
   private showState(): void {
-    if (!this.visible) return
+    if (!this.drawing()) return
     const turn = this.state.turn
     const activity = this.state.activity
     this.waitShown = this.waitsForLimit()
@@ -1056,15 +1185,18 @@ export class ChatView {
 
   /** the elapsed time ticks once a second while the chat is shown and a turn runs, and so do the times of the agents running in the dock, which outlive their turn */
   private syncClock(): void {
-    const agents = this.dockOpen && this.dockRows.some((agent) => agent.state === 'running')
-    const run = this.visible && (this.state.turn !== 'idle' || this.state.activity !== undefined || agents || this.waitShown)
+    // the dock's times count while it shows, on an agent page too; the working line's only while the conversation is drawn
+    const agents = this.visible && this.dockOpen && this.dockRows.some((agent) => agent.state === 'running')
+    const run = agents || (this.drawing() && (this.state.turn !== 'idle' || this.state.activity !== undefined || this.waitShown))
     if (run && this.clock === null) {
       // a chat shown again catches up at once
       tickAgentTimes(this.dock)
       this.clock = setInterval(() => {
-        // the moment Claude was to go on has come: the line goes, unless Claude Code's own news came first
-        if (this.waitShown && !this.waitsForLimit()) this.showState()
-        else this.tickElapsed()
+        if (this.drawing()) {
+          // the moment Claude was to go on has come: the line goes, unless Claude Code's own news came first
+          if (this.waitShown && !this.waitsForLimit()) this.showState()
+          else this.tickElapsed()
+        }
         tickAgentTimes(this.dock)
       }, 1000)
     }
@@ -1078,27 +1210,21 @@ export class ChatView {
 
   /** the first item drawn that is at least partly in view, and its top's offset from the top of the view */
   private topItem(): { id: string; offset: number } | null {
-    const top = this.scroll.getBoundingClientRect().top
-    for (const node of Array.from(this.column.children)) {
-      if (!(node instanceof HTMLElement) || node.dataset.item === undefined) continue
-      const box = node.getBoundingClientRect()
-      if (box.bottom > top) return { id: node.dataset.item, offset: box.top - top }
-    }
-    return null
+    return topItemOf(this.scroll, this.column)
   }
 
   /** the item the reader was on stays at the same offset from the top of the view */
   private keepAt(anchor: { id: string; offset: number }): void {
     const node = this.drawn.get(anchor.id)
     if (node === undefined) return
-    const top = this.scroll.getBoundingClientRect().top
-    this.scroll.scrollTop += node.getBoundingClientRect().top - top - anchor.offset
+    keepAtNode(this.scroll, node, anchor)
   }
 
   /** the window is the items around one of them: a page above it, and the rest below */
   private windowAround(id: string): void {
-    this.from = Math.max(0, this.indexOf(id) - PAGE_STEP)
-    this.to = Math.min(this.items.length, this.from + WINDOW)
+    const w = windowAt(this.items.length, this.indexOf(id))
+    this.from = w.from
+    this.to = w.to
   }
 
   /** the folds of the items that are gone are forgotten */
@@ -1108,7 +1234,7 @@ export class ChatView {
   }
 
   private settle(): void {
-    if (!this.visible || !this.stick) return
+    if (!this.drawing() || !this.stick) return
     this.scroll.scrollTop = this.scroll.scrollHeight
     this.settledTop = this.scroll.scrollTop
   }
@@ -1142,11 +1268,11 @@ export class ChatView {
    * still stuck to its bottom would take the reader back to the end
    */
   private catchScroll(): void {
-    if (this.visible && this.stick && this.scroll.scrollTop < this.settledTop) this.onScroll()
+    if (this.drawing() && this.stick && this.scroll.scrollTop < this.settledTop) this.onScroll()
   }
 
   private onScroll(): void {
-    if (!this.visible) return
+    if (!this.drawing()) return
     if (this.nearTop()) this.growUp()
     if (this.distanceToBottom() < EDGE_ZONE && this.to < this.items.length) this.growDown()
     const atEnd = this.distanceToBottom() <= BOTTOM_SLACK

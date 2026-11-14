@@ -51,8 +51,12 @@ function isAttachment(v: unknown): v is ChatAttachment {
     && isText(v.name, PATH_CAP) && isCount(v.size) && (v.cardId === null || isText(v.cardId, 64))
 }
 
-/** a message's origin when it is not the person's own typing: the automatic continue, or the Changes panel's Send */
+/** a message's origin when it is not the person's own typing: the automatic continue, or the Changes panel's Send. 'agent' (a forward)
+ * is main's own: the window cannot name it, and a member's mirror does not take it */
 export const isChatOrigin = (v: unknown): boolean => v === 'auto' || v === 'review'
+
+/** a text the person sends to an agent: not blank, at most 1 MiB */
+export const isAgentText = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= SEND_TEXT_CAP
 
 /** a message the user sent, with its attachments; its origin, when it has one, is one the window may name */
 export function isChatSend(v: unknown): v is ChatSend {

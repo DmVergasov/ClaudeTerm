@@ -13,7 +13,7 @@ export type ChatPermissionMode = 'default' | 'acceptEdits' | 'plan' | 'auto' | '
  * oversize: an image too big to scale in main, which goes to Claude as its path */
 export interface ChatAttachment { kind: 'image' | 'file'; path: string; name: string; size: number; cardId: string | null; oversize?: boolean }
 /** who sent a message that is not the user's own typing: an auto-continue, or the Review panel's Send. Such a message is no recall */
-export type ChatSendOrigin = 'auto' | 'review'
+export type ChatSendOrigin = 'auto' | 'review' | 'agent'
 export interface ChatSend { text: string; attachments: ChatAttachment[]; from?: ChatSendOrigin }
 
 /** the longest line the terminal handoff types: one line of printable text, as main checks it before it types it */
@@ -35,6 +35,8 @@ export interface ChatSubagent {
   model?: string; effort?: string; context?: number
   /** when it started (ms since the epoch, main's clock): a running row counts up from it */
   startedAt?: number
+  /** a failed agent that was stopped (task_notification 'stopped'); absent otherwise */
+  stopped?: boolean
 }
 export interface ChatToolCall {
   id: string; name: string; subject: string; detail: string | null; state: ChatCallState
@@ -56,6 +58,13 @@ export type ChatItem =
   | { kind: 'reload'; id: string; title: string; text: string; action: ReloadAction | null }
   // a message Claude Code puts in the conversation that is not the person's: a background task's end, another session's message, a channel's
   | { kind: 'event'; id: string; source: ChatEventSource; title: string; status: string | null; body: string }
+  // agent pages only: Claude's prompt (first) or a later message from Claude
+  | { kind: 'prompt'; id: string; text: string; first: boolean }
+  // agent pages only: a message the person sent to the agent, and how its forward goes (reason: why it did not go)
+  | { kind: 'forward'; id: string; agentId: string; label: string; text: string; state: ForwardState; reason: string | null }
+
+/** a forward's state: queued, being sent through Claude, delivered, failed, or skipped (the agent is gone, or Claude did not send it) */
+export type ForwardState = 'queued' | 'sending' | 'delivered' | 'failed' | 'skipped'
 
 /** what an event row is about: a background task (task), another Claude session (peer), any other message (message) */
 export type ChatEventSource = 'task' | 'peer' | 'message'
@@ -137,4 +146,23 @@ export interface ChatModelInfo {
   resolved?: string
   /** the model runs auto mode: an older device's list has no flag (absent) */
   autoMode?: boolean
+}
+
+/** an agent id as Claude Code gives it (task_id, agent_id, agent-<id>.jsonl): checked before it is a key, a path part or an argument */
+export const AGENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+export const isAgentId = (v: unknown): v is string => typeof v === 'string' && AGENT_ID_PATTERN.test(v)
+export type ChatAgentState = 'running' | 'done' | 'failed' | 'stopped'
+export interface ChatAgentInfo {
+  id: string; type: string; description: string; state: ChatAgentState
+  startedAt: number | null   // the current or last run's start, main's Date.now()
+  ms: number | null          // the last run's length, once it ended
+  parentId: string | null    // the agent that started it; null for the main conversation's agents
+}
+export type AgentPatch = Exclude<ChatPatch, { op: 'state' }> | { op: 'agent'; agent: ChatAgentInfo }
+export interface AgentSnapshot { tabId: string; agentId: string; rev: number; items: ChatItem[]; hasOlder: boolean; agent: ChatAgentInfo; writable: boolean }
+/** a length as an agent's header and its end divider show it: `elapsedText`'s format (src/renderer/chat/chat-steps.ts), but at least 1 s — `12s`, `1m 12s`, `1m 05s` */
+export function agentDuration(ms: number): string {
+  const s = Math.max(1, Math.floor(ms / 1000))
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`
 }
