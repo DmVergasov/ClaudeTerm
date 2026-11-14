@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { LIMIT_ERROR } from '../../src/main/auto-continue'
 import { CoordinatorHub, HUB_TEXT, type HubTab } from '../../src/main/coordinator/coordinator-hub'
 import {
   CoordinatorStore,
@@ -59,6 +60,12 @@ function world(o: { problem?: string | null; self?: string | null; newId?: () =>
     rechecks: 0,
     aliases: [] as [string, string][],
     warns,
+    /** the settle timers still waiting, as the hub asked for them */
+    timers: [] as { ms: number; fn: () => void }[],
+    /** the tabs that are not at rest now (every tab is, unless a test says otherwise) */
+    resting: {} as Record<string, boolean>,
+    /** the hub's calls to the window and the mail, in order */
+    order: [] as string[],
     problem: o.problem ?? null,
     store: new CoordinatorStore(dir, { debounceMs: 100_000 }),
     mail: MailStore.open({ dir, now: () => NOW, debounceMs: 100_000 }),
@@ -83,7 +90,7 @@ function world(o: { problem?: string | null; self?: string | null; newId?: () =>
     waits: (tabId) => w.waits[tabId] ?? { prompt: null, limit: null },
     progress: (tabId) => w.progress[tabId] ?? null,
     taskList: () => null,
-    restingNow: () => true,
+    restingNow: (tabId) => w.resting[tabId] ?? true,
     isDirectory: async (p) => p === 'D:\\Work\\acme',
     accountLabel: (a) => (a === null ? 'Main account' : `Account ${a}`),
     openTab: (req) => {
@@ -92,17 +99,27 @@ function world(o: { problem?: string | null; self?: string | null; newId?: () =>
     },
     recheckMail: () => {
       w.rechecks++
+      w.order.push('recheck')
     },
     poke: (tabId) => {
       w.pokes.push(tabId)
+      w.order.push(`poke:${tabId}`)
     },
-    changed: () => {},
+    changed: () => {
+      w.order.push('changed')
+    },
     alias: (a, b) => {
       w.aliases.push([a, b])
     },
     clock: (ms) => new Date(ms).toISOString().slice(11, 16),
     now: () => w.now,
-    later: () => () => {},
+    later: (ms, fn) => {
+      const timer = { ms, fn }
+      w.timers.push(timer)
+      return () => {
+        w.timers = w.timers.filter((t) => t !== timer)
+      }
+    },
     newId: o.newId ?? (() => uid(++ids)),
     log: {
       info: () => {},
@@ -123,6 +140,13 @@ const update = (w: World, tabId: string, over: Partial<HubTab>): void => {
 }
 
 const records = (w: World, kind: MailRecord['kind']): MailRecord[] => w.mail.all().filter((r) => r.kind === kind)
+
+/** runs the settle timers that wait now */
+const fire = (w: World): void => {
+  const due = w.timers
+  w.timers = []
+  for (const t of due) t.fn()
+}
 
 const attachment = (session: string, name = 'parser · Desktop'): StoredAttachment => ({
   device: null,
@@ -702,5 +726,282 @@ describe('views', () => {
       ok: true,
       info: ['parser · Desktop [a10000]', 'State: Idle · Finished · report ready', 'Folder: D:\\Work\\acme · Branch: main', 'No open task.', 'Last report: finished 22:13', 'Parser fixed; the tests pass.'].join('\n')
     })
+  })
+})
+
+describe('CoordinatorHub task lifecycle', () => {
+  let w: World
+  let task: MailRecord
+
+  beforeEach(() => {
+    w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    task = records(w, 'task')[0]
+  })
+
+  it('a task handed to a watcher is open; one written as a prompt is delivered until its turn starts', () => {
+    w.hub.handedOver('tab-1', [task], 'prompt')
+    expect(w.store.hosted(S.one)!.tasks[0]).toMatchObject({ state: 'delivered', deliveredAt: NOW })
+    w.hub.turnStarted('tab-1')
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('open')
+  })
+
+  it('a turn that starts on a coordinator rechecks the mail, so a held watcher can take a stopped report', () => {
+    w.order.length = 0
+    w.hub.turnStarted('tab-c')
+    expect(w.order).toContain('recheck')
+    w.order.length = 0
+    w.hub.turnStarted('tab-1')
+    expect(w.order).not.toContain('recheck')
+  })
+
+  it('an event that does not apply to a task leaves it as it is and writes nothing', () => {
+    const before = JSON.stringify(w.mail.all())
+    w.hub.handedOver('tab-1', [task], 'running')
+    w.hub.turnStarted('tab-1')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Nothing done.' })
+    fire(w)
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ state: 'queued' }])
+    expect(JSON.stringify(w.mail.all())).toBe(before)
+  })
+
+  it('a Stop with nothing after it finishes the task 2 s later: the report is the last answer, to the coordinator, on the task', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Parser fixed; 12 tests pass.' })
+    expect(w.timers.map((t) => t.ms)).toEqual([2000])
+    expect(records(w, 'report')).toEqual([])
+    fire(w)
+    expect(records(w, 'report')).toEqual([
+      expect.objectContaining({
+        from: expect.objectContaining({ session: S.one, name: 'parser · Desktop' }),
+        to: expect.objectContaining({ session: S.coord }),
+        replyTo: task.id,
+        outcome: 'finished',
+        text: 'Parser fixed; 12 tests pass.'
+      })
+    ])
+    expect(w.store.hosted(S.one)!.tasks).toEqual([])
+    expect(w.store.coordinator(S.coord)!.attachments[0].lastReport).toMatchObject({ outcome: 'finished', reason: null })
+  })
+
+  it('a turn that starts within the settle keeps the task open; the report is the answer of the Stop after it', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Half done.' })
+    w.hub.turnStarted('tab-1')
+    expect(w.timers).toEqual([])
+    fire(w)
+    expect(records(w, 'report')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('open')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Parser fixed.' })
+    fire(w)
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'finished', text: 'Parser fixed.' }])
+  })
+
+  it('a Stop with background work keeps the task open; the next Stop without it ends it', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: 'Waiting for the tests.' })
+    expect(w.timers).toEqual([])
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Tests pass.' })
+    expect(w.timers.map((t) => t.ms)).toEqual([2000])
+    fire(w)
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'finished', text: 'Tests pass.' }])
+  })
+
+  it('a Stop while the tab is not resting does not end the task', () => {
+    w.resting['tab-1'] = false
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Done.' })
+    fire(w)
+    expect(records(w, 'report')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('open')
+  })
+
+  it('a failed turn ClaudeTerm does not continue fails the task; a usage limit and a continued cut do not end it', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnFailed('tab-1', LIMIT_ERROR, false)
+    w.hub.turnFailed('tab-1', 'server_error', true)
+    expect(records(w, 'report')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('open')
+    w.hub.turnFailed('tab-1', 'invalid_request', false)
+    expect(records(w, 'report')).toMatchObject([
+      {
+        outcome: 'failed',
+        reason: 'Claude Code stopped the turn on an error (invalid_request)',
+        replyTo: task.id,
+        text: 'The task failed: Claude Code stopped the turn on an error (invalid_request).'
+      }
+    ])
+    expect(w.store.hosted(S.one)!.tasks).toEqual([])
+  })
+
+  it("Esc in the task's turn stops it, also in a turn a watcher started; Esc outside a turn does nothing", () => {
+    w.hub.interrupted('tab-1')
+    expect(records(w, 'report')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('queued')
+
+    w.hub.handedOver('tab-1', [task], 'prompt')
+    w.hub.interrupted('tab-1')
+    expect(records(w, 'report')).toEqual([])
+    w.hub.handedOver('tab-1', [], 'idle')
+    w.hub.interrupted('tab-1')
+    expect(records(w, 'report')).toMatchObject([
+      { outcome: 'stopped', reason: 'its turn was interrupted', replyTo: task.id, text: 'The task was stopped by the user: its turn was interrupted.' }
+    ])
+    expect(w.store.hosted(S.one)!.tasks).toEqual([])
+  })
+
+  it("an interrupt read from the transcript stops the task only when it is not older than the task's delivery", () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.interrupted('tab-1', NOW - 1)
+    expect(records(w, 'report')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('open')
+    w.hub.interrupted('tab-1', NOW + 5)
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'stopped', reason: 'its turn was interrupted' }])
+  })
+
+  it('an interrupt whose time is unknown (0) counts as an Esc in the turn', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.interrupted('tab-1', 0)
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'stopped', replyTo: task.id }])
+  })
+
+  it('the process exiting fails the open task and keeps the queued ones; closing the tab fails every task', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.message('tab-c', 'a10000', 'Then the docs.')
+    const second = records(w, 'task')[1]
+    w.hub.exited('tab-1')
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'failed', reason: 'Claude Code exited', replyTo: task.id }])
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ id: second.id, state: 'queued' }])
+
+    w.hub.tabClosed('tab-1')
+    expect(records(w, 'report').map((r) => [r.replyTo, r.outcome, r.reason])).toEqual([
+      [task.id, 'failed', 'Claude Code exited'],
+      [second.id, 'failed', 'its tab was closed']
+    ])
+    expect(w.mail.get(second.id)).toMatchObject({ delivered: true, read: false })
+    expect(w.store.hosted(S.one)!.tasks).toEqual([])
+    expect(w.store.coordinator(S.coord)!.attachments).toHaveLength(1)
+  })
+
+  it('a clear stops the open task, and the report comes from the new session id', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    const NEW = uid(0x2002)
+    update(w, 'tab-1', { session: NEW })
+    w.hub.sessionStarted('tab-1', S.one, NEW, 'clear')
+    expect(w.store.hosted(NEW)!.tasks).toEqual([])
+    expect(records(w, 'report')).toMatchObject([
+      {
+        from: { session: NEW, name: 'parser · Desktop' },
+        to: { session: S.coord },
+        replyTo: task.id,
+        outcome: 'stopped',
+        reason: 'the session was cleared',
+        text: 'The task was stopped by the user: the session was cleared.'
+      }
+    ])
+  })
+
+  it('a task the previous coordinator gave reports to the new one with a note', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Parser fixed.' })
+    w.hub.make('tab-2', true)
+    fire(w)
+    expect(records(w, 'report')).toMatchObject([
+      {
+        from: { session: S.one },
+        to: { session: S.two },
+        replyTo: task.id,
+        outcome: 'finished',
+        text: '(This task was given by the previous coordinator, coord · Desktop.)\n\nParser fixed.'
+      }
+    ])
+  })
+
+  it('a failed report marks the attachment failed until the next task', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnFailed('tab-1', 'invalid_request', false)
+    expect(w.store.coordinator(S.coord)!.attachments[0]).toMatchObject({
+      failed: true,
+      lastReport: { outcome: 'failed', reason: 'Claude Code stopped the turn on an error (invalid_request)' }
+    })
+    w.hub.message('tab-c', 'a10000', 'Try again.')
+    expect(w.store.coordinator(S.coord)!.attachments[0]).toMatchObject({ failed: false })
+  })
+
+  it('a report that cannot be written still ends the task, and the coordinator shows its outcome', () => {
+    let broken = false
+    let ids = 0x6000
+    const flaky = world({ newId: () => (broken ? 'not-a-uuid' : uid(++ids)) })
+    flaky.hub.make('tab-c', false)
+    flaky.hub.attach('tab-c', 'a10000')
+    flaky.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    const [t] = records(flaky, 'task')
+    broken = true
+    flaky.hub.handedOver('tab-1', [t], 'idle')
+    flaky.hub.turnFailed('tab-1', 'invalid_request', false)
+    expect(flaky.store.hosted(S.one)!.tasks).toEqual([])
+    expect(records(flaky, 'report')).toEqual([])
+    expect(flaky.warns.some((m) => m.includes('report'))).toBe(true)
+    expect(flaky.store.coordinator(S.coord)!.attachments[0]).toMatchObject({
+      failed: true,
+      lastReport: { outcome: 'failed', reason: 'Claude Code stopped the turn on an error (invalid_request)' }
+    })
+  })
+
+  it('a detach whose record cannot be written still detaches the session, and logs why', () => {
+    let broken = false
+    let ids = 0x7000
+    const flaky = world({ newId: () => (broken ? 'not-a-uuid' : uid(++ids)) })
+    flaky.hub.make('tab-c', false)
+    flaky.hub.attach('tab-c', 'a10000')
+    broken = true
+    expect(flaky.hub.detach('tab-c', 'a10000')).toEqual({ ok: true, info: 'Detached parser · Desktop.' })
+    expect(flaky.store.hosted(S.one)).toBeNull()
+    expect(flaky.store.coordinator(S.coord)!.attachments).toEqual([])
+    expect(flaky.warns).toHaveLength(1)
+  })
+
+  it('a device id that is empty reads as no device: this device\'s records keep it as null', () => {
+    const bare = world({ self: '' })
+    bare.hub.make('tab-c', false)
+    expect(bare.hub.attach('tab-c', 'a10000')).toMatchObject({ ok: true })
+    expect(records(bare, 'attach')[0].from.device).toBeNull()
+  })
+
+  it('a task taken from the mail is rechecked, then its tab is poked, then the window is told', () => {
+    w.order.length = 0
+    w.mail.add({
+      v: 1,
+      id: uid(0x3010),
+      from: { device: null, session: S.coord, name: 'coord · Desktop' },
+      to: { device: null, session: S.one, name: 'parser · Desktop' },
+      replyTo: null,
+      text: 'Another one.',
+      sentAt: NOW,
+      delivered: false,
+      read: false,
+      kind: 'task',
+      project: 'acme'
+    })
+    expect(w.order).toEqual(['recheck', 'poke:tab-1', 'changed'])
+  })
+
+  it("after an outcome the hub rechecks the mail, pokes the session's tab and tells the window", () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Done.' })
+    w.order.length = 0
+    fire(w)
+    expect(w.order.slice(-3)).toEqual(['recheck', 'poke:tab-1', 'changed'])
+    expect(w.pokes).toContain('tab-1')
+  })
+
+  it('a session detached before its outcome reports nothing', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Done.' })
+    w.hub.detach('tab-c', 'a10000')
+    fire(w)
+    expect(records(w, 'report')).toEqual([])
   })
 })

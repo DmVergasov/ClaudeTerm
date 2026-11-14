@@ -1,6 +1,6 @@
 import type { CoordGroup, CoordMarks, CoordOp, CoordResult, CoordSessionRow, CoordTaskInfo, CoordinatorView } from '../../shared/coordinator'
 import { COORD_TASK_MAX } from '../../shared/coordinator'
-import { isSignal, kindOf, type MailAddress, type MailRecord } from '../../shared/mail'
+import { isSignal, kindOf, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
 import type { PipeResponse } from '../../shared/protocol'
 import type { TabView } from '../../shared/chat'
 import type { TaskList } from '../../shared/task-list'
@@ -11,6 +11,7 @@ import { checkMailRecord } from '../mail/mail-record'
 import type { HandOver } from '../mail/mail-hub'
 import type { MailStore } from '../mail/mail-store'
 import type { TabWaitsState } from '../tab-waits'
+import { LIMIT_ERROR } from '../auto-continue'
 import { findRow, rowState } from './session-state'
 import { listText, readText } from './session-text'
 import {
@@ -21,9 +22,11 @@ import {
   type CoordinatorStore,
   type StoredAttachment,
   type StoredCoordinator,
-  type StoredHosted
+  type StoredHosted,
+  type StoredTask
 } from './coordinator-store'
-import { currentTask, nextTask } from './task-machine'
+import { REASONS, reportText } from './report-text'
+import { currentTask, nextTask, stepTask, type TaskEvent } from './task-machine'
 
 /** a Claude tab of this device, as the hub needs it */
 export interface HubTab {
@@ -66,6 +69,9 @@ export interface CoordinatorHubDeps {
 
 /** the project name as a record or the store keeps it: one line, at most 200 UTF-16 units */
 const PROJECT_NAME_MAX = 200
+
+/** a Stop that comes to rest ends the task this long after it, unless a turn starts meanwhile */
+export const REST_SETTLE_MS = 2000
 
 /** a record the hub writes: its version, id, time and flags are set by write() */
 type RecordInput = Omit<MailRecord, 'v' | 'id' | 'sentAt' | 'delivered' | 'read'> & { delivered?: boolean; read?: boolean }
@@ -124,6 +130,12 @@ export class CoordinatorHub {
   private readonly renamedFrom = new Map<string, string>()
   /** each row's group and line, and when they last changed, per coordinator and row key */
   private readonly seen = new Map<string, { group: CoordGroup; line: string; changedAt: number }>()
+  /** the tabs that are in a turn now */
+  private readonly inTurn = new Set<string>()
+  /** the settle timer of each tab whose Stop came to rest: the function cancels it */
+  private readonly settle = new Map<string, () => void>()
+  /** the last answer of a task's session, by task id: the text of its report */
+  private readonly answers = new Map<string, string>()
   private readonly unsubscribe: () => void
 
   constructor(private readonly d: CoordinatorHubDeps) {
@@ -251,7 +263,8 @@ export class CoordinatorHub {
     const found = this.attachedFind(c, target)
     if ('error' in found) return fail(found.error)
     const { att, row } = found
-    if (this.write(this.detachRecord(c.session, att.session, c.project.name)) === null) return fail(HUB_TEXT.notSaved)
+    // best-effort, as end() does it: a refused record is logged, and the session is detached all the same
+    this.write(this.detachRecord(c.session, att.session, c.project.name))
     const dropped = this.unhost(att.session) > 0
     this.unattach(c.session, att.session)
     this.d.changed()
@@ -320,6 +333,67 @@ export class CoordinatorHub {
     return true
   }
 
+  /** the tab was handed mail: a task among it is open (idle) or delivered (prompt), and a turn starts unless it is a prompt */
+  handedOver(tabId: string, taken: MailRecord[], into: HandOver): void {
+    const session = this.sessionOfTab(tabId)
+    if (session !== null) for (const r of taken) this.advance(session, r.id, { kind: 'handed', into, at: this.d.now() })
+    if (into !== 'prompt') this.inTurn.add(tabId)
+    this.d.changed()
+  }
+
+  /** a turn started: a task delivered as a prompt is open now, and a Stop that waits for its settle is overtaken */
+  turnStarted(tabId: string): void {
+    this.cancelSettle(tabId)
+    this.inTurn.add(tabId)
+    this.onCurrent(tabId, { kind: 'turn' })
+    if (this.isCoordinator(tabId)) this.d.recheckMail()
+    this.d.changed()
+  }
+
+  /** a turn ended; without background work left, the task ends at rest after REST_SETTLE_MS, unless a turn starts meanwhile */
+  turnEnded(tabId: string, end: { background: boolean; lastMessage: string | null }): void {
+    this.inTurn.delete(tabId)
+    const cur = this.currentOf(tabId)
+    if (cur && end.lastMessage !== null) this.answers.set(cur.task.id, end.lastMessage)
+    this.cancelSettle(tabId)
+    if (cur && !end.background) {
+      const taskId = cur.task.id
+      this.settle.set(tabId, this.d.later(REST_SETTLE_MS, () => this.rest(tabId, taskId)))
+    }
+    this.d.recheckMail()
+    this.d.poke(tabId)
+  }
+
+  /** a turn failed: a usage limit, or a cut ClaudeTerm continues, ends nothing; any other error fails the task */
+  turnFailed(tabId: string, error: string, continued: boolean): void {
+    this.inTurn.delete(tabId)
+    this.cancelSettle(tabId)
+    if (error !== LIMIT_ERROR && !continued) this.onCurrent(tabId, { kind: 'failed', reason: REASONS.error(error) })
+    this.d.poke(tabId)
+    this.d.changed()
+  }
+
+  /** the person ended the running turn; `at` is the transcript time of the entry that says so, 0 when it is not known */
+  interrupted(tabId: string, at = 0): void {
+    if (!this.inTurn.has(tabId)) return
+    const cur = this.currentOf(tabId)
+    // an entry older than the task's delivery was written before the task: the feed reads old entries when it starts
+    if (at !== 0 && cur?.task.deliveredAt != null && at < cur.task.deliveredAt) return
+    this.inTurn.delete(tabId)
+    this.cancelSettle(tabId)
+    this.onCurrent(tabId, { kind: 'stopped', reason: REASONS.interrupted })
+    this.d.poke(tabId)
+    this.d.changed()
+  }
+
+  /** the tab's process exited: its turn is over and the task it held fails; the queued tasks stay */
+  exited(tabId: string): void {
+    this.inTurn.delete(tabId)
+    this.cancelSettle(tabId)
+    this.onCurrent(tabId, { kind: 'failed', reason: REASONS.exit })
+    this.d.changed()
+  }
+
   /** the session a tab of this device runs now; the hub follows the tab's changes through tabSession and sessionStarted */
   tabSession(tabId: string, session: string | null): void {
     const before = this.sessions.get(tabId) ?? null
@@ -335,16 +409,25 @@ export class CoordinatorHub {
     // the design names clear and compact; resume is needed too, for a restored tab that resumes under a new id
     if (source !== 'clear' && source !== 'compact' && source !== 'resume') return
     const old = before !== null && before !== after ? before : remembered
-    if (old === null || old === after) return
-    this.d.store.renameSession(old, after)
-    this.d.alias(old, after)
-    this.d.changed()
+    if (old !== null && old !== after) {
+      this.d.store.renameSession(old, after)
+      this.d.alias(old, after)
+      this.d.changed()
+    }
+    // a clear ends the task its session held; the report comes from the new id
+    if (source === 'clear') this.onCurrent(tabId, { kind: 'stopped', reason: REASONS.clear })
   }
 
-  /** the tab was closed on purpose: a coordinator's tab stops its coordinator */
+  /** the tab was closed on purpose: its tasks fail, oldest first, and a coordinator's tab stops its coordinator */
   tabClosed(tabId: string): void {
     this.renamedFrom.delete(tabId)
+    this.inTurn.delete(tabId)
+    this.cancelSettle(tabId)
     const session = this.sessionOfTab(tabId)
+    if (session !== null) {
+      const tasks = this.d.store.hosted(session)?.tasks ?? []
+      for (const t of tasks.sort((a, b) => a.queuedAt - b.queuedAt)) this.advance(session, t.id, { kind: 'failed', reason: REASONS.closed })
+    }
     const c = session === null ? null : this.d.store.coordinator(session)
     if (c) this.end(c)
   }
@@ -373,6 +456,8 @@ export class CoordinatorHub {
 
   dispose(): void {
     this.unsubscribe()
+    for (const cancel of this.settle.values()) cancel()
+    this.settle.clear()
   }
 
   /** the coordinator a tab runs, or null */
@@ -566,7 +651,17 @@ export class CoordinatorHub {
   /** the mail that arrived: a task given to a session of this device by its hosted coordinator is taken into the hosted entry */
   private mailChanged(changed: MailRecord[]): void {
     let taken = false
+    let held = false
+    const pokes: string[] = []
     for (const r of changed) {
+      if (kindOf(r) === 'report') {
+        if (this.holdReport(r)) {
+          held = true
+          const tab = this.tabOfSession(r.to.session)
+          if (tab) pokes.push(tab.tabId)
+        }
+        continue
+      }
       if (kindOf(r) !== 'task' || r.delivered || this.norm(r.to.device) !== null) continue
       const hosted = this.d.store.hosted(r.to.session)
       if (!hosted || hosted.tasks.some((t) => t.id === r.id)) continue
@@ -576,12 +671,93 @@ export class CoordinatorHub {
       this.d.store.putHosted({ ...hosted, tasks: [...hosted.tasks, { id: r.id, from, state: 'queued', queuedAt: r.sentAt, deliveredAt: null }] })
       taken = true
       const tab = this.tabOfSession(hosted.session)
-      if (tab) this.d.poke(tab.tabId)
+      if (tab) pokes.push(tab.tabId)
     }
-    if (taken) {
-      this.d.recheckMail()
-      this.d.changed()
+    if (taken) this.d.recheckMail()
+    for (const tabId of pokes) this.d.poke(tabId)
+    if (taken || held) this.d.changed()
+  }
+
+  /** a report a session of this device sent a coordinator of this device is the last report of that session's attachment, unless it holds this one or a newer one */
+  private holdReport(r: MailRecord): boolean {
+    if (this.norm(r.to.device) !== null || r.outcome === undefined) return false
+    const c = this.d.store.coordinator(r.to.session)
+    const att = c?.attachments.find((a) => a.session === r.from.session && a.device === this.norm(r.from.device))
+    if (!c || !att) return false
+    if (att.lastReport && (att.lastReport.id === r.id || att.lastReport.at > r.sentAt)) return false
+    this.patchAttachment(c, att.session, { lastReport: { id: r.id, outcome: r.outcome, reason: r.reason ?? null, at: r.sentAt }, failed: r.outcome === 'failed' })
+    return true
+  }
+
+  /** the session of a tab and the task it holds now, delivered or open; null when it holds none */
+  private currentOf(tabId: string): { session: string; task: StoredTask } | null {
+    const session = this.sessionOfTab(tabId)
+    const h = session === null ? null : this.d.store.hosted(session)
+    const task = h ? currentTask(h) : null
+    return h && task ? { session: h.session, task } : null
+  }
+
+  /** applies an event to the task a tab's session holds now */
+  private onCurrent(tabId: string, event: TaskEvent): void {
+    const cur = this.currentOf(tabId)
+    if (cur) this.advance(cur.session, cur.task.id, event)
+  }
+
+  /** the event applied to a task of a session: its new state is stored, or its outcome is reported; an event that does not apply changes nothing */
+  private advance(session: string, taskId: string, event: TaskEvent): void {
+    const h = this.d.store.hosted(session)
+    const task = h?.tasks.find((t) => t.id === taskId)
+    if (!h || !task) return
+    const step = stepTask(task, event)
+    if (step === null) return
+    if ('task' in step) this.d.store.putHosted({ ...h, tasks: h.tasks.map((t) => (t.id === taskId ? step.task : t)) })
+    else this.report(h, task, step.outcome, step.reason)
+  }
+
+  /** the settle of a Stop ran out: the task ends finished, if its session is still at rest on the same task */
+  private rest(tabId: string, taskId: string): void {
+    this.settle.delete(tabId)
+    const cur = this.currentOf(tabId)
+    if (!cur || cur.task.id !== taskId || this.inTurn.has(tabId) || !this.d.restingNow(tabId)) return
+    this.advance(cur.session, taskId, { kind: 'rest' })
+  }
+
+  /** a task's outcome: the report goes to the coordinator, and the task leaves its session's entry */
+  private report(h: StoredHosted, task: StoredTask, outcome: ReportOutcome, reason: string | null): void {
+    // a task that never reached its session is marked delivered, so it is no unread mail
+    if (task.state === 'queued') this.d.mail.mark([task.id], 'delivered')
+    const lastMessage = this.answers.get(task.id) ?? null
+    this.answers.delete(task.id)
+    const previous = task.from.session === h.coordinator.session && task.from.device === h.coordinator.device ? null : task.from.name
+    const id = this.write({
+      kind: 'report',
+      from: this.address(null, h.session),
+      to: this.address(h.coordinator.device, h.coordinator.session),
+      replyTo: task.id,
+      text: reportText({ outcome, reason, lastMessage, previous }),
+      outcome,
+      ...(reason === null ? {} : { reason }),
+      delivered: false,
+      read: false
+    })
+    if (id === null) {
+      this.d.log.warn(`coordinator: the report of the task of ${h.session} was not saved; its outcome is kept on the coordinator's row`)
+      // the coordinator's row still shows the outcome, as its attachment's last report
+      const c = h.coordinator.device === null ? this.d.store.coordinator(h.coordinator.session) : null
+      if (c) this.patchAttachment(c, h.session, { lastReport: { id: this.d.newId(), outcome, reason, at: this.d.now() }, failed: outcome === 'failed' })
     }
+    const now = this.d.store.hosted(h.session)
+    if (now) this.d.store.putHosted({ ...now, tasks: now.tasks.filter((t) => t.id !== task.id) })
+    this.d.recheckMail()
+    const tab = this.tabOfSession(h.session)
+    if (tab) this.d.poke(tab.tabId)
+    this.d.changed()
+  }
+
+  /** cancels a tab's settle timer, when one waits */
+  private cancelSettle(tabId: string): void {
+    this.settle.get(tabId)?.()
+    this.settle.delete(tabId)
   }
 
   /** writes a record the hub makes: null when the mail check refuses it, and the reason is logged */
@@ -628,7 +804,7 @@ export class CoordinatorHub {
 
   /** the address of a session on a device: device null is this device, which the record carries as its own id */
   private address(device: string | null, session: string): MailAddress {
-    return { device: device ?? this.d.self(), session, name: this.nameOf(session) }
+    return { device: device ?? (this.d.self() || null), session, name: this.nameOf(session) }
   }
 
   private isThisDevice(device: string | null): boolean {
