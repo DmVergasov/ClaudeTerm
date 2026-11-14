@@ -1,5 +1,6 @@
 import { posix, win32 } from 'node:path'
 import { CARRY_ITEMS, type CarryCount, type CarryItem } from '../shared/accounts'
+import { isClientSecret } from '../shared/mcp'
 import { isWindowsPath, pathKey } from './path-key'
 
 /** settings keys that never leave the source: hooks and plugins come with their own items, the rest are credentials or cloud routing */
@@ -127,6 +128,30 @@ export function serverSecrets(config: Record<string, unknown>): string[] {
     const values = config[field]
     return isObject(values) ? Object.values(values).filter((value): value is string => typeof value === 'string' && value !== '') : []
   })
+}
+
+/**
+ * The client secrets of a sign-in store (`.credentials.json`) for the servers named: each name's secret, in the order of
+ * `names`. The store keys each one as `name|hash`; an entry without a valid secret is skipped, and a name with two
+ * different secrets is left out, since nothing says which one its config uses. Never throws.
+ */
+export function clientSecrets(credentials: unknown, names: readonly string[]): Map<string, string> {
+  const configs = isObject(credentials) && isObject(credentials.mcpOAuthClientConfig) ? credentials.mcpOAuthClientConfig : {}
+  const found = new Map<string, string[]>()
+  for (const [key, entry] of Object.entries(configs)) {
+    const at = key.indexOf('|')
+    if (at < 1 || !isObject(entry) || !isClientSecret(entry.clientSecret)) continue
+    const name = key.slice(0, at)
+    const secrets = found.get(name) ?? []
+    if (!secrets.includes(entry.clientSecret)) secrets.push(entry.clientSecret)
+    found.set(name, secrets)
+  }
+  const result = new Map<string, string>()
+  for (const name of names) {
+    const secrets = found.get(name) ?? []
+    if (secrets.length === 1) result.set(name, secrets[0])
+  }
+  return result
 }
 
 export interface PluginPlan {

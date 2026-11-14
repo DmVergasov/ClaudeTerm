@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { marketplaceSource } from '../../src/shared/mcp'
+import { isClientSecret, marketplaceSource } from '../../src/shared/mcp'
 
 describe('marketplaceSource', () => {
   it('turns a GitHub link into owner/repo and keeps any other source', () => {
@@ -18,5 +18,12 @@ describe('marketplaceSource', () => {
     expect(marketplaceSource('a\nb')).toBeNull()
     expect(marketplaceSource('a\u0007b')).toBeNull()
     expect(marketplaceSource('-x')).toBeNull()
+  })
+})
+
+describe('isClientSecret', () => {
+  it('takes 1 to 4096 characters on one line and refuses the rest', () => {
+    for (const v of ['s', 'cs-123 with a space', 'x'.repeat(4096)]) expect(isClientSecret(v)).toBe(true)
+    for (const v of ['', 'x'.repeat(4097), 'a\nb', 'a\u0000b', 'a\u007f', 1, null, undefined]) expect(isClientSecret(v)).toBe(false)
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   addTrust,
   carriedSettings,
+  clientSecrets,
   countHooks,
   hooksOf,
   isServerName,
@@ -281,5 +282,31 @@ describe('malformed files carry nothing and never throw', () => {
     expect(previewCounts({ settings: null, claudeJson: 'x', installed: null, known: null }, files).map((c) => c.count)).toEqual([
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ])
+  })
+})
+
+describe('clientSecrets', () => {
+  it("finds each named server's client secret by the name before | and leaves the others out", () => {
+    const credentials = {
+      claudeAiOauth: { accessToken: 'not-a-client-secret' },
+      mcpOAuthClientConfig: {
+        'notion|fedcba9876543210': { clientSecret: 'notion-secret-0001' },
+        'asana|0123456789abcdef': { clientSecret: 'asana-secret-0001' },
+        'other|0000000000000000': { clientSecret: 'not-carried' }
+      }
+    }
+    expect([...clientSecrets(credentials, ['asana', 'github', 'notion'])]).toEqual([['asana', 'asana-secret-0001'], ['notion', 'notion-secret-0001']])
+  })
+
+  it('skips empty, malformed and ambiguous entries and never throws', () => {
+    for (const value of [null, 'x', [], { mcpOAuthClientConfig: [] }, { mcpOAuthClientConfig: 'x' }]) expect(clientSecrets(value, ['a']).size).toBe(0)
+    const entries = {
+      'a|1': { clientSecret: '' }, 'b|1': { clientSecret: 42 }, 'c|1': 'secret', d: { clientSecret: 'no-bar' },
+      'e|1': { clientSecret: 'line\nbreak' }, 'f|1': { clientSecret: 'x'.repeat(4097) },
+      'g|1': { clientSecret: 'one' }, 'g|2': { clientSecret: 'two' },
+      'h|1': { clientSecret: 'same' }, 'h|2': { clientSecret: 'same' },
+      '|1': { clientSecret: 'nameless' }
+    }
+    expect([...clientSecrets({ mcpOAuthClientConfig: entries }, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', ''])]).toEqual([['h', 'same']])
   })
 })

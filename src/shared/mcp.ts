@@ -39,3 +39,8 @@ export function marketplaceSource(text: string): string | null {
   const link = /^(?:https?:\/\/)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\/.*)?$/i.exec(source)
   return link ? `${link[1]}/${link[2]}` : source
 }
+export const MAX_CLIENT_SECRET = 4096
+/** a client secret of an OAuth app: 1 to 4096 characters, none of them a control character (one line) */
+export function isClientSecret(v: unknown): v is string {
+  return typeof v === 'string' && v.length >= 1 && v.length <= MAX_CLIENT_SECRET && !/[\u0000-\u001f\u007f]/.test(v)
+}
