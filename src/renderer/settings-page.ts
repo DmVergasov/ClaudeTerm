@@ -436,8 +436,13 @@ function clearSearch(): void {
   applySearch()
 }
 
+let focused = false
+
 function render(v: SettingsView): void {
   applyTheme(v.settings.theme)
+  // the page is hidden until applyTheme shows it, and a hidden page takes no focus: focused on the first render, unless something else has it
+  if (!focused && document.activeElement === document.body) root.focus({ preventScroll: true })
+  focused = true
   banner.hidden = !v.locked
   bannerText.textContent = `settings.json can't be used: ${v.problems.map((p) => p.replace(/^settings\.json: /, '')).join(' ')}`
   notice.hidden = v.locked || v.problems.length === 0
@@ -497,5 +502,3 @@ function showSection(name: string): void {
 
 ct.onSettingsSection(showSection)
 showSection(location.hash.slice(1))
-// the page scrolls here, so a key press scrolls it with no click first: focused once, unless something else already has the focus
-if (document.activeElement === document.body) root.focus({ preventScroll: true })

@@ -693,6 +693,17 @@ test('PageDown scrolls the page of a tab, also right after its tab is clicked', 
   await app.close()
 })
 
+test('a Settings window opens with its page focused, so the keys scroll it with no click first', async () => {
+  const { app, page } = await launchApp({ settings: QUIET })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    const win = await openSettings(app, page)
+    await expect.poll(() => win.evaluate(() => document.activeElement?.id ?? null)).toBe('settings')
+  } finally {
+    await app.close()
+  }
+})
+
 test('the window opens at General, with its tabs in order, and a tab shows only its own settings', async () => {
   const { app, page } = await launchApp({ settings: QUIET })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
