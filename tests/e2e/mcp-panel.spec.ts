@@ -219,6 +219,9 @@ test('a terminal-view tab has no MCP segment', async () => {
 
 const ROW = (name: string) => `.panel-mcp [data-name="${name}"]`
 const LOGIN_GATE = { mcpLogin: { sentry: { gate: 'sentry-ok' } } }
+const ASANA = { type: 'http', url: 'https://mcp.example.com/asana', oauth: { clientId: 'asana-client-0001' } }
+const APP_SECRET = 'app-secret-never-shown-0001'
+const CLIENT_AUTH = 'Client authentication failed. Check that client_id and client_secret match your registered app.'
 
 test('Sign in waits for the browser, then reconnects the server in the running session', async () => {
   const { app, page, config, log } = await launchChatTab(
@@ -549,6 +552,70 @@ test('while a sign-in runs the row\'s other buttons are off and Cancel stays on'
     await expect(row.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled()
     await row.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(row.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
+  } finally {
+    await app.close()
+  }
+})
+
+test("a sign-in refused for the app's client authentication asks for the client secret; Save adds the server again with it, then the sign-in works", async () => {
+  const { app, page, log } = await launchChatTab(
+    { turns: {}, mcp: { asana: { status: 'needs-auth' } }, mcpLogin: { asana: { noSecret: CLIENT_AUTH } } },
+    { claude: { mcpServers: { asana: ASANA } } }
+  )
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('asana'))
+    await row.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(row.locator('.mcp-error')).toContainText('Client authentication failed')
+    const field = row.getByLabel('Client secret', { exact: true })
+    await expect(field).toHaveAttribute('type', 'password')
+    await expect(field).toBeFocused()
+    await field.fill(APP_SECRET)
+    await row.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(field).toHaveCount(0)
+    expect(cliCalls(log).filter((c) => c.argv.includes('asana') && c.argv[1] !== 'login')).toEqual([
+      { argv: ['mcp', 'remove', '--scope', 'user', '--', 'asana'], secretEnv: false, stdinKeys: null },
+      { argv: ['mcp', 'add-json', '--scope', 'user', '--client-secret', '--', 'asana', JSON.stringify(ASANA)], secretEnv: true, stdinKeys: null }
+    ])
+    await row.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(row.locator('.mcp-row')).toHaveAttribute('data-status', 'connected')
+    expect(await page.content()).not.toContain(APP_SECRET)
+    expect(JSON.stringify(log())).not.toContain(APP_SECRET)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Set client secret… shows the field; what is typed survives a repaint; a refused secret shows the message masked and the server stays', async () => {
+  const { app, page, log } = await launchChatTab(
+    { turns: {}, mcp: { asana: { status: 'needs-auth' } }, cliFail: { 'mcp add-json --scope user --client-secret': `invalid_client: ${APP_SECRET} is not this app's secret` } },
+    { claude: { mcpServers: { asana: ASANA } } }
+  )
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('asana'))
+    await row.getByRole('button', { name: 'More for asana', exact: true }).click()
+    await page.locator('.panel-mcp .mcp-menu-item', { hasText: 'Set client secret…' }).click()
+    const field = row.getByLabel('Client secret', { exact: true })
+    await expect(field).toBeFocused()
+    await field.fill(APP_SECRET)
+    // a click on the row's name folds its tools: the list is drawn again
+    await row.locator('.mcp-main').click()
+    await expect(field).toHaveValue(APP_SECRET)
+    await field.press('Enter')
+    await expect(row.locator('.mcp-error')).toHaveText("Could not save the client secret: invalid_client: •••••••• is not this app's secret")
+    await expect(field).toBeVisible()
+    expect(cliCalls(log).filter((c) => c.argv.includes('asana')).map((c) => c.argv.slice(0, 5))).toEqual([
+      ['mcp', 'remove', '--scope', 'user', '--'],
+      ['mcp', 'add-json', '--scope', 'user', '--client-secret'],
+      ['mcp', 'add-json', '--scope', 'user', '--']
+    ])
+    expect(await page.content()).not.toContain(APP_SECRET)
+    await row.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(field).toHaveCount(0)
+    await expect(row).toBeVisible()
   } finally {
     await app.close()
   }

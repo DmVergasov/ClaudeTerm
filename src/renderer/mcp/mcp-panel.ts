@@ -4,7 +4,7 @@ import type { SidePanel } from '../side-panel'
 import { serverList, type RowCommand, type RowState } from './mcp-servers'
 import { openAddDialog } from './mcp-add-dialog'
 import { PluginsSection } from './mcp-plugins'
-import { editScope, serverStats } from './mcp-view-model'
+import { editScope, needsClientSecret, serverStats } from './mcp-view-model'
 import './mcp.css'
 
 export interface McpPanelCallbacks {
@@ -250,6 +250,21 @@ export class McpPanel {
       case 'close-menu':
         this.closeMenu(true)
         return
+      case 'set-secret':
+        this.menuOf = null
+        row.secretOpen = true
+        this.wanted = { name: s.name, key: 'secret' }
+        this.paint()
+        return
+      case 'save-secret':
+        this.saveSecret(tabId, s, row)
+        return
+      case 'cancel-secret':
+        row.secretOpen = false
+        row.secret = ''
+        this.wanted = { name: s.name, key: 'name' }
+        this.paint()
+        return
       case 'sign-out':
         this.menuOf = null
         this.run(tabId, row, { kind: 'logout', name: s.name })
@@ -300,11 +315,13 @@ export class McpPanel {
     this.paint()
     void this.request(tabId, { kind: 'login', name }).then((result) => {
       row.signingIn = false
-      if (!result.ok && !row.cancelled) row.error = result.error
-      else row.error = null
+      const error = result.ok || row.cancelled ? null : result.error
+      row.error = error
+      // a refused client secret opens the field under the row, where the secret is saved
+      if (error !== null && needsClientSecret(error)) row.secretOpen = true
       row.cancelled = false
-      // the answer brings Sign in back, or the row's name once the server is connected: that gets the focus
-      this.wanted = { name, key: 'sign-in' }
+      // the answer brings Sign in back, or the row's name once the server is connected: that gets the focus; an open secret field gets it
+      this.wanted = { name, key: row.secretOpen ? 'secret' : 'sign-in' }
       this.settled(tabId)
     })
   }
@@ -334,12 +351,33 @@ export class McpPanel {
     void this.load()
   }
 
+  /** the Client secret is saved: the server is added again with it, then the sign-in can go on; a refused secret stays in the field with its message */
+  private saveSecret(tabId: string, s: McpServerView, row: RowState): void {
+    const scope = editScope(s)
+    if (row.busy || row.secret === '' || scope === null) return
+    row.busy = true
+    row.error = null
+    this.paint()
+    void this.request(tabId, { kind: 'set-secret', name: s.name, scope, secret: row.secret }).then((result) => {
+      row.busy = false
+      if (result.ok) {
+        row.secretOpen = false
+        row.secret = ''
+        this.wanted = { name: s.name, key: 'sign-in' }
+      } else {
+        row.error = result.error
+        this.wanted = { name: s.name, key: 'secret' }
+      }
+      this.settled(tabId)
+    })
+  }
+
   /** what a row keeps for the tab in front */
   private rowOf(name: string): RowState {
     const key = JSON.stringify([this.tabId ?? '', name])
     const kept = this.rows.get(key)
     if (kept !== undefined) return kept
-    const row: RowState = { busy: false, signingIn: false, cancelled: false, asking: false, error: null }
+    const row: RowState = { busy: false, signingIn: false, cancelled: false, asking: false, secretOpen: false, secret: '', error: null }
     this.rows.set(key, row)
     return row
   }
@@ -407,7 +445,10 @@ export class McpPanel {
       fold: (name) => this.fold(name),
       state: (name) => this.rowOf(name),
       menu: this.menuOf,
-      command: (s, c) => this.command(s, c)
+      command: (s, c) => this.command(s, c),
+      secretTyped: (name, value) => {
+        this.rowOf(name).secret = value
+      }
     }))
   }
 

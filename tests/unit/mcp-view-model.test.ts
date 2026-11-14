@@ -8,6 +8,7 @@ import {
   iconColor,
   initials,
   matchedTools,
+  needsClientSecret,
   pluginLine,
   rowActions,
   serverGroups,
@@ -161,6 +162,22 @@ describe('rowActions', () => {
     expect(rowActions(waiting, true)).toEqual({
       primary: 'approve', reconnect: false, toggle: null, menu: ['reconnect', 'copy-config', 'open-config', 'remove'],
     })
+  })
+})
+
+it('a server with its own OAuth app offers Set client secret… before the config actions, in an edit scope only', () => {
+  const asana = server('asana', { status: 'needs-auth', transport: 'http', oauthApp: true })
+  expect(rowActions(asana, true).menu).toEqual(['reconnect', 'sign-out', 'client-secret', 'copy-config', 'open-config', 'remove'])
+  expect(rowActions({ ...asana, scope: 'plugin', plugin: 'tools' }, true).menu).not.toContain('client-secret')
+  expect(rowActions({ ...asana, oauthApp: false }, true).menu).not.toContain('client-secret')
+})
+
+describe('needsClientSecret', () => {
+  it("is true for a sign-in refused for the app's client authentication, false otherwise", () => {
+    expect(needsClientSecret('Client authentication failed. Check that client_id and client_secret match your registered app.')).toBe(true)
+    expect(needsClientSecret('OAuth error: invalid_client')).toBe(true)
+    expect(needsClientSecret('Cancelled')).toBe(false)
+    expect(needsClientSecret(null)).toBe(false)
   })
 })
 

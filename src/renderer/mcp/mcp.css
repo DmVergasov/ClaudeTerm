@@ -72,6 +72,9 @@
 .mcp-switch[aria-checked="true"]::after { background: #fff; transform: translateX(12px); }
 @media (prefers-reduced-motion: reduce) { .mcp-switch::after { transition: none; } }
 
+.mcp-secret { display: flex; align-items: center; gap: 6px; margin: 2px 8px 6px 46px; }
+.mcp-secret-input { flex: 1; min-width: 0; box-sizing: border-box; padding: 5px 8px; background: var(--term); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; font: inherit; font-size: 12.5px; }
+.mcp-secret-input:focus { outline: none; border-color: var(--accent); }
 .mcp-confirm { display: flex; align-items: center; gap: 6px; margin: 2px 8px 6px 46px; font-size: 12px; color: var(--text-2); }
 .mcp-confirm-text { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

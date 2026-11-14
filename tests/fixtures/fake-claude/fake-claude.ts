@@ -1327,6 +1327,12 @@ function saveClientSecret(name: string, entry: Msg, secret: string): void {
   })
 }
 
+// whether the config folder keeps a client secret for the server: a key of the sign-in store's mcpOAuthClientConfig starts with its name
+function hasClientSecret(name: string): boolean {
+  const stored: Msg = readJsonFile(credentialsFile()).mcpOAuthClientConfig ?? {}
+  return Object.keys(stored).some(key => key.startsWith(`${name}|`))
+}
+
 async function mcpCommand(verb: string | undefined, args: string[], call: CliCall): Promise<CliResult> {
   const [name, json] = args
   switch (verb) {
@@ -1384,6 +1390,8 @@ async function mcpCommand(verb: string | undefined, args: string[], call: CliCal
       if (gate !== undefined) {
         await waitForGate(join(configDir, gate))
       }
+      // an app that needs its client secret refuses the sign-in until the secret is saved
+      if (plan?.noSecret !== undefined && !hasClientSecret(name)) return bad(plan.noSecret)
       if (plan?.fail !== undefined) return bad(plan.fail)
       editJson(authFile(), value => { value[name] = true })
       return out('Authentication successful')

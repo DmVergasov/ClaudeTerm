@@ -99,8 +99,8 @@ export interface FakeScript {
   headsUp?: { check?: string; explain?: string }
   /** the MCP servers the session loaded, by name: every one is connected with the tool `ping` unless given here (a status, a failure's error, its tools, its version); pendingMs: 'pending' that long after the start */
   mcp?: Record<string, { status?: 'connected' | 'failed' | 'needs-auth'; error?: string; tools?: string[]; version?: string; pendingMs?: number }>
-  /** `claude mcp login <name>`: waits for <config folder>/<gate>; fail: that message on stderr, exit 1. A name not given logs in at once */
-  mcpLogin?: Record<string, { gate?: string; fail?: string }>
+  /** `claude mcp login <name>`: waits for <config folder>/<gate>; fail: that message on stderr, exit 1; noSecret: that message on stderr, exit 1 until the config folder keeps a client secret for the server. A name not given logs in at once */
+  mcpLogin?: Record<string, { gate?: string; fail?: string; noSecret?: string }>
   /** what `claude plugin marketplace add <source>` can add, by its exact source */
   marketplaces?: FakeMarketplace[]
   /** a CLI call whose arguments (joined by spaces, `--` left out) start with the key fails with that message, exit 1 */

@@ -1,6 +1,6 @@
 import type { McpServerView, McpServersView } from '../../shared/mcp'
 import { el } from '../dom'
-import { badgeOf, detailOf, iconColor, initials, matchedTools, rowActions, serverGroups, type RowMenuItem } from './mcp-view-model'
+import { badgeOf, detailOf, editScope, iconColor, initials, matchedTools, rowActions, serverGroups, type RowMenuItem } from './mcp-view-model'
 
 /** the tools a row lists at most; the rest is one chip with their count */
 const TOOL_CAP = 200
@@ -9,6 +9,7 @@ const TOOL_CAP = 200
 export type RowCommand =
   | 'sign-in' | 'cancel-sign-in' | 'reconnect' | 'toggle' | 'approve' | 'menu' | 'close-menu'
   | 'sign-out' | 'tools' | 'copy-config' | 'open-config' | 'ask-remove' | 'cancel-remove' | 'remove'
+  | 'set-secret' | 'save-secret' | 'cancel-secret'
 
 /** what the panel keeps per tab and server: a sign-in waiting for the browser, an action running, its error, a removal asked for */
 export interface RowState {
@@ -17,6 +18,10 @@ export interface RowState {
   /** Cancel was pressed in the sign-in: its Cancelled answer is no error */
   cancelled: boolean
   asking: boolean
+  /** the Client secret field is open under the row */
+  secretOpen: boolean
+  /** what the field holds, kept across repaints: the panel never shows it as text */
+  secret: string
   error: string | null
 }
 
@@ -33,12 +38,15 @@ export interface ServerListOptions {
   menu: string | null
   /** a control of a row was used */
   command(s: McpServerView, c: RowCommand): void
+  /** the Client secret field of a row changed: the panel keeps what is typed, without a repaint */
+  secretTyped(name: string, value: string): void
 }
 
 const MENU_LABEL: Record<RowMenuItem, string> = {
   reconnect: 'Reconnect',
   'sign-out': 'Sign out',
   tools: 'Show tools',
+  'client-secret': 'Set client secret…',
   'copy-config': 'Copy config',
   'open-config': 'Open config file',
   remove: 'Remove'
@@ -48,6 +56,7 @@ const MENU_COMMAND: Record<RowMenuItem, RowCommand> = {
   reconnect: 'reconnect',
   'sign-out': 'sign-out',
   tools: 'tools',
+  'client-secret': 'set-secret',
   'copy-config': 'copy-config',
   'open-config': 'open-config',
   remove: 'ask-remove'
@@ -90,6 +99,7 @@ function serverRow(s: McpServerView, o: ServerListOptions, live: boolean): HTMLE
   item.append(line)
   if (s.status === 'failed' && s.error !== null) item.append(el('div', { className: 'mcp-error', textContent: s.error }))
   if (row.error !== null) item.append(el('div', { className: 'mcp-error', textContent: row.error }))
+  if (row.secretOpen && editScope(s) !== null) item.append(secretField(s, o, row))
   if (row.asking) item.append(removeAsk(s, o))
   if (o.menu === s.name && actions.menu.length > 0) item.append(menuBox(s, o, actions.menu))
   const tools = matched ?? s.tools
@@ -133,6 +143,27 @@ function switchControl(s: McpServerView, o: ServerListOptions, on: boolean): HTM
   sw.dataset.focusKey = 'switch'
   sw.addEventListener('click', () => o.command(s, 'toggle'))
   return sw
+}
+
+/** the Client secret field under the row: a password field with Save and Cancel; Enter saves, Esc cancels. The panel keeps what is typed and never shows it as text */
+function secretField(s: McpServerView, o: ServerListOptions, row: RowState): HTMLElement {
+  const box = el('div', { className: 'mcp-secret' })
+  const input = el('input', { className: 'mcp-secret-input', type: 'password', placeholder: 'Client secret' })
+  input.setAttribute('aria-label', 'Client secret')
+  input.autocomplete = 'off'
+  input.spellcheck = false
+  input.value = row.secret
+  input.disabled = row.busy
+  input.dataset.focusKey = 'secret'
+  input.addEventListener('input', () => o.secretTyped(s.name, input.value))
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== 'Escape') return
+    e.preventDefault()
+    e.stopPropagation()
+    o.command(s, e.key === 'Enter' ? 'save-secret' : 'cancel-secret')
+  })
+  box.append(input, control('Save', 'mcp-btn primary', 'save-secret', () => o.command(s, 'save-secret')), control('Cancel', 'mcp-btn', 'cancel-secret', () => o.command(s, 'cancel-secret')))
+  return box
 }
 
 /** the Remove ask under the row: the name, Remove in red and Cancel */

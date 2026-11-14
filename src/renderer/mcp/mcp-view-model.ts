@@ -5,7 +5,7 @@ import type { McpEditScope, McpServerView, McpServersView, PluginView } from '..
 
 export interface ServerGroup { label: 'Needs attention' | 'Connected' | 'Configured' | 'Off'; servers: McpServerView[] }
 
-export type RowMenuItem = 'reconnect' | 'sign-out' | 'tools' | 'copy-config' | 'open-config' | 'remove'
+export type RowMenuItem = 'reconnect' | 'sign-out' | 'tools' | 'client-secret' | 'copy-config' | 'open-config' | 'remove'
 
 const ICON_COLORS = ['#5E6AD2', '#8D7BD8', '#336791', '#63C08F', '#2EAD33', '#D97757', '#7FA7F5', '#E5B567']
 
@@ -79,7 +79,10 @@ export function rowActions(s: McpServerView, live: boolean): { primary: 'sign-in
   if (live && !reconnect) menu.push('reconnect')
   if ((s.transport === 'http' || s.transport === 'sse' || s.scope === 'claudeai') && (s.status === 'connected' || s.status === 'needs-auth')) menu.push('sign-out')
   if (s.tools.length > 0) menu.push('tools')
-  if (editScope(s) !== null) menu.push('copy-config', 'open-config', 'remove')
+  if (editScope(s) !== null) {
+    if (s.oauthApp) menu.push('client-secret')
+    menu.push('copy-config', 'open-config', 'remove')
+  }
   return { primary, reconnect, toggle, menu }
 }
 
@@ -116,4 +119,11 @@ export function pluginLine(p: PluginView): string {
 
 export function editScope(s: McpServerView): McpEditScope | null {
   return s.scope === 'user' || s.scope === 'project' || s.scope === 'local' ? s.scope : null
+}
+
+/** true when a sign-in is refused for the app's client authentication: the app needs its client secret */
+export function needsClientSecret(error: string | null): boolean {
+  if (error === null) return false
+  const text = error.toLowerCase()
+  return text.includes('client authentication failed') || text.includes('invalid_client')
 }
