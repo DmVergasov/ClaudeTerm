@@ -1,6 +1,9 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, KEYS, launchApp, launchClaudeTab } from './helpers'
+import { settingsWindow } from './account-helpers'
+import { FAKE_CLAUDE_SETTINGS, KEYS, launchApp, launchClaudeTab, showSettingsTab } from './helpers'
 
 // The theme colours the whole app: the window's frame, its panels, menus and dialogs, the Settings window and the windows' own
 // chrome. One Half Light is the light theme the tests use; Graphite must look as it always has.
@@ -122,6 +125,35 @@ test('in a light theme Recent sessions opens on a light scrim, with a light sche
     await expect(page.locator('#sessions')).toBeVisible()
     expect(luminance(await computed(page, '#sessions', 'backgroundColor'))).toBeGreaterThan(0.7)
     expect(await computed(page, '.sessions-box', 'colorScheme')).toBe('light')
+  } finally {
+    await app.close()
+  }
+})
+
+/** the Settings window, opened as the window's own button opens it, once its page is up */
+async function openSettingsWindow(app: ElectronApplication, page: Page): Promise<Page> {
+  const win = await settingsWindow(app, page)
+  await win.waitForSelector('#settings .section-title')
+  return win
+}
+
+test('the Settings window takes the theme, and a hand edit of settings.json reaches both windows at once', async () => {
+  const { app, page, dataDir } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    const win = await openSettingsWindow(app, page)
+    await expect.poll(() => computed(win, 'body', 'backgroundColor')).toBe('rgb(250, 250, 250)')
+    expect(await computed(win, '#settings-titlebar', 'backgroundColor')).toBe('rgb(250, 250, 250)')
+    expect(await computed(win, '.section-body', 'backgroundColor')).toBe('rgb(247, 247, 247)')
+    expect(await computed(win, 'body', 'color')).toBe('rgb(56, 58, 66)')
+    expect(await computed(win, 'body', 'colorScheme')).toBe('light')
+    expect(await computed(win, 'select', 'colorScheme')).toBe('light')
+    await showSettingsTab(win, 'appearance')
+    await expect.poll(() => win.locator('#h-setting-theme').evaluate((h) => h.childNodes[0].textContent)).toBe('Theme')
+    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ...FAKE_CLAUDE_SETTINGS, theme: 'Graphite' }))
+    await expect.poll(() => computed(win, 'body', 'backgroundColor')).toBe('rgb(10, 10, 12)')
+    expect(await computed(win, 'body', 'colorScheme')).toBe('dark')
+    await expect.poll(() => computed(page, '#titlebar', 'backgroundColor')).toBe('rgb(10, 10, 12)')
   } finally {
     await app.close()
   }

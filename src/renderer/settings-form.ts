@@ -58,7 +58,7 @@ const THEME_NOTES: Record<string, string> = {
   Graphite: "ClaudeTerm's own, in the window's colors",
   Campbell: "Windows Terminal's default",
   'One Half Dark': 'Soft contrast on slate',
-  'One Half Light': 'A light terminal in the dark window'
+  'One Half Light': 'Dark text on a light window'
 }
 
 function cardColors(t: { background?: string; foreground?: string; green?: string; cursor?: string }): ThemeChoice['colors'] {

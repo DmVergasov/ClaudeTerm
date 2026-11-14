@@ -6,6 +6,7 @@ import { MAX_AUTO_CONTINUES, NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_L
 import { DEFAULT_TEST_PATTERNS } from '../shared/test-files'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
 import { accountsSection } from './accounts-section'
+import { applyTheme } from './app-theme'
 import { helperOpen, openHelper } from './account-helper'
 import { devicesSection } from './devices-section'
 import { el, loadInter, section } from './dom'
@@ -177,8 +178,8 @@ root.append(el('div', { className: 'settings-inner' },
       switchRow({ label: 'Check for updates automatically' }, 'autoUpdate', (v) => v.settings.autoUpdate))),
   tabPage('appearance',
     cardSection({
-      title: 'Terminal theme', key: 'theme', small: true,
-      searchText: "Graphite ClaudeTerm's own, in the window's colors Campbell Windows Terminal's default One Half Dark Soft contrast on slate One Half Light A light terminal in the dark window",
+      title: 'Theme', key: 'theme', small: true,
+      searchText: "Graphite ClaudeTerm's own, in the window's colors Campbell Windows Terminal's default One Half Dark Soft contrast on slate One Half Light Dark text on a light window",
       choices: (v) => themeChoices(v.settings.theme).map((c) => ({ value: c.value, title: c.title, note: c.note, art: swatch(c.colors), selectable: c.selectable })),
       selected: (v) => themeChoices(v.settings.theme).find((c) => c.selected)?.value ?? '',
       pick: (value, error) => {
@@ -436,6 +437,7 @@ function clearSearch(): void {
 }
 
 function render(v: SettingsView): void {
+  applyTheme(v.settings.theme)
   banner.hidden = !v.locked
   bannerText.textContent = `settings.json can't be used: ${v.problems.map((p) => p.replace(/^settings\.json: /, '')).join(' ')}`
   notice.hidden = v.locked || v.problems.length === 0

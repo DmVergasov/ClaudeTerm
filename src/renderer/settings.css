@@ -2,7 +2,7 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); font: 13px "Inter Variable", "Segoe UI", system-ui, sans-serif; color-scheme: dark; overflow: hidden; }
+html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); font: 13px "Inter Variable", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
 body { display: flex; flex-direction: column; }
 
 /* the title bar: as the main window's, 36 px high; the window buttons sit in its right end */

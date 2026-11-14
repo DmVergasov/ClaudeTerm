@@ -44,7 +44,7 @@ describe('settings form', () => {
     expect(c.filter((x) => x.selected).map((x) => x.value)).toEqual(['Campbell'])
     expect(c.every((x) => x.selectable)).toBe(true)
     expect(c[0]).toMatchObject({ title: 'Graphite', note: "ClaudeTerm's own, in the window's colors", colors: { background: '#0E0E10', foreground: '#D4D4DA', green: '#63C08F', cursor: '#D97757' } })
-    expect(c.map((x) => x.note)).toEqual(["ClaudeTerm's own, in the window's colors", "Windows Terminal's default", 'Soft contrast on slate', 'A light terminal in the dark window'])
+    expect(c.map((x) => x.note)).toEqual(["ClaudeTerm's own, in the window's colors", "Windows Terminal's default", 'Soft contrast on slate', 'Dark text on a light window'])
   })
 
   it('themeChoices: a theme object from settings.json is one more card, chosen, not selectable, in its colors over Campbell', () => {
