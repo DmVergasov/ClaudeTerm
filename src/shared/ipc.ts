@@ -1,6 +1,7 @@
 import type { AccountBegin, AccountFlowView, AccountResult, AccountsView, CarryPreview, FlowAction, PickedFolder, RemoveInfo, RemoveOptions, RemoveResult } from './accounts'
 import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
+import type { FileLink } from './chat-paths'
 import type { MailConversationView, MailUnread } from './mail'
 import type { McpAction, McpAddRequest, McpResult, McpServersView, PluginAction, PluginsView, ReloadAction } from './mcp'
 import type { DeviceResult, DevicesView } from './devices'
@@ -191,6 +192,10 @@ export const IPC = {
   chatAttach: 'chat:attach',
   chatPickFiles: 'chat:pick-files',
   chatFiles: 'chat:files',
+  /** the paths of a chat's text that are files of the tab's folder, answered as links for the window */
+  chatFileLinks: 'chat:file-links',
+  /** opens a file a chat's answer named: a document in the Docs panel, another file in the editor at its line */
+  chatOpenFile: 'chat:open-file',
   /** the Heads up card of a chat: the one the window shows per tab, and the person's answer to it */
   chatHeadsUp: 'chat:heads-up',
   chatHeadsUpAction: 'chat:heads-up-action',
@@ -581,6 +586,10 @@ export interface CtApi {
   chatPickFiles(tabId: string): Promise<ChatAttachment[]>
   /** the files of the tab's folder whose path matches the query, best first, for the @ picker */
   chatFiles(tabId: string, query: string): Promise<string[]>
+  /** the paths that are files of a local Claude tab's folder, one answer per path; [] for any other tab or bad arguments */
+  chatFileLinks(tabId: string, paths: string[]): Promise<FileLink[]>
+  /** opens a file an answer of this tab named (see chatFileLinks): a document in Docs, anything else in the editor */
+  chatOpenFile(tabId: string, file: string, line: number | null): void
   /** the Heads up card a local chat shows now; null when it shows none */
   chatHeadsUp(tabId: string): Promise<HeadsUpCard | null>
   /** the person's answer to a chat's Heads up card */

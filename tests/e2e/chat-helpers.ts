@@ -29,7 +29,7 @@ function installCommand(dir: string): string {
  */
 export async function launchChatTab(
   script: FakeScript,
-  o: { trusted?: boolean; login?: object; version?: string; work?: string; autoContinue?: boolean; headsUp?: boolean; env?: Record<string, string>; tabs?: object; sidePanel?: object; claude?: object } = {}
+  o: { trusted?: boolean; login?: object; version?: string; work?: string; autoContinue?: boolean; headsUp?: boolean; env?: Record<string, string>; tabs?: object; sidePanel?: object; claude?: object; review?: object } = {}
 ): Promise<Launched & { work: string; config: string; tabId: string; log(): Record<string, unknown>[] }> {
   const root = mkdtempSync(join(tmpdir(), 'ct-chat-'))
   const work = o.work ?? join(root, 'work')
@@ -53,7 +53,7 @@ export async function launchChatTab(
   if (Object.keys(claudeJson).length > 0) writeFileSync(join(config, '.claude.json'), JSON.stringify(claudeJson))
 
   // Heads up asks a second Claude Code process now and then: off unless the test is about it, so other tests start only theirs
-  const settings = { ...FAKE_CLAUDE_SETTINGS, claude: { ...FAKE_CLAUDE_SETTINGS.claude, command, view: 'chat', autoContinue: o.autoContinue ?? false, headsUp: o.headsUp ?? false }, ...(o.tabs ? { tabs: o.tabs } : {}), ...(o.sidePanel ? { sidePanel: o.sidePanel } : {}) }
+  const settings = { ...FAKE_CLAUDE_SETTINGS, claude: { ...FAKE_CLAUDE_SETTINGS.claude, command, view: 'chat', autoContinue: o.autoContinue ?? false, headsUp: o.headsUp ?? false }, ...(o.tabs ? { tabs: o.tabs } : {}), ...(o.sidePanel ? { sidePanel: o.sidePanel } : {}), ...(o.review ? { review: o.review } : {}) }
   const launched = await launchApp({
     settings,
     args: ['--claude', work],

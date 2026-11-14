@@ -8,6 +8,7 @@ import { MAIN_ACCOUNT, type AccountFlowView, type AccountResult, type AccountVie
 import { commandWord, isAgentId, isTabView, type AgentSnapshot, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSnapshot } from '../shared/chat'
 import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import type { DocRead } from '../shared/docs'
+import type { FileLink } from '../shared/chat-paths'
 import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
 import { DEVICE_COPY, type ActiveDevicesView, type DeviceResult, type DevicePlatform, type DevicesView, MAX_DEVICE_NAME } from '../shared/devices'
 import { socketDir } from '../shared/protocol'
@@ -33,7 +34,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { applyEnvPatch, buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions } from './ipc-guards'
+import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isFileLinkPaths, isOptionalLineNo } from './ipc-guards'
 import { NOT_RUNNING, type ReviewUpdate } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -76,6 +77,7 @@ import { isAgentText, isChatAnswer, isChatSend, isHeadsUpAction, isHeadsUpAskTex
 import { canonicalFolder, readTrustFile } from './chat/chat-files'
 import { attachFiles, attachmentOf, isChatPaths, isChatQuery, type AttachDeps } from './chat/chat-attachments'
 import { matchFiles, projectFiles } from './chat/project-files'
+import { FileLinks, isRegularFile, openFileLink } from './chat/file-links'
 import { cachedTrustList, chatSupport } from './chat/chat-support'
 import { resolveChatLaunch, type ChatLaunchDeps } from './chat/claude-spawn'
 import { askOnce, loadSdk, startSdkEngine } from './chat/sdk-engine'
@@ -716,6 +718,7 @@ function bootstrap(): void {
     renderMarkdown: () => settings.review.renderMarkdown
   })
   const docs = new DocHub({ publish: (u) => send(IPC.evDocs, u), newId: () => randomUUID() })
+  const fileLinks = new FileLinks({ isFile: isRegularFile, home: homedir() })
 
   const startTabImages = (tab: TabInfo): void => {
     images.addTab(tab.id, tab.cwd)
@@ -891,6 +894,7 @@ function bootstrap(): void {
       places.removeTab(tabId)
       tabPlaces.delete(tabId)
       docs.removeTab(tabId)
+      fileLinks.removeTab(tabId)
       noteHub.removeTab(tabId)
       projectNotes.removeTab(tabId)
       taskLists.removeTab(tabId)
@@ -2964,6 +2968,24 @@ function bootstrap(): void {
     const tab = isLocalClaudeTab(tabId) ? tabs.get(tabId) : undefined
     if (!tab) return []
     return matchFiles(await projectFiles(tab.cwd, execGit), query)
+  })
+  // the paths of a chat's text that are files of a local Claude tab's folder; a remote tab gets none
+  ipcMain.handle(IPC.chatFileLinks, (_e, tabId: unknown, paths: unknown): Promise<FileLink[]> => {
+    const tab = isLocalClaudeTab(tabId) ? tabs.get(tabId) : undefined
+    if (!tab || !isFileLinkPaths(paths)) return Promise.resolve([])
+    return fileLinks.resolve(tab.id, tab.folder, paths)
+  })
+  // only a file an answer of this tab named opens; a document goes to the Docs panel, anything else to the editor at its line
+  ipcMain.on(IPC.chatOpenFile, (_e, tabId: unknown, file: unknown, line: unknown) => {
+    if (!isLocalClaudeTab(tabId) || !isAbsPath(file) || !isOptionalLineNo(line) || !fileLinks.linked(tabId, file)) return
+    void openFileLink(tabId, file, line, {
+      isFile: isRegularFile,
+      checkDoc: checkDocFile,
+      htmlRefused: (f) => htmlFolderRefused(f, homedir()),
+      showDoc: (id, f, kind) => { docs.show(id, f, null, kind) },
+      edit: (f, l) => launchEditor(settings.review.editor, f, l, { spawn: spawnDetached, reveal: (p) => shell.showItemInFolder(p), onError: toast }),
+      toast
+    })
   })
   // a remote tab's view switches on its device; the tab's own view and the handoff of a command go through the same switch
   ipcMain.handle(IPC.tabsSetView, (_e, tabId: unknown, view: unknown): Promise<boolean> => {
