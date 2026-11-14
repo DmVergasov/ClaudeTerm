@@ -19,6 +19,8 @@ const GITHUB = 'This is a GitHub repository: add it as a plugin marketplace'
 const UNCOPYABLE = "This server's configuration cannot be copied"
 const MAX_NAME = 200
 const MAX_ERROR = 2000
+/** each error of a two-error message: a name of 200 characters, the wording and two parts of this length fit MAX_ERROR */
+const MAX_PART = 800
 const MAX_TARGET = 2000
 const MAX_TOOLS = 500
 const LIVE_STATUSES = new Set<string>(['connected', 'failed', 'needs-auth', 'pending', 'disabled'])
@@ -308,10 +310,11 @@ export class McpHub {
         this.d.changed(tabId, true)
         const added = await this.cli(tab, ['mcp', 'add-json', '--scope', scope, '--client-secret', '--', name, json], { secrets, env: { ...tab.env, MCP_CLIENT_SECRET: secret } })
         if ('error' in added) {
-          const error = `Could not save the client secret: ${added.error}`
           // the server must not be lost: it is added back without the secret
           const back = await this.cli(tab, ['mcp', 'add-json', '--scope', scope, '--', name, json], { secrets })
-          return fail('error' in back ? `${error} — ${name} could not be added back: ${back.error}` : error)
+          // the lost server comes first, and each error is cut so that both fit MAX_ERROR
+          if ('error' in back) return fail(`${name} was removed and could not be added back: ${back.error.slice(0, MAX_PART)} (the client secret was refused: ${added.error.slice(0, MAX_PART)})`)
+          return fail(`Could not save the client secret: ${added.error}`)
         }
         return { ok: true }
       } finally {

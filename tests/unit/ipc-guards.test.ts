@@ -393,6 +393,15 @@ describe('device guards', () => {
 })
 
 describe('MCP guards', () => {
+  it('isMcpAddRequest refuses an empty or missing client secret; null is the add with no secret', () => {
+    const request = { text: '{"mcpServers":{"context7":{"type":"http","url":"https://example.com/mcp"}}}', names: ['context7'], scope: 'user', clientSecret: null }
+    expect(isMcpAddRequest(request)).toBe(true)
+    expect(isMcpAddRequest({ ...request, clientSecret: '' })).toBe(false)
+    const missing: Record<string, unknown> = { ...request }
+    delete missing.clientSecret
+    expect(isMcpAddRequest(missing)).toBe(false)
+  })
+
   it('isMcpAction takes set-secret with a name, an edit scope and a one-line secret of at most 4096 characters', () => {
     const ok = { kind: 'set-secret', name: 'asana', scope: 'user', secret: 'cs-123' }
     expect(isMcpAction(ok)).toBe(true)

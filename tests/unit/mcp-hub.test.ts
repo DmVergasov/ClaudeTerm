@@ -358,6 +358,14 @@ describe('McpHub', () => {
     expect((await idle.hub.servers(TAB))?.servers.map((s) => [s.name, s.oauthApp])).toEqual([['asana', true], ['github', false]])
   })
 
+  it('a malformed oauth entry is no OAuth app, and reading it throws nothing', async () => {
+    const files = { userConfig: { mcpServers: { a: { ...ASANA, oauth: null }, b: { ...ASANA, oauth: [] }, c: { ...ASANA, oauth: { clientId: 42 } } } } }
+    const running = setup({ live: [live({ name: 'a', transport: 'http' }), live({ name: 'b', transport: 'http' }), live({ name: 'c', transport: 'http' })], files })
+    expect((await running.hub.servers(TAB))?.servers.map((s) => [s.name, s.oauthApp])).toEqual([['a', false], ['b', false], ['c', false]])
+    const idle = setup({ files })
+    expect((await idle.hub.servers(TAB))?.servers.map((s) => [s.name, s.oauthApp])).toEqual([['a', false], ['b', false], ['c', false]])
+  })
+
   it('set-secret adds the server again in its scope with the same config, the secret in MCP_CLIENT_SECRET with --client-secret; the restart waits meanwhile', async () => {
     const { hub, runs, order } = setup({ files: { userConfig: { mcpServers: { asana: ASANA } } } })
     expect(await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'user', secret: APP_SECRET })).toEqual({ ok: true })
@@ -388,7 +396,32 @@ describe('McpHub', () => {
   it('when the server cannot be put back either, the message says so', async () => {
     const reply: Reply = async (args) => (args[1] === 'add-json' ? { code: 1, stdout: '', stderr: 'disk full' } : { code: 0, stdout: '', stderr: '' })
     const { hub } = setup({ reply, files: { userConfig: { mcpServers: { asana: ASANA } } } })
-    expect(await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'user', secret: APP_SECRET })).toEqual({ ok: false, error: 'Could not save the client secret: disk full — asana could not be added back: disk full' })
+    expect(await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'user', secret: APP_SECRET })).toEqual({ ok: false, error: 'asana was removed and could not be added back: disk full (the client secret was refused: disk full)' })
+  })
+
+  it('a long put-back failure still says the server could not be added back, and no secret shows', async () => {
+    const secret = 'long-secret-0001'
+    const reply: Reply = async (args) => {
+      if (args.includes('--client-secret')) return { code: 1, stdout: '', stderr: `${secret} ${'e'.repeat(1500)}` }
+      if (args[1] === 'add-json') return { code: 1, stdout: '', stderr: 'p'.repeat(2500) }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const { hub, order } = setup({ reply, files: { userConfig: { mcpServers: { asana: ASANA } } } })
+    const result = await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'user', secret })
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error).toContain('asana was removed and could not be added back')
+    expect(result.ok === false && result.error).toContain('the client secret was refused')
+    expect(JSON.stringify(result)).not.toContain(secret)
+    expect(order).toEqual([`hold:${TAB}`, `changed:${TAB}:true`, `release:${TAB}`])
+  })
+
+  it('a remove that fails runs no add, holds and releases the restart, and answers its error', async () => {
+    const reply: Reply = async (args) => (args[1] === 'remove' ? { code: 1, stdout: '', stderr: 'Error: server busy' } : { code: 0, stdout: '', stderr: '' })
+    const { hub, runs, order, changed } = setup({ reply, files: { userConfig: { mcpServers: { asana: ASANA } } } })
+    expect(await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'user', secret: APP_SECRET })).toEqual({ ok: false, error: 'Could not save the client secret: Error: server busy' })
+    expect(runs.map((r) => r.args)).toEqual([['mcp', 'remove', '--scope', 'user', '--', 'asana']])
+    expect(order).toEqual([`hold:${TAB}`, `release:${TAB}`])
+    expect(changed).toEqual([])
   })
 
   it('set-secret of a server its scope does not have runs nothing', async () => {
