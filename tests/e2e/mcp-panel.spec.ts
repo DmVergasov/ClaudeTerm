@@ -112,7 +112,7 @@ test('servers are grouped by what they need, with their source, tools and error'
   }
 })
 
-test('the status bar names the servers at its end, before the changes: the connected count, red with a failed one, every server on hover', async () => {
+test('the status bar names the servers at its end, before the changes: the connected count, quiet by default, red with a failed one once its alerts are on', async () => {
   // a repository with a change, so the changes counter is on the bar too
   const work = mkdtempSync(join(tmpdir(), 'ct-mcp-segment-'))
   const git = (...args: string[]): void => void execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd: work })
@@ -128,6 +128,10 @@ test('the status bar names the servers at its end, before the changes: the conne
   try {
     await chatReady(page)
     const segment = page.locator(TOGGLE)
+    // the alerts are off by default: the segment only counts what is connected
+    await expect(segment).toHaveText('MCP 1')
+    await expect(segment).not.toHaveClass(/\bcrit\b/)
+    expect(await page.evaluate(() => window.ct.setSetting('chat.mcpAlerts', true))).toMatchObject({ ok: true })
     await expect(segment).toHaveText('MCP 1/2 · 1 failed')
     await expect(segment).toHaveClass(/\bcrit\b/)
     await expect(segment).toHaveAttribute('title', 'github: 2 tools · v1.0.0\nsentry: Failed to start\nClick for MCP servers and plugins')
@@ -138,10 +142,11 @@ test('the status bar names the servers at its end, before the changes: the conne
   }
 })
 
-test('a server waiting for its sign-in turns the segment amber', async () => {
+test('with its alerts on, a server waiting for its sign-in turns the segment amber', async () => {
   const { app, page } = await launchChatTab({ turns: {}, mcp: { sentry: { status: 'needs-auth' } } }, { claude: { mcpServers: { github: GITHUB, sentry: SENTRY } } })
   try {
     await chatReady(page)
+    expect(await page.evaluate(() => window.ct.setSetting('chat.mcpAlerts', true))).toMatchObject({ ok: true })
     await expect(page.locator(TOGGLE)).toHaveText('MCP · sign in to 1')
     await expect(page.locator(TOGGLE)).toHaveClass(/\bwarn\b/)
   } finally {

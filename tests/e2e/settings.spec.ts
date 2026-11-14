@@ -718,7 +718,7 @@ test('every setting lives in its tab', async () => {
     [p.dataset.page, [...new Set([...p.querySelectorAll<HTMLElement>('[data-key]')].map((e) => e.dataset.key!))].sort()])))).toEqual({
     general: ['autoUpdate', ...(WIN ? ['conpty'] : []), 'defaultFolder', 'defaultProfile'],
     appearance: ['font.family', 'font.size', 'scrollback', 'sidePanel.noRoom', 'tabs.position', 'theme'],
-    claude: ['chat.copyOnSelect', 'chat.fullWidth', 'claude.autoContinue', 'claude.command', 'claude.continueAfterLimit', 'claude.continueAfterRestore', 'claude.headsUp', 'claude.limitPace', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.view'],
+    claude: ['chat.copyOnSelect', 'chat.fullWidth', 'chat.mcpAlerts', 'claude.autoContinue', 'claude.command', 'claude.continueAfterLimit', 'claude.continueAfterRestore', 'claude.headsUp', 'claude.limitPace', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.view'],
     notifications,
     panels: ['agentMessages.enabled', 'agentMessages.marks', 'imagePanel.autoOpen', 'imageWatch.enabled', 'review.editor', 'review.hideIgnored', 'review.hideTests', 'review.renderMarkdown', 'review.statusBar', 'review.testPatterns'],
     accounts: [],

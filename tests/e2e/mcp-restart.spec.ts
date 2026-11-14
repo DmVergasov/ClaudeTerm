@@ -127,10 +127,11 @@ test('Not now keeps the card with Restart, and Restart restarts', async () => {
   }
 })
 
-test('a change the session has not loaded turns the MCP segment blue, until the restart loads it', async () => {
+test('with its alerts on, a change the session has not loaded turns the MCP segment blue, until the restart loads it', async () => {
   const { app, page, tabId, config } = await launchChatTab({ turns: { 'add context7': ADD_CONTEXT7 }, mcp: CONTEXT7_LOADS })
   try {
     await chatReady(page)
+    expect(await page.evaluate(() => window.ct.setSetting('chat.mcpAlerts', true))).toMatchObject({ ok: true })
     const segment = page.locator('#statusbar .status-mcp')
     await expect(segment).toHaveText('MCP')
     await sendMessage(page, 'add context7')

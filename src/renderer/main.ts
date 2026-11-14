@@ -426,7 +426,7 @@ function renderStatus(tabId: string): void {
   // a chat-view tab's status bar leaves the model to the composer, and stops its background tasks through the chat
   const t = tabs.get(tabId)
   const mcp = mcpAvailable(t) && mcpStatus?.tabId === tabId ? mcpStatus.view : null
-  const chat = t && isChatView(t) ? { tab: tabId, mcp, stopTask: (taskId: string) => stopTaskOf(tabId, taskId) } : undefined
+  const chat = t && isChatView(t) ? { tab: tabId, mcp, mcpAlerts: settings.chat.mcpAlerts, stopTask: (taskId: string) => stopTaskOf(tabId, taskId) } : undefined
   statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null, Date.now(), chat)
   renderMeters(tabId)
 }
@@ -1244,6 +1244,8 @@ function applySettings(s: Settings): void {
   if (s.chat.fullWidth !== prev.chat.fullWidth) for (const t of tabs.values()) t.chat?.setFullWidth(s.chat.fullWidth)
   // the way back in the header goes to the view the settings give Claude tabs
   if (s.claude.view !== prev.claude.view) refreshModes()
+  // the MCP segment says what needs the person, or only counts the servers
+  if (s.chat.mcpAlerts !== prev.chat.mcpAlerts && activeId) renderStatus(activeId)
   if (JSON.stringify(s.theme) !== JSON.stringify(prev.theme)) {
     const theme = resolveTheme(s.theme)
     for (const t of tabs.values()) t.view?.setTheme(theme)

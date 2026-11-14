@@ -88,6 +88,14 @@ describe('parseSettings', () => {
     expect(r.errors).toEqual(['settings.json: invalid value for "chat.fullWidth", using default'])
   })
 
+  it('chat.mcpAlerts is off unless turned on, and a value that is not a boolean falls back with a notice', () => {
+    expect(DEFAULT_SETTINGS.chat.mcpAlerts).toBe(false)
+    expect(parseSettings(JSON.stringify({ chat: { mcpAlerts: true } })).settings.chat.mcpAlerts).toBe(true)
+    const r = parseSettings(JSON.stringify({ chat: { mcpAlerts: 'yes' } }))
+    expect(r.settings.chat.mcpAlerts).toBe(false)
+    expect(r.errors).toEqual(['settings.json: invalid value for "chat.mcpAlerts", using default'])
+  })
+
   it('notifications: Even in front is off for every case unless turned on for one', () => {
     const n = parseSettings(JSON.stringify({ notifications: { done: { front: true } } })).settings.notifications
     expect([n.permission.front, n.question.front, n.done.front, n.bell.front]).toEqual([false, false, true, false])

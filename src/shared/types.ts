@@ -166,8 +166,8 @@ export interface Settings {
    * usage limit is spent, with a bar, a color and a forecast from the pace (off: the fixed 70% and 90% only)
    */
   claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean; continueAfterLimit: boolean; headsUp: boolean; limitPace: boolean; view: TabView }
-  /** copyOnSelect: text selected with the mouse in a chat goes to the clipboard, as in a terminal (Ctrl+C copies either way); fullWidth: the conversation and the message box take the whole width of the window, not a reading column */
-  chat: { copyOnSelect: boolean; fullWidth: boolean }
+  /** copyOnSelect: text selected with the mouse in a chat goes to the clipboard, as in a terminal (Ctrl+C copies either way); fullWidth: the conversation and the message box take the whole width of the window, not a reading column; mcpAlerts: the MCP segment of the status bar turns red, amber or blue when a server failed, waits for a sign-in or an approval, or a change waits for a restart (off: it only counts the servers) */
+  chat: { copyOnSelect: boolean; fullWidth: boolean; mcpAlerts: boolean }
   profiles: ProfileDef[]
   font: { family: string; size: number }
   theme: string | Record<string, string>

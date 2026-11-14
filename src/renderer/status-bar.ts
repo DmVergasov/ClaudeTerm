@@ -156,17 +156,18 @@ export function planSegment(p: PlanStatus): Segment {
 }
 
 /**
- * the MCP servers of the chat in front, at the end of the bar before the changes: quiet while they are connected, red when one
- * failed, amber when one waits for its sign-in or approval, blue while changes wait for a restart; every server on hover
+ * the MCP servers of the chat in front, at the end of the bar before the changes: quiet while they are connected; with `alerts`
+ * (chat.mcpAlerts) red when one failed, amber when one waits for its sign-in or approval, blue while changes wait for a restart.
+ * Every server on hover
  */
-export function mcpSegment(v: McpServersView): Segment {
+export function mcpSegment(v: McpServersView, alerts: boolean): Segment {
   const count = (status: McpStatus): number => v.servers.filter((s) => s.status === status).length
   const on = v.servers.filter((s) => s.status !== 'disabled').length
   const connected = v.live ? count('connected') : on
-  const failed = count('failed')
-  const signIn = count('needs-auth')
-  const approve = count('pending-approval')
-  const r = v.reload
+  const failed = alerts ? count('failed') : 0
+  const signIn = alerts ? count('needs-auth') : 0
+  const approve = alerts ? count('pending-approval') : 0
+  const r = alerts ? v.reload : null
   const [text, level]: [string, Level] =
     failed > 0 ? [`MCP ${connected}/${on} · ${failed} failed`, 'crit']
       : signIn > 0 ? [`MCP · sign in to ${signIn}`, 'warn']
@@ -200,6 +201,8 @@ export interface ChatStatus {
   tab: string
   /** the chat's MCP servers, for their segment: null while not known, and for a chat that has no panel of them (a member's) */
   mcp: McpServersView | null
+  /** chat.mcpAlerts: the segment says what needs the person, in color */
+  mcpAlerts: boolean
   /** resolves true when main sent the stop: the task then leaves the status, and so the list */
   stopTask(taskId: string): Promise<boolean>
 }
@@ -254,7 +257,7 @@ export class StatusBar {
       ...(account !== null ? [accountSegment(account)] : []),
       ...(u ? statusSegments(u, now).filter((s) => chat === undefined || s.key !== 'model') : []),
       ...(plan ? [planSegment(plan)] : []),
-      ...(chat?.mcp ? [mcpSegment(chat.mcp)] : []),
+      ...(chat?.mcp ? [mcpSegment(chat.mcp, chat.mcpAlerts)] : []),
       ...(changes ? [changesSegment(changes)] : [])
     ]
     this.el.hidden = segments.length === 0

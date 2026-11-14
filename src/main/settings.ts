@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   defaultFolder: null,
   claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, continueAfterLimit: true, headsUp: true, limitPace: true, view: 'chat' },
-  chat: { copyOnSelect: true, fullWidth: false },
+  chat: { copyOnSelect: true, fullWidth: false, mcpAlerts: false },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
   theme: 'Graphite',
@@ -142,7 +142,8 @@ export function parseSettings(text: string | null): ParsedSettings {
     },
     chat: {
       copyOnSelect: take('chat.copyOnSelect', ch.copyOnSelect, isBool, d.chat.copyOnSelect),
-      fullWidth: take('chat.fullWidth', ch.fullWidth, isBool, d.chat.fullWidth)
+      fullWidth: take('chat.fullWidth', ch.fullWidth, isBool, d.chat.fullWidth),
+      mcpAlerts: take('chat.mcpAlerts', ch.mcpAlerts, isBool, d.chat.mcpAlerts)
     },
     profiles,
     font: {
