@@ -1,7 +1,7 @@
 import type { CoordGroup, CoordMarks, CoordOp, CoordResult, CoordSessionRow, CoordTaskInfo, CoordinatorView } from '../../shared/coordinator'
 import { COORD_TASK_MAX } from '../../shared/coordinator'
 import { isSignal, kindOf, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
-import type { PipeResponse } from '../../shared/protocol'
+import { isUuid, type PipeResponse } from '../../shared/protocol'
 import type { TabView } from '../../shared/chat'
 import type { TaskList } from '../../shared/task-list'
 import type { OpenTabRequest, PlanStatus } from '../../shared/types'
@@ -742,9 +742,14 @@ export class CoordinatorHub {
     })
     if (id === null) {
       this.d.log.warn(`coordinator: the report of the task of ${h.session} was not saved; its outcome is kept on the coordinator's row`)
-      // the coordinator's row still shows the outcome, as its attachment's last report
+      // the coordinator's row still shows the outcome, as its attachment's last report; the store drops an attachment whose
+      // report has no UUID id on the next load, so the id is the task's own when newId gives no UUID
       const c = h.coordinator.device === null ? this.d.store.coordinator(h.coordinator.session) : null
-      if (c) this.patchAttachment(c, h.session, { lastReport: { id: this.d.newId(), outcome, reason, at: this.d.now() }, failed: outcome === 'failed' })
+      if (c) {
+        const newId = this.d.newId()
+        const lastReport = { id: isUuid(newId) ? newId : task.id, outcome, reason, at: this.d.now() }
+        this.patchAttachment(c, h.session, { lastReport, failed: outcome === 'failed' })
+      }
     }
     const now = this.d.store.hosted(h.session)
     if (now) this.d.store.putHosted({ ...now, tasks: now.tasks.filter((t) => t.id !== task.id) })

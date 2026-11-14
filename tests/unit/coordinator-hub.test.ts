@@ -60,6 +60,7 @@ function world(o: { problem?: string | null; self?: string | null; newId?: () =>
     rechecks: 0,
     aliases: [] as [string, string][],
     warns,
+    dir,
     /** the settle timers still waiting, as the hub asked for them */
     timers: [] as { ms: number; fn: () => void }[],
     /** the tabs that are not at rest now (every tab is, unless a test says otherwise) */
@@ -946,8 +947,15 @@ describe('CoordinatorHub task lifecycle', () => {
     expect(flaky.warns.some((m) => m.includes('report'))).toBe(true)
     expect(flaky.store.coordinator(S.coord)!.attachments[0]).toMatchObject({
       failed: true,
-      lastReport: { outcome: 'failed', reason: 'Claude Code stopped the turn on an error (invalid_request)' }
+      lastReport: { id: t.id, outcome: 'failed', reason: 'Claude Code stopped the turn on an error (invalid_request)' }
     })
+
+    // the store loads its file back: the attachment must survive a restart, with its last report
+    flaky.store.flush()
+    const reloaded = new CoordinatorStore(flaky.dir, { debounceMs: 100_000 })
+    expect(reloaded.coordinator(S.coord)!.attachments).toEqual([
+      expect.objectContaining({ session: S.one, failed: true, lastReport: { id: t.id, outcome: 'failed', reason: 'Claude Code stopped the turn on an error (invalid_request)', at: NOW } })
+    ])
   })
 
   it('a detach whose record cannot be written still detaches the session, and logs why', () => {
