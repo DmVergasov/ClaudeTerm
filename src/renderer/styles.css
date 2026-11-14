@@ -58,7 +58,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .sh-folder { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 12px; }
 .sh-spacer { flex: 1; min-width: 0; }
 .sh-modes { display: flex; flex: none; position: relative; }
-.sh-modes[hidden], .sh-mode-confirm[hidden] { display: none; }
+.sh-modes[hidden], .sh-mode-confirm[hidden], .sh-mode[hidden] { display: none; }
 .sh-mode { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer; }
 .sh-mode:hover:not(:disabled) { color: var(--text-2); }
 .sh-mode[aria-pressed="true"] { color: var(--text); border-color: var(--border); background: var(--raised); }

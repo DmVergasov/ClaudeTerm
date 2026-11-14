@@ -18,7 +18,6 @@ const CARD_BUTTON = '.chat-host:visible .chat-card button'
 const COLUMN = '.chat-host:visible .chat-column'
 const SCROLL = '.chat-host:visible .chat-scroll'
 const MODE_CHIP = '.chat-host:visible .chat-mode-chip'
-const TERMINAL_MODE = '.sh-mode[data-view="terminal"]'
 const SLASH_MENU = '.chat-host:visible .chat-slash-menu'
 const FILE_PICKER = '.chat-host:visible .chat-file-picker'
 const MODEL_PICKER = '.chat-host:visible .chat-model-picker'
@@ -338,7 +337,8 @@ test("the member switches the host's tab to the terminal", async () => {
   await idle(a, tabId)
   const sid = (await snapshotOf(a, tabId))!.state.sessionId!
 
-  await b.page.locator(TERMINAL_MODE).click()
+  // the member's own window asks the host's tab to show its terminal, as the chat's Open in the terminal does
+  expect(await b.page.evaluate((id) => window.ct.setTabView(id, 'terminal'), tabId)).toBe(true)
   // the host's tab shows its terminal, and the member shows a terminal copy of it: the resumed session's command is in both
   await expect(a.page.locator('#terminals .terminal-host:visible')).toHaveCount(1, SLOW)
   await expect.poll(() => bufferText(a.page, tabId), SLOW).toContain(`--resume ${sid}`)

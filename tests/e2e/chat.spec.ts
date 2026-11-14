@@ -10,8 +10,8 @@ import { KEYS, launchApp, processAlive } from './helpers'
 
 const SCROLL = '.chat-scroll'
 const INPUT = '.chat-input'
-const CHAT_MODE = '.sh-mode[data-view="chat"]'
-const TERMINAL_MODE = '.sh-mode[data-view="terminal"]'
+/** the header's way back to the view the settings give Claude tabs */
+const BACK = '#sheet-header .sh-back'
 const IDLE_PLACEHOLDER = 'Message Claude…'
 const QUEUE_PLACEHOLDER = 'Queue a follow-up…'
 
@@ -21,6 +21,16 @@ interface Entry {
   in?: { type?: string; request?: { subtype?: string }; response?: { response?: Record<string, unknown> }; message?: { content?: unknown } }
   argv?: string[]
   overlap?: string
+}
+
+/** the tab shows its terminal, as a command the chat cannot run takes it there */
+async function toTerminal(page: Page, tabId: string): Promise<void> {
+  expect(await page.evaluate((id) => window.ct.setTabView(id, 'terminal'), tabId)).toBe(true)
+}
+
+/** Settings → Claude tabs show: the view every Claude tab follows */
+async function showClaudeTabsIn(page: Page, view: 'chat' | 'terminal'): Promise<void> {
+  expect(await page.evaluate((v) => window.ct.setSetting('claude.view', v), view)).toMatchObject({ ok: true })
 }
 
 const lines = (n: number): string => Array.from({ length: n }, (_, i) => `line ${i}`).join('\n')
@@ -111,11 +121,16 @@ test('a chat tab has no terminal', async () => {
   try {
     await expect(page.locator('.chat-host')).toBeVisible()
     await expect(page.locator('#terminals .terminal-host')).toHaveCount(0)
-    await page.locator(TERMINAL_MODE).click()
+    // the header has no Chat | Terminal switch: the tab shows the view of the settings
+    await expect(page.locator('#sheet-header .sh-mode:visible')).toHaveCount(0)
+    const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
+    await toTerminal(page, tabId)
     await expect(page.locator('#terminals .terminal-host')).toHaveCount(1)
-    await page.locator(CHAT_MODE).click()
+    await expect(page.locator(BACK)).toHaveText('Back to chat')
+    await page.locator(BACK).click()
     await expect(page.locator('#terminals .terminal-host')).toHaveCount(0)
     await expect(page.locator('.chat-host')).toBeVisible()
+    await expect(page.locator(BACK)).toBeHidden()
   } finally {
     await app.close()
   }
@@ -224,14 +239,14 @@ test('a dialog says the chat cannot show it, and opens the terminal', async () =
     await expect(page.locator('.chat-notice', { hasText: 'Claude Code asked something the chat cannot show yet' })).toHaveCount(1)
     await waitForTurn(page, tabId, 'idle')
     await page.locator('.chat-notice button', { hasText: 'Open in the terminal' }).click()
-    await expect(page.locator(TERMINAL_MODE)).toHaveAttribute('aria-pressed', 'true')
     await expect(page.locator('#terminals .terminal-host')).toBeVisible()
+    await expect(page.locator(BACK)).toHaveText('Back to chat')
   } finally {
     await app.close()
   }
 })
 
-test('switching with background tasks asks first', async () => {
+test('a tab with background tasks keeps its view when the setting changes, and its way back asks first', async () => {
   const { app, page, pipeName, tabId } = await launchChatTab({ turns: { hello: [{ text: 'Hi there' }] } })
   try {
     await send(page, 'hello')
@@ -243,17 +258,22 @@ test('switching with background tasks asks first', async () => {
 
     // the window must know the task before the switch: a click before that switches at once
     await expect(page.locator('#statusbar .status-background')).toContainText('1 in background: Run the e2e suite')
-    await page.locator(TERMINAL_MODE).click()
+    // the setting says terminal: a switch would stop the task, so the tab stays in its chat and offers the way
+    await showClaudeTabsIn(page, 'terminal')
+    await expect(page.locator(BACK)).toHaveText('Back to terminal')
+    await expect(page.locator('.chat-host:visible')).toHaveCount(1)
+    await page.locator(BACK).click()
     await expect(page.locator('.sh-mode-confirm')).toBeVisible()
     // the row holds its buttons too: the question is what it says
     await expect(page.locator('.sh-mode-confirm')).toContainText('1 background task will stop. Switch anyway?')
     await page.locator('.sh-mode-confirm button', { hasText: 'Cancel' }).click()
     await expect(page.locator('.sh-mode-confirm')).toBeHidden()
-    await expect(page.locator(CHAT_MODE)).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.chat-host:visible')).toHaveCount(1)
 
-    await page.locator(TERMINAL_MODE).click()
+    await page.locator(BACK).click()
     await page.locator('.sh-mode-confirm button', { hasText: 'Switch' }).click()
-    await expect(page.locator(TERMINAL_MODE)).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('#terminals .terminal-host:visible')).toHaveCount(1)
+    await expect(page.locator(BACK)).toBeHidden()
   } finally {
     await app.close()
   }
@@ -309,7 +329,7 @@ test('a permission card allows once and denies', async () => {
   }
 })
 
-test('switching to the terminal and back keeps the conversation', async () => {
+test('the setting switches the open tab to the terminal and back, and the conversation goes on', async () => {
   const { app, page, tabId, log } = await launchChatTab({ turns: { hello: [{ text: 'Hi there' }] } })
   try {
     await send(page, 'hello')
@@ -317,11 +337,13 @@ test('switching to the terminal and back keeps the conversation', async () => {
     await waitForTurn(page, tabId, 'idle')
     const sessionId = (await snapshot(page, tabId))!.state.sessionId!
 
-    await page.locator(TERMINAL_MODE).click()
+    await showClaudeTabsIn(page, 'terminal')
     await expect(page.locator('#terminals .terminal-host')).toBeVisible()
     await expect.poll(() => page.evaluate((id) => window.__ct!.bufferText(id), tabId)).toContain(`--resume ${sessionId}`)
+    // the tab shows the view of the settings: no way back to offer
+    await expect(page.locator(BACK)).toBeHidden()
 
-    await page.locator(CHAT_MODE).click()
+    await showClaudeTabsIn(page, 'chat')
     await expect(page.locator('.chat-user', { hasText: 'hello' })).toHaveCount(1)
     await expect(page.locator('.chat-column')).toContainText('Hi there')
     await expect.poll(() => (log() as Entry[]).some((e) => Array.isArray(e.argv) && e.argv.some((a, i) => a === '--resume' && e.argv![i + 1] === sessionId))).toBe(true)
@@ -331,15 +353,19 @@ test('switching to the terminal and back keeps the conversation', async () => {
   }
 })
 
-test('the switch is disabled while Claude works', async () => {
+test('a tab that works when the setting changes switches once its answer ends; its way back is off meanwhile', async () => {
   const { app, page, tabId } = await launchChatTab({ turns: { wait: [{ wait: 6000 }] } })
   try {
     await send(page, 'wait')
     await waitForTurn(page, tabId, 'working')
-    await expect(page.locator(TERMINAL_MODE)).toBeDisabled()
-    await expect(page.locator(TERMINAL_MODE)).toHaveAttribute('title', 'Claude is working — switch when it finishes, or press Esc to stop it')
-    await waitForTurn(page, tabId, 'idle')
-    await expect(page.locator(TERMINAL_MODE)).toBeEnabled()
+    await showClaudeTabsIn(page, 'terminal')
+    await expect(page.locator(BACK)).toHaveText('Back to terminal')
+    await expect(page.locator(BACK)).toBeDisabled()
+    await expect(page.locator(BACK)).toHaveAttribute('title', 'Claude is working — switch when it finishes, or press Esc to stop it')
+    await expect(page.locator('.chat-host:visible')).toHaveCount(1)
+    // the answer ends: the tab follows the setting by itself
+    await expect(page.locator('#terminals .terminal-host:visible')).toHaveCount(1, { timeout: 20_000 })
+    await expect(page.locator(BACK)).toBeHidden()
   } finally {
     await app.close()
   }
@@ -397,7 +423,7 @@ test('a restored chat tab opens in chat with its history', async () => {
     await expect.poll(() => second.page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
     await second.page.locator('.banner-restore').click()
     await second.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
-    await expect(second.page.locator(CHAT_MODE)).toHaveAttribute('aria-pressed', 'true')
+    await expect(second.page.locator('.chat-host:visible')).toHaveCount(1)
     await expect(second.page.locator('.chat-user', { hasText: 'hello' })).toHaveCount(1)
     await expect(second.page.locator('.chat-column')).toContainText('Hi there')
   } finally {
@@ -453,7 +479,7 @@ test('an untrusted folder opens in the terminal and says why', async () => {
   const { app, page } = await launchChatTab({ turns: {} }, { trusted: false })
   try {
     await expect(page.locator('.toast', { hasText: 'has not been told to trust' })).toHaveCount(1)
-    await expect(page.locator(TERMINAL_MODE)).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator(BACK)).toHaveText('Back to chat')
     await expect(page.locator('#terminals .terminal-host')).toBeVisible()
   } finally {
     await app.close()
@@ -464,7 +490,7 @@ test('an old Claude Code opens in the terminal and says why', async () => {
   const { app, page } = await launchChatTab({ turns: {} }, { version: '2.1.100' })
   try {
     await expect(page.locator('.toast', { hasText: 'this is 2.1.100' })).toHaveCount(1)
-    await expect(page.locator(TERMINAL_MODE)).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator(BACK)).toHaveText('Back to chat')
   } finally {
     await app.close()
   }
@@ -546,7 +572,7 @@ test('a slow chat exit holds the terminal back: never two processes on one sessi
     await waitForTurn(page, tabId, 'idle')
     const sessionId = (await snapshot(page, tabId))!.state.sessionId!
 
-    await page.locator(TERMINAL_MODE).click()
+    await toTerminal(page, tabId)
     await expect.poll(() => page.evaluate((id) => window.__ct!.bufferText(id), tabId)).toContain(`--resume ${sessionId}`)
     const entries = log() as Entry[]
     const chat = entries.find((e) => Array.isArray(e.argv) && e.argv.includes('--input-format'))!
@@ -685,9 +711,9 @@ test('after a switch to the terminal and back, the chat shows new answers', asyn
     await expect(page.locator('.chat-column')).toContainText('Hi there')
     await waitForTurn(page, tabId, 'idle')
 
-    await page.locator(TERMINAL_MODE).click()
+    await toTerminal(page, tabId)
     await expect(page.locator('#terminals .terminal-host')).toBeVisible()
-    await page.locator(CHAT_MODE).click()
+    await page.locator(BACK).click()
     await expect(page.locator('.chat-user', { hasText: 'hello' })).toHaveCount(1)
 
     await send(page, 'again')

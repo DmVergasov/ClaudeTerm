@@ -139,6 +139,7 @@ import { configPaths, jsonFileCache, readTabConfig, type ConfigPaths } from './m
 import { McpHub } from './mcp/mcp-hub'
 import { ConfigWatch } from './mcp/config-watch'
 import { RestartCoordinator } from './mcp/restart-coordinator'
+import { ViewFollow } from './view-follow'
 import { isMcpAction, isMcpAddRequest, isPluginAction, isReloadAction } from './ipc-guards'
 
 const dataDir = initDataDir()
@@ -989,6 +990,8 @@ function bootstrap(): void {
         syncChatTitle(t.id)
         // an agent's start or stop changes the activity without a state change: the hold follows it
         updateAwake()
+        // a tab that waited for its answer to end switches to the view of the settings
+        viewFollow.updated(t)
         // a tab that leaves its chat view no longer restarts by its chat's configuration
         if (t.view !== 'chat' && coordinator.tracked().includes(t.id)) {
           coordinator.removeTab(t.id)
@@ -998,6 +1001,7 @@ function bootstrap(): void {
       closed: (id) => {
         send(IPC.evTabClosed, id)
         remote?.closed(id)
+        viewFollow.removeTab(id)
         mailKeys.delete(id)
         mailTabsChanged()
         sizes.drop(id)
@@ -1193,6 +1197,13 @@ function bootstrap(): void {
     const folder = await canonicalFolder(tab.cwd)
     return { paths: configPaths(env, homedir(), folder), folder }
   }
+  // the Claude tabs follow the view the settings give them: a change of the setting switches the open ones too
+  const viewFollow = new ViewFollow({
+    home: () => settings.claude.view,
+    tabs: () => tabs.list(),
+    background: (id) => statusHub.get(id).background.length,
+    setView: (id, view) => tabs.setView(id, view)
+  })
   const coordinator: RestartCoordinator = new RestartCoordinator({
     read: async (id) => {
       const files = await tabConfigFiles(id)
@@ -3403,6 +3414,7 @@ function bootstrap(): void {
       const watcherBefore = mailWatcher()
       const agentsBefore = JSON.stringify(settings.agentMessages)
       const commandBefore = settings.claude.command
+      const viewBefore = settings.claude.view
       const versionBefore = localVersion()
       const wakesBefore = localWakes()
       settings = next.settings
@@ -3422,6 +3434,7 @@ function bootstrap(): void {
       // messages off releases the held waits and on hands over waiting mail: the tabs are offered them again
       if (agentsChanged) mailTabsChanged()
       if (settings.claude.command !== commandBefore) probeVersion()
+      if (settings.claude.view !== viewBefore) viewFollow.settingChanged()
       const computed = computeProfiles(settings)
       profiles = computed.profiles
       notices = [...notices, ...computed.notices]

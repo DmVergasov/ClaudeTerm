@@ -201,11 +201,11 @@ test('a row keeps the focus when Enter opens its tools', async () => {
 })
 
 test('a terminal-view tab has no MCP segment', async () => {
-  const { app, page } = await launchChatTab({ turns: {} })
+  const { app, page, tabId } = await launchChatTab({ turns: {} })
   try {
     await chatReady(page)
     await expect(page.locator(TOGGLE)).toBeVisible()
-    await page.locator('.sh-mode[data-view="terminal"]').click()
+    expect(await page.evaluate((id) => window.ct.setTabView(id, 'terminal'), tabId)).toBe(true)
     await expect(page.locator(TOGGLE)).toBeHidden()
   } finally {
     await app.close()

@@ -957,7 +957,7 @@ test('a section put in the chat slot is 28 px above the section after the slot',
   await app.close()
 })
 
-test('Claude tabs open in: Terminal makes new Claude tabs open in the terminal', async () => {
+test('Claude tabs show: Terminal switches the open Claude tab to its terminal, and new Claude tabs open in it', async () => {
   const { app, page, dataDir, work } = await launchChatTab({ turns: {} })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   // the first Claude tab opens in its chat, as the setting still says chat
@@ -968,9 +968,13 @@ test('Claude tabs open in: Terminal makes new Claude tabs open in the terminal',
   await win.locator('[data-key="claude.view"][data-value="terminal"]').click()
   await expect.poll(() => readSettings(dataDir)).toMatchObject({ claude: { view: 'terminal' } })
   await expect(win.locator('[data-key="claude.view"][data-value="terminal"]')).toHaveAttribute('aria-checked', 'true')
-  await openTabInFront(page, 'claude', work)
-  await expect(page.locator('.sh-mode[data-view="terminal"]')).toHaveAttribute('aria-pressed', 'true')
+  // the open tab follows the setting: its terminal shows, and its header has no way back to offer
   await expect(page.locator('.terminal-host:visible .xterm')).toBeVisible()
+  await expect(page.locator('.chat-host:visible')).toHaveCount(0)
+  await expect(page.locator('#sheet-header .sh-back')).toBeHidden()
+  await openTabInFront(page, 'claude', work)
+  await expect(page.locator('.terminal-host:visible .xterm')).toBeVisible()
+  await expect(page.locator('.chat-host:visible')).toHaveCount(0)
   await app.close()
 })
 

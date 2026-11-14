@@ -133,7 +133,7 @@ The panel follows the file: when it changes, the document is drawn again. A Mark
 
 A Claude tab opens as a chat: your messages, Claude's answers with their Markdown (headings, lists, tables, code), and the work between them. Each batch of tool calls folds into one line, *Ran 3 tools · 2.5s*, and opens to show every call: the file an edit changed, a command with its output. A subagent has a line of its own with its state. Claude's questions and permission requests come as cards you answer right there: a number key or a click picks an option, Enter sends it, and Esc dismisses a question.
 
-The switch in the tab's header moves the tab between the chat and Claude Code's own screen (**Terminal**). Settings → **Claude Code** → **Claude tabs open in** (Chat or Terminal) sets the view of the Claude tabs you open after the change; each tab keeps its own view and its switch.
+Settings → **Claude Code** → **Claude tabs show** (Chat or Terminal) sets the view of every Claude tab: the open ones switch at once, a tab that works when its answer ends, and a tab with background tasks keeps its view until you switch it, since that would stop them. A command the chat cannot run, like `/config`, opens the tab's terminal; **Back to chat** in the tab's header brings it back.
 
 Under the conversation is the composer. **Enter** sends, **Shift+Enter** starts a new line, and **Esc** stops the turn (a command waiting to open in the terminal or for `/resume` is dropped first); with nothing running it clears the draft. The paperclip attaches files and images, **@** adds a file of the project to the message, and the chips show how Claude may act (**Ask before edits**, **Accept edits**, **Plan**, and **Auto** when your account offers it; `Shift+Tab` goes to the next one), and the model chip picks the model and its effort. A message you send while Claude works waits for the turn to end.
 
@@ -272,7 +272,7 @@ Everything is stored in `%APPDATA%\ClaudeTerm\settings.json` (`~/Library/Applica
     "continueAfterLimit": true,    // a turn the usage limit stopped goes on by itself a minute after the limit resets; that limit's meter in the title bar counts down to it
     "headsUp": true,               // in a chat, a side agent on Sonnet shows what you should know above the message box while Claude works; it uses your plan
     "limitPace": true,             // each usage limit in the title bar has a bar, a color and a forecast from the pace it is spent at; false = the fixed 70% and 90% only
-    "view": "chat"                 // Claude tabs open in the chat; "terminal" = Claude Code's own screen
+    "view": "chat"                 // Claude tabs show the chat; "terminal" = Claude Code's own screen
   },
   "profiles": [                    // added to (or overriding by name) the detected profiles
     { "name": "Git Bash", "command": "C:\\Program Files\\Git\\bin\\bash.exe", "args": ["--login", "-i"] }

@@ -1,7 +1,7 @@
 import type { TabView } from '../shared/chat'
 import { WORKTREE_COLORS } from '../shared/types'
 import { formatBadge } from './badge'
-import { icon, type IconName } from './icons'
+import { icon } from './icons'
 import { shortcutLabel } from './keymap'
 import { noteIcon } from './note-overlay'
 import { beginRename, shownActivity, tabIcon } from './tab-row'
@@ -16,14 +16,17 @@ function signature(item: TabBarItem | null, deviceColor: string | undefined): st
 }
 
 export type SheetHeaderCallbacks = Pick<TabBarCallbacks, 'rename' | 'toggleImages' | 'toggleChanges' | 'toggleDocs' | 'toggleMessages' | 'toggleNote'> & {
-  /** the Chat | Terminal switch: the tab in front shows the other view (after the user's word when background tasks would stop) */
+  /** the way back: the tab in front shows the view the settings give Claude tabs (after the user's word when background tasks would stop) */
   switchView(view: TabView): void
   /** files dropped on the header: attached to the chat in front, as a drop on the sheet is */
   drop(files: File[]): void
 }
 
-/** the Chat | Terminal switch of the tab in front: the tab, its view, whether Claude works in it, and its background tasks still running */
-export interface SheetModes { tab: string; view: TabView; busy: boolean; background: number }
+/**
+ * The view of the tab in front: the tab, its view, the view the settings give Claude tabs (`home`), whether Claude works in
+ * it, and its background tasks still running
+ */
+export interface SheetModes { tab: string; view: TabView; home: TabView; busy: boolean; background: number }
 
 /** the question a switch asks when background tasks would stop, and the button that answers it yes */
 export interface SwitchAsk { question: string; action: string }
@@ -44,14 +47,15 @@ export class SheetHeader {
   private readonly note: HTMLButtonElement
   private readonly spacer = document.createElement('div')
   private readonly modes = document.createElement('div')
-  private readonly chatMode: HTMLButtonElement
-  private readonly terminalMode: HTMLButtonElement
-  /** the row under the switch that asks before a switch stops background tasks */
+  /** Back to chat (or terminal): only while the tab shows another view than the settings give, as a command that needs the terminal leaves it */
+  private readonly back: HTMLButtonElement
+  /** the row under the way back that asks before a switch stops background tasks */
   private readonly confirm = document.createElement('div')
   private readonly confirmText = document.createElement('span')
   /** the tab in front, the view it shows, whether Claude works in it, its background tasks, and the switch that waits for the user's word */
   private tab: string | null = null
   private view: TabView | null = null
+  private home: TabView | null = null
   private busy = false
   private background = 0
   /**
@@ -74,14 +78,15 @@ export class SheetHeader {
   constructor(private readonly root: HTMLElement, private readonly cb: SheetHeaderCallbacks, platform: string) {
     this.spacer.className = 'sh-spacer'
     this.modes.className = 'sh-modes'
-    this.chatMode = this.modeButton('chat', 'Chat', 'message-square')
-    this.terminalMode = this.modeButton('terminal', 'Terminal', 'terminal')
+    this.back = document.createElement('button')
+    this.back.className = 'sh-mode sh-back'
+    this.back.addEventListener('click', () => { if (this.home !== null) this.choose(this.home) })
     this.confirm.className = 'sh-mode-confirm'
     this.confirm.hidden = true
     this.switchButton = this.confirmButton('Switch', () => this.confirmSwitch())
     this.confirm.append(this.confirmText, this.switchButton, this.confirmButton('Cancel', () => this.cancelSwitch()))
     this.modes.hidden = true
-    this.modes.append(this.chatMode, this.terminalMode, this.confirm)
+    this.modes.append(this.back, this.confirm)
     this.changes = this.toggle('tab-changes-toggle', 'Changes', `Changes (${shortcutLabel('toggleChanges', platform)})`, icon('file-diff', 16), () => cb.toggleChanges(), true)
     this.images = this.toggle('tab-images-toggle', 'Media', `Media (${shortcutLabel('toggleImages', platform)})`, icon('image', 16), () => cb.toggleImages(), true)
     this.messages = this.toggle('tab-messages-toggle', '', 'Agent messages', icon('mail', 16), () => cb.toggleMessages(), true)
@@ -115,7 +120,8 @@ export class SheetHeader {
   }
 
   /**
-   * The Chat | Terminal switch of the tab in front; null hides it (a shell tab). Both buttons are disabled while Claude works.
+   * The view of the tab in front; null for a tab with no chat (a shell tab). The way back to the settings' view shows only while
+   * the tab is in the other view, and is disabled while Claude works.
    * A switch that would stop background tasks waits for the user's word in the confirm row, and that question is the tab's own:
    * when another tab comes to the front, or the view changes, or no task is left, it goes, and its Cancel keeps the text.
    */
@@ -123,6 +129,7 @@ export class SheetHeader {
     this.modes.hidden = m === null
     this.tab = m?.tab ?? null
     this.view = m?.view ?? null
+    this.home = m?.home ?? null
     this.busy = m?.busy ?? false
     this.background = m?.background ?? 0
     const p = this.pending
@@ -166,15 +173,6 @@ export class SheetHeader {
     }
   }
 
-  private modeButton(view: TabView, label: string, iconName: IconName): HTMLButtonElement {
-    const b = document.createElement('button')
-    b.className = 'sh-mode'
-    b.dataset.view = view
-    b.innerHTML = icon(iconName, 14) + `<span class="sh-label">${label}</span>`
-    b.addEventListener('click', () => this.choose(view))
-    return b
-  }
-
   private confirmButton(label: string, onClick: () => void): HTMLButtonElement {
     const b = document.createElement('button')
     b.className = 'sh-mode-confirm-button'
@@ -208,11 +206,16 @@ export class SheetHeader {
   }
 
   private drawModes(): void {
-    for (const b of [this.chatMode, this.terminalMode]) {
-      b.setAttribute('aria-pressed', String(b.dataset.view === this.view))
-      b.disabled = this.busy
-      b.title = this.busy ? WORKING_SWITCH : b.textContent ?? ''
+    const b = this.back
+    const home = this.home
+    b.hidden = home === null || home === this.view
+    if (home !== null && b.dataset.view !== home) {
+      const label = home === 'chat' ? 'Back to chat' : 'Back to terminal'
+      b.dataset.view = home
+      b.innerHTML = icon(home === 'chat' ? 'message-square' : 'terminal', 14) + `<span class="sh-label">${label}</span>`
     }
+    b.disabled = this.busy
+    b.title = this.busy ? WORKING_SWITCH : b.textContent ?? ''
     const p = this.pending
     this.confirm.hidden = p === null
     if (p !== null) {

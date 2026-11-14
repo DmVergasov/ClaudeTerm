@@ -972,12 +972,15 @@ test("a second question in the header replaces the first, and the first one's no
   })
   try {
     await withBackgroundTask(page, pipeName, tabId)
+    // the setting says terminal: the tab keeps its chat for the task, and its header offers the way to the terminal
+    expect(await page.evaluate(() => window.ct.setSetting('claude.view', 'terminal'))).toMatchObject({ ok: true })
+    await expect(page.locator('#sheet-header .sh-back')).toHaveText('Back to terminal')
     await send(page, '/review focus')
     await page.locator('.chat-host:visible .chat-notice button', { hasText: 'Open in the terminal' }).click()
     const header = page.locator('.sh-mode-confirm')
     await expect(header).toContainText('Switch anyway?')
-    // the header's own Terminal button asks the same question: the notice's question is gone with it
-    await page.locator('.sh-mode[data-view="terminal"]').click()
+    // the header's own way to the terminal asks the same question: the notice's question is gone with it
+    await page.locator('#sheet-header .sh-back').click()
     await expect(page.locator(NOTE)).toBeHidden()
     await expect(header).toBeVisible()
     await header.locator('button', { hasText: 'Cancel' }).click()

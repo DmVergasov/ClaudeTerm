@@ -144,9 +144,9 @@ function tabPage(id: TabId, ...content: HTMLElement[]): HTMLElement {
   return page
 }
 
-// the view a Claude tab opens in: a tab opened after a change follows it; each open tab keeps its own view and its switch
+// the view of the Claude tabs: a change switches the open ones too, each as soon as nothing it runs would stop
 const claudeSlot = el('div', { className: 'settings-slot' }, cardSection({
-  title: 'Claude tabs open in', key: 'claude.view', searchText: 'chat terminal view default open',
+  title: 'Claude tabs show', key: 'claude.view', searchText: 'chat terminal view default open',
   choices: () => [
     { value: 'chat', title: 'Chat', note: "The conversation as a chat, with cards for Claude's questions and permissions", art: iconBox(icon('message-square', 17)) },
     { value: 'terminal', title: 'Terminal', note: 'Claude Code\'s own screen, as before', art: iconBox(icon('terminal', 17)) }

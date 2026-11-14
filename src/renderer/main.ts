@@ -973,7 +973,8 @@ function refreshModes(): void {
     sheetHeader.setModes(null)
     return
   }
-  sheetHeader.setModes({ tab: t.info.id, view: t.info.view, busy: t.info.activity === 'working', background: backgroundOf(t.info.id) })
+  // a member's tab follows its host's setting, which this window does not know: it offers no way back
+  sheetHeader.setModes({ tab: t.info.id, view: t.info.view, home: t.info.remote ? t.info.view : settings.claude.view, busy: t.info.activity === 'working', background: backgroundOf(t.info.id) })
 }
 
 /** the background tasks a tab's status names: its own count, which a question about its switch goes by */
@@ -1241,6 +1242,8 @@ function applySettings(s: Settings): void {
   if (s.font.family !== prev.font.family) setCodeFont(s.font.family)
   // the conversation's width follows the setting in every open chat, at once
   if (s.chat.fullWidth !== prev.chat.fullWidth) for (const t of tabs.values()) t.chat?.setFullWidth(s.chat.fullWidth)
+  // the way back in the header goes to the view the settings give Claude tabs
+  if (s.claude.view !== prev.claude.view) refreshModes()
   if (JSON.stringify(s.theme) !== JSON.stringify(prev.theme)) {
     const theme = resolveTheme(s.theme)
     for (const t of tabs.values()) t.view?.setTheme(theme)
