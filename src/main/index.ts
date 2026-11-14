@@ -724,6 +724,8 @@ function bootstrap(): void {
       send(IPC.evReview, u)
       pushReviewToMembers(u.tabId, withoutTabId(u), rev).catch((err: unknown) => log.warn(`review push failed: ${String(err)}`))
     },
+    // a dialog the person answers in the middle of a turn no longer waits for them
+    onDialogsClosed: (tabId) => tabWaits.dialogsClosed(tabId),
     onError: (m) => log.warn(m),
     hideIgnored: () => settings.review.hideIgnored,
     testPatterns: () => (settings.review.hideTests ? settings.review.testPatterns : null),
@@ -782,7 +784,7 @@ function bootstrap(): void {
       onInterrupt: (agentId, at) => {
         review.interrupted(tabId, agentId, at)
         // the person ended the main conversation's turn: its task ends with it
-        if (agentId === null) projectCoordinators.interrupted(tabId, at)
+        if (agentId === null) interrupted(tabId, at)
       },
       onTurn: (turnIndex, peer) => turns.report(tabId, turnIndex, peer),
       onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at),
@@ -926,6 +928,7 @@ function bootstrap(): void {
       // a tab closed on quit is not a closed coordinator: the store keeps its coordinators for the next start
       if (!quitting) projectCoordinators.tabClosed(tabId)
       tabWaits.removeTab(tabId)
+      promptDelivery.forget(tabId)
       coordSoon.request()
     },
     // read at each start: the console host applies to tabs opened after a change
@@ -1592,7 +1595,7 @@ function bootstrap(): void {
       snapshot: (tabId) => chatHub.remoteSnapshot(tabId),
       send: (tabId, s) => chatHub.send(tabId, s),
       answer: (tabId, cardId, a) => chatHub.answer(tabId, cardId, a),
-      interrupt: (tabId) => chatHub.interrupt(tabId),
+      interrupt: (tabId) => interruptChat(tabId),
       setMode: (tabId, mode) => chatHub.setMode(tabId, mode),
       setModel: (tabId, model, effort) => chatHub.setModel(tabId, model, effort),
       // a task the chat stopped is gone from the tab's status, whoever asked: no later status brings it back
@@ -1720,6 +1723,16 @@ function bootstrap(): void {
     }
   }
 
+  /** the person ended the main conversation's running turn: the mail turn it held and the coordinator's task in it end with it */
+  const interrupted = (tabId: string, at?: number): void => {
+    mailHub.interrupted(tabId)
+    projectCoordinators.interrupted(tabId, at)
+  }
+  /** a chat's stop: the chat stops, and the turn ends as an Esc would end it */
+  const interruptChat = (tabId: string): void => {
+    chatHub.interrupt(tabId)
+    interrupted(tabId)
+  }
   /** input into a tab: the window's own keys (from null, which take the tab at its fitted size) or a member device's */
   const writeInput = (tabId: string, data: string, from: string | null): void => {
     const prompt = isPromptInput(data)
@@ -1739,7 +1752,10 @@ function bootstrap(): void {
       resumeAfterRestore.delete(tabId)
     }
     // Esc or Ctrl+C stops a turn, and Claude Code runs no Stop hook for that: a restore must not take the turn up again
-    if (data === '\x1b' || data === '\x03') tabs.setWorking(tabId, false)
+    if (data === '\x1b' || data === '\x03') {
+      interrupted(tabId)
+      tabs.setWorking(tabId, false)
+    }
     tabs.write(tabId, data)
   }
 
@@ -2980,7 +2996,7 @@ function bootstrap(): void {
     return isLocalClaudeTab(tabId) ? chatHub.sendToAgent(tabId, agentId, text) : Promise.resolve('Claude Code is not running in this tab')
   })
   ipcMain.on(IPC.chatInterrupt, (_e, tabId: unknown) => {
-    if (isLocalClaudeTab(tabId)) chatHub.interrupt(tabId)
+    if (isLocalClaudeTab(tabId)) interruptChat(tabId)
     else if (isId(tabId) && remote?.viewer.has(tabId)) remote.actions.chatInterrupt(tabId)
   })
   ipcMain.handle(IPC.chatHeadsUp, (_e, tabId: unknown) => (isLocalClaudeTab(tabId) ? headsUp.card(tabId) : null))
