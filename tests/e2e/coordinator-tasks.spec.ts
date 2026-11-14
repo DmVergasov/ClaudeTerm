@@ -252,6 +252,32 @@ test('the report of a task the previous coordinator gave goes to the new one wit
   }
 })
 
+test('a task given in the Stop race of a turn a watcher woke waits for the next turn: the old turn\'s answer is no report of it', async () => {
+  const { app, page, pipeName, tabs, sids } = await coordApp(2)
+  try {
+    expect(await makeCoordinator(page, tabs[0]!)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, tabs[0]!, { op: 'attach', session: refOf(sids[1]!) })).toMatchObject({ ok: true })
+    // a plain message wakes the session's watcher: a turn Claude Code starts with no UserPromptSubmit, so the tab does not read as working
+    const w1 = waitForMail(pipeName, tabs[1]!, sids[1]!)
+    expect(await sendText(pipeName, tabs[0]!, sids[1]!, 'a plain note')).toMatchObject({ ok: true })
+    expect(await within(w1, 15_000)).toMatchObject({ ok: true, info: expect.stringContaining('a plain note') })
+
+    // the task comes while that turn runs: its watcher comes in the turn, so it waits for the turn's end
+    expect(await coord(pipeName, tabs[0]!, { op: 'message', session: refOf(sids[1]!), text: 'Fix the parser.' })).toMatchObject({ ok: true })
+    const w2 = waitForMail(pipeName, tabs[1]!, sids[1]!)
+    await stillWaiting(w2, 1000)
+
+    const c = waitForMail(pipeName, tabs[0]!, sids[0]!)
+    c.catch(() => {})
+    // the wake turn ends with its answer: the task starts in the next turn, and that answer is no report of the task
+    await done(pipeName, tabs[1]!, sids[1]!, { lastMessage: 'note answered' })
+    expect(await within(w2, 15_000)).toMatchObject({ ok: true, info: expect.stringContaining('> Fix the parser.') })
+    await stillWaiting(c, 3500)
+  } finally {
+    await app.close()
+  }
+})
+
 test('chat view: with no watcher the task goes as a message, and the report as a message to the coordinator', async () => {
   const work = gitRepo()
   const l = await launchChatTab({ turns: { hello: [{ text: 'Hi there' }] }, fallback: [{ text: 'Parser fixed.' }] }, { work, env: { CLAUDETERM_TEST_PROMPT_DELAY_MS: '300' } })

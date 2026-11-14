@@ -970,6 +970,24 @@ describe('MailHub hand-over rules', () => {
     expect(seen).toEqual(['idle', 'running', 'next'])
   })
 
+  it('a watcher that came in the current turn of a busy tab is "next" even when the tab reads as not working: a turn mail woke has no UserPromptSubmit', async () => {
+    const seen: HandOver[] = []
+    const { hub, store, world } = setup({
+      accepts: (_r, _tabId, into) => {
+        seen.push(into)
+        return true
+      }
+    })
+    world.working['tab-2'] = false
+    store.add(record({ from: MAC, to: LOCAL, text: 'wakes the turn' }))
+    await hub.wait('tab-2', SES_LOCAL, signal())
+    expect(hub.busy('tab-2')).toBe(true)
+    const inTurn = hub.wait('tab-2', SES_LOCAL, signal())
+    store.add(record({ from: MAC, to: LOCAL, text: 'the Stop race' }))
+    await inTurn
+    expect(seen).toEqual(['idle', 'next'])
+  })
+
   it('a record accepts refuses stays undelivered, and tabsChanged hands it over once accepts allows it', async () => {
     let allow = false
     const { hub, store } = setup({ accepts: () => allow })
@@ -1066,6 +1084,27 @@ describe('MailHub hand-over rules', () => {
     expect(hub.takeForPrompt('tab-2', SES_LOCAL)).not.toBeNull()
     expect(hub.canTakeForPrompt('tab-2', SES_LOCAL)).toBe(false)
     expect(hub.takeForPrompt('tab-2', SES_LOCAL)).toBeNull()
+  })
+})
+
+describe('MailHub stopped reports ride with a wake', () => {
+  const signal = (): AbortSignal => new AbortController().signal
+
+  it('a stopped report pending for a session goes with the next report that wakes its watcher: both are in the wake text, and both are delivered', async () => {
+    // a stopped report is refused at an idle hand-over, so it waits for the coordinator's next wake
+    const { hub, store } = setup({ accepts: r => r.outcome !== 'stopped' })
+    const stopped = record({ kind: 'report', outcome: 'stopped', reason: 'Esc', from: MAC, to: LOCAL, text: 'The task was stopped.' })
+    const finished = record({ kind: 'report', outcome: 'finished', from: MAC, to: LOCAL, text: 'Parser fixed.' })
+    store.add(stopped)
+    const held = hub.wait('tab-2', SES_LOCAL, signal())
+    expect(store.get(stopped.id)?.delivered).toBe(false)
+
+    store.add(finished)
+    const answer = await held
+    expect(answer).toMatchObject({ ok: true, info: expect.stringContaining('its task was stopped by the user: Esc.') })
+    expect(answer).toMatchObject({ ok: true, info: expect.stringContaining('its task finished.') })
+    expect(store.get(stopped.id)?.delivered).toBe(true)
+    expect(store.get(finished.id)?.delivered).toBe(true)
   })
 })
 

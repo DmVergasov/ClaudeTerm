@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WIN } from '../fixtures/platform'
 import { hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine } from '../../src/hook/session-hook'
-import type { AttentionMessage } from '../../src/shared/protocol'
+import { encodeMessage, type AttentionMessage } from '../../src/shared/protocol'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -102,6 +102,16 @@ describe('runSessionHook: other hook events', () => {
     const tasks = [{ id: 'm1', type: 'monitor', status: 'running' }, { type: 'shell', command: 'make' }, 'junk']
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', background_tasks: tasks }), ENV, send)
     expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true, tasks: [{ id: 'm1', type: 'monitor', description: null, command: null }] })
+  })
+
+  it('a Stop with 80 background tasks of 5000-character commands keeps 50 tasks of at most 300 characters, and its line stays under the pipe limit', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    const tasks = Array.from({ length: 80 }, (_, i) => ({ id: `bg${i}`, type: 'shell', status: 'running', description: 'build', command: 'c'.repeat(5000) }))
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', background_tasks: tasks }), ENV, send)).toBe(true)
+    const msg = (send.mock.calls[0] as unknown as [string, AttentionMessage])[1]
+    expect(msg.tasks).toHaveLength(50)
+    expect(Math.max(...msg.tasks!.map((t) => t.command!.length))).toBeLessThanOrEqual(300)
+    expect(encodeMessage(msg).length).toBeLessThan(64 * 1024)
   })
 
   it('a scheduled wakeup alone is no background work', async () => {

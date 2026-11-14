@@ -103,6 +103,23 @@ describe('coordinator store', () => {
     expect(store.renameSession(S3, A)).toBe(false)
   })
 
+  it('renameSession onto an id that already names a hosted entry or a coordinator of this device changes nothing', () => {
+    const store = new CoordinatorStore(newDir(), { debounceMs: 60_000 })
+    store.putCoordinator(coord)
+    store.putHosted(hosted)
+    // S2 is a hosted session of another coordinator, A2 is a coordinator of its own
+    store.putHosted({ ...hosted, session: S2, coordinator: { device: DEV, session: A2, name: 'Other' }, tasks: [] })
+    store.putCoordinator({ ...coord, session: A2, project: { key: '/work/other', name: 'Other' }, attachments: [] })
+    const before = { coordinators: store.coordinators(), hosted: store.allHosted() }
+
+    expect(store.renameSession(S, S2)).toBe(false)
+    expect(store.renameSession(A, A2)).toBe(false)
+    expect(store.coordinators()).toEqual(before.coordinators)
+    expect(store.allHosted()).toEqual(before.hosted)
+    expect(store.coordinator(A)).toEqual(coord)
+    expect(store.hosted(S)).toEqual(hosted)
+  })
+
   it('entries that do not check are skipped and the rest kept', () => {
     const dir = newDir()
     const badAttachment = { ...coord.attachments[0], name: 'Check\nout' }

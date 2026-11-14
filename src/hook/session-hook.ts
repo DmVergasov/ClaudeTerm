@@ -1,8 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
-import { type AttentionMessage, type AttentionReason, cutText, defaultPipeName, isUuid, LAST_MESSAGE_MAX, oneLineText, type PipeMessage, type PipeResponse, PROMPT_TEXT_MAX } from '../shared/protocol'
-import type { BackgroundTask } from '../shared/types'
+import { type AttentionMessage, type AttentionReason, cutText, defaultPipeName, isUuid, LAST_MESSAGE_MAX, oneLineText, parseTasks, type PipeMessage, type PipeResponse, PROMPT_TEXT_MAX } from '../shared/protocol'
 import { compactWindow } from './compact-window'
 import { statusFromStatusLine } from './status-line'
 
@@ -30,13 +29,6 @@ export function parseInput(stdinText: string): Obj | null {
   } catch {
     return null
   }
-}
-
-/** an entry of a Stop's background_tasks, or none when it has no id */
-function backgroundTask(t: unknown): BackgroundTask[] {
-  if (!isObj(t) || typeof t.id !== 'string' || t.id === '') return []
-  const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null)
-  return [{ id: t.id, type: text(t.type) ?? 'task', description: text(t.description), command: text(t.command) }]
 }
 
 /** the pipe server refuses a line over 64 KB and the turn's end would be lost with it: a Stop whose message would encode longer drops its last answer */
@@ -115,10 +107,10 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
     const prompt = questionPrompt(input.tool_input)
     return { ...attention('question'), ...(prompt ? { prompt } : {}) }
   }
-  // background_tasks: the background work still in flight, which wakes the session again when it ends
+  // background_tasks: the background work still in flight, which wakes the session again when it ends; capped as the pipe parser caps them
   if (event === 'Stop') {
     const done = Array.isArray(input.background_tasks)
-      ? { ...attention('done', input.background_tasks.length > 0), tasks: input.background_tasks.flatMap(backgroundTask) }
+      ? { ...attention('done', input.background_tasks.length > 0), tasks: parseTasks(input.background_tasks) }
       : attention('done')
     if (typeof input.last_assistant_message !== 'string') return done
     const withLast = { ...done, lastMessage: cutText(input.last_assistant_message, LAST_MESSAGE_MAX) }

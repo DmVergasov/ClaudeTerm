@@ -248,6 +248,9 @@ export class CoordinatorStore {
   /** a tab's conversation took a new id: every place it is named on this device follows (see Step 3) */
   renameSession(from: string, to: string): boolean {
     if (from === to) return false
+    // an id that already names a coordinator, a hosted session or an attachment of this device is not written over: the session would sit under two coordinators
+    const taken = this.coords.has(to) || this.hostedBySession.has(to)
+    if (taken || [...this.coords.values()].some((c) => c.attachments.some((a) => a.device === null && a.session === to))) return false
     let changed = false
     const coords = [...this.coords.values()]
     this.coords.clear()

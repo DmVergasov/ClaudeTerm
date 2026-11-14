@@ -373,6 +373,10 @@ export class CoordinatorHub {
       this.d.log.warn(`coordinator: ${row.name} is attached without its hosted entry; the task is not given`)
       return fail(HUB_TEXT.notSaved)
     }
+    // a session attached here whose entry names another coordinator is not this coordinator's to task
+    if (this.norm(hosted.coordinator.device) !== null || hosted.coordinator.session !== c.session) {
+      return fail(HUB_TEXT.elsewhere(row.name, hosted.project, hosted.coordinator.name))
+    }
     if (hosted.tasks.length >= MAX_TASKS_PER_SESSION) return fail(HUB_TEXT.tooMany(row.name))
     // the record goes first: the mail listener takes the task into the hosted entry
     const written = this.write({
@@ -408,15 +412,17 @@ export class CoordinatorHub {
     const kind = kindOf(r)
     if (kind === 'task') {
       if (into !== 'idle' && into !== 'prompt') return false
+      // a turn the tab is in takes no task as an idle hand-over, whatever its watcher came in: the task starts with the next turn
+      if (into === 'idle' && this.inTurn.has(tabId)) return false
       const session = this.sessionOfTab(tabId)
       const hosted = session === null ? null : this.d.store.hosted(session)
-      if (!hosted) return false
+      if (session === null || !hosted) return false
       const held = hosted.tasks.find((t) => t.id === r.id)
-      return held?.state === 'queued' && nextTask(hosted)?.id === r.id
+      return held?.state === 'queued' && this.nextQueuedTask(session)?.id === r.id
     }
     if (kind === 'report' && r.outcome === 'stopped') return into === 'running'
-    // a prompt carries a report, never a plain message
-    if (into === 'prompt') return kind === 'report'
+    // a prompt carries a report, never a plain message; and only a tab that still coordinates takes a report as a prompt
+    if (into === 'prompt') return kind === 'report' && this.isCoordinator(tabId)
     return true
   }
 
@@ -499,8 +505,8 @@ export class CoordinatorHub {
     if (source !== 'clear' && source !== 'compact' && source !== 'resume') return
     const old = before !== null && before !== after ? before : remembered
     if (old !== null && old !== after) {
-      this.d.store.renameSession(old, after)
-      this.moveStarts(old, after)
+      // a rename onto an id that already names a coordinator or a hosted session of this device changes nothing: its starts stay too
+      if (this.d.store.renameSession(old, after)) this.moveStarts(old, after)
       this.d.alias(old, after)
       this.d.changed()
     }
@@ -886,6 +892,19 @@ export class CoordinatorHub {
     if (att.lastReport && (att.lastReport.id === r.id || att.lastReport.at > r.sentAt)) return false
     this.patchAttachment(c, att.session, { lastReport: { id: r.id, outcome: r.outcome, reason: r.reason ?? null, at: r.sentAt }, failed: r.outcome === 'failed' })
     return true
+  }
+
+  /** the session's next task to give; a queued task whose mail record is gone is dropped first, so it cannot hold the queue */
+  private nextQueuedTask(session: string): StoredTask | null {
+    for (;;) {
+      const h = this.d.store.hosted(session)
+      const next = h ? nextTask(h) : null
+      if (!h || !next) return null
+      if (this.d.mail.get(next.id)) return next
+      this.d.log.warn(`coordinator: the task ${next.id} of ${session} has no mail record; it is dropped`)
+      this.d.store.putHosted({ ...h, tasks: h.tasks.filter((t) => t.id !== next.id) })
+      this.d.changed()
+    }
   }
 
   /** the session of a tab and the task it holds now, delivered or open; null when it holds none */

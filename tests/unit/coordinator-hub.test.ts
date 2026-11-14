@@ -579,6 +579,59 @@ describe('tasks given', () => {
     expect(w.hub.accepts({ ...message, kind: 'attach', project: 'acme' }, 'tab-1', 'idle')).toBe(false)
   })
 
+  it('a report goes into a prompt only while its tab still coordinates; as mail it goes to any tab', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    const finished: MailRecord = {
+      v: 1,
+      id: uid(0x4003),
+      from: { device: null, session: S.one, name: 'parser · Desktop' },
+      to: { device: null, session: S.coord, name: 'coord · Desktop' },
+      replyTo: uid(0x3001),
+      text: 'Parser fixed.',
+      sentAt: NOW,
+      delivered: false,
+      read: false,
+      kind: 'report',
+      outcome: 'finished'
+    }
+    expect(w.hub.accepts(finished, 'tab-c', 'prompt')).toBe(true)
+    expect(w.hub.stop('tab-c')).toMatchObject({ ok: true })
+    expect(w.hub.accepts(finished, 'tab-c', 'prompt')).toBe(false)
+    expect(w.hub.accepts(finished, 'tab-c', 'idle')).toBe(true)
+  })
+
+  it('message refuses a session whose hosted entry names another coordinator, and writes no task', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.make('tab-b', false)
+    // the session is attached to the beta coordinator's entry, as well as to this coordinator's attachments
+    w.store.putHosted({ ...w.store.hosted(S.one)!, coordinator: { device: null, session: S.beta, name: 'beta · Desktop' } })
+    expect(w.hub.message('tab-c', 'a10000', 'Fix the parser.')).toEqual({ ok: false, error: HUB_TEXT.elsewhere('parser · Desktop', 'acme', 'beta · Desktop') })
+    expect(records(w, 'task')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks).toEqual([])
+  })
+
+  it('a queued task whose mail record is gone is dropped with a warning, and the next queued task is accepted', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    w.hub.message('tab-c', 'a10000', 'Then the docs.')
+    const [first, second] = records(w, 'task')
+    // a queued task older than both, whose record the mail store does not hold: it would block the queue for ever
+    const gone = uid(0x5001)
+    const h = w.store.hosted(S.one)!
+    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW - 1, deliveredAt: null }, ...h.tasks] })
+    expect(w.mail.get(gone)).toBeUndefined()
+
+    expect(w.hub.accepts(first, 'tab-1', 'idle')).toBe(true)
+    expect(w.store.hosted(S.one)!.tasks.map((t) => t.id)).toEqual([first.id, second.id])
+    expect(w.warns.some((m) => m.includes(gone))).toBe(true)
+  })
+
   it('a task is accepted by the tab that runs its session, and by no other tab', () => {
     const w = world()
     w.hub.make('tab-c', false)

@@ -280,7 +280,7 @@ function parseLimit(v: unknown): MainStatus['fiveHour'] {
 }
 
 /** the background tasks of a turn end: an entry without a usable id is left out, the texts are cut to size */
-function parseTasks(raw: unknown[]): BackgroundTask[] {
+export function parseTasks(raw: unknown[]): BackgroundTask[] {
   const tasks: BackgroundTask[] = []
   for (const t of raw) {
     if (tasks.length === MAX_TASKS) break

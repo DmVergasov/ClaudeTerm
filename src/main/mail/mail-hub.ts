@@ -258,8 +258,9 @@ export class MailHub {
    */
   takeForPrompt(tabId: string, session: string): { info: string; taken: MailRecord[] } | null {
     const mail = this.promptable(tabId, session)
-    if (mail.length === 0) return null
-    const { taken, info } = wakeTextWithin(mail, a => this.deps.sender(a), WAKE_MAX)
+    const wake = mail.length === 0 ? null : this.wakeOf(this.current(session), mail)
+    if (!wake) return null
+    const { taken, info } = wake
     this.deps.store.mark(taken.map(r => r.id), 'delivered')
     this.turnsOf(tabId).promptMail = true
     this.deps.handedOver?.(tabId, taken, 'prompt')
@@ -391,12 +392,16 @@ export class MailHub {
     const session = this.current(w.session)
     if (this.deps.localTab(session) !== w.tabId) return
     const t = this.turnsOf(w.tabId)
-    // a turn Esc interrupted never gets its Stop: the tab's working flag says it is idle again
-    const into: HandOver = !t.busy || this.deps.working?.(w.tabId) === false ? 'idle' : w.seq === t.seq ? 'next' : 'running'
+    // a watcher that came in the current turn is the Stop race even when the working flag reads false: a turn that mail woke
+    // has no UserPromptSubmit, so the flag does not show it. A turn Esc interrupted never gets its Stop: the tab's working
+    // flag says it is idle again
+    const into: HandOver = !t.busy ? 'idle' : w.seq === t.seq ? 'next' : this.deps.working?.(w.tabId) === false ? 'idle' : 'running'
     const mail = this.pending(w.tabId, session, into)
     if (mail.length === 0) return
     // the oldest messages that fit one wake text; the rest wait for the next watcher
-    const { taken, info } = wakeTextWithin(mail, a => this.deps.sender(a), WAKE_MAX)
+    const wake = this.wakeOf(session, mail)
+    if (!wake) return
+    const { taken, info } = wake
     this.handOver(w, into)
     // finish() first: marking the mail notifies the watchers, and this one must already be off the hold
     this.finish(w, { ok: true, info })
@@ -415,6 +420,31 @@ export class MailHub {
           this.isThisDevice(r.to.device) &&
           this.current(r.to.session) === session &&
           (this.deps.accepts?.(r, tabId, into) ?? true)
+      )
+  }
+
+  /**
+   * The wake text of the oldest of the mail that fits, with the session's pending stopped reports riding along: a
+   * coordinator woken by one report learns of a stop in the same wake. Null when none of the mail fits.
+   */
+  private wakeOf(session: string, mail: MailRecord[]): { taken: MailRecord[]; info: string } | null {
+    const ids = new Set(mail.map(r => r.id))
+    const riders = this.pendingStops(session).filter(r => !ids.has(r.id))
+    const wake = wakeTextWithin([...mail, ...riders], a => this.deps.sender(a), WAKE_MAX)
+    return wake.taken.some(r => ids.has(r.id)) ? wake : null
+  }
+
+  /** the stopped reports of a session (its current id) not delivered yet: they are handed over with other mail, never alone */
+  private pendingStops(session: string): MailRecord[] {
+    return this.deps.store
+      .all()
+      .filter(
+        r =>
+          !r.delivered &&
+          kindOf(r) === 'report' &&
+          r.outcome === 'stopped' &&
+          this.isThisDevice(r.to.device) &&
+          this.current(r.to.session) === session
       )
   }
 
