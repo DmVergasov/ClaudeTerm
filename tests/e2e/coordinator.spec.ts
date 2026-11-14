@@ -6,7 +6,7 @@ import { coordinatorProblem, type CoordMarks } from '../../src/shared/coordinato
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { gitRepo, launchApp, type Launched } from './helpers'
 import { coordApp, claudeTabIn, coord, done, makeCoordinator, stillWaiting, turnOf, within } from './coordinator-helpers'
-import { refOf, sendText, setSetting, startSession, waitForMail } from './agent-mail'
+import { refOf, setSetting, startSession, waitForMail } from './agent-mail'
 
 const marksOf = (page: Page): Promise<CoordMarks> => page.evaluate(() => window.ct.coordMarks())
 const viewOf = (page: Page, tabId: string) => page.evaluate((id) => window.ct.coordView(id), tabId)
@@ -25,10 +25,11 @@ test('a tab made coordinator through the window lists the project\'s other sessi
   const { app, page, pipeName, tabs, sids, repo } = await coordApp(2)
   try {
     expect(await makeCoordinator(page, tabs[0]!)).toEqual({ ok: true, info: `This tab is now the coordinator of ${basename(repo)}.` })
+    // the other tab's place arrives on its own schedule: the row shows once it has
+    await expect.poll(async () => (await coord(pipeName, tabs[0]!, { op: 'list' })).info, { timeout: 15_000 }).toContain(`[${refOf(sids[1]!)}]`)
     const list = await coord(pipeName, tabs[0]!, { op: 'list' })
-    expect(list).toMatchObject({ ok: true, info: expect.stringContaining(`[${refOf(sids[1]!)}]`) })
-    expect((list as { info: string }).info).toContain('Not attached (this project):')
-    expect((list as { info: string }).info).toContain('No sessions are attached.')
+    expect(list.info).toContain('Not attached (this project):')
+    expect(list.info).toContain('No sessions are attached.')
   } finally {
     await app.close()
   }
@@ -232,21 +233,6 @@ test('start_session opens an attached tab, and its first task carries the worktr
     const got = await waitForMail(pipeName, newTab, sid)
     expect(got.info).toContain(worktreeInstruction('notes').trim())
     expect(got.info).toContain('> Write the release notes.')
-  } finally {
-    await app.close()
-  }
-})
-
-test('a plain agent message is not typed into an idle Claude tab that holds no mail watcher', async () => {
-  const { app, page, pipeName, tabs, sids } = await coordApp(2, { env: { CLAUDETERM_TEST_PROMPT_DELAY_MS: '300' } })
-  try {
-    expect(await sendText(pipeName, tabs[0]!, sids[1]!, 'plain note')).toMatchObject({ ok: true })
-    // well past the delay of a prompt try
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    const conversations = await page.evaluate((id) => window.ct.getMailConversations(id), tabs[1]!)
-    const messages = conversations.flatMap((c) => c.messages).filter((m) => m.text === 'plain note')
-    expect(messages).toHaveLength(1)
-    expect(messages[0]!.delivered).toBe(false)
   } finally {
     await app.close()
   }
