@@ -36,12 +36,19 @@ describe('parsePipeMessage', () => {
 
   it('accepts a session message with transcript path', () => {
     const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP }))
-    expect(r).toEqual({ ok: true, message: { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP } })
+    expect(r).toEqual({ ok: true, message: { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP, cwd: null } })
+  })
+
+  it('keeps the absolute folder of a session message, and nulls a relative, over-long, NUL or missing one', () => {
+    const parse = (cwd: unknown) => parsePipeMessage(JSON.stringify({ v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'resume', transcriptPath: null, cwd }))
+    const folder = (cwd: unknown) => { const r = parse(cwd); return r.ok && r.message.type === 'session' ? r.message.cwd : 'rejected' }
+    expect(folder(PLOT)).toBe(PLOT)
+    for (const bad of ['rel/dir', '', `${PLOT}\0x`, PLOT + 'a'.repeat(4096), 42, null, undefined]) expect(folder(bad)).toBeNull()
   })
 
   it('nulls an invalid transcript path and defaults source', () => {
     const r = parsePipeMessage(JSON.stringify({ v: 1, type: 'session', tabId: TAB, sessionId: SID, transcriptPath: EVIL }))
-    expect(r).toEqual({ ok: true, message: { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'unknown', transcriptPath: null } })
+    expect(r).toEqual({ ok: true, message: { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'unknown', transcriptPath: null, cwd: null } })
   })
 
   it('rejects a session message with non-UUID ids', () => {

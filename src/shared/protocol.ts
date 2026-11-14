@@ -17,6 +17,7 @@ const MAX_TASK_COMMAND = 300
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,200}$/
 const MAX_REF = 200
 const MAX_PATHS = 100
+const MAX_FOLDER = 4096
 const ATTENTION_REASONS: readonly string[] = ['permission', 'question', 'done'] satisfies AttentionReason[]
 
 export interface ShowImageMessage {
@@ -34,6 +35,8 @@ export interface SessionMessage {
   sessionId: string
   source: string
   transcriptPath: string | null
+  /** the folder Claude Code runs in as the session starts (the hook input's cwd); null or absent when it names none (a hook script of an older version sends none) */
+  cwd?: string | null
 }
 
 export interface StatusMessage extends MainStatus {
@@ -296,9 +299,10 @@ export function parsePipeMessage(line: string): ParseResult {
     if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
     const tp = m.transcriptPath
     const transcriptPath = typeof tp === 'string' && isAbsolute(tp) && tp.toLowerCase().endsWith('.jsonl') ? tp : null
+    const cwd = typeof m.cwd === 'string' && m.cwd !== '' && m.cwd.length <= MAX_FOLDER && !m.cwd.includes('\0') && isAbsolute(m.cwd) ? m.cwd : null
     return {
       ok: true,
-      message: { v: 1, type: 'session', tabId: m.tabId, sessionId: m.sessionId, source: typeof m.source === 'string' ? m.source : 'unknown', transcriptPath }
+      message: { v: 1, type: 'session', tabId: m.tabId, sessionId: m.sessionId, source: typeof m.source === 'string' ? m.source : 'unknown', transcriptPath, cwd }
     }
   }
 

@@ -12,7 +12,8 @@ import { testPipeName, WIN } from '../fixtures/platform'
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const TP = WIN ? 'C:\\Users\\me\\.claude\\projects\\D--x\\s.jsonl' : '/home/me/.claude/projects/-x/s.jsonl'
-const INPUT = JSON.stringify({ session_id: SID, transcript_path: TP, hook_event_name: 'SessionStart', source: 'startup' })
+const START = WIN ? 'D:\\proj' : '/proj'
+const INPUT = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: START, hook_event_name: 'SessionStart', source: 'startup' })
 const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe'
 const AGENT = 'a40a10c1d655cf759'
 const STATUS_INPUT = JSON.stringify({
@@ -84,7 +85,7 @@ async function listen(mailAnswer: PipeResponse = { ok: true }): Promise<{ pipe: 
   return { pipe, got }
 }
 
-const expected = { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'startup', transcriptPath: TP }
+const expected = { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'startup', transcriptPath: TP, cwd: START }
 
 /** the hook script in a folder of its own, for paths with spaces and apostrophes */
 function bundleIn(folder: string): string {

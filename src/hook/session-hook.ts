@@ -51,7 +51,8 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
       tabId,
       sessionId,
       source: typeof input.source === 'string' ? input.source : 'unknown',
-      transcriptPath: typeof input.transcript_path === 'string' ? input.transcript_path : null
+      transcriptPath: typeof input.transcript_path === 'string' ? input.transcript_path : null,
+      cwd: typeof input.cwd === 'string' && isAbsolute(input.cwd) ? input.cwd : null
     }
   }
   if (event === 'SubagentStart' || event === 'SubagentStop') {

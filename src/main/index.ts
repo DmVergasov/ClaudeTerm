@@ -1100,6 +1100,11 @@ function bootstrap(): void {
   }
 
   // one chat per Claude tab in its chat view: the SDK's conversation, folded into a model the window draws
+  // the tab follows its session's folder, when the folder is there; the folder the tab names already, however spelled, moves nothing
+  const followSessionFolder = (tabId: string, path: string): void => {
+    const now = tabs.get(tabId)?.folder
+    if (now !== undefined && isDirectory(path) && !sameFolder(now, path)) tabs.setFolder(tabId, path)
+  }
   const chatHub: ChatHub = new ChatHub({
     engine: startSdkEngine,
     support: async (tab, env) => chatSupport(settings.claude.command, await canonicalFolder(tab.cwd), env, {
@@ -1170,12 +1175,8 @@ function bootstrap(): void {
       })
     },
     recordSession: (sessionId) => chatSessions.add(sessionId),
-    // the session started in, entered or left a worktree (no statusLine runs for a chat): the tab follows it, when the folder
-    // is there; the folder the tab names already, however spelled, moves nothing
-    folder: (tabId, path) => {
-      const now = tabs.get(tabId)?.folder
-      if (now !== undefined && isDirectory(path) && !sameFolder(now, path)) tabs.setFolder(tabId, path)
-    },
+    // the session started in, entered or left a worktree (no statusLine runs for a chat): the tab follows it
+    folder: followSessionFolder,
     now: () => Date.now(),
     log,
     observe: (tabId, msg) => headsUp.message(tabId, msg)
@@ -2242,6 +2243,10 @@ function bootstrap(): void {
       review.sessionStarted(msg.tabId, msg.sessionId, msg.source)
       turns.session(msg.tabId, msg.sessionId)
       if (msg.transcriptPath) attachTranscript(msg.tabId, msg.sessionId, msg.transcriptPath)
+      // a chat's Claude Code starts in the folder its session works in (a worktree it had entered), long before the SDK's init comes
+      // with the first message: the hook says it at once. Only a process start tells: after a clear or a compaction the cwd may be
+      // where a Bash cd looked around
+      if (msg.cwd && (msg.source === 'startup' || msg.source === 'resume') && tabs.get(msg.tabId)?.view === 'chat') followSessionFolder(msg.tabId, msg.cwd)
       const cut = resumeAfterRestore.get(msg.tabId)
       if (cut) {
         resumeAfterRestore.delete(msg.tabId)

@@ -70,7 +70,7 @@ describe('pipe server + client', () => {
     const pipe = newPipe()
     const got: SessionMessage[] = []
     server = await startPipeServer(pipe, { ...okHandlers, session: (m) => { got.push(m); return { ok: false, error: 'not a claude tab' } } })
-    const msg: SessionMessage = { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'startup', transcriptPath: null }
+    const msg: SessionMessage = { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'startup', transcriptPath: null, cwd: null }
     expect(await sendPipeMessage(pipe, msg)).toEqual({ ok: false, error: 'not a claude tab' })
     expect(got).toEqual([msg])
   })

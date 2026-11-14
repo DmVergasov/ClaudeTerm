@@ -1,16 +1,30 @@
 import { describe, expect, it, vi } from 'vitest'
+import { WIN } from '../fixtures/platform'
 import { runSessionHook, runStatusLine } from '../../src/hook/session-hook'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const TP = 'C:\\Users\\me\\.claude\\projects\\D--x\\5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8.jsonl'
-const input = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: 'D:\\x', hook_event_name: 'SessionStart', source: 'clear' })
+// the hook checks the folder with the platform's isAbsolute: the sample is absolute where the tests run
+const WORK = WIN ? 'D:\\x' : '/x'
+const input = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: WORK, hook_event_name: 'SessionStart', source: 'clear' })
 
 describe('runSessionHook', () => {
   it('sends the session id and transcript path for the tab', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     expect(await runSessionHook(input, { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: '\\\\.\\pipe\\x' }, send)).toBe(true)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP, cwd: WORK })
+  })
+
+  it('passes the folder the session starts in, and none for a missing, relative or non-string one', async () => {
+    const sent = async (cwd: unknown): Promise<unknown> => {
+      const send = vi.fn(async () => ({ ok: true as const }))
+      const text = JSON.stringify({ session_id: SID, transcript_path: TP, cwd, hook_event_name: 'SessionStart', source: 'resume' })
+      await runSessionHook(text, { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: 'p' }, send)
+      return (send.mock.calls[0] as unknown as [string, { cwd?: unknown }])[1].cwd
+    }
+    expect(await sent(WORK)).toBe(WORK)
+    for (const bad of [undefined, 'rel/dir', '', 42, null, ['x']]) expect(await sent(bad)).toBeNull()
   })
 
   it('does nothing outside a ClaudeTerm tab', async () => {
