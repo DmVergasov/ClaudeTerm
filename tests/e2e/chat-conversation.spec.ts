@@ -1384,6 +1384,43 @@ test('a long conversation shows its end and holds a small DOM', async () => {
   }
 })
 
+test("a restored chat whose session was compacted shows the compaction's divider, not its summary as a message of yours", async () => {
+  const first = await launchChatTab({ turns: { hello: [{ text: 'Hi there' }] } })
+  await send(first.page, 'hello')
+  await expect(first.page.locator('.chat-column')).toContainText('Hi there')
+  await waitForTurn(first.page, first.tabId, 'idle')
+  const sid = (await snapshot(first.page, first.tabId))!.state.sessionId!
+  await closeWindow(first.app)
+
+  // the transcript as Claude Code leaves it after a compaction: its boundary, the summary, then the conversation after them
+  const projects = join(first.config, 'projects')
+  const file = join(projects, readdirSync(projects).find((dir) => existsSync(join(projects, dir, `${sid}.jsonl`)))!, `${sid}.jsonl`)
+  const lines = readFileSync(file, 'utf8').split('\n').filter((line) => line.trim() !== '')
+  const summary = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion.'
+  const compaction = [
+    { parentUuid: null, type: 'system', subtype: 'compact_boundary', uuid: 'boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'auto', preTokens: 27_000 } },
+    { parentUuid: 'boundary', type: 'user', uuid: 'summary', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: summary } }
+  ].map((entry) => JSON.stringify({ isSidechain: false, sessionId: sid, timestamp: '2026-10-08T09:00:00.000Z', ...entry }))
+  lines[0] = JSON.stringify({ ...(JSON.parse(lines[0]) as Record<string, unknown>), parentUuid: 'summary' })
+  writeFileSync(file, [...compaction, ...lines].join('\n') + '\n')
+
+  const root = dirname(first.config)
+  const second = await launchApp({
+    dataDir: first.dataDir,
+    env: { CLAUDE_CONFIG_DIR: first.config, FAKE_CLAUDE_SCRIPT: join(root, 'script.json'), FAKE_CLAUDE_LOG: join(root, 'fake-claude.log') }
+  })
+  try {
+    await expect.poll(() => second.page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
+    await second.page.locator('.banner-restore').click()
+    await expect(second.page.locator('.chat-text', { hasText: 'Hi there' })).toHaveCount(1)
+    await expect(second.page.locator('.chat-divider', { hasText: 'Conversation compacted' })).toHaveCount(1)
+    await expect(second.page.locator('.chat-user', { hasText: /^hello$/ })).toHaveCount(1)
+    await expect(second.page.locator('.chat-user', { hasText: 'This session is being continued' })).toHaveCount(0)
+  } finally {
+    await second.app.close()
+  }
+})
+
 test('scrolling up brings older items', async () => {
   const { app, page } = await restoredLong()
   try {

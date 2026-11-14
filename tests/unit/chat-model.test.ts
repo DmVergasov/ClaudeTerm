@@ -224,6 +224,22 @@ describe('ChatModel', () => {
     expect(users[0]).toMatchObject({ kind: 'user', text: 'hi', queued: false })
   })
 
+  it("a resumed conversation's compaction summary is drawn as the compaction's divider, not as a message of the person", () => {
+    const summary = { type: 'user', isCompactSummary: true, is_meta: true, message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context.' } }
+    const { m } = model()
+    // the SDK's history starts with the summary, a user message flagged isCompactSummary (and is_meta), with no boundary before it
+    m.apply(summary)
+    m.apply({ type: 'user', message: { role: 'user', content: 'go on' } })
+    m.historyLoaded()
+    expect(m.items().map(item => (item.kind === 'user' ? `user: ${item.text}` : item.kind === 'divider' ? `divider: ${item.text}` : item.kind))).toEqual(['divider: Conversation compacted', 'user: go on'])
+
+    // live, the boundary drew the divider already: the summary after it adds nothing
+    const live = model().m
+    live.apply({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual' } })
+    live.apply(summary)
+    expect(live.items().map(item => item.kind)).toEqual(['divider'])
+  })
+
   it('a turn with thinking before its text has one text item, settled', () => {
     const { m, clock } = model()
     for (const msg of fixtureLines('read', 'out')) {

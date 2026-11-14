@@ -631,6 +631,9 @@ export class ChatModel extends ChatFold {
     if (Array.isArray(content) && content.some(block => isObj(block) && block.type === 'tool_result')) {
       return [...this.forwardResult(content), ...this.toolResults(content, msg.tool_use_result ?? msg.toolUseResult)]
     }
+    // the summary a compaction leaves: a resumed conversation's history starts with it and has no boundary before it, so it draws
+    // the divider; live, the boundary drew it already
+    if (msg.isCompactSummary === true) return this.list.at(-1)?.kind === 'divider' ? [] : this.divider('Conversation compacted')
     if (isClaudeCodeFlag(msg)) return []
     const text = plainText(content)
     if (text === null || text === '') return []

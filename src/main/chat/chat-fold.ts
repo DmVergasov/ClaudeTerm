@@ -77,8 +77,12 @@ const contextOf = (usage: unknown): number | null => {
   return total
 }
 
-/** a user message Claude Code writes itself, not the person: a replay, a meta or a synthetic message (the main chat and an agent's page drop it) */
-export const isClaudeCodeFlag = (msg: Obj): boolean => msg.isReplay === true || msg.isMeta === true || msg.isSynthetic === true
+/**
+ * a user message Claude Code writes itself, not the person: a replay, a meta or a synthetic message, or the summary a compaction
+ * leaves, which the history gives as a user message (its divider is drawn from the compaction's boundary); the main chat and an
+ * agent's page drop it
+ */
+export const isClaudeCodeFlag = (msg: Obj): boolean => msg.isReplay === true || msg.isMeta === true || msg.isSynthetic === true || msg.isCompactSummary === true
 
 /** a user text Claude Code writes itself: the interrupt notice, and a typed command's name, message or arguments */
 export const isClaudeCodeText = (text: string): boolean => text.startsWith('[Request interrupted by user') || /^<command-(name|message|args)>/.test(text)
