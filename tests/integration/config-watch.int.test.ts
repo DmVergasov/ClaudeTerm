@@ -15,6 +15,11 @@ async function waitFor(cond: () => boolean, ms = 5000): Promise<void> {
   }
 }
 
+// macOS may report the writes a test made just before its watch started (libuv's fs_event docs: "events collected by
+// the OS immediately before calling uv_fs_event_start might be reported"): a test that counts the calls waits this
+// long after the start and counts from there
+const EARLIER_EVENTS_MS = 300
+
 let watch: ConfigWatch | null = null
 let root: string | null = null
 
@@ -40,6 +45,8 @@ describe('ConfigWatch', () => {
     let calls = 0
     watch = new ConfigWatch(() => calls++, { debounceMs: 50 })
     watch.setFiles([file])
+    await settle(EARLIER_EVENTS_MS)
+    calls = 0
 
     writeFileSync(other, '{"a":1}')
     await settle(400)
@@ -107,6 +114,8 @@ describe('ConfigWatch', () => {
     watch = new ConfigWatch(() => calls++, { debounceMs: 50 })
     watch.setFiles([file])
     watch.setFiles([file, other])
+    await settle(EARLIER_EVENTS_MS)
+    calls = 0
 
     writeFileSync(other, '{"a":1}')
     await waitFor(() => calls >= 1)
@@ -128,6 +137,8 @@ describe('ConfigWatch', () => {
       { debounceMs: 50 },
     )
     watch.setFiles([file])
+    await settle(EARLIER_EVENTS_MS)
+    calls = 0
 
     writeFileSync(file, '{"a":1}')
     await waitFor(() => calls === 1)
