@@ -1,15 +1,18 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MAIL_KEEP_MS, type MailRecord } from '../../shared/mail'
+import { isSignal, MAIL_KEEP_MS, type MailRecord } from '../../shared/mail'
 import { checkMailRecord, mailFlags, mergeMail } from './mail-record'
 
 const FILE = 'agent-messages.json'
 /** how far ahead of this device's clock a message may be sent: a record further ahead is refused */
 const MAIL_MAX_AHEAD_MS = 24 * 60 * 60 * 1000
 
-/** A record may leave this device only when both its ends have a device: one with a null device is never paired and is kept here. */
+/**
+ * A record may leave this device only when both its ends have a device: one with a null device is never paired and is kept here.
+ * A signal between two ends of one device tells that device only, so it stays here too.
+ */
 export function isShareable(r: MailRecord): boolean {
-  return r.from.device !== null && r.to.device !== null
+  return r.from.device !== null && r.to.device !== null && !(isSignal(r) && r.from.device === r.to.device)
 }
 
 export interface MailStoreDeps {

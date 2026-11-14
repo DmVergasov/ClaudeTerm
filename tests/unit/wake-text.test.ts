@@ -84,6 +84,35 @@ describe('wakeText', () => {
     expect(blocks[3]).toBe('> Second, sent later.')
   })
 
+  it('a task reads as the user\'s instruction through their coordinator', () => {
+    expect(wakeText([record({ kind: 'task', project: 'acme', text: 'Fix the parser.' })], known)).toBe(
+      [
+        'Task from your coordinator, through ClaudeTerm: the user\'s instruction, given through their acme coordinator.',
+        'from: acme-dashboard · MacBook [c5df49] (folder /Users/sam/acme-dashboard, branch main)',
+        `id: ${ID_1}  (do it; when it is done, end your turn: ClaudeTerm sends your last answer to the coordinator as your report)`,
+        '',
+        '> Fix the parser.'
+      ].join('\n')
+    )
+    expect(wakeText([record({ kind: 'task', text: 'x' })], known).split('\n')[0]).toBe(
+      'Task from your coordinator, through ClaudeTerm: the user\'s instruction, given through their coordinator.'
+    )
+  })
+
+  it('a report names its outcome and the task it answers', () => {
+    const head = (over: Partial<MailRecord>): string[] =>
+      wakeText([record({ kind: 'report', replyTo: ID_2, text: 'Parser fixed.', ...over })], known).split('\n')
+    expect(head({ outcome: 'finished' })[0]).toBe('Report from a session attached to you, through ClaudeTerm: its task finished.')
+    expect(head({ outcome: 'failed', reason: 'Claude Code exited' })[0]).toBe(
+      'Report from a session attached to you, through ClaudeTerm: its task failed: Claude Code exited.'
+    )
+    expect(head({ outcome: 'stopped', reason: 'its turn was interrupted' })[0]).toBe(
+      'Report from a session attached to you, through ClaudeTerm: its task was stopped by the user: its turn was interrupted.'
+    )
+    expect(head({ outcome: 'finished' })[2]).toBe(`id: ${ID_1}  (the report on task ${ID_2}; read_session "c5df49" shows the session)`)
+    expect(head({ outcome: 'finished' })[4]).toBe('> Parser fixed.')
+  })
+
   it('folder and branch are left out when unknown', () => {
     expect(wakeText([record()], () => ({ folder: null, branch: null }))).toContain('\nfrom: acme-dashboard · MacBook [c5df49]\nid: ')
     expect(wakeText([record()], () => ({ folder: '/Users/sam/acme-dashboard', branch: null }))).toContain(

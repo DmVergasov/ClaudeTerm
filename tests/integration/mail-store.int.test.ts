@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { MailStore } from '../../src/main/mail/mail-store'
+import { isShareable, MailStore } from '../../src/main/mail/mail-store'
 import { MAIL_KEEP_MS, type MailRecord } from '../../src/shared/mail'
 
 const DEV_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -119,6 +119,18 @@ describe('MailStore', () => {
     store.mark([shared.id], 'read')
     expect(ids(store.missingFor([[shared.id, 1], [unread.id, 0]]))).toEqual([shared.id])
     expect(ids(store.missingFor([[shared.id, 3], [unread.id, 0]]))).toEqual([])
+  })
+
+  it('a signal between two ends of one device is not shareable; a task between two devices is', () => {
+    const store = MailStore.open({ dir: dir(), now: () => NOW, debounceMs: 100000 })
+    const parser = { device: DEV_A, session: SES_A, name: 'Parser' }
+    const attach = record({ kind: 'attach', from: parser, to: { ...parser, session: SES_B, name: 'Reviewer' } })
+    const task = record({ kind: 'task', from: parser, to: { device: DEV_B, session: SES_B, name: 'Reviewer' } })
+    expect(isShareable(attach)).toBe(false)
+    expect(isShareable(task)).toBe(true)
+    store.add(attach)
+    store.add(task)
+    expect(store.digest()).toEqual([[task.id, 0]])
   })
 
   it('a corrupt file is moved aside and the store opens empty', () => {

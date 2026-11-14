@@ -898,3 +898,45 @@ describe("MailHub messages of Claude Code's own messaging", () => {
     expect(hub.send('tab-1', 'Build session', 'hi', null)).toEqual({ ok: false, error: 'No agent named "Build session"; call list_agents.' })
   })
 })
+
+describe('MailHub record kinds', () => {
+  const TASK_ID = '2c9d0e1f-4a5b-4c6d-8e7f-9a0b1c2d3e4f'
+
+  it('attach and detach records count for no unread mark and show in no conversation', () => {
+    const { hub, store } = setup()
+    store.add(record({ kind: 'attach', from: CALLER, to: LOCAL }))
+    store.add(record({ kind: 'detach', from: CALLER, to: LOCAL }))
+    const tabs = [
+      { tabId: 'tab-1', device: null, session: SES_CALLER },
+      { tabId: 'tab-2', device: null, session: SES_LOCAL }
+    ]
+    expect(hub.unreadByTab(tabs)).toEqual({})
+    expect(hub.conversations(null)).toEqual([])
+  })
+
+  it('a message view carries its kind, outcome and reason', () => {
+    const { hub, store } = setup()
+    store.add(record({ kind: 'report', replyTo: TASK_ID, outcome: 'failed', reason: 'Claude Code exited', from: MAC, to: CALLER }))
+    store.add(record({ from: MAC, to: CALLER }))
+    const [c] = hub.conversations(null)
+    expect(c.messages[0]).toMatchObject({ kind: 'report', outcome: 'failed', reason: 'Claude Code exited' })
+    expect(c.messages[1]).toMatchObject({ kind: 'message', outcome: null, reason: null })
+  })
+
+  it('a watcher is never handed an attach or detach record', async () => {
+    const { hub, store } = setup()
+    const ctrl = new AbortController()
+    const p = hub.wait('tab-2', SES_LOCAL, ctrl.signal)
+    const state = settledOf(p)
+    const attach = record({ kind: 'attach', from: CALLER, to: LOCAL })
+    const detach = record({ kind: 'detach', from: CALLER, to: LOCAL })
+    store.add(attach)
+    store.add(detach)
+    await tick()
+    expect(state.done).toBe(false)
+    expect(store.get(attach.id)?.delivered).toBe(false)
+    expect(store.get(detach.id)?.delivered).toBe(false)
+    ctrl.abort()
+    await expect(p).resolves.toEqual({ ok: true })
+  })
+})

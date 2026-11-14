@@ -7,7 +7,9 @@ import {
   type MailEndView,
   type MailMessageView,
   type MailRecord,
-  type MailUnread
+  type MailUnread,
+  isSignal,
+  kindOf
 } from '../../shared/mail'
 import { isUuid, type PipeResponse } from '../../shared/protocol'
 import type { PeerMail } from '../transcript-mail'
@@ -221,7 +223,7 @@ export class MailHub {
     // one pass over the unread messages: each counts once for each of its two ends, then each tab looks its end up
     const perEnd = new Map<string, number>()
     for (const r of this.deps.store.all()) {
-      if (r.read) continue
+      if (r.read || isSignal(r)) continue
       const from = this.endKey(r.from)
       const to = this.endKey(r.to)
       perEnd.set(from, (perEnd.get(from) ?? 0) + 1)
@@ -244,6 +246,7 @@ export class MailHub {
     >()
     // all() is oldest first, so the messages of each group come oldest first and its names are the newest ones
     for (const r of this.deps.store.all()) {
+      if (isSignal(r)) continue
       const ends = [r.from, r.to]
         .map(end => ({ key: this.endKey(end), view: this.endView(end) }))
         .sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0))
@@ -262,7 +265,10 @@ export class MailHub {
         sentAt: r.sentAt,
         text: r.text,
         delivered: r.delivered,
-        read: r.read
+        read: r.read,
+        kind: kindOf(r),
+        outcome: r.outcome ?? null,
+        reason: r.reason ?? null
       })
     }
     const out: MailConversationView[] = []
@@ -339,7 +345,7 @@ export class MailHub {
     if (this.deps.localTab(session) !== w.tabId) return
     const mail = this.deps.store
       .all()
-      .filter(r => !r.delivered && this.isThisDevice(r.to.device) && this.current(r.to.session) === session)
+      .filter(r => !r.delivered && !isSignal(r) && this.isThisDevice(r.to.device) && this.current(r.to.session) === session)
     if (mail.length === 0) return
     // the oldest messages that fit one wake text; the rest wait for the next watcher
     const { taken, info } = wakeTextWithin(mail, a => this.deps.sender(a), WAKE_MAX)

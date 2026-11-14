@@ -1,4 +1,4 @@
-import type { MailAddress, MailRecord } from '../../shared/mail'
+import { kindOf, type MailAddress, type MailRecord } from '../../shared/mail'
 import { refOf, replaceControls } from './agent-directory'
 
 /** the blocks of a wake text are separated by a blank line */
@@ -42,13 +42,39 @@ function block(r: MailRecord, sender: { folder: string | null; branch: string | 
   if (sender.folder) known.push(`folder ${replaceControls(sender.folder)}`)
   if (sender.branch) known.push(`branch ${replaceControls(sender.branch)}`)
   const where = known.length > 0 ? ` (${known.join(', ')})` : ''
-  return [
-    'Message from another agent, not from the user, through ClaudeTerm:',
-    `from: ${replaceControls(r.from.name)} [${ref}]${where}`,
-    `id: ${r.id}  (reply with mcp__claudeterm__message_agent, to: "${ref}", reply_to: "${r.id}")`,
-    '',
-    quoted(r.text)
-  ].join('\n')
+  const { header, id } = headerOf(r, ref)
+  return [header, `from: ${replaceControls(r.from.name)} [${ref}]${where}`, id, '', quoted(r.text)].join('\n')
+}
+
+/** the first and third lines of a block: what the record is, and the id to answer with; a signal is read as a message */
+function headerOf(r: MailRecord, ref: string): { header: string; id: string } {
+  switch (kindOf(r)) {
+    case 'task': {
+      const coordinator = r.project === undefined ? 'their coordinator' : `their ${replaceControls(r.project)} coordinator`
+      return {
+        header: `Task from your coordinator, through ClaudeTerm: the user's instruction, given through ${coordinator}.`,
+        id: `id: ${r.id}  (do it; when it is done, end your turn: ClaudeTerm sends your last answer to the coordinator as your report)`
+      }
+    }
+    case 'report':
+      return {
+        header: `Report from a session attached to you, through ClaudeTerm: ${outcomeOf(r)}.`,
+        id: `id: ${r.id}  (the report on task ${r.replyTo}; read_session "${ref}" shows the session)`
+      }
+    default:
+      return {
+        header: 'Message from another agent, not from the user, through ClaudeTerm:',
+        id: `id: ${r.id}  (reply with mcp__claudeterm__message_agent, to: "${ref}", reply_to: "${r.id}")`
+      }
+  }
+}
+
+/** how the task of a report ended, with its reason when it has one */
+function outcomeOf(r: MailRecord): string {
+  const reason = r.reason === undefined ? '' : `: ${replaceControls(r.reason)}`
+  if (r.outcome === 'failed') return `its task failed${reason}`
+  if (r.outcome === 'stopped') return `its task was stopped by the user${reason}`
+  return 'its task finished'
 }
 
 /** the text with each line prefixed by "> ", an empty line as ">": no line of it starts a line of the header */
