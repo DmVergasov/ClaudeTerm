@@ -127,6 +127,8 @@ export class McpPanel {
       this.plugins = undefined
       this.menuOf = null
       this.wanted = null
+      // a secret typed for one tab is not kept for another: the rows forget what their fields held
+      for (const row of this.rows.values()) row.secret = ''
     }
     this.refresh()
   }

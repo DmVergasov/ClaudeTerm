@@ -621,6 +621,40 @@ test('Set client secret… shows the field; what is typed survives a repaint; a 
   }
 })
 
+test('Save with an empty field does nothing, and Esc closes the field and keeps no secret: the next opening is empty', async () => {
+  const { app, page, log } = await launchChatTab(
+    { turns: {}, mcp: { asana: { status: 'needs-auth' } }, cliFail: { 'mcp add-json --scope user --client-secret': `invalid_client: ${APP_SECRET} is not this app's secret` } },
+    { claude: { mcpServers: { asana: ASANA } } }
+  )
+  // the calls that change the server: its removal and its adding, with or without the secret
+  const changes = () => cliCalls(log).filter((c) => c.argv.includes('asana') && (c.argv[1] === 'remove' || c.argv[1] === 'add-json'))
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('asana'))
+    await row.getByRole('button', { name: 'More for asana', exact: true }).click()
+    await page.locator('.panel-mcp .mcp-menu-item', { hasText: 'Set client secret…' }).click()
+    const field = row.getByLabel('Client secret', { exact: true })
+    await expect(field).toBeFocused()
+    await row.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.waitForTimeout(500)
+    expect(changes()).toEqual([])
+    await expect(row.locator('.mcp-error')).toHaveCount(0)
+    await expect(field).toBeVisible()
+    await field.fill(APP_SECRET)
+    await page.keyboard.press('Escape')
+    await expect(field).toHaveCount(0)
+    await expect(row).toBeVisible()
+    expect(changes()).toEqual([])
+    await row.getByRole('button', { name: 'More for asana', exact: true }).click()
+    await page.locator('.panel-mcp .mcp-menu-item', { hasText: 'Set client secret…' }).click()
+    await expect(row.getByLabel('Client secret', { exact: true })).toHaveValue('')
+    expect(await page.content()).not.toContain(APP_SECRET)
+  } finally {
+    await app.close()
+  }
+})
+
 test('a sign-in still waits after the list is loaded again', async () => {
   const { app, page, config } = await launchChatTab(
     { turns: {}, mcp: { sentry: { status: 'needs-auth' } }, ...LOGIN_GATE },
