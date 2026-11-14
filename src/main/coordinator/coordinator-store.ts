@@ -8,9 +8,9 @@ import { isUuid } from '../../shared/protocol'
 /** The most tasks kept for one hosted session; the rest of a file are skipped. */
 export const MAX_TASKS_PER_SESSION = 20
 
-const MAX_COORDINATORS = 50
-const MAX_ATTACHMENTS = 200
-const MAX_HOSTED = 500
+export const MAX_COORDINATORS = 50
+export const MAX_ATTACHMENTS = 200
+export const MAX_HOSTED = 500
 const NAME_MAX = 200
 const TASK_STATES: readonly TaskState[] = ['queued', 'delivered', 'open']
 
