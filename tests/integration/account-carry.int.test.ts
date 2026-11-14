@@ -99,7 +99,7 @@ function seedSource(): void {
     mcpServers: {
       claudeterm: { type: 'stdio', command: 'node', args: ['show-image.js'] },
       docs: { type: 'stdio', command: 'node', args: ['docs.js'], env: { DOCS_TOKEN: 'docs-env-secret-0001' } },
-      api: { type: 'http', url: 'https://api.example.com/mcp', headers: { 'X-Key': SECRET_HEADER } }
+      api: { type: 'http', url: 'https://api.example.com/mcp', headers: { 'X-Key': SECRET_HEADER }, oauth: { clientId: 'example-client-id' } }
     },
     projects: {
       [alpha]: { hasTrustDialogAccepted: true },
@@ -658,6 +658,25 @@ describe('carry-over', () => {
     // the account's Claude Code keeps the same secret for api
     const store = readJson(join(target, '.credentials.json')).mcpOAuthClientConfig as Record<string, unknown>
     expect(Object.entries(store).filter(([key]) => key.startsWith('api|')).map(([, entry]) => entry)).toEqual([{ clientSecret: APP_SECRET }])
+  })
+
+  it('a stale client secret of a server without an OAuth app of its own is not carried: only api gets --client-secret', async () => {
+    writeJson(join(source, '.credentials.json'), {
+      claudeAiOauth: { accessToken: MAIN_CREDENTIAL },
+      mcpOAuthClientConfig: { 'api|0123456789abcdef': { clientSecret: APP_SECRET }, 'docs|fedcba9876543210': { clientSecret: 'docs-stale-secret-0001' } }
+    })
+    const servers = readJson(join(source, '.claude.json')).mcpServers as Record<string, unknown>
+    expect(await carryLines('mcp', { ...deps(), secrets: true })).toEqual([
+      { item: 'mcp', state: 'done', text: '2 added', subs: [] },
+      { item: 'mcp-secrets', state: 'done', text: '1 added', subs: [] }
+    ])
+    expect(cliCalls()).toEqual([
+      { cli: ['mcp', 'remove', '--scope', 'user', '--', 'api'], secretEnv: false },
+      { cli: ['mcp', 'add-json', '--scope', 'user', '--client-secret', '--', 'api', JSON.stringify(servers.api)], secretEnv: true },
+      { cli: ['mcp', 'remove', '--scope', 'user', '--', 'docs'], secretEnv: false },
+      { cli: ['mcp', 'add-json', '--scope', 'user', '--', 'docs', JSON.stringify(servers.docs)], secretEnv: false }
+    ])
+    expect(readFileSync(log, 'utf8')).not.toContain('docs-stale-secret-0001')
   })
 
   it('without MCP app secrets every server is added without a secret', async () => {

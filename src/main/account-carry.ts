@@ -1,6 +1,6 @@
 import { posix, win32 } from 'node:path'
 import { CARRY_ITEMS, type CarryCount, type CarryItem } from '../shared/accounts'
-import { isClientSecret } from '../shared/mcp'
+import { hasOauthApp, isClientSecret } from '../shared/mcp'
 import { isWindowsPath, pathKey } from './path-key'
 
 /** settings keys that never leave the source: hooks and plugins come with their own items, the rest are credentials or cloud routing */
@@ -137,19 +137,22 @@ export function serverSecrets(config: Record<string, unknown>): string[] {
  */
 export function clientSecrets(credentials: unknown, names: readonly string[]): Map<string, string> {
   const configs = isObject(credentials) && isObject(credentials.mcpOAuthClientConfig) ? credentials.mcpOAuthClientConfig : {}
-  const found = new Map<string, string[]>()
+  const wanted = new Set(names)
+  // a name's secret, or null once two different ones have shown up for it
+  const found = new Map<string, string | null>()
   for (const [key, entry] of Object.entries(configs)) {
     const at = key.indexOf('|')
     if (at < 1 || !isObject(entry) || !isClientSecret(entry.clientSecret)) continue
     const name = key.slice(0, at)
-    const secrets = found.get(name) ?? []
-    if (!secrets.includes(entry.clientSecret)) secrets.push(entry.clientSecret)
-    found.set(name, secrets)
+    if (!wanted.has(name)) continue
+    const seen = found.get(name)
+    if (seen === undefined) found.set(name, entry.clientSecret)
+    else if (seen !== null && seen !== entry.clientSecret) found.set(name, null)
   }
   const result = new Map<string, string>()
   for (const name of names) {
-    const secrets = found.get(name) ?? []
-    if (secrets.length === 1) result.set(name, secrets[0])
+    const secret = found.get(name)
+    if (typeof secret === 'string') result.set(name, secret)
   }
   return result
 }
@@ -253,7 +256,7 @@ export function previewCounts(
   const plan = pluginPlan(read.installed, read.known, read.settings)
   const projects = isObject(read.claudeJson) && isObject(read.claudeJson.projects) ? Object.values(read.claudeJson.projects) : []
   const trusted = projects.filter((entry) => isObject(entry) && entry.hasTrustDialogAccepted === true).length
-  const secrets = clientSecrets(read.credentials, servers.map((server) => server.name))
+  const secrets = clientSecrets(read.credentials, servers.filter((server) => hasOauthApp(server.config)).map((server) => server.name))
 
   const count = (item: CarryItem, value: number, names: string[] = [], marketplaces = 0): CarryCount => ({ item, count: value, names, marketplaces })
   const byItem: Record<CarryItem, CarryCount> = {

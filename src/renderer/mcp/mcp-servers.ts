@@ -1,4 +1,4 @@
-import type { McpServerView, McpServersView } from '../../shared/mcp'
+import { MAX_CLIENT_SECRET, type McpServerView, type McpServersView } from '../../shared/mcp'
 import { el } from '../dom'
 import { badgeOf, detailOf, editScope, iconColor, initials, matchedTools, rowActions, serverGroups, type RowMenuItem } from './mcp-view-model'
 
@@ -154,6 +154,7 @@ function secretField(s: McpServerView, o: ServerListOptions, row: RowState): HTM
   input.spellcheck = false
   input.value = row.secret
   input.disabled = row.busy
+  input.maxLength = MAX_CLIENT_SECRET
   input.dataset.focusKey = 'secret'
   input.addEventListener('input', () => o.secretTyped(s.name, input.value))
   input.addEventListener('keydown', (e) => {
@@ -162,7 +163,12 @@ function secretField(s: McpServerView, o: ServerListOptions, row: RowState): HTM
     e.stopPropagation()
     o.command(s, e.key === 'Enter' ? 'save-secret' : 'cancel-secret')
   })
-  box.append(input, control('Save', 'mcp-btn primary', 'save-secret', () => o.command(s, 'save-secret')), control('Cancel', 'mcp-btn', 'cancel-secret', () => o.command(s, 'cancel-secret')))
+  // while a save runs, Save and Cancel are off too: the field closes only when the save is done
+  const save = control('Save', 'mcp-btn primary', 'save-secret', () => o.command(s, 'save-secret'))
+  const cancel = control('Cancel', 'mcp-btn', 'cancel-secret', () => o.command(s, 'cancel-secret'))
+  save.disabled = row.busy
+  cancel.disabled = row.busy
+  box.append(input, save, cancel)
   return box
 }
 

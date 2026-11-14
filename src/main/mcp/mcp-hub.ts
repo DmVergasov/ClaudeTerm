@@ -3,7 +3,7 @@ import type { McpLiveServer } from '../chat/chat-engine'
 import type { ChatHub } from '../chat/chat-hub'
 import type { ChatLaunch } from '../chat/claude-spawn'
 import type { McpAction, McpAddRequest, McpEditScope, McpReload, McpResult, McpScope, McpServerView, McpServersView, McpStatus, McpTransport, PluginAction, PluginOffer, PluginOption, PluginsView } from '../../shared/mcp'
-import { marketplaceSource } from '../../shared/mcp'
+import { hasOauthApp, marketplaceSource } from '../../shared/mcp'
 import { isServerName, maskedConfig, maskText, maskUrl, maskUrls, parseAddInput, secretsOf, targetOf, type McpConfig, type McpOauth } from '../../shared/mcp-add'
 import { isWindowsPath, nativePath, pathKey } from '../path-key'
 import { CliError, cliMessage, jsonOutput, LOGIN_TIMEOUT_MS, runClaudeCli, type CliOptions, type CliRun } from './claude-cli'
@@ -485,11 +485,6 @@ function liveScope(s: McpLiveServer): McpScope {
 
 function transportOf(value: unknown): McpTransport {
   return TRANSPORTS.find((t) => t === value) ?? 'other'
-}
-
-/** a configuration entry signs in through an OAuth app of the person's own: its oauth.clientId is a non-empty string */
-function hasOauthApp(raw: Json): boolean {
-  return isRecord(raw.oauth) && typeof raw.oauth.clientId === 'string' && raw.oauth.clientId !== ''
 }
 
 /** a running server is an OAuth app when a configured server of its name and scope is one */

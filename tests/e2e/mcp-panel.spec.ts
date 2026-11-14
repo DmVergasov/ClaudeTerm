@@ -655,6 +655,86 @@ test('Save with an empty field does nothing, and Esc closes the field and keeps 
   }
 })
 
+test('a sign-in that works after the client secret was asked for closes the field and keeps no secret', async () => {
+  const { app, page, config } = await launchChatTab(
+    { turns: {}, mcp: { asana: { status: 'needs-auth' } }, mcpLogin: { asana: { noSecret: CLIENT_AUTH } } },
+    { claude: { mcpServers: { asana: ASANA } } }
+  )
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('asana'))
+    await row.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(row.getByLabel('Client secret', { exact: true })).toBeFocused()
+    // the app now has its client secret: the config folder keeps one for asana, as a save leaves it
+    writeFileSync(join(config, '.credentials.json'), JSON.stringify({ mcpOAuthClientConfig: { 'asana|0123456789abcdef': { clientSecret: APP_SECRET } } }))
+    await row.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(row.locator('.mcp-row')).toHaveAttribute('data-status', 'connected')
+    await expect(page.locator('.mcp-secret')).toHaveCount(0)
+    expect(await page.content()).not.toContain(APP_SECRET)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Save and Cancel wait while a client secret is saved: Esc does nothing, and the field closes when the save is done', async () => {
+  const { app, page, log, config } = await launchChatTab(
+    { turns: {}, mcp: { asana: { status: 'needs-auth' } }, cliGate: { 'mcp add-json --scope user --client-secret': 'hold-save' } },
+    { claude: { mcpServers: { asana: ASANA } } }
+  )
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('asana'))
+    await row.getByRole('button', { name: 'More for asana', exact: true }).click()
+    await page.locator('.panel-mcp .mcp-menu-item', { hasText: 'Set client secret…' }).click()
+    const field = row.getByLabel('Client secret', { exact: true })
+    await expect(field).toBeFocused()
+    await field.fill(APP_SECRET)
+    await row.getByRole('button', { name: 'Save', exact: true }).click()
+    // the stand-in holds the adding until the gate file exists: the save runs meanwhile
+    await expect(row.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
+    await expect(row.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
+    await expect(field).toBeDisabled()
+    await page.keyboard.press('Escape')
+    await expect(field).toBeVisible()
+    writeFileSync(join(config, 'hold-save'), '')
+    await expect(field).toHaveCount(0)
+    await expect(row.locator('.mcp-error')).toHaveCount(0)
+    expect(cliCalls(log).filter((c) => c.argv.includes('asana') && c.argv[1] !== 'login').map((c) => c.argv.slice(0, 5))).toEqual([
+      ['mcp', 'remove', '--scope', 'user', '--'],
+      ['mcp', 'add-json', '--scope', 'user', '--client-secret']
+    ])
+    expect(await page.content()).not.toContain(APP_SECRET)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a client secret the guard refuses says so under the row and sends nothing', async () => {
+  const { app, page, log } = await launchChatTab({ turns: {}, mcp: { asana: { status: 'needs-auth' } } }, { claude: { mcpServers: { asana: ASANA } } })
+  const changes = () => cliCalls(log).filter((c) => c.argv.includes('asana') && (c.argv[1] === 'remove' || c.argv[1] === 'add-json'))
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('asana'))
+    await row.getByRole('button', { name: 'More for asana', exact: true }).click()
+    await page.locator('.panel-mcp .mcp-menu-item', { hasText: 'Set client secret…' }).click()
+    const field = row.getByLabel('Client secret', { exact: true })
+    await expect(field).toHaveAttribute('maxlength', '4096')
+    await field.fill('abc\tdef')
+    await row.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(row.locator('.mcp-error')).toHaveText('The client secret must be one line of up to 4096 characters')
+    await expect(field).toBeVisible()
+    expect(changes()).toEqual([])
+    const html = await page.content()
+    expect(html).not.toContain('value="abc')
+    expect(html).not.toContain('value="def')
+  } finally {
+    await app.close()
+  }
+})
+
 test('a sign-in still waits after the list is loaded again', async () => {
   const { app, page, config } = await launchChatTab(
     { turns: {}, mcp: { sentry: { status: 'needs-auth' } }, ...LOGIN_GATE },

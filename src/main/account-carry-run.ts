@@ -16,6 +16,7 @@ import {
   withHooks,
   type FolderItem
 } from './account-carry'
+import { hasOauthApp } from '../shared/mcp'
 import { cliMessage, jsonOutput, type CliRun } from './mcp/claude-cli'
 import { canonicalOf, copyTree, writeAtomic, type CopyGuard } from './account-copy'
 
@@ -228,7 +229,7 @@ async function carryMcp(d: CarryDeps): Promise<{ servers: CarryLine; secrets: Ca
   if (d.secrets) {
     const store = await parseJsonFile(join(d.source.configDir, '.credentials.json'))
     if (store.state === 'unreadable') storeUnreadable = true
-    else if (store.state === 'ok') secretOf = clientSecrets(store.value, servers.map((server) => server.name))
+    else if (store.state === 'ok') secretOf = clientSecrets(store.value, servers.filter((server) => hasOauthApp(server.config)).map((server) => server.name))
   }
   let added = 0
   let withSecret = 0

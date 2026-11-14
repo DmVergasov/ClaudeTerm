@@ -42,6 +42,12 @@ export function marketplaceSource(text: string): string | null {
   const link = /^(?:https?:\/\/)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\/.*)?$/i.exec(source)
   return link ? `${link[1]}/${link[2]}` : source
 }
+/** a configuration entry signs in through an OAuth app of the person's own: its oauth.clientId is a non-empty string. Never throws. */
+export function hasOauthApp(config: unknown): boolean {
+  const oauth = typeof config === 'object' && config !== null && !Array.isArray(config) ? (config as Record<string, unknown>).oauth : undefined
+  const clientId = typeof oauth === 'object' && oauth !== null && !Array.isArray(oauth) ? (oauth as Record<string, unknown>).clientId : undefined
+  return typeof clientId === 'string' && clientId !== ''
+}
 export const MAX_CLIENT_SECRET = 4096
 /** a client secret of an OAuth app: 1 to 4096 characters, none of them a control character (one line) */
 export function isClientSecret(v: unknown): v is string {

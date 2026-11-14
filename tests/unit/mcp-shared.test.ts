@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { isClientSecret, marketplaceSource } from '../../src/shared/mcp'
+import { hasOauthApp, isClientSecret, marketplaceSource } from '../../src/shared/mcp'
+
+describe('hasOauthApp', () => {
+  it('is true for a config whose oauth.clientId is a non-empty string', () => {
+    expect(hasOauthApp({ oauth: { clientId: 'x' } })).toBe(true)
+  })
+
+  it('is false for a config without an OAuth app of its own, and never throws', () => {
+    for (const config of [{}, { oauth: {} }, { oauth: { clientId: '' } }, { oauth: { clientId: 3 } }, null, 'x', undefined]) expect(hasOauthApp(config)).toBe(false)
+  })
+})
 
 describe('marketplaceSource', () => {
   it('turns a GitHub link into owner/repo and keeps any other source', () => {

@@ -90,6 +90,10 @@ function appSecretSetup(config: string): void {
   const store = JSON.parse(readFileSync(join(config, '.credentials.json'), 'utf8')) as Record<string, unknown>
   store.mcpOAuthClientConfig = { 'context7|0123456789abcdef': { clientSecret: APP_SECRET } }
   writeFileSync(join(config, '.credentials.json'), JSON.stringify(store))
+  // the secret belongs to an OAuth app of the person's own: only such a server carries it
+  const doc = JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8')) as { mcpServers: Record<string, Record<string, unknown>> }
+  doc.mcpServers.context7.oauth = { clientId: 'context7-client' }
+  writeFileSync(join(config, '.claude.json'), JSON.stringify(doc))
 }
 
 /** a tick of the helper, by its exact label */

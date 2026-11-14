@@ -238,7 +238,7 @@ describe('previewCounts', () => {
     const read = {
       settings: { model: 'opus', env: { FOO: '1', ANTHROPIC_API_KEY: 'key' }, hooks: { Stop: [{ hooks: [{}, {}] }, { hooks: [{}] }] } },
       claudeJson: {
-        mcpServers: { alpha: { type: 'stdio' }, beta: { type: 'stdio' }, gamma: { type: 'stdio' }, delta: { type: 'stdio' } },
+        mcpServers: { alpha: { type: 'stdio' }, beta: { type: 'stdio', oauth: { clientId: 'beta-client' } }, gamma: { type: 'stdio' }, delta: { type: 'stdio' } },
         projects: {
           '/a': { hasTrustDialogAccepted: true },
           '/b': { hasTrustDialogAccepted: false },
@@ -265,6 +265,18 @@ describe('previewCounts', () => {
       { item: 'output-styles', count: 0, names: [], marketplaces: 0 },
     ])
     expect(JSON.stringify(previewCounts(read, files, true))).not.toContain('app-secret')
+  })
+
+  it('previewCounts counts only the servers with an OAuth app of their own: a stale secret of a plain server is left out', () => {
+    const read = {
+      settings: null,
+      claudeJson: { mcpServers: { app: { type: 'http', oauth: { clientId: 'cid' } }, plain: { type: 'stdio' } } },
+      installed: null,
+      known: null,
+      credentials: { mcpOAuthClientConfig: { 'app|h1': { clientSecret: 'app-secret-0001' }, 'plain|h2': { clientSecret: 'plain-secret-0001' } } },
+    }
+    const files: Record<FolderItem, number> = { skills: 0, agents: 0, commands: 0, 'output-styles': 0, memory: 0, keybindings: 0 }
+    expect(previewCounts(read, files, true).find((c) => c.item === 'mcp-secrets')).toEqual({ item: 'mcp-secrets', count: 1, names: ['app'], marketplaces: 0 })
   })
 
   it('previewCounts leaves MCP app secrets out where Claude Code keeps them in the Keychain', () => {
@@ -317,5 +329,15 @@ describe('clientSecrets', () => {
       '|1': { clientSecret: 'nameless' }
     }
     expect([...clientSecrets({ mcpOAuthClientConfig: entries }, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', ''])]).toEqual([['h', 'same']])
+  })
+
+  it('reads only the entries of the names asked for, so a store of many entries stays quick', () => {
+    const entries: Record<string, { clientSecret: string }> = {}
+    for (let i = 0; i < 50000; i++) entries[`n|h${i}`] = { clientSecret: `n-secret-${i}` }
+    entries['other|h'] = { clientSecret: 'other-secret-0001' }
+    const started = performance.now()
+    const result = clientSecrets({ mcpOAuthClientConfig: entries }, ['other'])
+    expect(performance.now() - started).toBeLessThan(200)
+    expect(result).toEqual(new Map([['other', 'other-secret-0001']]))
   })
 })

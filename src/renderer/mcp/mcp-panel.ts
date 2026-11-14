@@ -1,4 +1,4 @@
-import type { McpAction, McpAddRequest, McpResult, McpSection, McpServersView, McpServerView, PluginAction, PluginsView } from '../../shared/mcp'
+import { isClientSecret, type McpAction, type McpAddRequest, type McpResult, type McpSection, type McpServersView, type McpServerView, type PluginAction, type PluginsView } from '../../shared/mcp'
 import { el } from '../dom'
 import type { SidePanel } from '../side-panel'
 import { serverList, type RowCommand, type RowState } from './mcp-servers'
@@ -319,8 +319,12 @@ export class McpPanel {
       row.signingIn = false
       const error = result.ok || row.cancelled ? null : result.error
       row.error = error
-      // a refused client secret opens the field under the row, where the secret is saved
+      // a refused client secret opens the field under the row, where the secret is saved; a sign-in that works closes it and forgets the secret
       if (error !== null && needsClientSecret(error)) row.secretOpen = true
+      if (result.ok) {
+        row.secretOpen = false
+        row.secret = ''
+      }
       row.cancelled = false
       // the answer brings Sign in back, or the row's name once the server is connected: that gets the focus; an open secret field gets it
       this.wanted = { name, key: row.secretOpen ? 'secret' : 'sign-in' }
@@ -357,6 +361,13 @@ export class McpPanel {
   private saveSecret(tabId: string, s: McpServerView, row: RowState): void {
     const scope = editScope(s)
     if (row.busy || row.secret === '' || scope === null) return
+    // a text the main process would refuse says so here, and nothing is sent
+    if (!isClientSecret(row.secret)) {
+      row.error = 'The client secret must be one line of up to 4096 characters'
+      this.wanted = { name: s.name, key: 'secret' }
+      this.paint()
+      return
+    }
     row.busy = true
     row.error = null
     this.paint()
