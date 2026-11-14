@@ -309,8 +309,9 @@ test('a member attaching a 5 000-item conversation shows its end and pages older
     return restored
   }, { timeout: 60_000 }).not.toBeNull()
   a.firstTab = restored!
-  // the host itself holds a page of the older items: the member's paging is over a snapshot that has more
-  expect((await snapshotOf(a, a.firstTab))!.hasOlder).toBe(true)
+  // the host itself holds a page of the older items once the history is in (it loads after the chat starts, which
+  // shows Starting Claude… until then): the member's paging is over a snapshot that has more
+  await expect.poll(async () => (await snapshotOf(a, a.firstTab))!.hasOlder, { timeout: 60_000 }).toBe(true)
 
   // the member attaches it: the end is drawn, the snapshot is a page of it, and scrolling up brings the older pages
   await frontOnMember(b, a.firstTab)
