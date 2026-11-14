@@ -267,7 +267,9 @@ function followServers(f: Form, on: boolean): void {
 
 function selectAll(f: Form, on: boolean): void {
   if (f.preview === null) return
-  f.ticks = on ? new Set(tickRows(f.preview, { ...tickOptions(f), mcpTicked: on }).filter((r) => !r.disabled).map((r) => r.item)) : new Set()
+  // the secrets come with the servers: they are ticked only when the servers' row is there to tick
+  const serversOn = on && tickRows(f.preview, tickOptions(f)).some((r) => r.item === 'mcp' && !r.disabled)
+  f.ticks = on ? new Set(tickRows(f.preview, { ...tickOptions(f), mcpTicked: serversOn }).filter((r) => !r.disabled).map((r) => r.item)) : new Set()
   paintTicks(f)
 }
 

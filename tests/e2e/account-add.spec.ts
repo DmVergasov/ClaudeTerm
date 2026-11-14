@@ -299,6 +299,17 @@ test('the picker lists MCP app secrets right after MCP servers with their count,
   await expect(secrets.locator('input')).toBeEnabled()
   await expect(secrets.locator('input')).toBeChecked()
   expect(await win.content()).not.toContain(APP_SECRET)
+  // the picker's own Select all and None carry the secrets along with the servers
+  await servers.uncheck()
+  await expect(secrets.locator('input')).toBeDisabled()
+  await helper(win).getByRole('button', { name: 'Select all', exact: true }).click()
+  await expect(servers).toBeChecked()
+  await expect(secrets.locator('input')).toBeEnabled()
+  await expect(secrets.locator('input')).toBeChecked()
+  await helper(win).getByRole('button', { name: 'None', exact: true }).click()
+  await expect(servers).not.toBeChecked()
+  await expect(secrets.locator('input')).toBeDisabled()
+  await expect(secrets.locator('input')).not.toBeChecked()
   await app.close()
 })
 
