@@ -895,13 +895,16 @@ export class ReviewPanel {
     // the lines the hunks hide: each gap's buttons sit in the header of the hunk under it, the last one's in a row of its own
     // a remote tab's view has none: the lines a hunk hides are read on its device, which this window does not ask
     const gaps = new Map<number, Gap>(u.remote ? [] : gapsOf(f.hunks, f.lineCount).map((g): [number, Gap] => [g.before, g]))
-    f.hunks.forEach((h, hi) => box.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt, marks, gaps.get(hi))))
+    // the lines sit in a body of their own, which scrolls a wide line sideways inside the card's frame
+    const body = el('div', 'review-file-body')
+    f.hunks.forEach((h, hi) => body.append(this.renderHunk(u, s, f, fi, h, hi, placed, draftAt, marks, gaps.get(hi))))
     const tail = gaps.get(f.hunks.length)
     if (tail) {
       const row = el('div', 'review-hunk-head review-gap-tail')
       row.append(this.gapButtons(u, f, tail))
-      box.append(row)
+      body.append(row)
     }
+    box.append(body)
     return box
   }
 

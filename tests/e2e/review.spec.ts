@@ -982,13 +982,17 @@ test('the expand buttons show the lines a hunk hides above and below it, 20 at a
   await app.close()
 })
 
-test('a long diff line can be scrolled into view sideways', async () => {
-  // one changed line of about 400 characters: its end lies past the right edge of the panel until the diff is scrolled
+test('a long diff line stays inside its file card, which scrolls it into view sideways; the list of files never scrolls sideways', async () => {
+  // one changed line of about 400 characters: its end lies past the right edge of its card until the card's lines are scrolled
   const long = `const value = "${'abcdefghij'.repeat(40)}END";`
   const { app, page } = await reviewTab((repo) => writeFileSync(join(repo, 'a.ts'), `one\n${long}\nthree\n`))
   await page.keyboard.press(KEYS.changes)
   await expect(added(page, 'a.ts')).toHaveText(long)
-  const scroller = page.locator('.review-files')
+  const scroller = page.locator('.review-file[data-path="a.ts"] .review-file-body')
+  expect(await page.locator('.review-files').evaluate((e) => e.scrollWidth - e.clientWidth)).toBe(0)
+  const frame = (await file(page, 'a.ts').boundingBox())!
+  const shown = (await scroller.boundingBox())!
+  expect(shown.x + shown.width).toBeLessThanOrEqual(frame.x + frame.width)
   const endBox = () => page.evaluate(() => {
     const code = document.querySelector('.review-file[data-path="a.ts"] .review-line.add .review-code')!
     const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT)
@@ -998,7 +1002,7 @@ test('a long diff line can be scrolled into view sideways', async () => {
     range.setStart(last!, last!.length - 3)
     range.setEnd(last!, last!.length)
     const box = range.getBoundingClientRect()
-    const view = document.querySelector('.review-files')!.getBoundingClientRect()
+    const view = document.querySelector('.review-file[data-path="a.ts"] .review-file-body')!.getBoundingClientRect()
     return { inside: box.left >= view.left - 0.5 && box.right <= view.right + 0.5 }
   })
   expect(await scroller.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true)

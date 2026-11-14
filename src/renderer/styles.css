@@ -467,9 +467,10 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .review-tree-file.viewed { opacity: 0.6; }
 .review-loading .review-files { opacity: 0.5; }
 .review-loading, .review-loading * { cursor: progress; }
-/* a file is a card of its own: its header takes the card's top corners and its last child the bottom ones. Nothing clips the card,
-   so a wide diff line scrolls sideways in .review-files as on the base; the header stays sticky */
+/* a file is a card of its own: its header takes the card's top corners and its last child the bottom ones. A wide diff line scrolls
+   sideways in the card's body, inside its frame; the card itself clips nothing, so its header stays sticky in .review-files */
 .review-file { margin: 8px 8px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--term); }
+.review-file-body { overflow-x: auto; }
 .review-file > :last-child { border-radius: 0 0 9px 9px; }
 .review-file > .review-file-head:first-child:last-child { border-radius: 9px; }
 .review-file-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; background: var(--raised); border-bottom: 1px solid var(--line); border-radius: 9px 9px 0 0; cursor: pointer; user-select: none; font-size: 12px; }
