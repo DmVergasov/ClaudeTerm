@@ -169,3 +169,14 @@ The script options (tests/fixtures/fake-claude/install.ts):
 - `cliFail`: a CLI call whose arguments start with the key fails with its message.
 - `cliGate`: a CLI call whose arguments start with the key waits, once logged, for its file in the config folder.
 - the `{ cli: [...] }` step: a Bash call `claude <args>` whose result is the stand-in's CLI output.
+- `mcp get <name>`: a user-scope server, as Claude Code names it; `mcp add [-s scope] [-t transport] [-e K=V] [-H 'K: V'] <name> <command|url> [args…]`: a stdio server, or an http one with its headers.
+- `plugin install`: a plugin whose marketplace runs a command (`installCommand`) waits for `-y` or `--accept-command <sha256>`, and asks with `--json`.
+
+## Accounts: scripted, not recorded
+
+The stand-in signs in, out and checks the config folder it runs in (`auth`, `fake-cli.ts`). Assumed from Claude Code 2.1.322's help output; nothing recorded.
+
+- `auth login [--claudeai] [--email]`: writes the token into `.credentials.json` and the account into `.claude.json`'s `oauthAccount`. The signed-in email is the script's `email` for the folder when it gives one, else `--email` (the page's pre-fill), else `<folder>@example.com`; the `auth` script of the folder can wait for a gate, or fail.
+- `auth status [--json | --text]`: the signed-in JSON, or the signed-out one with exit 1; the script can make it answer garbage, or never answer.
+- `auth logout`: removes the token and the account, keeps the other keys of `.claude.json`.
+- Every run logs its config folder and whether a token or a key was set in the environment, never their values.

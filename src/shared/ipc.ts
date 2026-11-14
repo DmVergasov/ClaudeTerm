@@ -1,4 +1,4 @@
-import type { AccountResult, AccountsView } from './accounts'
+import type { AccountBegin, AccountFlowView, AccountResult, AccountsView, CarryPreview, FlowAction, PickedFolder, RemoveInfo, RemoveOptions, RemoveResult } from './accounts'
 import type { ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { MailConversationView, MailUnread } from './mail'
@@ -62,6 +62,7 @@ export const IPC = {
   restoreRun: 'restore:run',
   sessionsList: 'sessions:list',
   sessionsOpen: 'sessions:open',
+  sessionsOpenAs: 'sessions:open-as',
   sessionsStar: 'sessions:star',
   sessionsStarred: 'sessions:starred',
   notesSetText: 'notes:set-text',
@@ -93,6 +94,15 @@ export const IPC = {
   accountsSetToken: 'accounts:set-token',
   accountsRemove: 'accounts:remove',
   accountsGetToken: 'accounts:get-token',
+  accountsCheck: 'accounts:check',
+  accountsCarryPreview: 'accounts:carry-preview',
+  accountsBegin: 'accounts:begin',
+  accountsFlow: 'accounts:flow',
+  accountsFlowAction: 'accounts:flow-action',
+  accountsPickFolder: 'accounts:pick-folder',
+  accountsRemoveInfo: 'accounts:remove-info',
+  accountsShowFolder: 'accounts:show-folder',
+  accountsOpenTab: 'accounts:open-tab',
   devicesView: 'devices:view',
   devicesStartPairing: 'devices:start-pairing',
   devicesCancelPairing: 'devices:cancel-pairing',
@@ -133,6 +143,7 @@ export const IPC = {
   evReview: 'ev:review',
   evPanelMode: 'ev:panel-mode',
   evAccounts: 'ev:accounts',
+  evAccountFlow: 'ev:account-flow',
   evNote: 'ev:note',
   evNoteOp: 'ev:note-op',
   evProjectNote: 'ev:project-note',
@@ -259,8 +270,8 @@ export interface SettingsView {
 export type SetSettingResult = { ok: true } | { ok: false; error: string }
 
 /** the sections a Settings window can be opened at */
-export type SettingsSection = 'devices' | 'notifications'
-export const isSettingsSection = (v: unknown): v is SettingsSection => v === 'devices' || v === 'notifications'
+export type SettingsSection = 'devices' | 'notifications' | 'accounts' | 'add-account'
+export const isSettingsSection = (v: unknown): v is SettingsSection => v === 'devices' || v === 'notifications' || v === 'accounts' || v === 'add-account'
 
 export type Unsubscribe = () => void
 
@@ -347,6 +358,8 @@ export interface CtApi {
   listRemoteSessions(): Promise<DeviceAnswer<RecentSession[]>[]>
   /** go to the tab in that conversation, or resume it in a new Claude tab; device: the device of the section it was picked in */
   openSession(id: string, device?: string): void
+  /** opens a session in the account whose folder holds its copy (null: Main account) */
+  openSessionAs(sessionId: string, account: string | null): void
   /** star or unstar a session; answers when the change is saved */
   setSessionStarred(id: string, starred: boolean): Promise<void>
   /** the ids of all starred sessions */
@@ -406,8 +419,25 @@ export interface CtApi {
   renameAccount(id: string, name: string): Promise<AccountResult>
   /** tabs on the account use the new token from their next start */
   setAccountToken(id: string, token: string): Promise<AccountResult>
-  /** tabs on the account keep running, and start on the main account next time */
-  removeAccount(id: string): Promise<AccountResult>
+  /** what removing the account would touch, for its confirmation; null when there is no such account */
+  accountRemoveInfo(id: string): Promise<RemoveInfo | null>
+  /** tabs on the account keep running, and start on the main account next time; the folder goes to the trash only when `deleteFolder` is set and ClaudeTerm made it */
+  removeAccount(id: string, opts?: RemoveOptions): Promise<RemoveResult>
+  /** looks at each sign-in account's login again (at most once a minute per account) */
+  checkAccounts(): void
+  /** what a carry from the source account (null: Main account) into the target (null: a new account) would copy; null when there is no such source */
+  carryPreview(source: string | null, target: string | null): Promise<CarryPreview | null>
+  /** starts the add, sign-in, sign-in-again or carry flow */
+  beginAccountFlow(req: AccountBegin): Promise<AccountResult>
+  /** the flow in progress, or null */
+  accountFlow(): Promise<AccountFlowView | null>
+  accountFlowAction(a: FlowAction): void
+  /** asks for the folder of a sign-in account; null when the dialog was cancelled */
+  pickAccountFolder(): Promise<PickedFolder | null>
+  /** shows the account's folder in the file manager (null: Main account's) */
+  showAccountFolder(id: string | null): void
+  /** a Claude tab in the default folder on the account (null: Main account), the main window brought forward */
+  openAccountTab(id: string | null): void
   /** opens a tab running `claude setup-token` in the main window */
   getToken(): void
   /** the device sync section: `enabled: false` while this device has no group yet */
@@ -479,6 +509,8 @@ export interface CtApi {
   onProjectNoteOp(cb: (key: string, op: NoteOp, generation: number) => void): Unsubscribe
   /** the extra accounts changed: every window gets the new list */
   onAccounts(cb: (view: AccountsView) => void): Unsubscribe
+  /** the flow in progress changed; null when it ended */
+  onAccountFlow(cb: (view: AccountFlowView | null) => void): Unsubscribe
   /** main asks what Claude Code's prompt in the tab holds, from the terminal's screen; answer with answerPrompt */
   onPromptQuery(cb: (queryId: number, tabId: string) => void): Unsubscribe
   /** the documents of a Claude tab changed: the list, newest first, and the one show_document just showed */

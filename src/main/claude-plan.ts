@@ -4,12 +4,12 @@ import { join } from 'node:path'
 /** a .claude.json larger than this is not read: the plan is a nicety, not worth a long read */
 const MAX_BYTES = 4 * 1024 * 1024
 
-/** the subscriptions Claude Code's login names, as the account block at the foot of the tabs shows them */
+/** the subscriptions Claude Code's login names (with or without its claude_ prefix), as the account block at the foot of the tabs shows them */
 const PLANS: Record<string, string> = {
-  claude_max: 'Max plan',
-  claude_pro: 'Pro plan',
-  claude_team: 'Team plan',
-  claude_enterprise: 'Enterprise plan'
+  max: 'Max plan',
+  pro: 'Pro plan',
+  team: 'Team plan',
+  enterprise: 'Enterprise plan'
 }
 
 /** Claude Code keeps its login in .claude.json: in the home folder, or in <config> when CLAUDE_CONFIG_DIR moves it. */
@@ -17,14 +17,19 @@ export function claudeAccountFile(env: NodeJS.ProcessEnv, home: string): string 
   return join(env.CLAUDE_CONFIG_DIR || home, '.claude.json')
 }
 
+/** the plan a subscription or organization type names, or null when it names none it knows */
+export function planOf(type: unknown): string | null {
+  if (typeof type !== 'string') return null
+  const key = type.replace(/^claude_/, '')
+  return Object.hasOwn(PLANS, key) ? PLANS[key]! : null
+}
+
 /**
  * The plan of the login Claude Code keeps (`oauthAccount.organizationType`), or null when the file has none it knows. The
  * file is Claude Code's and its format is not documented: anything unexpected names no plan. Only that one field is read.
  */
 export function planName(text: string | null): string | null {
-  const account = oauthAccount(settingsOf(text))
-  const type = account?.organizationType
-  return typeof type === 'string' && Object.hasOwn(PLANS, type) ? PLANS[type]! : null
+  return planOf(oauthAccount(settingsOf(text))?.organizationType)
 }
 
 /**

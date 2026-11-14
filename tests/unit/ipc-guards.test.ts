@@ -3,7 +3,7 @@ import { MAX_ADDRESS_LENGTH } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
-import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput } from '../../src/main/ipc-guards'
+import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -336,6 +336,49 @@ describe('device guards', () => {
     expect(isPathText('x'.repeat(MAX_PATH_TEXT + 1))).toBe(false)
     expect(isPathText(1)).toBe(false)
     expect(isPathText(null)).toBe(false)
+  })
+
+  it("isAccountBegin takes each mode's request and refuses a wrong mode, a repeated or unknown item, a name over 200 characters and an email over 254", () => {
+    const base = { mode: 'add', id: null, name: 'Work', email: null, source: null, items: [], adopt: false }
+    expect(isAccountBegin(base)).toBe(true)
+    for (const mode of ['add', 'sign-in-again', 'to-login', 'carry']) expect(isAccountBegin({ ...base, mode, id: 'acc-1', source: 'main' })).toBe(true)
+    expect(isAccountBegin({ ...base, mode: 'remove' })).toBe(false)
+    expect(isAccountBegin({ ...base, items: ['settings', 'mcp', 'output-styles'] })).toBe(true)
+    expect(isAccountBegin({ ...base, items: ['settings', 'settings'] })).toBe(false)
+    expect(isAccountBegin({ ...base, items: ['claudeterm'] })).toBe(false)
+    expect(isAccountBegin({ ...base, items: ['nope'] })).toBe(false)
+    expect(isAccountBegin({ ...base, items: 'settings' })).toBe(false)
+    expect(isAccountBegin({ ...base, name: 'x'.repeat(200) })).toBe(true)
+    expect(isAccountBegin({ ...base, name: 'x'.repeat(201) })).toBe(false)
+    expect(isAccountBegin({ ...base, email: 'a'.repeat(254) })).toBe(true)
+    expect(isAccountBegin({ ...base, email: 'a'.repeat(255) })).toBe(false)
+    expect(isAccountBegin({ ...base, id: 'x'.repeat(64) })).toBe(true)
+    expect(isAccountBegin({ ...base, id: 'x'.repeat(65) })).toBe(false)
+    expect(isAccountBegin({ ...base, id: '' })).toBe(false)
+    expect(isAccountBegin({ ...base, adopt: 'yes' })).toBe(false)
+    expect(isAccountBegin(null)).toBe(false)
+  })
+
+  it('isFlowAction takes each action and a retry of a carry line, and refuses an unknown kind or item', () => {
+    for (const kind of ['cancel', 'show-tab', 'retry-sign-in', 'another-login', 'keep-login', 'open-tab', 'close']) expect(isFlowAction({ kind })).toBe(true)
+    expect(isFlowAction({ kind: 'retry-item', item: 'mcp' })).toBe(true)
+    expect(isFlowAction({ kind: 'retry-item', item: 'claudeterm' })).toBe(true)
+    expect(isFlowAction({ kind: 'retry-item', item: 'nope' })).toBe(false)
+    expect(isFlowAction({ kind: 'retry-item' })).toBe(false)
+    expect(isFlowAction({ kind: 'delete' })).toBe(false)
+    expect(isFlowAction({})).toBe(false)
+    expect(isFlowAction('cancel')).toBe(false)
+    expect(isFlowAction(null)).toBe(false)
+  })
+
+  it('isRemoveOptions takes both flags or nothing', () => {
+    expect(isRemoveOptions(undefined)).toBe(true)
+    expect(isRemoveOptions({ signOut: true, deleteFolder: false })).toBe(true)
+    expect(isRemoveOptions({ signOut: false, deleteFolder: true })).toBe(true)
+    expect(isRemoveOptions({ signOut: true })).toBe(false)
+    expect(isRemoveOptions({ signOut: 'yes', deleteFolder: true })).toBe(false)
+    expect(isRemoveOptions(null)).toBe(false)
+    expect(isRemoveOptions('x')).toBe(false)
   })
 })
 

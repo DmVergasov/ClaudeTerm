@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { claudeAccountFile, loginOf, planName } from '../../src/main/claude-plan'
+import { claudeAccountFile, loginOf, planName, planOf } from '../../src/main/claude-plan'
 
 const account = (organizationType: unknown): string => JSON.stringify({ numStartups: 3, oauthAccount: { organizationType, organizationName: 'Example Org' } })
 
@@ -41,6 +41,19 @@ describe('loginOf', () => {
     expect(loginOf(login([1, 2]))).toBeNull()
     expect(loginOf('{ "numStartups": 3, "oauthAcc')).toBeUndefined()
     expect(loginOf(JSON.stringify([1, 2]))).toBeUndefined()
+  })
+})
+
+describe('planOf', () => {
+  it('names the plans of both spellings', () => {
+    expect(planOf('claude_max')).toBe('Max plan')
+    expect(planOf('max')).toBe('Max plan')
+    expect(planOf('pro')).toBe('Pro plan')
+    expect(planOf('claude_team')).toBe('Team plan')
+    expect(planOf('enterprise')).toBe('Enterprise plan')
+    expect(planOf('something_new')).toBeNull()
+    expect(planOf(42)).toBeNull()
+    expect(planOf(undefined)).toBeNull()
   })
 })
 

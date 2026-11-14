@@ -2,6 +2,7 @@ import { open, readdir, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { isUuid } from '../shared/protocol'
 import type { SessionSummary } from '../shared/types'
+import { sameTime, type TranscriptRoot } from './transcript-move'
 
 export const HEAD_BYTES = 64 * 1024
 export const TAIL_BYTES = 256 * 1024
@@ -167,25 +168,40 @@ interface TranscriptFile {
   id: string
   size: number
   mtimeMs: number
+  /** the account whose folder holds the copy; null for Main account */
+  account: string | null
+}
+
+/** One copy per session id: the newest; a tie (sameTime) goes to the later root, which comes later in the list */
+function newestCopies(files: TranscriptFile[]): TranscriptFile[] {
+  const best = new Map<string, TranscriptFile>()
+  for (const f of files) {
+    const b = best.get(f.id)
+    if (!b || f.mtimeMs > b.mtimeMs || sameTime(f.mtimeMs, b.mtimeMs)) best.set(f.id, f)
+  }
+  return [...best.values()]
 }
 
 /** The most recently active Claude Code sessions, read from Claude Code's transcripts. */
 export class SessionHistory {
   private readonly cache = new Map<string, { size: number; mtimeMs: number; knownChat: boolean; summary: SessionSummary | null }>()
 
-  /** alsoInteractive: whether a session id is one of the chats ClaudeTerm started; those are listed as the terminal's are */
+  /**
+   * roots: the `projects` folder of Main account and of every sign-in account, asked on each list.
+   * alsoInteractive: whether a session id is one of the chats ClaudeTerm started; those are listed as the terminal's are
+   */
   constructor(
-    private readonly projectsDir: string,
+    private readonly roots: () => TranscriptRoot[],
     private readonly fs: HistoryFs = nodeHistoryFs,
     private readonly alsoInteractive: (sessionId: string) => boolean = () => false
   ) {}
 
   /**
    * The latest `limit` sessions, newest first, plus every starred one however old. Starred sessions do not
-   * count against the limit; the transcripts left out are not read.
+   * count against the limit; the transcripts left out are not read. A session under several roots is listed once.
    */
   async list(limit: number, starred: ReadonlySet<string> = new Set()): Promise<SessionSummary[]> {
-    const files = await this.transcripts()
+    const files = newestCopies(await this.transcripts())
     files.sort((a, b) => b.mtimeMs - a.mtimeMs)
     const out: SessionSummary[] = []
     let others = 0
@@ -194,17 +210,24 @@ export class SessionHistory {
       if (!isStarred && others >= limit) continue
       const s = await this.summary(f)
       if (!s) continue
-      out.push(s)
+      out.push({ ...s, account: f.account })
       if (!isStarred) others++
     }
     return out
   }
 
-  /** <uuid>.jsonl directly in each project folder; subagent transcripts live deeper */
+  /** every root's transcripts, in root order */
   private async transcripts(): Promise<TranscriptFile[]> {
+    const files: TranscriptFile[] = []
+    for (const root of this.roots()) files.push(...(await this.rootTranscripts(root)))
+    return files
+  }
+
+  /** <uuid>.jsonl directly in each project folder; subagent transcripts live deeper */
+  private async rootTranscripts(root: TranscriptRoot): Promise<TranscriptFile[]> {
     let projects: string[]
     try {
-      projects = await this.fs.readdir(this.projectsDir)
+      projects = await this.fs.readdir(root.projects)
     } catch {
       return []
     }
@@ -212,17 +235,17 @@ export class SessionHistory {
     for (const project of projects) {
       let names: string[]
       try {
-        names = await this.fs.readdir(join(this.projectsDir, project))
+        names = await this.fs.readdir(join(root.projects, project))
       } catch {
         continue // a file, or gone meanwhile
       }
       for (const name of names) {
         const id = name.endsWith('.jsonl') ? name.slice(0, -'.jsonl'.length) : ''
         if (!isUuid(id)) continue
-        const path = join(this.projectsDir, project, name)
+        const path = join(root.projects, project, name)
         try {
           const s = await this.fs.stat(path)
-          if (s.isFile()) files.push({ path, id, size: s.size, mtimeMs: s.mtimeMs })
+          if (s.isFile()) files.push({ path, id, size: s.size, mtimeMs: s.mtimeMs, account: root.account })
         } catch {
           // gone meanwhile
         }

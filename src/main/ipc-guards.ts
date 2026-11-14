@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import { CARRY_ITEMS, FLOW_MODES, type AccountBegin, type CarryItem, type CarryLineItem, type FlowAction, type RemoveOptions } from '../shared/accounts'
 import { DOC_ACTIONS, type DocAction } from '../shared/docs'
 import type { ImageAction } from '../shared/ipc'
 import { MAX_ADDRESS_LENGTH } from '../shared/devices'
@@ -47,6 +48,41 @@ export const isPtyData = (v: unknown): v is string => typeof v === 'string'
 
 /** an extra account's id, or null for the main account */
 export const isAccountRef = (v: unknown): v is string | null => v === null || (typeof v === 'string' && v.length > 0 && v.length <= 64)
+
+/** an item the account flow carries over from another account */
+export const isCarryItem = (v: unknown): v is CarryItem => typeof v === 'string' && (CARRY_ITEMS as readonly string[]).includes(v)
+
+/** a line of the carry progress: a carry item, or ClaudeTerm's own tools */
+export const isCarryLineItem = (v: unknown): v is CarryLineItem => isCarryItem(v) || v === 'claudeterm'
+
+const FLOW_ACTION_KINDS: readonly string[] = ['cancel', 'show-tab', 'retry-sign-in', 'another-login', 'keep-login', 'open-tab', 'close']
+
+/** a button of the account flow: an action, or a retry of one line of the carry progress */
+export const isFlowAction = (v: unknown): v is FlowAction => {
+  if (typeof v !== 'object' || v === null) return false
+  const a = v as Record<string, unknown>
+  if (a.kind === 'retry-item') return isCarryLineItem(a.item)
+  return typeof a.kind === 'string' && FLOW_ACTION_KINDS.includes(a.kind)
+}
+
+/** a request to start the account flow: a mode, an id, a name and an email of at most 200 and 254 characters, a source account, distinct carry items and the adopt flag */
+export const isAccountBegin = (v: unknown): v is AccountBegin => {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  const text = (x: unknown, min: number, max: number): boolean => x === null || (typeof x === 'string' && x.length >= min && x.length <= max)
+  return (FLOW_MODES as readonly unknown[]).includes(r.mode) &&
+    text(r.id, 1, 64) && text(r.name, 0, 200) && text(r.email, 0, 254) && text(r.source, 1, 64) &&
+    Array.isArray(r.items) && r.items.every(isCarryItem) && new Set(r.items).size === r.items.length &&
+    isFlag(r.adopt)
+}
+
+/** the options of a removal: both flags, or none at all */
+export const isRemoveOptions = (v: unknown): v is RemoveOptions | undefined => {
+  if (v === undefined) return true
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  return isFlag(o.signOut) && isFlag(o.deleteFolder)
+}
 
 export const isOptionalTitle = (v: unknown): v is string | null => v === null || typeof v === 'string'
 

@@ -329,6 +329,13 @@ describe('call replies', () => {
     expect(CALL_REPLIES.accounts([{ id: 'acc-1', name: 'Work', extra: 1 }])).toEqual([{ id: 'acc-1', name: 'Work' }])
   })
 
+  it('a session list with or without account names parses; a bad name becomes none', () => {
+    expect(CALL_REPLIES.sessions([{ ...session(), accountName: 'Work' }])).toEqual([{ ...session(), accountName: 'Work' }])
+    expect(CALL_REPLIES.sessions([session()])).toEqual([{ ...session(), accountName: null }])
+    expect(CALL_REPLIES.sessions([{ ...session(), accountName: 7 }])).toEqual([{ ...session(), accountName: null }])
+    expect(CALL_REPLIES.sessions([{ ...session(), accountName: 'x'.repeat(257) }])).toEqual([{ ...session(), accountName: null }])
+  })
+
   it('sessions are checked one by one: a bad entry is left out and the good ones are kept (R9); a session of another device loses its device field', () => {
     expect(CALL_REPLIES.sessions([{ ...session(), id: undefined }])).toEqual([])
     expect(CALL_REPLIES.sessions([{ ...session(), device: 'Studio' }])).toEqual([session()])
@@ -398,6 +405,7 @@ const session = (over: Record<string, unknown> = {}): Record<string, unknown> =>
   modifiedAt: 1700000000000.5,
   open: false,
   starred: true,
+  accountName: null,
   ...over
 })
 

@@ -7,6 +7,20 @@ import { AccountStore, nodeAccountFile, type Vault } from '../../src/main/accoun
 const plain: Vault = { available: () => false, encrypt: (t) => t, decrypt: (d) => d }
 const newPath = (): string => join(mkdtempSync(join(tmpdir(), 'ct-accounts-')), 'accounts.json')
 
+describe('accounts.json version 2', () => {
+  it('accounts.json version 2 is replaced in one step and readable only by the user', () => {
+    const path = newPath()
+    writeFileSync(path, JSON.stringify({ version: 1, accounts: [{ id: 'old', name: 'Work', addedAt: '2026-10-01T00:00:00.000Z', token: 'test-token-work-0000000001', encrypted: false }] }))
+    const store = new AccountStore(nodeAccountFile(path), plain)
+    expect(store.addLogin({ id: 'login-1', name: 'Home', folder: join(tmpdir(), 'ct-home-account'), created: true })).toEqual({ ok: true })
+    const saved = JSON.parse(readFileSync(path, 'utf8'))
+    expect(saved.version).toBe(2)
+    expect(saved.accounts.map((a: { kind: string }) => a.kind)).toEqual(['token', 'login'])
+    expect(readdirSync(join(path, '..'))).toEqual(['accounts.json'])
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+})
+
 describe('nodeAccountFile', () => {
   it('reads null before the file exists, then what was written; the write leaves no temporary file', () => {
     const path = newPath()

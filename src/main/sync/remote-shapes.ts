@@ -728,7 +728,7 @@ function sessionTextOf(v: unknown): boolean {
 
 function sessionEntry(v: unknown): RecentSession | null {
   if (!isPlainObject(v)) return null
-  const { id, cwd, title, firstPrompt, lastPrompt, modifiedAt, open, starred } = v
+  const { id, cwd, title, firstPrompt, lastPrompt, modifiedAt, open, starred, accountName } = v
   if (!isUuid(id) || !isPathText(cwd) || typeof open !== 'boolean' || typeof starred !== 'boolean') return null
   if (!isNonNegativeNumber(modifiedAt)) return null
   if (!orNull(title, sessionTextOf) || !orNull(firstPrompt, sessionTextOf) || !orNull(lastPrompt, sessionTextOf)) return null
@@ -740,7 +740,9 @@ function sessionEntry(v: unknown): RecentSession | null {
     lastPrompt: lastPrompt as string | null,
     modifiedAt,
     open,
-    starred
+    starred,
+    // a device older than the account names sends none: that reads as Main account's
+    accountName: isString(accountName, 1, MAX_ACCOUNT_NAME) ? accountName : null
   }
 }
 

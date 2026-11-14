@@ -6,6 +6,7 @@ import { MAX_AUTO_CONTINUES, NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_L
 import { DEFAULT_TEST_PATTERNS } from '../shared/test-files'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
 import { accountsSection } from './accounts-section'
+import { helperOpen, openHelper } from './account-helper'
 import { devicesSection } from './devices-section'
 import { el, loadInter, section } from './dom'
 import { icon } from './icons'
@@ -454,6 +455,8 @@ document.addEventListener('keydown', (e) => {
 
 // Ctrl+F (Cmd+F on macOS) puts the focus in the search field, wherever the focus is
 document.addEventListener('keydown', (e) => {
+  // the helper is modal: the search field behind it does not take the focus
+  if (helperOpen()) return
   if ((ct.platform === 'darwin' ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === 'KeyF') {
     e.preventDefault()
     searchField.focus()
@@ -475,7 +478,7 @@ ct.onSettingsView(render)
 void ct.getSettingsView().then(render)
 
 /** the sections a Settings window can be opened at, each with the tab it lives in: the #hash of a new window, or a section sent to an open one */
-const SECTIONS = new Map<string, TabId>([['devices', 'devices'], ['notifications', 'notifications']])
+const SECTIONS = new Map<string, TabId>([['devices', 'devices'], ['notifications', 'notifications'], ['accounts', 'accounts'], ['add-account', 'accounts']])
 
 function showSection(name: string): void {
   const tab = SECTIONS.get(name)
@@ -483,6 +486,8 @@ function showSection(name: string): void {
   // the section is shown in its tab, not among the results of a search
   clearSearch()
   showTab(tab)
+  // the add flow's helper opens over the page, once the page is in front
+  if (name === 'add-account') void ct.listAccounts().then((accounts) => openHelper({ mode: 'add', account: null, accounts }))
   document.getElementById(name)?.scrollIntoView()
 }
 

@@ -133,7 +133,7 @@ export interface FakeHost {
   /** the tabs whose media was marked seen, and the cards removed, in order */
   marked: string[]
   removedCards: string[]
-  accounts: AccountView[]
+  accounts: Pick<AccountView, 'id' | 'name' | 'addedAt' | 'readable'>[]
   /** what profiles() answers; a test may set something that is not a list */
   profilesAnswer: unknown
   attention: TabAttention
@@ -244,6 +244,7 @@ export function fakeHost(): FakeHost {
         const t = h.infos.get(id)
         return t ? { ...t } : null
       },
+      isTransient: () => false,
       close: (id) => {
         h.closed.push(id)
       },
@@ -296,7 +297,7 @@ export function fakeHost(): FakeHost {
     },
     notes: { get: (id) => (id === T1 ? { text: 'todo', shown: false, form: 'card' } : null) },
     accounts: {
-      list: () => h.accounts.map((a) => ({ ...a })),
+      list: () => h.accounts.map((a) => ({ ...a, kind: 'token' as const, folder: null, created: false })),
       nameOf: (id) => h.accounts.find((a) => a.id === id)?.name ?? null
     },
     sizes,
@@ -326,7 +327,7 @@ export function fakeHost(): FakeHost {
     folders: (id, path) => folderListingOf(id, path, folderDeps()),
     changeFolder: (id, path) => changeFolderOf(id, path, folderDeps()),
     sessions: async () => h.sessionList.map((s) => ({ ...s })),
-    openSession: (id) => {
+    openSession: async (id) => {
       h.openedSessions.push(id)
       return T3
     },

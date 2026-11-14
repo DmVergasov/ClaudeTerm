@@ -5,6 +5,7 @@ import {
   claudeProjectsDir, HEAD_BYTES, oneLine, parseSessionHead, parseSessionTail, SessionHistory, TAIL_BYTES, WIDE_TAIL_BYTES,
   type HistoryFs
 } from '../../src/main/session-history'
+import type { TranscriptRoot } from '../../src/main/transcript-move'
 
 const SID1 = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const SID2 = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -142,6 +143,7 @@ describe('claudeProjectsDir', () => {
 
 describe('SessionHistory', () => {
   const file = (folder: string, name: string): string => join(ROOT, folder, name)
+  const main: TranscriptRoot[] = [{ account: null, projects: ROOT }]
 
   it('lists sessions newest first and skips claude -p runs, other files and subagent folders', async () => {
     const { fs } = memFs({
@@ -151,9 +153,9 @@ describe('SessionHistory', () => {
       [file('D--b', 'notes.jsonl')]: { text: jsonl(user('D:\\b', 'x')), mtimeMs: 5000 },
       [file('D--b', join(SID2, 'subagents', 'agent-1.jsonl'))]: { text: jsonl(user('D:\\b', 'sub')), mtimeMs: 6000 }
     })
-    expect(await new SessionHistory(ROOT, fs).list(10)).toEqual([
-      { id: SID2, cwd: 'D:\\b', title: 'Two', firstPrompt: 'two?', lastPrompt: null, modifiedAt: 3000 },
-      { id: SID1, cwd: 'D:\\a', title: 'One', firstPrompt: 'one?', lastPrompt: 'one?', modifiedAt: 1000 }
+    expect(await new SessionHistory(() => main, fs).list(10)).toEqual([
+      { id: SID2, cwd: 'D:\\b', title: 'Two', firstPrompt: 'two?', lastPrompt: null, account: null, modifiedAt: 3000 },
+      { id: SID1, cwd: 'D:\\a', title: 'One', firstPrompt: 'one?', lastPrompt: 'one?', account: null, modifiedAt: 1000 }
     ])
   })
 
@@ -163,7 +165,7 @@ describe('SessionHistory', () => {
       [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\a', 'mid')), mtimeMs: 2000 },
       [file('D--a', `${SID3}.jsonl`)]: { text: jsonl(user('D:\\a', 'p', { entrypoint: 'sdk-cli' })), mtimeMs: 3000 }
     })
-    expect((await new SessionHistory(ROOT, fs).list(1)).map((s) => s.id)).toEqual([SID2])
+    expect((await new SessionHistory(() => main, fs).list(1)).map((s) => s.id)).toEqual([SID2])
   })
 
   it('starred sessions are listed even beyond the limit; the limit counts the others', async () => {
@@ -172,7 +174,7 @@ describe('SessionHistory', () => {
       [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\a', 'mid')), mtimeMs: 2000 },
       [file('D--a', `${SID3}.jsonl`)]: { text: jsonl(user('D:\\a', 'new')), mtimeMs: 3000 }
     })
-    const h = new SessionHistory(ROOT, fs)
+    const h = new SessionHistory(() => main, fs)
     expect((await h.list(1, new Set([SID1]))).map((s) => s.id)).toEqual([SID3, SID1])
     expect((await h.list(1)).map((s) => s.id)).toEqual([SID3])
     // the one left out is never read
@@ -184,7 +186,7 @@ describe('SessionHistory', () => {
       [file('D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'one')), mtimeMs: 1000 },
       [file('D--a', `${SID3}.jsonl`)]: { text: jsonl(user('D:\\a', 'p', { entrypoint: 'sdk-cli' })), mtimeMs: 3000 }
     })
-    expect((await new SessionHistory(ROOT, fs).list(10, new Set([SID2, SID3]))).map((s) => s.id)).toEqual([SID1])
+    expect((await new SessionHistory(() => main, fs).list(10, new Set([SID2, SID3]))).map((s) => s.id)).toEqual([SID1])
   })
 
   it('reads the last 2 MB once when the last 256 KB hold no title or message', async () => {
@@ -192,7 +194,7 @@ describe('SessionHistory', () => {
     const text = jsonl(user('D:\\a', 'start'), { type: 'ai-title', aiTitle: 'Deep' }, ...filler)
     const path = file('D--a', `${SID1}.jsonl`)
     const { fs, reads } = memFs({ [path]: { text, mtimeMs: 1 } })
-    const [s] = await new SessionHistory(ROOT, fs).list(10)
+    const [s] = await new SessionHistory(() => main, fs).list(10)
     expect(s.title).toBe('Deep')
     const size = Buffer.byteLength(text)
     expect(reads).toEqual([`${path}@0+${HEAD_BYTES}`, `${path}@${size - TAIL_BYTES}+${TAIL_BYTES}`, `${path}@0+${size}`])
@@ -205,8 +207,8 @@ describe('SessionHistory', () => {
       [file('D--a', `${SID1}.jsonl`)]: { text: jsonl(...lead, user('D:\\a', 'late'), { type: 'last-prompt', lastPrompt: 'go on' }), mtimeMs: 2 },
       [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(attachment('D:\\a')), mtimeMs: 1 }
     })
-    expect(await new SessionHistory(ROOT, fs).list(10)).toEqual([
-      { id: SID1, cwd: 'D:\\a', title: null, firstPrompt: null, lastPrompt: 'go on', modifiedAt: 2 }
+    expect(await new SessionHistory(() => main, fs).list(10)).toEqual([
+      { id: SID1, cwd: 'D:\\a', title: null, firstPrompt: null, lastPrompt: 'go on', account: null, modifiedAt: 2 }
     ])
   })
 
@@ -216,7 +218,7 @@ describe('SessionHistory', () => {
       [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\a', 'b')), mtimeMs: 2 }
     }
     const { fs, reads } = memFs(files)
-    const h = new SessionHistory(ROOT, fs)
+    const h = new SessionHistory(() => main, fs)
     await h.list(10)
     const first = reads.length
     await h.list(10)
@@ -228,13 +230,13 @@ describe('SessionHistory', () => {
   })
 
   it('a missing projects folder gives an empty list; an unreadable file is skipped', async () => {
-    expect(await new SessionHistory(join('C:', 'nowhere'), memFs({}).fs).list(10)).toEqual([])
+    expect(await new SessionHistory(() => [{ account: null, projects: join('C:', 'nowhere') }], memFs({}).fs).list(10)).toEqual([])
     const bad = file('D--a', `${SID1}.jsonl`)
     const { fs } = memFs({
       [bad]: { text: jsonl(user('D:\\a', 'a')), mtimeMs: 2 },
       [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\a', 'b')), mtimeMs: 1 }
     }, [bad])
-    expect((await new SessionHistory(ROOT, fs).list(10)).map((s) => s.id)).toEqual([SID2])
+    expect((await new SessionHistory(() => main, fs).list(10)).map((s) => s.id)).toEqual([SID2])
   })
 
   it.runIf(WIN)('a first message longer than both windows with nothing before it: the folder comes from the tail, mapped back to the project folder (Windows folders)', async () => {
@@ -243,8 +245,8 @@ describe('SessionHistory', () => {
     // later entries run in a subfolder the conversation moved to
     const text = jsonl(image, attachment('D:\\a\\sub'), { type: 'last-prompt', lastPrompt: 'what is this' })
     const { fs } = memFs({ [file('D--a', `${SID1}.jsonl`)]: { text, mtimeMs: 7 } })
-    expect(await new SessionHistory(ROOT, fs).list(10)).toEqual([
-      { id: SID1, cwd: 'D:\\a', title: null, firstPrompt: null, lastPrompt: 'what is this', modifiedAt: 7 }
+    expect(await new SessionHistory(() => main, fs).list(10)).toEqual([
+      { id: SID1, cwd: 'D:\\a', title: null, firstPrompt: null, lastPrompt: 'what is this', account: null, modifiedAt: 7 }
     ])
   })
 
@@ -252,8 +254,8 @@ describe('SessionHistory', () => {
     const image = { type: 'user', message: { role: 'user', content: [{ type: 'image', source: { data: 'i'.repeat(TAIL_BYTES + 50_000) } }, { type: 'text', text: 'what is this' }] }, cwd: '/a', entrypoint: 'cli', isSidechain: false }
     const text = jsonl(image, attachment('/a/sub'), { type: 'last-prompt', lastPrompt: 'what is this' })
     const { fs } = memFs({ [file('-a', `${SID1}.jsonl`)]: { text, mtimeMs: 7 } })
-    expect(await new SessionHistory(ROOT, fs).list(10)).toEqual([
-      { id: SID1, cwd: '/a', title: null, firstPrompt: null, lastPrompt: 'what is this', modifiedAt: 7 }
+    expect(await new SessionHistory(() => main, fs).list(10)).toEqual([
+      { id: SID1, cwd: '/a', title: null, firstPrompt: null, lastPrompt: 'what is this', account: null, modifiedAt: 7 }
     ])
   })
 
@@ -263,7 +265,90 @@ describe('SessionHistory', () => {
       [file('D--a', `${SID1}.jsonl`)]: { text: jsonl(image('cli'), attachment('E:\\elsewhere'), { type: 'last-prompt', lastPrompt: 'go' }), mtimeMs: 2 },
       [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(image('sdk-cli'), { ...attachment('E:\\elsewhere'), entrypoint: 'sdk-cli' }, { type: 'last-prompt', lastPrompt: 'go' }), mtimeMs: 1 }
     })
-    const list = await new SessionHistory(ROOT, fs).list(10)
+    const list = await new SessionHistory(() => main, fs).list(10)
     expect(list.map((s) => [s.id, s.cwd])).toEqual([[SID1, 'E:\\elsewhere']])
+  })
+})
+
+describe('SessionHistory over several roots', () => {
+  const ACC = join('C:', 'accounts', 'work', 'projects')
+  const HOME = join('C:', 'accounts', 'home', 'projects')
+  const file = (projects: string, folder: string, name: string): string => join(projects, folder, name)
+
+  it('lists the sessions of every root with their account', async () => {
+    const { fs } = memFs({
+      [file(ROOT, 'D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'main one')), mtimeMs: 1000 },
+      [file(ACC, 'D--b', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\b', 'work two')), mtimeMs: 3000 }
+    })
+    const roots: TranscriptRoot[] = [{ account: null, projects: ROOT }, { account: 'work', projects: ACC }]
+    expect(await new SessionHistory(() => roots, fs).list(10)).toEqual([
+      { id: SID2, cwd: 'D:\\b', title: null, firstPrompt: 'work two', lastPrompt: null, account: 'work', modifiedAt: 3000 },
+      { id: SID1, cwd: 'D:\\a', title: null, firstPrompt: 'main one', lastPrompt: null, account: null, modifiedAt: 1000 }
+    ])
+  })
+
+  it('one id under two roots is listed once: the newest copy, with its account', async () => {
+    const { fs } = memFs({
+      [file(ROOT, 'D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'old copy')), mtimeMs: 1000 },
+      [file(ACC, 'D--b', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\b', 'new copy')), mtimeMs: 2000 }
+    })
+    const roots: TranscriptRoot[] = [{ account: null, projects: ROOT }, { account: 'work', projects: ACC }]
+    expect(await new SessionHistory(() => roots, fs).list(10)).toEqual([
+      { id: SID1, cwd: 'D:\\b', title: null, firstPrompt: 'new copy', lastPrompt: null, account: 'work', modifiedAt: 2000 }
+    ])
+  })
+
+  it('a newer copy in Main account wins over an older one in a sign-in account', async () => {
+    const { fs } = memFs({
+      [file(ROOT, 'D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'main newer')), mtimeMs: 5000 },
+      [file(ACC, 'D--b', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\b', 'work older')), mtimeMs: 2000 }
+    })
+    const roots: TranscriptRoot[] = [{ account: null, projects: ROOT }, { account: 'work', projects: ACC }]
+    expect(await new SessionHistory(() => roots, fs).list(10)).toEqual([
+      { id: SID1, cwd: 'D:\\a', title: null, firstPrompt: 'main newer', lastPrompt: null, account: null, modifiedAt: 5000 }
+    ])
+  })
+
+  it('a tie goes to the later root', async () => {
+    const { fs } = memFs({
+      [file(ROOT, 'D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'main')), mtimeMs: 1000 },
+      [file(ACC, 'D--b', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\b', 'work')), mtimeMs: 1000 }
+    })
+    const mainLast: TranscriptRoot[] = [{ account: 'work', projects: ACC }, { account: null, projects: ROOT }]
+    const workLast: TranscriptRoot[] = [{ account: null, projects: ROOT }, { account: 'work', projects: ACC }]
+    expect((await new SessionHistory(() => mainLast, fs).list(10)).map((s) => s.account)).toEqual([null])
+    expect((await new SessionHistory(() => workLast, fs).list(10)).map((s) => s.account)).toEqual(['work'])
+  })
+
+  it('a missing root lists nothing and the others still list', async () => {
+    const { fs } = memFs({
+      [file(ROOT, 'D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'main')), mtimeMs: 1000 },
+      [file(HOME, 'D--b', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\b', 'home')), mtimeMs: 2000 }
+    })
+    const roots: TranscriptRoot[] = [{ account: 'gone', projects: ACC }, { account: null, projects: ROOT }, { account: 'home', projects: HOME }]
+    expect((await new SessionHistory(() => roots, fs).list(10)).map((s) => [s.id, s.account])).toEqual([[SID2, 'home'], [SID1, null]])
+  })
+
+  it('the limit and the starred rule apply after the roots are merged', async () => {
+    const { fs } = memFs({
+      [file(ROOT, 'D--a', `${SID1}.jsonl`)]: { text: jsonl(user('D:\\a', 'old')), mtimeMs: 1000 },
+      [file(ACC, 'D--b', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\b', 'mid')), mtimeMs: 2000 },
+      [file(HOME, 'D--c', `${SID3}.jsonl`)]: { text: jsonl(user('D:\\c', 'new')), mtimeMs: 3000 }
+    })
+    const roots: TranscriptRoot[] = [{ account: null, projects: ROOT }, { account: 'work', projects: ACC }, { account: 'home', projects: HOME }]
+    const h = new SessionHistory(() => roots, fs)
+    expect((await h.list(1)).map((s) => s.id)).toEqual([SID3])
+    expect((await h.list(1, new Set([SID1]))).map((s) => [s.id, s.account])).toEqual([[SID3, 'home'], [SID1, null]])
+  })
+
+  it('the roots are asked again on every list', async () => {
+    const { fs } = memFs({
+      [file(ACC, 'D--b', `${SID2}.jsonl`)]: { text: jsonl(user('D:\\b', 'work')), mtimeMs: 2000 }
+    })
+    let roots: TranscriptRoot[] = [{ account: null, projects: ROOT }]
+    const h = new SessionHistory(() => roots, fs)
+    expect(await h.list(10)).toEqual([])
+    roots = [{ account: null, projects: ROOT }, { account: 'work', projects: ACC }]
+    expect((await h.list(10)).map((s) => s.account)).toEqual(['work'])
   })
 })

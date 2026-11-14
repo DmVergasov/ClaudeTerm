@@ -58,7 +58,7 @@ const firstLine = (text: string): string | null => text.split('\n').map(line => 
 export interface ChatHubDeps {
   engine: StartChatEngine
   support(tab: TabInfo, env: Record<string, string>): Promise<{ launch: Exclude<ChatLaunch, { how: 'none' }> } | { reason: string }>
-  history(sessionId: string, folder: string): Promise<unknown[]>     // getSessionMessages with includeSystemMessages
+  history(sessionId: string, folder: string, account: string | null): Promise<unknown[]>     // getSessionMessages with includeSystemMessages; the tab's account
   window(tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]): void
   /** the patches of a tab a member watches, in a batch of their own: the members get them whatever tab the window shows */
   remote(tabId: string, fromRev: number, toRev: number, patches: ChatPatch[]): void
@@ -187,12 +187,19 @@ export class ChatHub {
   private readonly restarts = new Set<string>()
   /** the clock time a tool call of the tab last may have changed what Claude Code loads: kept across the tab's restarts, dropped with the tab */
   private readonly touched = new Map<string, number>()
+  /** the divider a tab's restart ends with, when the restart names one (a switch of account says whom the tab continues as) */
+  private readonly restartDividers = new Map<string, string>()
 
   constructor(private readonly d: ChatHubDeps) {}
 
-  /** a restart of the tab's Claude Code begins: the chat says so at once, and the chat that starts in its place carries it until Claude Code is ready */
-  restarting(tabId: string): void {
+  /**
+   * a restart of the tab's Claude Code begins: the chat says so at once, and the chat that starts in its place carries it until Claude Code is ready.
+   * `divider`: the line the restart ends with, instead of `Session restarted`
+   */
+  restarting(tabId: string, divider?: string): void {
     this.restarts.add(tabId)
+    if (divider === undefined) this.restartDividers.delete(tabId)
+    else this.restartDividers.set(tabId, divider)
     const live = this.tabs.get(tabId)
     if (live && !live.ended) this.publish(live, live.model.setState({ activity: { kind: 'restarting', since: this.d.now() } }))
   }
@@ -206,6 +213,7 @@ export class ChatHub {
   /** the relaunch of a tab starts another conversation or folder, not a restart of its own: the restart said is none, and the chat starts new */
   newConversation(tabId: string): void {
     this.restarts.delete(tabId)
+    this.restartDividers.delete(tabId)
     const live = this.tabs.get(tabId)
     if (live && !live.ended && live.model.state().activity?.kind === 'restarting') this.publish(live, live.model.setState({ activity: undefined }))
   }
@@ -545,6 +553,7 @@ export class ChatHub {
     this.attached.forget(tabId)
     this.autoTabs.delete(tabId)
     this.restarts.delete(tabId)
+    this.restartDividers.delete(tabId)
     this.carried.delete(tabId)
     this.touched.delete(tabId)
   }
@@ -647,11 +656,13 @@ export class ChatHub {
     )
   }
 
-  /** the restart is over: its line goes, and the column says the session restarted */
+  /** the restart is over: its line goes, and the column says the session restarted (or what the restart named) */
   private restartEnded(live: Live): ChatPatch[] {
     if (!live.restarted) return []
     live.restarted = false
-    const divider = live.model.divider('Session restarted')
+    const text = this.restartDividers.get(live.tabId) ?? 'Session restarted'
+    this.restartDividers.delete(live.tabId)
+    const divider = live.model.divider(text)
     const added = divider[0]
     live.restartDivider = added?.op === 'add' ? added.item.id : null
     return [...live.model.setState({ activity: undefined }), ...divider]
@@ -684,7 +695,7 @@ export class ChatHub {
   private async loadHistory(live: Live, sessionId: string): Promise<void> {
     let messages: unknown[] = []
     try {
-      const got = await this.d.history(sessionId, live.req.tab.cwd)
+      const got = await this.d.history(sessionId, live.req.tab.cwd, live.req.tab.account)
       if (Array.isArray(got)) messages = got
     } catch (e) {
       this.d.log.warn(`cannot read the history of ${sessionId}: ${errorText(e)}`)

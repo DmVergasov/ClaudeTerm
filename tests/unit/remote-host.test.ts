@@ -9,7 +9,6 @@ import { Calls, CallError, type CallLink } from '../../src/main/sync/calls'
 import { CALL_REPLIES, parsePush } from '../../src/main/sync/remote-shapes'
 import { parseRemoteTab } from '../../src/main/sync/remote-wire'
 import { MAX_FRAME_BYTES } from '../../src/main/sync/wire'
-import type { AccountView } from '../../src/shared/accounts'
 import { MAX_IMAGE_BYTES } from '../../src/shared/image-file'
 import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_REVIEW_PARTS, REVIEW_PART_BYTES, type PushKind } from '../../src/shared/remote'
 import type { ChatPatch, ChatSnapshot } from '../../src/shared/chat'
@@ -127,6 +126,18 @@ describe('the directory of this device', () => {
     expect(f.closed).toEqual([])
   })
 
+  it('a sign-in tab is not listed to the members, and a call on it is refused as for a tab that is not here', async () => {
+    const f = fakeHost()
+    expect(hostTabs(f.ctx).list().map((t) => t.id)).toContain(T2)
+    f.ctx.tabs.isTransient = (id) => id === T2
+    expect(hostTabs(f.ctx).list().map((t) => t.id)).not.toContain(T2)
+    expect(hostTabs(f.ctx).has(T2)).toBe(false)
+    await expect(run(f, 'rename', { id: T2, title: 'x' })).rejects.toThrow(REMOTE_COPY.unknownTab)
+    await expect(run(f, 'close', { id: T2 })).rejects.toThrow(REMOTE_COPY.unknownTab)
+    expect(f.renamed).toEqual([])
+    expect(f.closed).toEqual([])
+  })
+
   it('a call whose arguments do not fit is refused with bad arguments', async () => {
     const f = fakeHost()
     await expect(run(f, 'rename', { id: 'not-an-id', title: 'x' })).rejects.toThrow('bad arguments')
@@ -234,7 +245,7 @@ describe('the calls of this device', () => {
   it('rename, mute, restart and switch-account reach the tab; profiles and accounts answer names and ids, never tokens', async () => {
     const f = fakeHost()
     const withToken = { ...f.accounts[0]!, token: 'tok-secret' }
-    f.accounts = [withToken as AccountView]
+    f.accounts = [withToken]
     await run(f, 'rename', { id: T1, title: 'x' })
     expect(f.renamed).toEqual([[T1, 'x']])
     await run(f, 'mute', { id: T1, muted: true })
@@ -770,7 +781,7 @@ describe('the media of this device', () => {
 
 /** a session of this device as its history lists it */
 function sessionOf(id: string, over: Partial<RecentSession> = {}): RecentSession {
-  return { id, cwd: '/work/demo', title: 'Fix the login bug', firstPrompt: 'why does login fail', lastPrompt: 'why does login fail', modifiedAt: 1_000, open: false, starred: false, ...over }
+  return { id, cwd: '/work/demo', title: 'Fix the login bug', firstPrompt: 'why does login fail', lastPrompt: 'why does login fail', modifiedAt: 1_000, open: false, starred: false, accountName: null, ...over }
 }
 const S1 = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const S2 = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -809,11 +820,11 @@ describe('the Recent sessions of this device (R1, R2, R9)', () => {
     await h.sessions!.run({})
     expect(await h['open-session']!.run({ session: S1 })).toEqual({ id: T3 })
     expect(f.openedSessions).toEqual([S1])
-    expect(() => h['open-session']!.run({ session: S3 })).toThrow(REMOTE_COPY.unknownSession)
+    await expect(h['open-session']!.run({ session: S3 })).rejects.toThrow(REMOTE_COPY.unknownSession)
     // a later answer that no longer lists S2 refuses it
     f.sessionList = [sessionOf(S1)]
     await h.sessions!.run({})
-    expect(() => h['open-session']!.run({ session: S2 })).toThrow(REMOTE_COPY.unknownSession)
+    await expect(h['open-session']!.run({ session: S2 })).rejects.toThrow(REMOTE_COPY.unknownSession)
     expect(f.openedSessions).toEqual([S1])
   })
 
@@ -830,12 +841,21 @@ describe('the Recent sessions of this device (R1, R2, R9)', () => {
     expect(CALL_REPLIES.sessions({ 0: good })).toBeNull()
   })
 
+  it('a session\'s account name goes to the members cut and cleaned, never its id', async () => {
+    const f = fakeHost()
+    f.sessionList = [sessionOf(S1, { accountName: 'Work\u0000', account: ACC_WORK }), sessionOf(S2, { accountName: 'n'.repeat(300) }), sessionOf(S3)]
+    const list = (await hostHandlers(f.ctx, B_ID).sessions!.run({})) as RecentSession[]
+    expect(list.map((s) => s.accountName)).toEqual(['Work', 'n'.repeat(256), null])
+    expect(list[0]).not.toHaveProperty('account')
+    expect(JSON.stringify(list)).not.toContain(ACC_WORK)
+  })
+
   it('the ids a member was answered with stay openable for that member on a new link, and not for another member (I3)', async () => {
     const f = fakeHost()
     f.sessionList = [sessionOf(S1)]
     await hostHandlers(f.ctx, B_ID).sessions!.run({})
-    expect(hostHandlers(f.ctx, B_ID)['open-session']!.run({ session: S1 })).toEqual({ id: T3 })
-    expect(() => hostHandlers(f.ctx, 'b2000000-0000-4000-8000-000000000002')['open-session']!.run({ session: S1 })).toThrow(REMOTE_COPY.unknownSession)
+    expect(await hostHandlers(f.ctx, B_ID)['open-session']!.run({ session: S1 })).toEqual({ id: T3 })
+    await expect(hostHandlers(f.ctx, 'b2000000-0000-4000-8000-000000000002')['open-session']!.run({ session: S1 })).rejects.toThrow(REMOTE_COPY.unknownSession)
   })
 
   it('a device that leaves the group loses the sessions it was answered with; a member that stays keeps them', async () => {
@@ -845,8 +865,8 @@ describe('the Recent sessions of this device (R1, R2, R9)', () => {
     await hostHandlers(f.ctx, B_ID).sessions!.run({})
     await hostHandlers(f.ctx, C_ID).sessions!.run({})
     pruneListedMembers(f.ctx, [B_ID])
-    expect(hostHandlers(f.ctx, B_ID)['open-session']!.run({ session: S1 })).toEqual({ id: T3 })
-    expect(() => hostHandlers(f.ctx, C_ID)['open-session']!.run({ session: S1 })).toThrow(REMOTE_COPY.unknownSession)
+    expect(await hostHandlers(f.ctx, B_ID)['open-session']!.run({ session: S1 })).toEqual({ id: T3 })
+    await expect(hostHandlers(f.ctx, C_ID)['open-session']!.run({ session: S1 })).rejects.toThrow(REMOTE_COPY.unknownSession)
   })
 })
 

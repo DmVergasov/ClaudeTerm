@@ -64,6 +64,8 @@ export interface FakeScript {
   contextMax?: number | null // null: the answer carries no count of this kind
   /** the folder the init names (Claude Code's working folder: a resumed session's worktree); the folder it was started in when not given */
   cwd?: string
+  /** how the stand-in signs in each config folder, by the folder's name (basename(CLAUDE_CONFIG_DIR)); see FakeAuth */
+  auth?: Record<string, FakeAuth>
   /** the answers to ClaudeTerm's Heads up questions (src/main/chat/heads-up.ts): a check's, and Explain more's */
   headsUp?: { check?: string; explain?: string }
   /** the MCP servers the session loaded, by name: every one is connected with the tool `ping` unless given here (a status, a failure's error, its tools, its version); pendingMs: 'pending' that long after the start */
@@ -88,7 +90,20 @@ export interface FakePlugin {
   /** the MCP servers the plugin ships (its .mcp.json), each started as `fake-mcp <name>` */
   mcpServers?: string[]
   options?: { key: string; title: string; description?: string; required: boolean; sensitive: boolean }[]
+  /** its marketplace runs this to install it: `plugin install` asks for a confirmation (-y, or --accept-command <sha256>) first */
+  installCommand?: string
 }
+
+/** how the stand-in signs in a config folder (`auth login`, `auth status`), by the folder's name: basename(CLAUDE_CONFIG_DIR) */
+export interface FakeAuth {
+  email?: string; org?: string; orgUuid?: string; type?: string // defaults: `<folder name>@example.com`, 'Example Team', a UUID made from the name, 'claude_team'
+  gate?: string // auth login waits until <CLAUDE_CONFIG_DIR>/<gate> exists
+  fail?: string // auth login: stderr `Login failed: <fail>`, exit 1, nothing written
+  status?: 'garbage' | 'hang' // auth status: `Welcome to Claude Code` and exit 0, or never answers
+}
+
+/** the token inside every .credentials.json the stand-in writes (with the folder's name after it) */
+export const FAKE_CREDENTIAL = 'fake-credential-never-shown-0001'
 
 const STAND_IN = resolve(import.meta.dirname, 'fake-claude.ts')
 

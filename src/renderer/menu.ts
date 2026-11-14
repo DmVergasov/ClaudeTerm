@@ -69,6 +69,9 @@ export function showMenu(at: { x: number; y: number }, items: MenuItem[], o: { a
   return menu
 }
 
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeMenu()
-})
+// the unit tests import the menu's users without a window: no listener then
+if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeMenu()
+  })
+}

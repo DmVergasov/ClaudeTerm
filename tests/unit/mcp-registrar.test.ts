@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ensureMcpRegistered, resolveClaude, resolveClaudePosix, runClaude, type RunResult, type Runner } from '../../src/main/mcp-registrar'
+import { loginEnv } from '../../src/main/accounts'
+import { ensureMcpRegistered, resolveClaude, resolveClaudePosix, runClaude, signInFoldersToRegister, type RunOptions, type RunResult, type Runner } from '../../src/main/mcp-registrar'
 
 const EXE = 'C:\\Users\\me\\AppData\\Local\\Programs\\ClaudeTerm\\ClaudeTerm.exe'
 const SCRIPT = 'C:\\Users\\me\\AppData\\Local\\Programs\\ClaudeTerm\\resources\\mcp\\show-image-server.js'
@@ -111,5 +112,83 @@ describe('ensureMcpRegistered', () => {
     const { run } = fakeRunner([whereFinds(CLAUDE), (c) => (c.args[1] === 'get' || c.args[1] === 'add' ? fail('boom') : null)])
     expect(await ensureMcpRegistered({ run, execPath: EXE, serverScript: SCRIPT, log: (m) => logs.push(m) })).toBe('failed')
     expect(logs[0]).toContain('boom')
+  })
+})
+
+describe('runClaude with an account environment', () => {
+  it("a .cmd shim gets the account's environment too", async () => {
+    const before = process.env.CLAUDE_CODE_OAUTH_TOKEN
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'invented-token'
+    try {
+      const seen: (RunOptions | undefined)[] = []
+      const run: Runner = async (_file, _args, opts) => {
+        seen.push(opts)
+        return ok()
+      }
+      await runClaude(run, { file: 'C:\\x\\claude.cmd', viaCmd: true }, ['mcp', 'get', 'claudeterm'], loginEnv('C:\\acc\\work'))
+      expect(seen[0]?.verbatim).toBe(true)
+      expect(seen[0]?.env).toBeDefined()
+      expect(seen[0]?.env?.CLAUDE_CONFIG_DIR).toBe('C:\\acc\\work')
+      expect(seen[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    } finally {
+      if (before === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+      else process.env.CLAUDE_CODE_OAUTH_TOKEN = before
+    }
+  })
+
+  it('a native exe and a Linux claude get the patch over their environment', async () => {
+    const seen: (NodeJS.ProcessEnv | undefined)[] = []
+    const run: Runner = async (_file, _args, opts) => {
+      seen.push(opts?.env)
+      return ok()
+    }
+    await runClaude(run, { file: '/x/claude', viaCmd: false, env: { PATH: '/x', CLAUDE_CODE_OAUTH_TOKEN: 'invented-token' } }, ['mcp', 'get', 'claudeterm'], loginEnv('/acc/work'))
+    expect(seen[0]).toEqual({ PATH: '/x', CLAUDE_CONFIG_DIR: '/acc/work' })
+    await runClaude(run, { file: CLAUDE, viaCmd: false }, ['mcp', 'get', 'claudeterm'], loginEnv('C:\\acc\\work'))
+    expect(seen[1]?.CLAUDE_CONFIG_DIR).toBe('C:\\acc\\work')
+    expect(seen[1]?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+  })
+})
+
+describe('ensureMcpRegistered with an environment or exec', () => {
+  it('gives every command the environment of the account', async () => {
+    const seen: (RunOptions | undefined)[] = []
+    const run: Runner = async (_file, _args, opts) => {
+      seen.push(opts)
+      return ok()
+    }
+    const resolve = async () => ({ file: 'C:\\x\\claude.cmd', viaCmd: true })
+    expect(await ensureMcpRegistered({ run, execPath: EXE, serverScript: SCRIPT, log: () => {}, resolve, env: loginEnv('C:\\acc\\work') })).toBe('registered')
+    expect(seen.length).toBe(3)
+    for (const opts of seen) expect(opts?.env?.CLAUDE_CONFIG_DIR).toBe('C:\\acc\\work')
+  })
+
+  it('with exec runs every command through it and never looks claude up', async () => {
+    const { run, calls } = fakeRunner([])
+    const seen: string[][] = []
+    const exec = async (args: string[]): Promise<RunResult> => {
+      seen.push(args)
+      return args[1] === 'get' ? fail('not found') : ok()
+    }
+    expect(await ensureMcpRegistered({ run, execPath: EXE, serverScript: SCRIPT, log: () => {}, exec })).toBe('registered')
+    expect(seen.map((a) => a[1])).toEqual(['get', 'remove', 'add'])
+    expect(calls).toEqual([])
+  })
+})
+
+describe('signInFoldersToRegister', () => {
+  it('lists the sign-in accounts whose folder is there: a token account, a folder that is gone and no folder are left out', async () => {
+    const present = new Set(['C:\\Users\\me\\accounts\\work', 'C:\\Users\\me\\accounts\\studio'])
+    const list = [
+      { name: 'Work', kind: 'login', folder: 'C:\\Users\\me\\accounts\\work' },
+      { name: 'Token', kind: 'token', folder: null },
+      { name: 'Gone', kind: 'login', folder: 'C:\\Users\\me\\accounts\\gone' },
+      { name: 'Studio', kind: 'login', folder: 'C:\\Users\\me\\accounts\\studio' },
+      { name: 'Unset', kind: 'login', folder: null },
+    ]
+    expect(await signInFoldersToRegister(list, async (p) => present.has(p))).toEqual([
+      { name: 'Work', folder: 'C:\\Users\\me\\accounts\\work' },
+      { name: 'Studio', folder: 'C:\\Users\\me\\accounts\\studio' },
+    ])
   })
 })

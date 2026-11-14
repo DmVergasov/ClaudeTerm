@@ -4,7 +4,7 @@ import { accessSync, appendFileSync, constants, existsSync, mkdirSync, promises 
 import { homedir, hostname, release, tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
 import { dirname, join } from 'node:path'
-import type { AccountResult, AccountsView } from '../shared/accounts'
+import { MAIN_ACCOUNT, type AccountFlowView, type AccountResult, type AccountView, type AccountsView, type CarryLine, type CarryPreview, type PickedFolder, type RemoveInfo, type RemoveResult } from '../shared/accounts'
 import { commandWord, isTabView, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSnapshot } from '../shared/chat'
 import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import type { DocRead } from '../shared/docs'
@@ -15,7 +15,15 @@ import { describeTaskList, taskListSummary } from '../shared/task-list'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
 import type { NotificationCase, OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout, TabPlace } from '../shared/types'
 import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteDeviceView } from '../shared/remote'
-import { AccountStore, accountLaunch, electronVault, nodeAccountFile } from './accounts'
+import { AccountStore, accountLaunch, electronVault, loginEnv, nodeAccountFile } from './accounts'
+import { accountsRoot, canonical, identityOf, inAccountsRoot, NO_IDENTITY, parseAuthStatus, signInCommand, type AuthStatus, type Identity } from './account-login'
+import { AccountChecks, STATUS_TIMEOUT_MS } from './account-checks'
+import { CliError, CLI_TIMEOUT_MS, cliMessage, runClaudeCli, type CliRun } from './mcp/claude-cli'
+import { AccountFlow } from './account-flow'
+import { removeAccount } from './account-remove'
+import { carryItem, readSource, type SourceFolder } from './account-carry-run'
+import { previewCounts } from './account-carry'
+import { accountSessionStore, copyAt, copyTranscript, decideMove, findCopies, type TranscriptCopy, type TranscriptRoot } from './transcript-move'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
 import { badgeDescription, dotBitmap } from './app-badge'
@@ -23,9 +31,9 @@ import { AutoContinue, limitResetOf, type RestoreCut } from './auto-continue'
 import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
-import { buildChildEnv } from './child-env'
+import { applyEnvPatch, buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput } from './ipc-guards'
+import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions } from './ipc-guards'
 import { NOT_RUNNING, type ReviewUpdate } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -46,19 +54,19 @@ import { findExecutable, isExecutableFile } from './login-env'
 import { migrateLook } from './look-migration'
 import { macMenuTemplate } from './mac-menu'
 import { bundleOf, createMacUpdateBackend, feedFileUrl, prepareUpdate, releasePage, startSwap } from './mac-update'
-import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, type ClaudeCli } from './mcp-registrar'
+import { ensureMcpRegistered, execRunner, resolveClaude, resolveClaudePosix, signInFoldersToRegister, type ClaudeCli } from './mcp-registrar'
 import { anchorExe, findGitBash, MsysAnchor, spawnAnchor } from './msys-anchor'
 import { execGit } from './git-source'
 import { changeFolderOf, folderListingOf, type TabFolderDeps } from './folder-browse'
 import { pathKey } from './path-key'
 import { startPipeServer, type PipeServerHandle } from './pipe-server'
-import { buildLaunch, buildProbe, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver, typedPaths } from './profiles'
+import { buildLaunch, buildProbe, detectInstalledProfiles, loginShell, pickClaudeProfile, pickProfile, profileResolver, shellFamily, typedPaths } from './profiles'
 import { allPtysExited, spawnPty } from './pty-host'
 import { resourcePath } from './resources'
 import { applySettingEdit, loadSettingsSafe, type ParsedSettings } from './settings'
 import { Coalescer } from './coalesce'
 import { SettingsWindow } from './settings-window'
-import { claudeProjectsDir, SessionHistory } from './session-history'
+import { SessionHistory } from './session-history'
 import { ChatHub } from './chat/chat-hub'
 import { ChatSessions } from './chat/chat-sessions'
 import { isHandoffLine, openInTerminal, type HandoffDeps } from './chat/terminal-handoff'
@@ -114,7 +122,7 @@ import { socketProblem } from './socket-file'
 import { createSoundPlayer, linuxSoundDeps, macSoundDeps, startPlayer, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
-import { TabManager } from './tab-manager'
+import { TabManager, type ConversationMove } from './tab-manager'
 import { TabPlaces } from './tab-places'
 import { chatBatchPush, clampPush, forgetCopiedBy, hostHandlers, hostTabs, planPush, pruneListedMembers, reviewPushes, withoutTabId, type HostContext } from './remote-host'
 import { clearFlag, frontClears, presentViewers, RemoteFront } from './remote-front'
@@ -128,7 +136,6 @@ import { showWindow } from './window-show'
 import { loadWindowState, trackWindowState } from './window-state'
 import type { McpResult, McpServersView, PluginsView } from '../shared/mcp'
 import { configPaths, jsonFileCache, readTabConfig, type ConfigPaths } from './mcp/mcp-config'
-import { runClaudeCli } from './mcp/claude-cli'
 import { McpHub } from './mcp/mcp-hub'
 import { ConfigWatch } from './mcp/config-watch'
 import { RestartCoordinator } from './mcp/restart-coordinator'
@@ -298,7 +305,7 @@ function bootstrap(): void {
   let previous = sessions.rotateOnStartup({ afterUpdate: restoreAfterUpdate })
   // the sessions of the chats this app started: Claude Code marks them as SDK sessions, and Recent sessions lists them
   const chatSessions = new ChatSessions(join(dataDir, 'chat-sessions.json'))
-  const history = new SessionHistory(claudeProjectsDir(process.env, homedir()), undefined, (id) => chatSessions.has(id))
+  const history = new SessionHistory(() => transcriptRoots(), undefined, (id) => chatSessions.has(id))
   const starred = new StarredSessions(dataDir, toast)
   const tabLayout = new TabLayoutStore(dataDir, toast)
   const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
@@ -329,6 +336,234 @@ function bootstrap(): void {
   const accountName = (id: string): string => {
     const name = accounts.nameOf(id)
     return name ? `Account "${name}"` : 'The account'
+  }
+  /** an account as a message names it: Main account, or the name */
+  const accountLabel = (id: string | null): string => (id === null ? 'Main account' : accounts.nameOf(id) ?? 'The account')
+  /** Main account's config folder: CLAUDE_CONFIG_DIR, else ~/.claude; null in a test run that sets no CLAUDE_CONFIG_DIR */
+  const mainConfigDir: string | null = process.env.CLAUDE_CONFIG_DIR || (isTest ? null : join(homedir(), '.claude'))
+  /** the `projects` folders conversations are kept in: Main account's, then each sign-in account's */
+  const transcriptRoots = (): TranscriptRoot[] => [
+    ...(mainConfigDir === null ? [] : [{ account: null, projects: join(mainConfigDir, 'projects') }]),
+    ...accounts.list().flatMap((a): TranscriptRoot[] => (a.kind === 'login' && a.folder !== null ? [{ account: a.id, projects: join(a.folder, 'projects') }] : []))
+  ]
+  /** the `projects` folder of an account: a sign-in account's own, else Main account's (token accounts share it); null when that is unknown */
+  const projectsOf = (account: string | null): string | null => {
+    const folder = account === null ? null : accounts.folderOf(account)
+    if (folder !== null) return join(folder, 'projects')
+    return mainConfigDir === null ? null : join(mainConfigDir, 'projects')
+  }
+  /** the environment of a CLI run for a sign-in account: its folder, and none of the environment's token or key */
+  const accountEnv = (folder: string): Record<string, string> => applyEnvPatch(childEnv(), loginEnv(folder))
+  /** `claude <args>` for a sign-in account, started the way a chat starts Claude Code; rejects with a CliError when it cannot run */
+  const accountCli = async (folder: string, args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<CliRun> => {
+    const launch = await resolveChatLaunch(settings.claude.command, chatLaunchDeps)
+    if (launch.how === 'none') throw new CliError('failed', launch.reason)
+    return runClaudeCli(launch, args, { cwd: homedir(), env: accountEnv(folder), timeoutMs })
+  }
+  /** the root the sign-in accounts' folders are made under (CLAUDETERM_ACCOUNTS_ROOT, else the data folder) */
+  const accountsRootDir = accountsRoot(process.env, homedir(), dataDir)
+  /** `claude auth status` in a sign-in account's folder, 15 s; a CLI error or a timeout is unknown */
+  const statusOf = (folder: string): Promise<AuthStatus> =>
+    accountCli(folder, ['auth', 'status', '--json'], STATUS_TIMEOUT_MS).then(parseAuthStatus, (e: Error): AuthStatus => ({ state: 'unknown', reason: e.message }))
+  /** a folder's login, from its .claude.json */
+  const identityOfFolder = (folder: string): Promise<Identity> => readTrustFile(join(folder, '.claude.json')).then(identityOf)
+  /** the login of a .claude.json file (Main account's is claudeAccountFile) */
+  const identityOfFile = (file: string): Promise<Identity> => readTrustFile(file).then(identityOf)
+  const isDirAsync = (folder: string): Promise<boolean> => fsPromises.stat(folder).then((s) => s.isDirectory(), () => false)
+  /** the state of each sign-in account, from `claude auth status` in its folder; a change goes to both windows */
+  const checks = new AccountChecks({
+    status: statusOf,
+    identity: identityOfFolder,
+    isDir: isDirAsync,
+    now: () => Date.now(),
+    changed: () => broadcast(IPC.evAccounts, accountsView())
+  })
+  /** whether a tab can start on the account: a token that reads here, or a sign-in folder that is there and not known to be signed out */
+  const startable = (id: string): boolean => {
+    if (accounts.kindOf(id) === 'token') return accounts.token(id) !== null
+    const folder = accounts.folderOf(id)
+    if (folder === null) return false
+    const state = checks.get(id).state
+    return (state === 'ready' || state === 'unknown') && isDirectory(folder)
+  }
+  /** Main account's .claude.json, where its login is read from; null when Main account's folder is unknown */
+  const mainClaudeJson: string | null = mainConfigDir === null ? null : claudeAccountFile(process.env, homedir())
+  /** Main account's login as the windows show it, read again when its .claude.json changed (its size and time) */
+  let mainWho: Identity = NO_IDENTITY
+  let mainWhoStamp = ''
+  const refreshMainWho = async (): Promise<void> => {
+    if (mainClaudeJson === null) return
+    const stamp = await fsPromises.stat(mainClaudeJson).then((s) => `${s.mtimeMs}:${s.size}`, () => '')
+    if (stamp === mainWhoStamp) return
+    mainWho = await identityOfFile(mainClaudeJson)
+    mainWhoStamp = stamp
+  }
+  /** both windows show the accounts: the settings window lists them, the main window's menus and status bar name them */
+  const accountsView = (): AccountsView => ({
+    accounts: accounts.list().map((a): AccountView => {
+      if (a.kind !== 'login') return { id: a.id, name: a.name, addedAt: a.addedAt, kind: 'token', readable: a.readable, state: null, checking: false, email: null, plan: null, folder: null }
+      const c = checks.get(a.id)
+      return { id: a.id, name: a.name, addedAt: a.addedAt, kind: 'login', readable: startable(a.id), state: c.state, checking: c.checking, email: c.identity.email, plan: c.identity.plan, folder: a.folder }
+    }),
+    keyring: accounts.keyring(),
+    main: { email: mainWho.email, plan: mainWho.plan, folder: mainConfigDir }
+  })
+  /** the sign-in accounts with their folders: the ones the checks and the carry-over look at */
+  const loginAccounts = (): { id: string; name: string; folder: string }[] =>
+    accounts.list().flatMap((a) => (a.kind === 'login' && a.folder !== null ? [{ id: a.id, name: a.name, folder: a.folder }] : []))
+  /** the account's sign-in tabs' count of running Claude tabs on it */
+  const tabsOn = (id: string): number => tabs.list().filter((t) => t.kind === 'claude' && t.account === id && !t.exited).length
+  /** `claude auth logout` in a sign-in account's folder; the result is the CLI's */
+  const logoutIn = (folder: string): Promise<CliRun> => accountCli(folder, ['auth', 'logout'], STATUS_TIMEOUT_MS)
+  /** the folder an account's files come from: Main account's config folder, or a sign-in account's; null when unknown */
+  const sourceFolder = (source: string | null): SourceFolder | null => {
+    if (source === null) return mainConfigDir === null || mainClaudeJson === null ? null : { configDir: mainConfigDir, claudeJson: mainClaudeJson }
+    const folder = accounts.folderOf(source)
+    return folder === null ? null : { configDir: folder, claudeJson: join(folder, '.claude.json') }
+  }
+  /** the conversations of a folder: the transcripts (.jsonl) under its projects folders */
+  const conversationsIn = async (folder: string): Promise<number> => {
+    const projects = await fsPromises.readdir(join(folder, 'projects'), { withFileTypes: true }).catch(() => null)
+    let count = 0
+    for (const dir of projects ?? []) {
+      if (!dir.isDirectory()) continue
+      const files = await fsPromises.readdir(join(folder, 'projects', dir.name)).catch(() => null)
+      count += (files ?? []).filter((name) => name.endsWith('.jsonl')).length
+    }
+    return count
+  }
+  /** the jobs of one folder run one after another: two items never write the same settings.json at once */
+  const folderQueue = new Map<string, Promise<unknown>>()
+  const inOrder = <T>(folder: string, job: () => Promise<T>): Promise<T> => {
+    const key = pathKey(folder)
+    const run = (folderQueue.get(key) ?? Promise.resolve()).then(job)
+    const tail = run.then(() => undefined, () => undefined)
+    folderQueue.set(key, tail)
+    void tail.then(() => {
+      if (folderQueue.get(key) === tail) folderQueue.delete(key)
+    })
+    return run
+  }
+  /** the MCP registration of ClaudeTerm's server in an account's folder, through that account's Claude Code */
+  const registerIn = async (folder: string): Promise<CarryLine> => {
+    let missing = false
+    const exec = (args: string[]): Promise<CliRun> =>
+      accountCli(folder, args).catch((e: Error) => {
+        missing ||= e instanceof CliError && e.reason === 'failed'
+        return { code: 1, stdout: '', stderr: e.message }
+      })
+    const result = await ensureMcpRegistered({ run: execRunner, execPath: process.execPath, serverScript: resourcePath('mcp/show-image-server.js'), log: (m) => log.warn(m), exec })
+    if (result === 'registered' || result === 'already') return { item: 'claudeterm', state: 'done', text: 'images, diffs, the task list, agent messages', subs: [] }
+    return { item: 'claudeterm', state: 'failed', text: missing || result === 'no-claude' ? 'Claude Code was not found' : "Could not add ClaudeTerm's server", subs: [] }
+  }
+  /** the add flow: main owns it, the Settings window shows it; its sign-in tab and folder are made and removed here */
+  const flow = new AccountFlow({
+    store: accounts,
+    root: () => accountsRootDir,
+    mainFolder: mainConfigDir,
+    canonical,
+    isDir: isDirAsync,
+    mkdir: (folder) => fsPromises.mkdir(folder, { recursive: true, mode: 0o700 }).then(() => undefined),
+    removeCreated: async (folder) => {
+      if (!(await inAccountsRoot(folder, accountsRootDir))) throw new Error('the folder is not inside the accounts folder')
+      await fsPromises.rm(folder, { recursive: true, force: true, maxRetries: 5 })
+    },
+    openSignInTab: (name, folder, email) => {
+      try {
+        return tabs.open({ kind: 'shell', cwd: homedir(), title: `Sign in — ${name}` }, { activate: false, signIn: { folder, email } }).id
+      } catch (e) {
+        log.warn(`cannot open the sign-in tab: ${(e as Error).message}`)
+        return null
+      }
+    },
+    closeTab: (tabId) => tabs.close(tabId),
+    showTab: (tabId) => {
+      tabs.activate(tabId)
+      focusWindow()
+    },
+    status: statusOf,
+    identity: identityOfFolder,
+    logout: (folder) => logoutIn(folder).then((r) => r.code === 0, () => false),
+    others: async (except) => {
+      const list: { label: string; identity: Identity }[] = []
+      if (mainClaudeJson !== null) list.push({ label: MAIN_ACCOUNT, identity: await identityOfFile(mainClaudeJson) })
+      for (const a of loginAccounts()) {
+        if (a.id !== except) list.push({ label: a.name, identity: await identityOfFolder(a.folder) })
+      }
+      return list
+    },
+    carry: async (item, target, source) => {
+      const from = sourceFolder(source)
+      if (from === null) return { item, state: 'failed', text: 'The account to carry from is not available', subs: [] }
+      return inOrder(target.folder, () =>
+        carryItem(item, { source: from, sourceName: accountLabel(source), target, cli: (args) => accountCli(target.folder, args), log: { warn: (m) => log.warn(m) } })
+      )
+    },
+    register: (folder) => inOrder(folder, () => registerIn(folder)),
+    tabsOn,
+    settingsOpen: () => settingsWindow.isOpen(),
+    toast,
+    publish: (view: AccountFlowView | null) => broadcast(IPC.evAccountFlow, view),
+    accountsChanged: () => broadcast(IPC.evAccounts, accountsView()),
+    confirmed: (id, identity) => checks.confirmed(id, identity),
+    openClaudeTab: (id) => openAccountTab(id),
+    log: (message) => log.warn(message),
+    newId: () => randomUUID()
+  })
+  /** the reason a copy failed: the system's error code, else the message */
+  const copyFailure = (e: unknown): string => {
+    const code = (e as NodeJS.ErrnoException | null)?.code
+    return typeof code === 'string' ? code : e instanceof Error ? e.message : String(e)
+  }
+  /**
+   * The copy a move starts from: the transcript the tab reported (also by its real path, for an 8.3 or junction spelling),
+   * else the copy in the folder the tab's account keeps its conversations in (a token tab's is Main account's). A newer
+   * copy elsewhere is what the move refuses, so it is not the source.
+   */
+  const sourceCopy = async (m: ConversationMove, copies: TranscriptCopy[]): Promise<TranscriptCopy | null> => {
+    const path = sources.get(m.tabId)?.transcriptPath
+    const reported = path ? copyAt(path, copies) ?? copyAt(await canonical(path), copies) : null
+    const own = projectsOf(m.from)
+    const mine = own === null ? undefined : copies.find((c) => pathKey(c.projects) === pathKey(own))
+    return reported ?? mine ?? null
+  }
+  /**
+   * A conversation moves to the account it resumes on (see ConversationMove). A refusal and a failed copy say why. An
+   * explicit move that fails stops with the tab on its account; any other resume goes on without the copy. Never throws.
+   */
+  const moveConversation = async (m: ConversationMove): Promise<boolean> => {
+    try {
+      const target = projectsOf(m.to)
+      if (target === null) return true
+      const copies = await findCopies(transcriptRoots(), m.sessionId)
+      const plan = decideMove({ explicit: m.explicit, target, source: await sourceCopy(m, copies), copies })
+      if (plan.kind === 'none') return true
+      if (plan.kind === 'refuse') {
+        toast(`This conversation went further on ${accountLabel(plan.newer.account)}; open it from Recent sessions`)
+        // a move with no tab (Open as, a listed session) has no tab to restart
+        if (m.stage === 'copy' && m.tabId !== '') chatHub.restarting(m.tabId)
+        return false
+      }
+      if (m.stage === 'check') return true
+      await copyTranscript(plan.from, target)
+      return true
+    } catch (e) {
+      const reason = copyFailure(e)
+      log.warn(`cannot move a conversation (${m.stage}): ${reason}`)
+      if (m.stage === 'check') return false
+      if (!m.explicit) {
+        toast(`Could not copy the conversation to ${accountLabel(m.to)}: ${reason}`)
+        return true
+      }
+      // a move with no tab (Open as) has no tab that goes on: the failure says only why
+      if (m.tabId === '') {
+        toast(`Could not copy the conversation to ${accountLabel(m.to)}: ${reason}`)
+        return false
+      }
+      toast(`Could not copy the conversation to ${accountLabel(m.to)}: ${reason}. The tab goes on as ${accountLabel(m.from)}.`)
+      chatHub.restarting(m.tabId)
+      return false
+    }
   }
   // what the window was last shown; opening looks the id up here, so the renderer only passes an id
   let listedSessions = new Map<string, SessionSummary>()
@@ -628,17 +863,20 @@ function bootstrap(): void {
       remote?.host.changed()
     },
     // a continue armed for the old process would type into the resumed one
-    onTabRestarting: (tabId) => {
+    onTabRestarting: (tabId, continuedAs) => {
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
       // the chat says at once that its Claude Code restarts, and keeps its conversation until the new one is ready
-      chatHub.restarting(tabId)
+      chatHub.restarting(tabId, continuedAs ? `Continued as ${accountLabel(continuedAs.account)}` : undefined)
     },
+    moveConversation,
     // another conversation or folder is no restart: the chat says none, and starts new as it did before
     onTabNewConversation: (tabId) => {
       chatHub.newConversation(tabId)
     },
     onTabClosed: (tabId) => {
+      // a sign-in tab closed by the person: its sign-in is looked at (the flow ignores any other tab)
+      void flow.tabEnded(tabId)
       stopTabImages(tabId)
       // after the feed has stopped, so no late report brings the closed tab back
       planHub.removeTab(tabId)
@@ -683,9 +921,13 @@ function bootstrap(): void {
     },
     baseEnv: childEnv,
     resolveLaunch: (req) => {
-      if (req.kind === 'claude' || req.setupToken) {
+      if (req.kind === 'claude' || req.setupToken || req.signIn) {
         msysAnchor?.ensure()
-        const acc = accountLaunch(req.kind === 'claude' ? req.account : null, (id) => accounts.token(id))
+        const acc = accountLaunch(req.kind === 'claude' ? req.account : null, (id) => {
+          if (accounts.kindOf(id) === 'token') return { kind: 'token', token: accounts.token(id) }
+          const folder = accounts.folderOf(id)
+          return folder === null ? null : { kind: 'login', folder, startable: startable(id) }
+        })
         // a switch to an account that cannot be used changes nothing; a start goes on with the main account
         if (acc.unavailable && req.strict) throw new Error(`${accountName(req.account!)} is not available`)
         if (claudeCli === null && settings.claude.command === 'claude') toast('claude not found in PATH — install Claude Code: https://claude.com/claude-code')
@@ -693,6 +935,11 @@ function bootstrap(): void {
         if (warning) toast(warning)
         if (req.setupToken) {
           return { profileName: profile.name, spec: buildLaunch(profile, 'claude', { command: `${settings.claude.command} setup-token`, settingsPath: null, resumeSessionId: null, forkSession: false }) }
+        }
+        // the sign-in tab runs `claude auth login` once, in the account's own folder
+        if (req.signIn) {
+          const command = signInCommand(settings.claude.command, shellFamily(profile), req.signIn.email)
+          return { profileName: profile.name, spec: buildLaunch(profile, 'claude', { command, settingsPath: null, resumeSessionId: null, forkSession: false }, { once: true }), env: loginEnv(req.signIn.folder) }
         }
         if (acc.unavailable) toast(`${accountName(req.account!)} is not available; the tab started on the main account`)
         // a fork without a conversation of its own starts as a fork of its head's conversation
@@ -710,9 +957,11 @@ function bootstrap(): void {
       updateAwake()
     },
     // Claude Code writes the transcript with the first message; --resume of a conversation without one fails
+    // the reported transcript, else a copy in any account's folder (a conversation moved there resumes); with no transcript reported, as before
     resumable: async (tabId, sessionId) => {
       const p = sources.get(tabId)?.transcriptPath
-      return p ? (await findTranscript(p, sessionId)) !== null : true
+      if (!p) return true
+      return (await findTranscript(p, sessionId)) !== null || (await findCopies(transcriptRoots(), sessionId)).length > 0
     },
     events: {
       opened: (t) => {
@@ -777,11 +1026,20 @@ function bootstrap(): void {
       order: (ids) => send(IPC.evTabsOrder, ids),
       data: (id, d) => {
         send(IPC.evPtyData, id, d)
+        flow.tabOutput(id, d)
         // the copy takes the same string as the window, in the same order
         remote?.host.output(id, d)
       },
       exit: (id, code) => {
         send(IPC.evPtyExit, id, code)
+        // a sign-in tab's process ended: auth status decides whether the sign-in went through
+        void flow.tabEnded(id)
+        // a Claude tab on a sign-in account that ends with an error: its sign-in may have ended, so the account is checked again
+        const ended = tabs.get(id)
+        if (code !== 0 && ended?.kind === 'claude' && ended.account !== null) {
+          const folder = accounts.folderOf(ended.account)
+          if (folder !== null) void checks.check(ended.account, folder)
+        }
         mailTabsChanged()
         // the process that waited is gone: an attention still in its poll must not start
         tabInputs.bump(id)
@@ -842,7 +1100,12 @@ function bootstrap(): void {
       launch: (command) => resolveChatLaunch(command, chatLaunchDeps),
       home: homedir()
     }),
-    history: async (sessionId, folder) => (await loadSdk()).getSessionMessages(sessionId, { dir: folder, includeSystemMessages: true }),
+    history: async (sessionId, folder, account) => {
+      // a sign-in account's transcripts are in its own folder: the SDK reads them through a store over that folder
+      const accountFolder = account === null ? null : accounts.folderOf(account)
+      const sessionStore = accountFolder === null ? undefined : accountSessionStore(join(accountFolder, 'projects'))
+      return (await loadSdk()).getSessionMessages(sessionId, { dir: folder, includeSystemMessages: true, ...(sessionStore ? { sessionStore } : {}) })
+    },
     window: (tabId, fromRev, toRev, patches) => send(IPC.evChatPatch, tabId, fromRev, toRev, patches),
     // the patches of a tab a member watches go to its members, whatever tab the window shows
     remote: (tabId, fromRev, toRev, patches) => pushChatBatch(tabId, fromRev, toRev, patches),
@@ -1201,18 +1464,18 @@ function bootstrap(): void {
     const list = await history.list(100, starred.ids())
     listedSessions = new Map(list.map((s) => [s.id, s]))
     const open = new Set(tabs.list().map((t) => t.claudeSessionId))
-    return list.map((s) => ({ ...s, open: open.has(s.id), starred: starred.ids().has(s.id) }))
+    return list.map((s) => ({ ...s, open: open.has(s.id), starred: starred.ids().has(s.id), accountName: s.account ? (accounts.nameOf(s.account) ?? null) : null }))
   }
 
   /** the tab in a session's conversation (not brought forward), or a new Claude tab that resumes it (opened in the background), for a member that was listed it */
-  const openSessionOf = (id: string): string => {
+  const openSessionOf = async (id: string): Promise<string> => {
     const s = listedSessions.get(id)
     if (!s) throw new CallError(REMOTE_COPY.unknownSession)
     const tab = tabs.list().find((t) => t.claudeSessionId === s.id)
     if (tab) return tab.id
     // Claude Code finds a conversation by its folder: resuming it anywhere else fails
     if (!isDirectory(s.cwd)) throw new CallError(`The folder of this session no longer exists: ${s.cwd}`)
-    const opened = openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id }, false)
+    const opened = await openOn(s, false)
     if (!opened) throw new CallError(REMOTE_COPY.openTabFailed)
     return opened.id
   }
@@ -1222,6 +1485,7 @@ function bootstrap(): void {
     tabs: {
       list: () => tabs.list(),
       get: (tabId) => tabs.get(tabId),
+      isTransient: (tabId) => tabs.isTransient(tabId),
       // a tab closed from another device leaves no empty window (the window's own close is tabsClose's)
       close: (tabId) => {
         tabs.close(tabId)
@@ -1242,7 +1506,8 @@ function bootstrap(): void {
     shownPlan: shownPlanOf,
     clearTaskList: (tabId) => taskLists.set(tabId, null),
     notes: noteHub,
-    accounts,
+    // the members see the accounts this device can start tabs on (accountEntries leaves out the rest)
+    accounts: { list: () => accountsView().accounts, nameOf: (id) => accounts.nameOf(id) },
     sizes,
     attention: tabAttention,
     titles,
@@ -1602,6 +1867,11 @@ function bootstrap(): void {
     }
   }
 
+  /** a Claude tab in the default folder on the account (null: Main account), the main window brought forward */
+  const openAccountTab = (id: string | null): void => {
+    if (openTab({ kind: 'claude', cwd: defaultFolder(), account: id }, true)) focusWindow()
+  }
+
   /** the folder new tabs open in: the defaultFolder setting, else (or when that folder is gone) the home folder */
   const defaultFolder = (): string => {
     if (settings.defaultFolder === null) return homedir()
@@ -1640,11 +1910,15 @@ function bootstrap(): void {
     send(IPC.evRestore, null)
     // a fork whose own conversation was never saved forks its head's again, rather than resuming nothing. The transcripts
     // are looked for together, before any tab opens, so the restored tabs then open in one go, in their saved order
-    const projects = claudeProjectsDir(process.env, homedir())
     const unsaved = await Promise.all(snap.tabs.map(async (t) => {
       const id = t.kind === 'claude' && t.fork?.from ? t.claudeSessionId : null
-      return id !== null && (await findTranscript(join(projects, t.cwd.replace(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`), id)) === null
+      return id !== null && (await findCopies(transcriptRoots(), id)).length === 0
     }))
+    // each conversation is carried to the account its tab opens on (rule B), before the tabs open
+    for (const t of snap.tabs) {
+      if (t.kind !== 'claude' || t.claudeSessionId === null) continue
+      await moveConversation({ tabId: '', sessionId: t.claudeSessionId, from: null, to: t.account !== null && startable(t.account) ? t.account : null, explicit: false, stage: 'copy' })
+    }
     if (autoTabId) {
       if (tabs.get(autoTabId)) tabs.close(autoTabId)
       autoTabId = null
@@ -2064,8 +2338,20 @@ function bootstrap(): void {
     .catch((e: unknown) => log.error(`pipe server failed: ${String(e)}`))
 
   if (app.isPackaged && process.env.CLAUDETERM_SKIP_MCP_REGISTER !== '1') {
-    void ensureMcpRegistered({ run: execRunner, execPath: process.execPath, serverScript: resourcePath('mcp/show-image-server.js'), log: (m) => log.warn(m), resolve: () => findingClaude })
-      .then((r) => log.info(`mcp registration: ${r}`))
+    const serverScript = resourcePath('mcp/show-image-server.js')
+    void ensureMcpRegistered({ run: execRunner, execPath: process.execPath, serverScript, log: (m) => log.warn(m), resolve: () => findingClaude })
+      .then(async (r) => {
+        log.info(`mcp registration: ${r}`)
+        // each sign-in account has a config folder of its own, registered one after another with its own Claude Code
+        for (const a of await signInFoldersToRegister(accounts.list(), isDirAsync)) {
+          const folder = a.folder
+          const exec = (args: string[]): Promise<CliRun> => accountCli(folder, args).catch((e: Error) => ({ code: 1, stdout: '', stderr: e.message }))
+          // in the folder's own queue: a carry-over or a removal of the folder does not run beside it
+          await inOrder(folder, async () => {
+            log.info(`mcp registration for ${a.name}: ${await ensureMcpRegistered({ run: execRunner, execPath: process.execPath, serverScript, log: (m) => log.warn(m), exec })}`)
+          })
+        }
+      })
   }
 
   // device sync: the group opens once this device has an identity (device-identity.json), or with the first pairing or join
@@ -2337,12 +2623,42 @@ function bootstrap(): void {
   ipcMain.handle(IPC.layoutGet, (): TabLayout => tabLayout.get())
   ipcMain.on(IPC.layoutSet, (_e, c: unknown) => { if (isTabLayoutChange(c)) tabLayout.set(c) })
   /** a listed session in a new Claude tab: Claude Code finds a conversation by its folder, and a folder that is gone cannot resume it */
-  const openListedSession = (s: { id: string; cwd: string }): TabInfo | null => {
+  /** the conversation is carried to the account it opens on (rule B: its own copy there, else the newest copy carried in), then it opens in a new Claude tab on that account */
+  const openOn = async (s: { id: string; cwd: string; account?: string | null }, activate: boolean): Promise<TabInfo | null> => {
+    const account = s.account ?? null
+    await moveConversation({ tabId: '', sessionId: s.id, from: null, to: account !== null && startable(account) ? account : null, explicit: false, stage: 'copy' })
+    return openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id, account }, activate)
+  }
+  const openListedSession = async (s: { id: string; cwd: string; account?: string | null }): Promise<TabInfo | null> => {
     if (!isDirectory(s.cwd)) {
       toast(`The folder of this session no longer exists: ${s.cwd}`)
       return null
     }
-    return openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id })
+    return openOn(s, true)
+  }
+  /**
+   * Open as: a listed session opens on another account. A tab that holds it moves to that account (a refusal is its toast),
+   * else the conversation is copied there (rule A, as Continue as) and a new Claude tab resumes it. Never throws.
+   */
+  const openSessionAs = async (id: string, account: string | null): Promise<void> => {
+    const s = listedSessions.get(id)
+    if (!s) return
+    if (account !== null && !startable(account)) {
+      toast(`${accountName(account)} is not available`)
+      return
+    }
+    const tab = tabs.list().find((t) => t.claudeSessionId === s.id)
+    if (tab) {
+      if (tab.account !== account) await tabs.switchAccount(tab.id, account)
+      tabs.activate(tab.id)
+      return
+    }
+    if (!isDirectory(s.cwd)) {
+      toast(`The folder of this session no longer exists: ${s.cwd}`)
+      return
+    }
+    const moved = await moveConversation({ tabId: '', sessionId: s.id, from: s.account ?? null, to: account, explicit: true, stage: 'copy' })
+    if (moved) openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id, account })
   }
   ipcMain.on(IPC.sessionsOpen, (_e, id: unknown, device?: unknown) => {
     // the device of the section the pick was made in; a value that is not a device drops the pick
@@ -2358,7 +2674,11 @@ function bootstrap(): void {
       tabs.activate(tab.id)
       return
     }
-    openListedSession(s)
+    void openListedSession(s)
+  })
+  ipcMain.on(IPC.sessionsOpenAs, (_e, id: unknown, account: unknown) => {
+    if (!isSessionId(id) || !isAccountRef(account)) return
+    void openSessionAs(id, account).catch((e: Error) => log.warn(`cannot open the session on another account: ${e.message}`))
   })
   ipcMain.on(IPC.tabsClose, (_e, id: unknown) => {
     if (!isId(id)) return
@@ -2395,7 +2715,8 @@ function bootstrap(): void {
       return
     }
     tabs.switchAccount(id, account)
-      .then((ok) => { if (!ok && account !== null && accounts.token(account) === null) toast(`${accountName(account)} is not available`) })
+      // a refusal by the move or a failed copy says so itself: this toast is for an account that cannot be used
+      .then((ok) => { if (!ok && account !== null && !startable(account)) toast(`${accountName(account)} is not available`) })
       .catch((e: Error) => log.warn(`cannot switch the account: ${e.message}`))
   })
   ipcMain.on(IPC.tabsMute, (_e, id: unknown, muted: unknown) => {
@@ -2518,7 +2839,7 @@ function bootstrap(): void {
     tabs: () => tabs.list(),
     resume: (tabId, sessionId) => tabs.resumeSession(tabId, sessionId),
     activate: (tabId) => tabs.activate(tabId),
-    open: (s) => openListedSession(s) !== null,
+    open: (s) => openListedSession(s).then((tab) => tab !== null),
   }
   // where a pick goes, asked before the picker's question: only a restart in the tab's own folder stops background tasks
   ipcMain.handle(IPC.chatResumePlan, (_e, tabId: unknown, sessionId: unknown): Promise<'here' | 'restart' | 'new-tab' | null> => (
@@ -2677,18 +2998,81 @@ function bootstrap(): void {
     revealInFolder(path, nodeRevealDeps((p) => shell.showItemInFolder(p), (d) => void shell.openPath(d)))
   })
   ipcMain.handle(IPC.panelSet, (_e, width: unknown, resize: unknown) => (liveWin() && isPanelWidth(width) && isFlag(resize) ? panelRoom.set(Math.round(width), resize) : panelRoom.mode))
-  const accountsView = (): AccountsView => ({ accounts: accounts.list(), keyring: accounts.keyring() })
-  /** both windows show the accounts: the settings window lists them, the main window's menus and status bar name them */
   const accountsChanged = (r: AccountResult): AccountResult => {
     if (r.ok) broadcast(IPC.evAccounts, accountsView())
     return r
   }
   // the store checks the names, tokens and ids it is given
-  ipcMain.handle(IPC.accountsList, () => accountsView())
+  ipcMain.handle(IPC.accountsList, async (): Promise<AccountsView> => {
+    await refreshMainWho()
+    return accountsView()
+  })
+  ipcMain.on(IPC.accountsCheck, () => checks.checkStale(loginAccounts()))
+  ipcMain.handle(IPC.accountsCarryPreview, async (_e, source: unknown, target: unknown): Promise<CarryPreview | null> => {
+    if (!isAccountRef(source) || !isAccountRef(target)) return null
+    const from = sourceFolder(source)
+    if (from === null) return null
+    const read = await readSource(from)
+    return {
+      source,
+      sourceName: accountLabel(source),
+      sourceEmail: (await identityOfFile(from.claudeJson)).email,
+      sourceFolder: from.configDir,
+      items: previewCounts(read, read.files),
+      targetTabs: target === null ? 0 : tabsOn(target)
+    }
+  })
+  ipcMain.handle(IPC.accountsBegin, (_e, req: unknown): Promise<AccountResult> => (isAccountBegin(req) ? flow.begin(req) : Promise.resolve({ ok: false, error: 'bad arguments' })))
+  ipcMain.handle(IPC.accountsFlow, (): AccountFlowView | null => flow.view())
+  ipcMain.on(IPC.accountsFlowAction, (_e, a: unknown) => {
+    if (isFlowAction(a)) void flow.action(a).catch((e: Error) => log.warn(`cannot run the account flow's action: ${e.message}`))
+  })
+  ipcMain.handle(IPC.accountsPickFolder, async (e): Promise<PickedFolder | null> => {
+    const owner = BrowserWindow.fromWebContents(e.sender)
+    const options: Electron.OpenDialogOptions = { title: 'Use a folder I already have', properties: ['openDirectory'] }
+    const r = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    const folder = r.filePaths[0]
+    return r.canceled || folder === undefined ? null : flow.pick(folder)
+  })
+  ipcMain.handle(IPC.accountsRemoveInfo, async (_e, id: unknown): Promise<RemoveInfo | null> => {
+    const a = isId(id) ? accounts.list().find((x) => x.id === id) : undefined
+    if (!a) return null
+    return { kind: a.kind, folder: a.folder, created: a.created, conversations: a.folder === null ? 0 : await conversationsIn(a.folder), tabs: tabsOn(a.id) }
+  })
   ipcMain.handle(IPC.accountsAdd, (_e, name: unknown, token: unknown) => accountsChanged(accounts.add(name, token)))
   ipcMain.handle(IPC.accountsRename, (_e, id: unknown, name: unknown) => accountsChanged(accounts.rename(id, name)))
   ipcMain.handle(IPC.accountsSetToken, (_e, id: unknown, token: unknown) => accountsChanged(accounts.setToken(id, token)))
-  ipcMain.handle(IPC.accountsRemove, (_e, id: unknown) => accountsChanged(accounts.remove(id)))
+  ipcMain.handle(IPC.accountsRemove, async (_e, id: unknown, opts: unknown): Promise<RemoveResult> => {
+    if (!isId(id) || !isRemoveOptions(opts)) return { ok: false, error: 'bad arguments' }
+    if (flow.view()?.id === id) return { ok: false, error: `Finish or cancel what runs for ${accounts.nameOf(id) ?? 'the account'} first` }
+    const result = await removeAccount(id, opts ?? { signOut: false, deleteFolder: false }, {
+      entry: (x) => accounts.list().find((a) => a.id === x) ?? null,
+      tabsOn,
+      busy: (folder) => folderQueue.has(pathKey(folder)),
+      logout: (folder) => logoutIn(folder).then((r) => (r.code === 0 ? null : cliMessage(r)), (e: Error) => e.message),
+      remove: (x) => accounts.remove(x),
+      changed: () => broadcast(IPC.evAccounts, accountsView()),
+      trash: trashFolder,
+      others: async (except) => Promise.all([...(mainConfigDir === null ? [] : [mainConfigDir]), ...loginAccounts().filter((a) => a.id !== except).map((a) => a.folder)].map(canonical)),
+      canonical
+    })
+    if (result.ok) checks.forget(id)
+    return result
+  })
+  // the account's folder goes to the trash (deleted under CLAUDETERM_TEST=1, as the trash is the machine's), only inside the accounts folder
+  const trashFolder = async (folder: string): Promise<void> => {
+    if (!(await inAccountsRoot(folder, accountsRootDir))) throw new Error('the folder is not inside the accounts folder')
+    if (isTest) await fsPromises.rm(folder, { recursive: true, force: true, maxRetries: 5 })
+    else await shell.trashItem(folder)
+  }
+  ipcMain.on(IPC.accountsShowFolder, (_e, id: unknown) => {
+    if (!isAccountRef(id)) return
+    const folder = id === null ? mainConfigDir : accounts.folderOf(id)
+    if (folder !== null) void shell.openPath(folder)
+  })
+  ipcMain.on(IPC.accountsOpenTab, (_e, id: unknown) => {
+    if (isAccountRef(id) && (id === null || accounts.kindOf(id) !== null)) openAccountTab(id)
+  })
   ipcMain.on(IPC.accountsGetToken, () => {
     if (openTab({ kind: 'shell', cwd: homedir(), title: 'Get a token' }, true, true)) focusWindow()
   })
@@ -3071,6 +3455,10 @@ function bootstrap(): void {
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (e) => e.preventDefault())
+  // the sign-in accounts are checked once the window is up (a check of one within the last minute is kept)
+  win.webContents.once('did-finish-load', () => {
+    checks.checkStale(loginAccounts())
+  })
   // ClaudeTerm uses no WebRTC: a page may send its data over UDP only through a proxy, so a report's script cannot use it to reach the network
   win.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
   // a document's HTML or PDF may load its own frames; any other frame navigation is refused
@@ -3082,8 +3470,18 @@ function bootstrap(): void {
 
   app.on('window-all-closed', () => app.quit())
   let ptysExited = false
+  let flowQuit = false
   app.on('before-quit', (e) => {
     if (ptysExited) return
+    // a sign-in still waiting is undone first (its tab closed, its folder removed); then the quit goes on
+    if (!flowQuit) {
+      e.preventDefault()
+      void flow.quit().catch((err: Error) => log.warn(`cannot end the account flow: ${err.message}`)).finally(() => {
+        flowQuit = true
+        app.quit()
+      })
+      return
+    }
     quitting = true
     remote?.dispose()
     remote = null

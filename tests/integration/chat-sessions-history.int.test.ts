@@ -16,7 +16,7 @@ describe('Recent sessions of the chats ClaudeTerm started', () => {
     writeFileSync(join(folder, `${SID}.jsonl`), JSON.stringify({ type: 'user', cwd: 'D:\\work', entrypoint: 'sdk-ts', isSidechain: false, message: { role: 'user', content: 'hello' } }) + '\n')
     const file = join(root, 'chat-sessions.json')
 
-    const history = new SessionHistory(join(root, 'projects'), nodeHistoryFs, (id) => new ChatSessions(file).has(id))
+    const history = new SessionHistory(() => [{ account: null, projects: join(root, 'projects') }], nodeHistoryFs, (id) => new ChatSessions(file).has(id))
     expect(await history.list(10)).toEqual([])
 
     new ChatSessions(file).add(SID)
@@ -31,7 +31,7 @@ describe('Recent sessions of the chats ClaudeTerm started', () => {
     const file = join(root, 'chat-sessions.json')
     new ChatSessions(file).add(SID)
 
-    const history = new SessionHistory(join(root, 'projects'), nodeHistoryFs, (id) => new ChatSessions(file).has(id))
+    const history = new SessionHistory(() => [{ account: null, projects: join(root, 'projects') }], nodeHistoryFs, (id) => new ChatSessions(file).has(id))
     expect((await history.list(10)).map((s) => s.id)).toEqual([SID])
   })
 })

@@ -40,6 +40,11 @@ describe('filterSessions', () => {
     expect(filterSessions(list, 'offroad').map((x) => x.id)).toEqual(['1'])
     expect(filterSessions(list, 'login payments')).toEqual([])
   })
+  it('filterSessions matches the account name', () => {
+    const onStudio = [s({ id: '3', title: 'Deploy', accountName: 'Studio' }), s({ id: '4', title: 'Deploy', accountName: null })]
+    expect(filterSessions(onStudio, 'studio').map((x) => x.id)).toEqual(['3'])
+    expect(filterSessions(onStudio, 'deploy STUDIO').map((x) => x.id)).toEqual(['3'])
+  })
 })
 
 describe('displayTitle', () => {

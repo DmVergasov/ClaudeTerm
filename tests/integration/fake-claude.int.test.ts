@@ -1,12 +1,12 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { fixtureLines } from '../fixtures/chat-fixtures'
-import { installFakeClaude, type FakeScript } from '../fixtures/fake-claude/install'
+import { FAKE_CREDENTIAL, installFakeClaude, type FakeScript } from '../fixtures/fake-claude/install'
 
 // The stand-in Claude Code (tests/fixtures/fake-claude/fake-claude.ts) run as the installed command
 
@@ -41,9 +41,13 @@ function writeScript(script: FakeScript): string {
   return file
 }
 
+// the sign-in variables a run may inherit: a test sets them itself, so the host's values never decide what a run logs
+const AUTH_ENV = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
+
 function env(script?: string): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CONFIG_DIR: config, FAKE_CLAUDE_LOG: log }
   delete result.FAKE_CLAUDE_SCRIPT
+  for (const key of AUTH_ENV) delete result[key]
   if (script !== undefined) result.FAKE_CLAUDE_SCRIPT = script
   return result
 }
@@ -79,6 +83,16 @@ function track(child: ChildProcess): Run {
 function start(args: string[], script?: FakeScript): Run {
   const file = script ? writeScript(script) : undefined
   return track(spawn(command, args, { cwd: work, env: env(file), shell: process.platform === 'win32', windowsHide: true }))
+}
+
+// runs the stand-in's CLI (mcp, plugin) in the work folder; stdin is closed so a CLI run never waits for input. On Windows
+// the command goes through cmd, so an argument with a space or a quote (a JSON argument) is quoted for it
+function cliRun(args: string[], script?: FakeScript, extra: NodeJS.ProcessEnv = {}): Run {
+  const quoted = process.platform === 'win32' ? args.map(arg => (/[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg)) : args
+  const file = script ? writeScript(script) : undefined
+  const run = track(spawn(command, quoted, { cwd: work, env: { ...env(file), ...extra }, shell: process.platform === 'win32', windowsHide: true }))
+  run.child.stdin?.end()
+  return run
 }
 
 function send(run: Run, message: unknown): void {
@@ -558,6 +572,305 @@ describe('the stand-in Claude Code', () => {
       if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR
       else process.env.CLAUDE_CONFIG_DIR = before
     }
+  })
+
+  it('claude mcp add-json writes the server where Claude Code keeps it, per scope', async () => {
+    writeFileSync(join(config, '.claude.json'), JSON.stringify({ numStartups: 3 }))
+    const user = { type: 'http', url: 'https://mcp.example.test/docs' }
+    const local = { type: 'sse', url: 'https://mcp.example.test/local' }
+    const project = { command: 'npx', args: ['docs-server'] }
+
+    const first = cliRun(['mcp', 'add-json', '--scope', 'user', '--', 'docs', JSON.stringify(user)])
+    expect(await first.exit).toBe(0)
+    expect(first.stdout).toContain('Added http MCP server docs to user config')
+    const second = cliRun(['mcp', 'add-json', '--', 'docs', JSON.stringify(local)])
+    expect(await second.exit).toBe(0)
+    expect(second.stdout).toContain('Added sse MCP server docs to local config')
+    const third = cliRun(['mcp', 'add-json', '-s', 'project', 'docs', JSON.stringify(project)])
+    expect(await third.exit).toBe(0)
+    expect(third.stdout).toContain('Added stdio MCP server docs to project config')
+
+    const claudeJson = JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8'))
+    expect(claudeJson.numStartups).toBe(3)
+    expect(claudeJson.mcpServers.docs).toEqual(user)
+    expect(claudeJson.projects[realpathSync.native(work)].mcpServers.docs).toEqual(local)
+    expect(JSON.parse(readFileSync(join(work, '.mcp.json'), 'utf8')).mcpServers.docs).toEqual(project)
+
+    const again = cliRun(['mcp', 'add-json', '--scope', 'user', '--', 'docs', JSON.stringify(user)])
+    expect(await again.exit).toBe(1)
+    expect(again.stderr).toContain('MCP server docs already exists in user config')
+
+    const broken = cliRun(['mcp', 'add-json', '--', 'bad', '{not json'])
+    expect(await broken.exit).toBe(1)
+    expect(broken.stderr).toContain('Invalid JSON')
+  })
+
+  it('claude mcp remove takes it out, with or without --, and an unknown name fails with its message', async () => {
+    const server = JSON.stringify({ command: 'npx', args: ['docs-server'] })
+    expect(await cliRun(['mcp', 'add-json', '--scope', 'user', '--', 'docs', server]).exit).toBe(0)
+    const removed = cliRun(['mcp', 'remove', '--scope', 'user', 'docs'])
+    expect(await removed.exit).toBe(0)
+    expect(removed.stdout).toContain('Removed MCP server docs from user config')
+    expect(JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8')).mcpServers.docs).toBeUndefined()
+
+    expect(await cliRun(['mcp', 'add-json', '--', 'docs', server]).exit).toBe(0)
+    const dashed = cliRun(['mcp', 'remove', '--', 'docs'])
+    expect(await dashed.exit).toBe(0)
+    expect(dashed.stdout).toContain('Removed MCP server docs from local config')
+
+    const unknown = cliRun(['mcp', 'remove', 'docs'])
+    expect(await unknown.exit).toBe(1)
+    expect(unknown.stderr).toContain('No MCP server found with name: docs')
+  })
+
+  it('plugin marketplace add, install, list --json and disable answer as Claude Code does', async () => {
+    const script: FakeScript = {
+      turns: {},
+      marketplaces: [{ name: 'acme-tools', source: 'acme/tools', plugins: [{ name: 'ci-watch', description: 'Follows CI runs.', version: '1.0.0' }] }]
+    }
+
+    const added = cliRun(['plugin', 'marketplace', 'add', 'acme/tools'], script)
+    expect(await added.exit).toBe(0)
+    expect(added.stdout).toContain('Successfully added marketplace: acme-tools')
+    const known = JSON.parse(readFileSync(join(config, 'plugins', 'known_marketplaces.json'), 'utf8'))
+    expect(known['acme-tools'].source).toEqual({ source: 'github', repo: 'acme/tools' })
+
+    const markets = cliRun(['plugin', 'marketplace', 'list', '--json'], script)
+    expect(await markets.exit).toBe(0)
+    expect(JSON.parse(markets.stdout)).toEqual([expect.objectContaining({ name: 'acme-tools', repo: 'acme/tools' })])
+
+    const installed = cliRun(['plugin', 'install', 'ci-watch@acme-tools', '--scope', 'user', '--json'], script)
+    expect(await installed.exit).toBe(0)
+    expect(JSON.parse(installed.stdout)).toEqual({ pluginId: 'ci-watch@acme-tools', scope: 'user', installed: true })
+    const registry = JSON.parse(readFileSync(join(config, 'plugins', 'installed_plugins.json'), 'utf8'))
+    expect(registry.plugins['ci-watch@acme-tools']).toEqual([expect.objectContaining({ scope: 'user', version: '1.0.0' })])
+    expect(JSON.parse(readFileSync(join(config, 'settings.json'), 'utf8')).enabledPlugins['ci-watch@acme-tools']).toBe(true)
+
+    const listing = cliRun(['plugin', 'list', '--json'], script)
+    expect(await listing.exit).toBe(0)
+    expect(JSON.parse(listing.stdout)).toEqual([expect.objectContaining({ id: 'ci-watch@acme-tools', scope: 'user', enabled: true })])
+
+    const disabled = cliRun(['plugin', 'disable', 'ci-watch@acme-tools'], script)
+    expect(await disabled.exit).toBe(0)
+    expect(disabled.stdout).toContain('Disabled plugin ci-watch@acme-tools')
+    const after = cliRun(['plugin', 'list', '--json'], script)
+    expect(await after.exit).toBe(0)
+    expect(JSON.parse(after.stdout)).toEqual([expect.objectContaining({ id: 'ci-watch@acme-tools', enabled: false })])
+
+    const noSource = cliRun(['plugin', 'marketplace', 'add', 'example/none'], script)
+    expect(await noSource.exit).toBe(1)
+    expect(noSource.stderr).toContain('Failed to add marketplace: no marketplace manifest found at example/none')
+    const noPlugin = cliRun(['plugin', 'install', 'nope@acme-tools'], script)
+    expect(await noPlugin.exit).toBe(1)
+    expect(noPlugin.stderr).toContain('Plugin "nope@acme-tools" not found in any marketplace')
+  })
+
+  it('cliFail fails a matching call with its message', async () => {
+    const script: FakeScript = { turns: {}, cliFail: { 'mcp add-json': 'Registry unreachable' } }
+    const failed = cliRun(['mcp', 'add-json', '--scope', 'user', 'docs', '{}'], script)
+    expect(await failed.exit).toBe(1)
+    expect(failed.stderr).toContain('Registry unreachable')
+    const other = cliRun(['plugin', 'list', '--json'], script)
+    expect(await other.exit).toBe(0)
+    expect(other.stdout.trim()).toBe('[]')
+  })
+
+  it('a CLI run logs its arguments and never a secret value', async () => {
+    const server = JSON.stringify({ command: 'npx', args: ['docs-server'] })
+    const run = cliRun(['mcp', 'add-json', '--client-secret', '--', 'docs', server], undefined, { MCP_CLIENT_SECRET: 'secret-value-for-test' })
+    expect(await run.exit).toBe(0)
+    expect(logEntries().find(entry => entry.cli !== undefined)).toEqual({ cli: ['mcp', 'add-json', '--client-secret', '--', 'docs', server], secretEnv: true, stdinKeys: null })
+    expect(readFileSync(log, 'utf8')).not.toContain('secret-value-for-test')
+  })
+
+  it('auth login writes a sign-in into CLAUDE_CONFIG_DIR, auth status reads it, logout removes it', async () => {
+    config = join(dir, 'work')
+    mkdirSync(config, { recursive: true })
+    writeFileSync(join(config, '.claude.json'), JSON.stringify({ numStartups: 3 }))
+
+    const before = cliRun(['auth', 'status'])
+    expect(await before.exit).toBe(1)
+    expect(JSON.parse(before.stdout)).toEqual({ loggedIn: false, authMethod: 'none', configDirectory: config })
+
+    const login = cliRun(['auth', 'login', '--claudeai'])
+    expect(await login.exit).toBe(0)
+    expect(login.stdout).toContain('Opening the browser to sign in…')
+    expect(login.stdout).toContain('If it did not open, use this link: https://claude.ai/oauth/authorize?fake=1')
+    expect(login.stdout).toContain('Login successful.')
+    expect(JSON.parse(readFileSync(join(config, '.credentials.json'), 'utf8'))).toEqual({ claudeAiOauth: { accessToken: `${FAKE_CREDENTIAL}-work` } })
+    const claudeJson = JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8'))
+    expect(claudeJson.numStartups).toBe(3)
+    expect(claudeJson.oauthAccount).toEqual({
+      emailAddress: 'work@example.com',
+      organizationName: 'Example Team',
+      organizationUuid: expect.any(String),
+      organizationType: 'claude_team'
+    })
+
+    const status = cliRun(['auth', 'status'])
+    expect(await status.exit).toBe(0)
+    expect(JSON.parse(status.stdout)).toEqual(
+      expect.objectContaining({
+        loggedIn: true,
+        authMethod: 'claude.ai',
+        apiProvider: 'firstParty',
+        configDirectory: config,
+        email: 'work@example.com',
+        orgId: claudeJson.oauthAccount.organizationUuid,
+        orgName: 'Example Team',
+        subscriptionType: 'team'
+      })
+    )
+    const text = cliRun(['auth', 'status', '--text'])
+    expect(await text.exit).toBe(0)
+    expect(text.stdout).toContain('Logged in as work@example.com')
+
+    const out = cliRun(['auth', 'logout'])
+    expect(await out.exit).toBe(0)
+    expect(out.stdout).toContain('Successfully logged out')
+    const gone = cliRun(['auth', 'status'])
+    expect(await gone.exit).toBe(1)
+    expect(existsSync(join(config, '.credentials.json'))).toBe(false)
+    const kept = JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8'))
+    expect(kept.numStartups).toBe(3)
+    expect(kept.oauthAccount).toBeUndefined()
+  })
+
+  it('auth login waits for its gate; a scripted failure exits 1 and writes nothing', async () => {
+    config = join(dir, 'gated')
+    mkdirSync(config, { recursive: true })
+    // the script names who signs in: its email wins over the --email the page is pre-filled with
+    const gated = cliRun(['auth', 'login', '--claudeai', '--email', 'typed@example.com'], { turns: {}, auth: { gated: { gate: 'approved', email: 'scripted@example.com' } } })
+    await until(() => gated.stdout.includes('Opening the browser to sign in'), 'the sign-in prompt')
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(gated.child.exitCode).toBeNull()
+    expect(existsSync(join(config, '.credentials.json'))).toBe(false)
+    writeFileSync(join(config, 'approved'), '')
+    expect(await gated.exit).toBe(0)
+    expect(existsSync(join(config, '.credentials.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8')).oauthAccount.emailAddress).toBe('scripted@example.com')
+
+    config = join(dir, 'broken')
+    mkdirSync(config, { recursive: true })
+    const broken = cliRun(['auth', 'login', '--claudeai'], { turns: {}, auth: { broken: { fail: 'the browser was closed' } } })
+    expect(await broken.exit).toBe(1)
+    expect(broken.stderr).toContain('Login failed: the browser was closed')
+    expect(existsSync(join(config, '.credentials.json'))).toBe(false)
+    expect(existsSync(join(config, '.claude.json'))).toBe(false)
+  })
+
+  it('auth status can answer garbage, or never', async () => {
+    config = join(dir, 'noisy')
+    mkdirSync(config, { recursive: true })
+    const garbage = cliRun(['auth', 'status'], { turns: {}, auth: { noisy: { status: 'garbage' } } })
+    expect(await garbage.exit).toBe(0)
+    expect(garbage.stdout).toContain('Welcome to Claude Code')
+
+    config = join(dir, 'stuck')
+    mkdirSync(config, { recursive: true })
+    const stuck = cliRun(['auth', 'status'], { turns: {}, auth: { stuck: { status: 'hang' } } })
+    await until(() => logEntries().some(entry => entry.argv !== undefined), 'the first log line')
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    expect(stuck.child.exitCode).toBeNull()
+    // afterEach ends a run the kill missed, so a failed kill neither fails the test nor waits on the run
+    try {
+      killTree(stuck.child)
+    } catch {
+      // see above
+    }
+  }, 20_000)
+
+  it('mcp add writes the server where Claude Code keeps it and mcp get names it', async () => {
+    writeFileSync(join(config, '.claude.json'), JSON.stringify({ numStartups: 3 }))
+    const added = cliRun(['mcp', 'add', '--scope', 'user', 'claudeterm', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', '/x/electron', '/x/server.js'])
+    expect(await added.exit).toBe(0)
+    expect(added.stdout).toContain('Added stdio MCP server claudeterm to user config')
+    const claudeJson = JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8'))
+    expect(claudeJson.numStartups).toBe(3)
+    expect(claudeJson.mcpServers.claudeterm).toEqual({ type: 'stdio', command: '/x/electron', args: ['/x/server.js'], env: { ELECTRON_RUN_AS_NODE: '1' } })
+
+    const got = cliRun(['mcp', 'get', 'claudeterm'])
+    expect(await got.exit).toBe(0)
+    expect(got.stdout).toContain('claudeterm:')
+    expect(got.stdout).toContain('  Scope: User config')
+    expect(got.stdout).toContain('  Type: stdio')
+    expect(got.stdout).toContain('  Command: /x/electron')
+    expect(got.stdout).toContain('  Args: /x/server.js')
+
+    const remote = cliRun(['mcp', 'add', '--scope', 'user', '-t', 'http', '-H', 'X-Team: example', 'docs', 'https://mcp.example.test/docs'])
+    expect(await remote.exit).toBe(0)
+    expect(remote.stdout).toContain('Added http MCP server docs to user config')
+    expect(JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8')).mcpServers.docs).toEqual({
+      type: 'http',
+      url: 'https://mcp.example.test/docs',
+      headers: { 'X-Team': 'example' }
+    })
+    const remoteGot = cliRun(['mcp', 'get', 'docs'])
+    expect(await remoteGot.exit).toBe(0)
+    expect(remoteGot.stdout).toContain('  URL: https://mcp.example.test/docs')
+
+    const missing = cliRun(['mcp', 'get', 'nope'])
+    expect(await missing.exit).toBe(1)
+    expect(missing.stderr).toContain('No MCP server found with name: nope')
+  })
+
+  it('a plugin whose marketplace runs a command is installed only with -y', async () => {
+    const command = 'node scripts/install.js'
+    const sha = createHash('sha256').update(command).digest('hex')
+    const script: FakeScript = {
+      turns: {},
+      marketplaces: [
+        {
+          name: 'acme-tools',
+          source: 'acme/tools',
+          plugins: [{ name: 'deploy-hook', description: 'Runs on deploy.', version: '2.0.0', installCommand: command }]
+        }
+      ]
+    }
+    expect(await cliRun(['plugin', 'marketplace', 'add', 'acme/tools'], script).exit).toBe(0)
+
+    const asked = cliRun(['plugin', 'install', 'deploy-hook@acme-tools', '--scope', 'user', '--json'], script)
+    expect(await asked.exit).toBe(1)
+    expect(JSON.parse(asked.stdout)).toEqual({ needsConfirmation: true, command, sha256: sha })
+    expect(asked.stderr).toContain('confirm with -y or --accept-command <sha256>')
+    expect(existsSync(join(config, 'plugins', 'installed_plugins.json'))).toBe(false)
+
+    const wrong = cliRun(['plugin', 'install', 'deploy-hook@acme-tools', '--accept-command', 'not-the-hash', '--json'], script)
+    expect(await wrong.exit).toBe(1)
+
+    const yes = cliRun(['plugin', 'install', 'deploy-hook@acme-tools', '--scope', 'user', '-y', '--json'], script)
+    expect(await yes.exit).toBe(0)
+    expect(JSON.parse(yes.stdout)).toEqual({ pluginId: 'deploy-hook@acme-tools', scope: 'user', installed: true })
+    const registry = JSON.parse(readFileSync(join(config, 'plugins', 'installed_plugins.json'), 'utf8'))
+    expect(registry.plugins['deploy-hook@acme-tools']).toEqual([expect.objectContaining({ scope: 'user', version: '2.0.0' })])
+  })
+
+  it('a plugin installs with the command hash the install asked for', async () => {
+    const command = 'node scripts/lint.js'
+    const sha = createHash('sha256').update(command).digest('hex')
+    const script: FakeScript = {
+      turns: {},
+      marketplaces: [{ name: 'acme-tools', source: 'acme/tools', plugins: [{ name: 'lint-hook', description: 'Lints.', version: '1.1.0', installCommand: command }] }]
+    }
+    expect(await cliRun(['plugin', 'marketplace', 'add', 'acme/tools'], script).exit).toBe(0)
+    const accepted = cliRun(['plugin', 'install', 'lint-hook@acme-tools', '--scope', 'user', '--accept-command', sha, '--json'], script)
+    expect(await accepted.exit).toBe(0)
+    expect(JSON.parse(accepted.stdout)).toEqual({ pluginId: 'lint-hook@acme-tools', scope: 'user', installed: true })
+  })
+
+  it('every run logs its config folder and whether a token or a key was set, never their values', async () => {
+    const authRun = cliRun(['auth', 'status'], undefined, { CLAUDE_CODE_OAUTH_TOKEN: 'token-value-for-test', ANTHROPIC_API_KEY: 'key-value-for-test' })
+    await authRun.exit
+    const version = start(['--version'])
+    expect(await version.exit).toBe(0)
+    const runEntries = logEntries().filter(entry => entry.argv !== undefined)
+    expect(runEntries).toEqual([
+      { argv: ['auth', 'status'], pid: expect.any(Number), env: { config, oauthToken: true, refreshToken: false, apiKey: true, authToken: false } },
+      { argv: ['--version'], pid: expect.any(Number), env: { config, oauthToken: false, refreshToken: false, apiKey: false, authToken: false } }
+    ])
+    const text = readFileSync(log, 'utf8')
+    expect(text).not.toContain('token-value-for-test')
+    expect(text).not.toContain('key-value-for-test')
   })
 })
 

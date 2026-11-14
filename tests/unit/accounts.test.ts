@@ -1,5 +1,6 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { accountLaunch, AccountStore, checkAccountName, checkToken, electronVault, parseAccounts, tokenEnv, type AccountFile, type Vault } from '../../src/main/accounts'
+import { accountLaunch, AccountStore, checkAccountName, checkToken, electronVault, loginEnv, parseAccounts, tokenEnv, type AccountFile, type Vault } from '../../src/main/accounts'
 
 const TOKEN = 'test-token-personal-0000001'
 const TOKEN2 = 'test-token-replaced-0000002'
@@ -72,7 +73,35 @@ describe('checkToken', () => {
 })
 
 describe('parseAccounts', () => {
-  it('reads the accounts and leaves out entries of the wrong shape and repeated ids', () => {
+  it('parseAccounts reads version 1 as token accounts', () => {
+    const text = JSON.stringify({
+      version: 1,
+      accounts: [{ id: 'a', name: 'Work', addedAt: '2026-10-01T00:00:00.000Z', token: TOKEN, encrypted: false }]
+    })
+    expect(parseAccounts(text)).toEqual([{ kind: 'token', id: 'a', name: 'Work', addedAt: '2026-10-01T00:00:00.000Z', token: TOKEN, encrypted: false }])
+  })
+
+  it('parseAccounts reads both kinds of version 2 and skips the entries of a wrong shape', () => {
+    const folder = resolve('work-account')
+    const text = JSON.stringify({
+      version: 2,
+      accounts: [
+        { kind: 'login', id: 'l', name: 'Login', addedAt: '2026-10-01T00:00:00.000Z', folder, created: true },
+        { kind: 'token', id: 't', name: 'Token', addedAt: '2026-10-01T00:00:00.000Z', token: TOKEN, encrypted: false },
+        { kind: 'login', id: 'no-folder', name: 'Login', addedAt: '2026-10-01T00:00:00.000Z', created: true },
+        { kind: 'login', id: 'relative', name: 'Login', addedAt: '2026-10-01T00:00:00.000Z', folder: 'accounts/work', created: true },
+        { kind: 'login', id: 'text-created', name: 'Login', addedAt: '2026-10-01T00:00:00.000Z', folder, created: 'yes' },
+        { kind: 'sso', id: 'sso', name: 'Login', addedAt: '2026-10-01T00:00:00.000Z', folder, created: true },
+        { kind: 'login', id: 'l', name: 'Again', addedAt: '2026-10-01T00:00:00.000Z', folder, created: true }
+      ]
+    })
+    expect(parseAccounts(text)).toEqual([
+      { kind: 'login', id: 'l', name: 'Login', addedAt: '2026-10-01T00:00:00.000Z', folder, created: true },
+      { kind: 'token', id: 't', name: 'Token', addedAt: '2026-10-01T00:00:00.000Z', token: TOKEN, encrypted: false }
+    ])
+  })
+
+  it('parseAccounts leaves out entries of the wrong shape and repeated ids', () => {
     const text = JSON.stringify({
       version: 1,
       accounts: [
@@ -83,12 +112,12 @@ describe('parseAccounts', () => {
         'junk'
       ]
     })
-    expect(parseAccounts(text)).toEqual([{ id: 'a', name: 'Work', addedAt: '2026-10-01T00:00:00.000Z', token: TOKEN, encrypted: false }])
+    expect(parseAccounts(text)).toEqual([{ kind: 'token', id: 'a', name: 'Work', addedAt: '2026-10-01T00:00:00.000Z', token: TOKEN, encrypted: false }])
   })
 
-  it('is null for a file that is not an accounts file', () => {
+  it('a version other than 1 or 2 is not an accounts file', () => {
     expect(parseAccounts('{')).toBeNull()
-    expect(parseAccounts(JSON.stringify({ version: 2, accounts: [] }))).toBeNull()
+    expect(parseAccounts(JSON.stringify({ version: 3, accounts: [] }))).toBeNull()
     expect(parseAccounts(JSON.stringify([]))).toBeNull()
   })
 })
@@ -99,7 +128,7 @@ describe('AccountStore', () => {
     const store = newStore(file)
     expect(store.add('Personal', TOKEN)).toEqual({ ok: true })
     const [a] = store.list()
-    expect(a).toEqual({ id: expect.any(String), name: 'Personal', addedAt: '2026-10-14T10:00:00.000Z', readable: true })
+    expect(a).toEqual({ id: expect.any(String), name: 'Personal', addedAt: '2026-10-14T10:00:00.000Z', kind: 'token', folder: null, created: false, readable: true })
     expect(JSON.stringify(store.list())).not.toContain(TOKEN)
     expect(file.text).not.toContain(TOKEN)
     expect(JSON.parse(file.text!).accounts[0]).toMatchObject({ name: 'Personal', encrypted: true })
@@ -122,6 +151,73 @@ describe('AccountStore', () => {
     expect(store.keyring()).toBe(false)
     expect(JSON.parse(file.text!).accounts[0]).toMatchObject({ token: TOKEN, encrypted: false })
     expect(store.token(store.list()[0].id)).toBe(TOKEN)
+  })
+
+  it('the first change writes version 2 and keeps the version 1 tokens', () => {
+    const file = memFile(JSON.stringify({ version: 1, accounts: [{ id: 'old', name: 'Work', addedAt: '2026-10-01T00:00:00.000Z', token: TOKEN, encrypted: false }] }))
+    const store = newStore(file)
+    expect(store.add('Home', TOKEN2)).toEqual({ ok: true })
+    expect(JSON.parse(file.text!)).toMatchObject({ version: 2, accounts: [{ kind: 'token', id: 'old', token: TOKEN }, { kind: 'token', name: 'Home' }] })
+    expect(store.token('old')).toBe(TOKEN)
+    expect(newStore(file).token('old')).toBe(TOKEN)
+  })
+
+  it('addLogin saves a sign-in account with its folder and nothing else', () => {
+    const file = memFile()
+    const store = newStore(file)
+    const folder = resolve('work-account')
+    expect(store.addLogin({ id: 'login-1', name: 'Work', folder, created: true })).toEqual({ ok: true })
+    expect(JSON.parse(file.text!)).toEqual({
+      version: 2,
+      accounts: [{ kind: 'login', id: 'login-1', name: 'Work', addedAt: '2026-10-14T10:00:00.000Z', folder, created: true }]
+    })
+    expect(file.text).not.toContain('"token"')
+    expect(file.text).not.toContain('@')
+    expect(store.list()).toEqual([{ id: 'login-1', name: 'Work', addedAt: '2026-10-14T10:00:00.000Z', kind: 'login', folder, created: true, readable: true }])
+    expect(store.token('login-1')).toBeNull()
+    expect(store.kindOf('login-1')).toBe('login')
+    expect(store.folderOf('login-1')).toBe(folder)
+  })
+
+  it('addLogin refuses a folder that is not absolute, and a name that is taken', () => {
+    const store = newStore()
+    expect(store.addLogin({ id: 'a', name: 'Work', folder: 'accounts/work', created: true })).toEqual({ ok: false, error: 'The folder is not an absolute path' })
+    store.add('Home', TOKEN)
+    expect(store.addLogin({ id: 'b', name: 'home', folder: resolve('home'), created: false })).toEqual({ ok: false, error: 'An account named "home" already exists' })
+  })
+
+  it('toLogin keeps the id and drops the token in the same write', () => {
+    const file = memFile()
+    const store = new AccountStore(file, fakeVault(), { now: () => new Date('2026-10-14T10:00:00.000Z'), newId: () => 'one' })
+    store.add('Work', TOKEN)
+    const folder = resolve('work-account')
+    let writes = 0
+    const write = file.write
+    file.write = (text: string) => {
+      writes++
+      write(text)
+    }
+    expect(store.toLogin('one', 'Work', folder, false)).toEqual({ ok: true })
+    expect(writes).toBe(1)
+    expect(file.text).not.toContain(TOKEN)
+    expect(store.kindOf('one')).toBe('login')
+    expect(store.folderOf('one')).toBe(folder)
+    expect(store.token('one')).toBeNull()
+    expect(store.list()).toEqual([{ id: 'one', name: 'Work', addedAt: '2026-10-14T10:00:00.000Z', kind: 'login', folder, created: false, readable: true }])
+    expect(store.toLogin('gone', 'Work', folder, true)).toEqual({ ok: false, error: 'No such account' })
+  })
+
+  it('the keyring is asked only while a token account exists', () => {
+    let asked = 0
+    const vault: Vault = { available: () => { asked++; return true }, encrypt: (t) => t, decrypt: (d) => d }
+    const store = newStore(memFile(), vault)
+    store.addLogin({ id: 'login-1', name: 'Work', folder: resolve('work-account'), created: true })
+    expect(store.keyring()).toBe(true)
+    expect(asked).toBe(0)
+    store.add('Home', TOKEN)
+    asked = 0
+    expect(store.keyring()).toBe(true)
+    expect(asked).toBe(1)
   })
 
   it('renames an account, refusing a name another account has', () => {
@@ -191,12 +287,26 @@ describe('AccountStore', () => {
 describe('accountLaunch', () => {
   it('gives a tab on an extra account its token and takes the API keys away', () => {
     expect(tokenEnv(TOKEN)).toEqual({ set: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN }, unset: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] })
-    expect(accountLaunch('a', () => TOKEN)).toEqual({ account: 'a', env: tokenEnv(TOKEN), unavailable: false })
+    expect(accountLaunch('a', () => ({ kind: 'token', token: TOKEN }))).toEqual({ account: 'a', env: tokenEnv(TOKEN), unavailable: false })
+  })
+
+  it('loginEnv sets the folder and removes every token and key Claude Code would use first', () => {
+    expect(loginEnv('/accounts/work')).toEqual({
+      set: { CLAUDE_CONFIG_DIR: '/accounts/work' },
+      unset: ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
+    })
+  })
+
+  it('accountLaunch: a sign-in account gets its folder, one that cannot start falls back to Main account', () => {
+    const folder = resolve('work-account')
+    expect(accountLaunch('l', () => ({ kind: 'login', folder, startable: true }))).toEqual({ account: 'l', env: loginEnv(folder), unavailable: false })
+    expect(accountLaunch('l', () => ({ kind: 'login', folder, startable: false }))).toEqual({ account: null, unavailable: true })
   })
 
   it('the main account changes nothing; an account that cannot be used falls back to it', () => {
-    expect(accountLaunch(null, () => TOKEN)).toEqual({ account: null, unavailable: false })
+    expect(accountLaunch(null, () => ({ kind: 'token', token: TOKEN }))).toEqual({ account: null, unavailable: false })
     expect(accountLaunch('gone', () => null)).toEqual({ account: null, unavailable: true })
+    expect(accountLaunch('a', () => ({ kind: 'token', token: null }))).toEqual({ account: null, unavailable: true })
   })
 })
 

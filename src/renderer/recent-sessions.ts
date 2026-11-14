@@ -1,7 +1,14 @@
+import type { AccountView } from '../shared/accounts'
 import { REMOTE_COPY, type DeviceAnswer } from '../shared/remote'
 import type { RecentSession, SessionSummary } from '../shared/types'
+import { switchChoices, type ChoiceAccount } from './account-items'
+import { avatarColor, initials } from './account-view'
 import { isPrimaryKey, shortcutLabel } from './keymap'
+import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
 import { folderName } from './util'
+
+/** the view of an account this device does not know (another device's, or a removed one): it draws in the token grey */
+const UNKNOWN_ACCOUNT = { kind: 'token' } as AccountView
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const DAY_MS = 86_400_000
@@ -27,12 +34,12 @@ export function formatAge(at: number, now: number): string {
 
 export const displayTitle = (s: SessionSummary): string => s.title ?? s.firstPrompt ?? '(untitled)'
 
-/** Sessions where every typed word appears in the title, the folder or a message, ignoring case. */
+/** Sessions where every typed word appears in the title, the folder, a message or the account's name, ignoring case. */
 export function filterSessions(list: RecentSession[], query: string): RecentSession[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
   if (words.length === 0) return list
   return list.filter((s) => {
-    const text = [s.title, s.cwd, s.firstPrompt, s.lastPrompt].filter((x) => x !== null).join('\n').toLowerCase()
+    const text = [s.title, s.cwd, s.firstPrompt, s.lastPrompt, s.accountName ?? null].filter((x) => x !== null).join('\n').toLowerCase()
     return words.every((w) => text.includes(w))
   })
 }
@@ -171,6 +178,10 @@ export interface RecentSessionsCallbacks {
   opening(): void
   /** the star was toggled; the window shows the new state right away */
   setStarred(id: string, starred: boolean): void
+  /** account: the account whose folder holds the session's copy (null: Main account); the window closes and the session opens there */
+  openAs(id: string, account: string | null): void
+  /** the window's accounts: the chip's avatar and the Open as items of a row's menu */
+  accounts(): readonly ChoiceAccount[]
   /** the window closed without opening anything, or before opening: give the keyboard back */
   closed(): void
 }
@@ -191,6 +202,8 @@ export class RecentSessionsWindow {
   private loadId = 0
   /** the window was opened to pick a session for a chat: the pick takes it instead of opening a tab */
   private picking: ((session: RecentSession) => void) | null = null
+  /** the menu a right-click on a row opened, while it is on screen */
+  private rowMenu: HTMLElement | null = null
   private readonly input: HTMLInputElement
   private readonly rows: HTMLElement
 
@@ -202,7 +215,7 @@ export class RecentSessionsWindow {
     heading.textContent = 'Recent sessions'
     this.input = document.createElement('input')
     this.input.className = 'sessions-search'
-    this.input.placeholder = 'Search by title, folder or message'
+    this.input.placeholder = 'Search by title, folder, message or account'
     this.input.spellcheck = false
     this.rows = document.createElement('div')
     this.rows.className = 'sessions-list'
@@ -220,7 +233,8 @@ export class RecentSessionsWindow {
       else if (e.key === 'ArrowDown') this.move(1)
       else if (e.key === 'ArrowUp') this.move(-1)
       else if (e.key === 'Enter') { if (item && 'heading' in item) this.toggleProject(item.heading.key); else this.choose(item?.session) }
-      else if (e.key === 'Escape') this.close()
+      // Escape closes the row's menu first; the window stays open
+      else if (e.key === 'Escape') { if (this.rowMenu && menuIsOpen(this.rowMenu)) closeMenu(); else this.close() }
       else if (e.key !== 'Tab') return
       e.preventDefault()
     })
@@ -335,6 +349,26 @@ export class RecentSessionsWindow {
     else this.cb.open(s.id, s.device?.id)
   }
 
+  private openAs(id: string, account: string | null): void {
+    this.close()
+    this.cb.openAs(id, account)
+  }
+
+  /** a right-click's menu: Open; Open as each account the session is not on (this device's rows, outside a chat's pick); Star or Unstar */
+  private showRowMenu(s: RecentSession, at: { x: number; y: number }): void {
+    const openAs: MenuItem[] = s.device || this.picking !== null ? [] : switchChoices(s.account ?? null, this.cb.accounts()).map((c) => ({
+      label: `Open as ${c.label}`,
+      disabled: c.disabled,
+      action: () => this.openAs(s.id, c.account)
+    }))
+    this.rowMenu = showMenu(at, [
+      { label: 'Open', action: () => this.choose(s) },
+      ...openAs,
+      { label: '', separator: true },
+      { label: s.starred ? 'Unstar' : 'Star', hint: shortcutLabel('star', this.platform), action: () => this.toggleStar(s) }
+    ])
+  }
+
   private render(keepSelected?: string, keepHeading?: string): void {
     // a search shows every match: a folded project would hide what it found
     const searching = this.input.value.trim() !== ''
@@ -428,6 +462,7 @@ export class RecentSessionsWindow {
     folder.textContent = folderName(s.cwd)
     folder.title = s.cwd
     meta.append(folder, ` · ${formatAge(s.modifiedAt, now)}`)
+    if (s.accountName) meta.append(this.accountChip(s, s.accountName))
     row.append(top, meta)
     if (s.lastPrompt && s.lastPrompt !== displayTitle(s)) {
       const last = document.createElement('div')
@@ -437,6 +472,29 @@ export class RecentSessionsWindow {
     }
     // the second click of a double-click can land on another row, which moved under the pointer
     row.addEventListener('click', (e) => { if (e.detail <= 1) this.choose(s) })
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+      this.showRowMenu(s, { x: e.clientX, y: e.clientY })
+    })
     return row
+  }
+
+  /** the account a session is on: its avatar and name, drawn like the account's chip in the status bar */
+  private accountChip(s: RecentSession, name: string): HTMLElement {
+    const list = this.cb.accounts()
+    const at = list.findIndex((a) => a.id === s.account)
+    const colour = avatarColor(at >= 0 ? (list[at] as AccountView) : UNKNOWN_ACCOUNT, at)
+    const chip = document.createElement('span')
+    chip.className = 'session-account'
+    const avatar = document.createElement('span')
+    avatar.className = 'session-avatar'
+    avatar.style.background = colour.background
+    avatar.style.color = colour.color
+    avatar.textContent = initials(name)
+    const label = document.createElement('span')
+    label.className = 'session-account-name'
+    label.textContent = name
+    chip.append(avatar, label)
+    return chip
   }
 }

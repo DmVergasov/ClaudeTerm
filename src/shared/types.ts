@@ -287,6 +287,8 @@ export interface SessionSummary {
   lastPrompt: string | null
   /** ms since epoch: when the transcript last changed */
   modifiedAt: number
+  /** the account whose folder holds the listed copy; absent or null: Main account */
+  account?: string | null
 }
 
 export interface RecentSession extends SessionSummary {
@@ -296,4 +298,6 @@ export interface RecentSession extends SessionSummary {
   starred: boolean
   /** the device the session is on, when another device of the group lists it */
   device?: { id: string; name: string }
+  /** the chip's account name; null for Main account */
+  accountName?: string | null
 }

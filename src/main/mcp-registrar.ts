@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
+import { applyEnvPatch, type EnvPatch } from './child-env'
 import { findExecutable, loginShellPath } from './login-env'
 
 export interface RunResult {
@@ -94,23 +95,55 @@ export async function resolveClaude(run: Runner): Promise<ClaudeCli | null> {
   return shim ? { file: shim, viaCmd: true } : null
 }
 
-export function runClaude(run: Runner, cli: ClaudeCli, args: string[]): Promise<RunResult> {
-  if (!cli.viaCmd) return run(cli.file, args, cli.env ? { env: cli.env } : undefined)
+export function runClaude(run: Runner, cli: ClaudeCli, args: string[], patch?: EnvPatch): Promise<RunResult> {
+  // an account's patch (CLAUDE_CONFIG_DIR, sign-in variables removed) goes over the environment claude runs with
+  const env = patch ? applyEnvPatch(stringEnv(cli.env ?? process.env), patch) : cli.env
+  if (!cli.viaCmd) return run(cli.file, args, env ? { env } : undefined)
   // .cmd shims cannot be spawned without a shell; cmd /s /c strips the outer quotes
   const line = [cli.file, ...args].map((a) => `"${a}"`).join(' ')
-  return run(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], { verbatim: true })
+  return run(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], { verbatim: true, env })
+}
+
+function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined))
 }
 
 export type RegisterResult = 'registered' | 'already' | 'no-claude' | 'failed'
 
-export async function ensureMcpRegistered(o: { run: Runner; execPath: string; serverScript: string; log(message: string): void; resolve?: () => Promise<ClaudeCli | null> }): Promise<RegisterResult> {
-  const cli = await (o.resolve ?? (() => resolveClaude(o.run)))()
-  if (!cli) return 'no-claude'
-  const get = await runClaude(o.run, cli, ['mcp', 'get', 'claudeterm'])
+/**
+ * The sign-in accounts whose folders get ClaudeTerm's server at start-up: a folder that is gone is skipped, since the
+ * CLI would make it again with no account owning it.
+ */
+export async function signInFoldersToRegister(
+  list: { name: string; kind: string; folder: string | null }[],
+  isDir: (path: string) => Promise<boolean>,
+): Promise<{ name: string; folder: string }[]> {
+  const found: { name: string; folder: string }[] = []
+  for (const a of list) {
+    if (a.kind === 'login' && a.folder !== null && (await isDir(a.folder))) found.push({ name: a.name, folder: a.folder })
+  }
+  return found
+}
+
+export async function ensureMcpRegistered(o: {
+  run: Runner; execPath: string; serverScript: string; log(message: string): void
+  resolve?: () => Promise<ClaudeCli | null>; env?: EnvPatch
+  /** runs every command itself (claude is never looked up) */
+  exec?: (args: string[]) => Promise<RunResult>
+}): Promise<RegisterResult> {
+  let call: (args: string[]) => Promise<RunResult>
+  if (o.exec) {
+    call = o.exec
+  } else {
+    const cli = await (o.resolve ?? (() => resolveClaude(o.run)))()
+    if (!cli) return 'no-claude'
+    call = (args) => runClaude(o.run, cli, args, o.env)
+  }
+  const get = await call(['mcp', 'get', 'claudeterm'])
   const out = get.stdout.toLowerCase()
   if (get.code === 0 && out.includes(o.serverScript.toLowerCase()) && out.includes(o.execPath.toLowerCase())) return 'already'
-  await runClaude(o.run, cli, ['mcp', 'remove', '--scope', 'user', 'claudeterm'])
-  const add = await runClaude(o.run, cli, ['mcp', 'add', '--scope', 'user', 'claudeterm', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', o.execPath, o.serverScript])
+  await call(['mcp', 'remove', '--scope', 'user', 'claudeterm'])
+  const add = await call(['mcp', 'add', '--scope', 'user', 'claudeterm', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', o.execPath, o.serverScript])
   if (add.code !== 0) {
     o.log(`claude mcp add failed (${add.code}): ${add.stderr || add.stdout}`)
     return 'failed'

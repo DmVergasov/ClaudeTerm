@@ -6,13 +6,13 @@ import { pathKey } from '../path-key'
 
 export interface ChatResumeDeps {
   /** a session the app listed: its id and the folder Claude Code finds it in */
-  listed(sessionId: string): { id: string; cwd: string } | undefined
+  listed(sessionId: string): { id: string; cwd: string; account?: string | null } | undefined
   tabs(): { id: string; cwd: string; claudeSessionId: string | null }[]
   /** resumes the session in the tab; false when it is refused (the tab works) */
   resume(tabId: string, sessionId: string): Promise<boolean>
   activate(tabId: string): void
-  /** opens the session in a new Claude tab; false when that fails */
-  open(s: { id: string; cwd: string }): boolean
+  /** opens the session in a new Claude tab (on its account); false when that fails */
+  open(s: { id: string; cwd: string; account?: string | null }): boolean | Promise<boolean>
 }
 
 /**
@@ -51,7 +51,7 @@ export async function routeChatResume(tabId: string, sessionId: string, d: ChatR
   }
   // Claude Code finds a conversation by its folder: a restart resumes it in the tab's folder
   if (pathKey(s.cwd) === pathKey(tab.cwd)) return (await d.resume(tabId, sessionId)) ? 'here' : null
-  return d.open(s) ? 'new-tab' : null
+  return (await d.open(s)) ? 'new-tab' : null
 }
 
 /**

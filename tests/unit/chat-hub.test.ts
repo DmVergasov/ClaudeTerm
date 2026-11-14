@@ -520,6 +520,27 @@ describe('ChatHub', () => {
     expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'divider', text: 'Session restarted' })
   })
 
+  it('a restart begun with a divider ends with it', async () => {
+    const { hub, engines } = harness({ history: async () => fixtureHistory().slice(0, 3) })
+    hub.start(startReq(SID).req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    await settle()
+
+    hub.restarting(TAB, 'Continued as Work')
+    hub.start(startReq(SID).req)
+    await settle()
+    engines[1].h.ready({ permissionMode: 'default' })
+    expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'divider', text: 'Continued as Work' })
+
+    hub.restarting(TAB)
+    hub.start(startReq(SID).req)
+    await settle()
+    engines[2].h.ready({ permissionMode: 'default' })
+    expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'divider', text: 'Session restarted' })
+  })
+
   it('a restart of a tab that starts fresh keeps the Starting notice, and a start that fails clears the restart activity', async () => {
     const { hub } = harness({ support: async () => ({ reason: 'Claude Code is too old' }) })
     hub.restarting(TAB)

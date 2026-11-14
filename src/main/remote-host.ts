@@ -8,7 +8,7 @@ import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS,
 import { MAX_HASH, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { PlanUpdate } from '../shared/ipc'
 import type { RecentSession, TabInfo, TabPlace } from '../shared/types'
-import type { AccountStore } from './accounts'
+import type { AccountView } from '../shared/accounts'
 import { capItems, capSnapshot, MAX_CHAT_PATCHES } from './chat/chat-mirror'
 import type { ImageHub } from './image-hub'
 import { isAbsPath, isHash } from './ipc-guards'
@@ -92,7 +92,7 @@ export interface HostChat {
 
 /** what this device gives a member about its tabs: the directory and the hub updates each tab has */
 export interface HostContext {
-  tabs: Pick<TabManager, 'list' | 'get' | 'close' | 'rename' | 'setMuted' | 'restart' | 'switchAccount' | 'size' | 'canFork' | 'fork'>
+  tabs: Pick<TabManager, 'list' | 'get' | 'isTransient' | 'close' | 'rename' | 'setMuted' | 'restart' | 'switchAccount' | 'size' | 'canFork' | 'fork'>
   /** the chats of this device's Claude tabs; left out, no tab has a chat for a member */
   chat?: HostChat
   images: Pick<ImageHub, 'list' | 'unseenCount' | 'notice' | 'markSeen' | 'remove' | 'get'>
@@ -104,7 +104,8 @@ export interface HostContext {
   /** clears the task list a Claude tab of this device keeps; false when this device keeps no list for the tab */
   clearTaskList(tabId: string): boolean
   notes: Pick<NoteHub, 'get'>
-  accounts: Pick<AccountStore, 'list' | 'nameOf'>
+  /** the accounts this device can start tabs on (readable), by id and name only */
+  accounts: { list(): Pick<AccountView, 'id' | 'name' | 'readable'>[]; nameOf(id: string): string | null }
   sizes: TabSizes
   attention: TabAttention
   titles: ReadonlyMap<string, string>
@@ -133,10 +134,10 @@ export interface HostContext {
   sessions(): Promise<RecentSession[]>
   /**
    * The tab in a session's conversation when one is open (not brought forward), else a new Claude tab that resumes it,
-   * opened without bringing it forward. Throws a CallError when this device no longer lists the session (no session of
+   * opened without bringing it forward. Rejects with a CallError when this device no longer lists the session (no session of
    * the list it was asked for) or when the session's folder is gone.
    */
-  openSession(id: string): string
+  openSession(id: string): Promise<string>
   /** the files a member sends for a tab of this device: a transfer is kept for the device that began it */
   receiver: Pick<FileReceiver, 'begin' | 'part' | 'end'>
 }
@@ -145,7 +146,7 @@ export interface HostContext {
 export function hostTabs(ctx: HostContext): HostTabs {
   return {
     list: () => directoryOf(ctx),
-    has: (tabId) => ctx.tabs.get(tabId) !== null,
+    has: (tabId) => ctx.tabs.get(tabId) !== null && !ctx.tabs.isTransient(tabId),
     input: (tabId, data, from) => {
       ctx.writeInput(tabId, data, from)
     },
@@ -349,11 +350,11 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
     },
     // a session the member's last answer did not list is refused; the folder check and the tab are the context's
     'open-session': {
-      run: (a) => {
+      run: async (a) => {
         const args = CALL_ARGS['open-session'](a)
         if (!args) throw new CallError('bad arguments')
         if (!sessionsOfMember.get(device)?.has(args.session)) throw new CallError(REMOTE_COPY.unknownSession)
-        return { id: ctx.openSession(args.session) }
+        return { id: await ctx.openSession(args.session) }
       }
     },
     // bulk: the bytes of a card go on the bulk lane, so they never hold up input or output
@@ -631,6 +632,8 @@ function clampChat(v: unknown): unknown {
 function directoryOf(ctx: HostContext): RemoteTab[] {
   const list: RemoteTab[] = []
   for (const info of ctx.tabs.list()) {
+    // a sign-in tab stays on this device: its output may hold an email or a code, and a member could type into it
+    if (ctx.tabs.isTransient(info.id)) continue
     const tab = remoteTabOf(ctx, info)
     if (tab) list.push(tab)
   }
@@ -810,7 +813,7 @@ function sessionsOf(list: RecentSession[]): RecentSession[] {
 
 function clampSession(x: unknown): RecentSession | null {
   if (!isRecord(x)) return null
-  const { id, cwd, title, firstPrompt, lastPrompt, modifiedAt, open, starred } = x
+  const { id, cwd, title, firstPrompt, lastPrompt, modifiedAt, open, starred, accountName } = x
   if (!isUuid(id) || typeof cwd !== 'string' || cwd.includes('\u0000') || !fits(cwd, MAX_PATH_TEXT)) return null
   if (typeof modifiedAt !== 'number' || !Number.isFinite(modifiedAt) || modifiedAt < 0) return null
   if (typeof open !== 'boolean' || typeof starred !== 'boolean') return null
@@ -818,7 +821,9 @@ function clampSession(x: unknown): RecentSession | null {
   const f = sessionText(firstPrompt)
   const l = sessionText(lastPrompt)
   if (t === undefined || f === undefined || l === undefined) return null
-  return { id, cwd, title: t, firstPrompt: f, lastPrompt: l, modifiedAt, open, starred }
+  // the account's name only, cut and cleaned like a title: its id never leaves this device, and Main account has none (null)
+  const name = typeof accountName === 'string' ? cut(stripC0(accountName), MAX_ACCOUNT_NAME) : ''
+  return { id, cwd, title: t, firstPrompt: f, lastPrompt: l, modifiedAt, open, starred, accountName: name === '' ? null : name }
 }
 
 /** a session's text: null stays null, a string is cut without NUL; anything else is undefined (the session is left out) */
@@ -832,7 +837,7 @@ function sessionText(v: unknown): string | null | undefined {
 /** the checked arguments of a call about one of this device's tabs: refused when they do not fit or the tab is not here */
 function tabCall<A extends { id: string }>(ctx: HostContext, checked: A | null): A {
   if (!checked) throw new CallError('bad arguments')
-  if (ctx.tabs.get(checked.id) === null) throw new CallError(REMOTE_COPY.unknownTab)
+  if (ctx.tabs.get(checked.id) === null || ctx.tabs.isTransient(checked.id)) throw new CallError(REMOTE_COPY.unknownTab)
   return checked
 }
 

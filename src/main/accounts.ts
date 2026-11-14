@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { MAIN_ACCOUNT, type AccountResult, type AccountView } from '../shared/accounts'
+import { isAbsolute } from 'node:path'
+import { accountNameError, type AccountKind, type AccountResult } from '../shared/accounts'
 import type { EnvPatch } from './child-env'
 
-const MAX_NAME = 40
 const MIN_TOKEN = 20
 const MAX_TOKEN = 500
 const MAX_ID = 64
-const CONTROL = /[\u0000-\u001f\u007f]/
+/** a name, folder or addedAt read from accounts.json: longer ones are left out */
+const MAX_STORED_NAME = 200
+const MAX_FOLDER = 4096
 
 /** Encrypts tokens at rest: Electron's safeStorage in the app, a fake in the tests. */
 export interface Vault {
@@ -27,13 +29,23 @@ export interface AccountFile {
   moveAside(): void
 }
 
-interface StoredAccount {
+/** an entry of accounts.json: a token account, or a sign-in account whose Claude Code config folder is its own */
+export type StoredAccount =
+  | { kind: 'token'; id: string; name: string; addedAt: string; token: string; encrypted: boolean }
+  | { kind: 'login'; id: string; name: string; addedAt: string; folder: string; created: boolean }
+
+type TokenAccount = Extract<StoredAccount, { kind: 'token' }>
+
+/** an extra account as the windows and the remote side see it; `folder` and `created` are for sign-in accounts */
+export interface AccountEntry {
   id: string
   name: string
   addedAt: string
-  /** the token, or with `encrypted` its encrypted form */
-  token: string
-  encrypted: boolean
+  kind: AccountKind
+  folder: string | null
+  created: boolean
+  /** token: its token decrypts here; login: always true */
+  readable: boolean
 }
 
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string }
@@ -43,14 +55,8 @@ const NO_ACCOUNT: AccountResult = { ok: false, error: 'No such account' }
 /** a name for a new or renamed account: trimmed, 1–40 characters, not "Main account" and not one of `taken`, ignoring case */
 export function checkAccountName(raw: unknown, taken: readonly string[]): Checked<string> {
   if (typeof raw !== 'string') return { ok: false, error: 'Enter a name' }
-  const name = raw.trim()
-  if (name.length === 0) return { ok: false, error: 'Enter a name' }
-  if (name.length > MAX_NAME) return { ok: false, error: `A name is at most ${MAX_NAME} characters` }
-  if (CONTROL.test(name)) return { ok: false, error: 'A name cannot hold control characters' }
-  const key = name.toLowerCase()
-  if (key === MAIN_ACCOUNT.toLowerCase()) return { ok: false, error: `"${MAIN_ACCOUNT}" is your normal Claude Code login; choose another name` }
-  if (taken.some((t) => t.toLowerCase() === key)) return { ok: false, error: `An account named "${name}" already exists` }
-  return { ok: true, value: name }
+  const error = accountNameError(raw, taken)
+  return error === null ? { ok: true, value: raw.trim() } : { ok: false, error }
 }
 
 /**
@@ -66,7 +72,12 @@ export function checkToken(raw: unknown): Checked<string> {
   return { ok: true, value: token }
 }
 
-/** accounts.json; null when it is not one. Entries of the wrong shape and repeated ids are left out. */
+/** a folder an account keeps its Claude Code config in: absolute and of a sane length */
+function isFolder(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= MAX_FOLDER && !v.includes('\u0000') && isAbsolute(v)
+}
+
+/** accounts.json; null when it is not one. Entries of the wrong shape and repeated ids are left out. Version 1 holds token accounts only. */
 export function parseAccounts(text: string): StoredAccount[] | null {
   let raw: unknown
   try {
@@ -76,14 +87,21 @@ export function parseAccounts(text: string): StoredAccount[] | null {
   }
   if (typeof raw !== 'object' || raw === null) return null
   const r = raw as Record<string, unknown>
-  if (r.version !== 1 || !Array.isArray(r.accounts)) return null
+  if ((r.version !== 1 && r.version !== 2) || !Array.isArray(r.accounts)) return null
   const accounts: StoredAccount[] = []
   for (const a of r.accounts as unknown[]) {
     if (typeof a !== 'object' || a === null) continue
     const x = a as Record<string, unknown>
+    const kind: unknown = r.version === 1 ? 'token' : x.kind
     if (typeof x.id !== 'string' || x.id.length === 0 || x.id.length > MAX_ID || accounts.some((o) => o.id === x.id)) continue
-    if (typeof x.name !== 'string' || typeof x.addedAt !== 'string' || typeof x.token !== 'string' || typeof x.encrypted !== 'boolean') continue
-    accounts.push({ id: x.id, name: x.name, addedAt: x.addedAt, token: x.token, encrypted: x.encrypted })
+    if (typeof x.name !== 'string' || x.name.length > MAX_STORED_NAME || typeof x.addedAt !== 'string') continue
+    if (kind === 'token') {
+      if (typeof x.token !== 'string' || typeof x.encrypted !== 'boolean') continue
+      accounts.push({ kind, id: x.id, name: x.name, addedAt: x.addedAt, token: x.token, encrypted: x.encrypted })
+    } else if (kind === 'login') {
+      if (!isFolder(x.folder) || typeof x.created !== 'boolean') continue
+      accounts.push({ kind, id: x.id, name: x.name, addedAt: x.addedAt, folder: x.folder, created: x.created })
+    }
   }
   return accounts
 }
@@ -93,18 +111,31 @@ export function tokenEnv(token: string): EnvPatch {
   return { set: { CLAUDE_CODE_OAUTH_TOKEN: token }, unset: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] }
 }
 
+/** what a tab on a sign-in account gets: its own config folder, and no token or key Claude Code would use before the login */
+export function loginEnv(folder: string): EnvPatch {
+  return {
+    set: { CLAUDE_CONFIG_DIR: folder },
+    unset: ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
+  }
+}
+
 export interface AccountLaunch {
   /** the account the tab runs on: null for the main account */
   account: string | null
   env?: EnvPatch
-  /** the account asked for cannot be used (removed, or its token cannot be read): the main account instead */
+  /** the account asked for cannot be used (removed, its token cannot be read, or its sign-in cannot start): the main account instead */
   unavailable: boolean
 }
 
-export function accountLaunch(id: string | null, token: (id: string) => string | null): AccountLaunch {
+/** an account as a tab's launch sees it: a token that may be unreadable, or a sign-in folder that may not start */
+export type LaunchAccount = { kind: 'token'; token: string | null } | { kind: 'login'; folder: string; startable: boolean }
+
+export function accountLaunch(id: string | null, find: (id: string) => LaunchAccount | null): AccountLaunch {
   if (id === null) return { account: null, unavailable: false }
-  const t = token(id)
-  return t === null ? { account: null, unavailable: true } : { account: id, env: tokenEnv(t), unavailable: false }
+  const a = find(id)
+  if (a === null) return { account: null, unavailable: true }
+  if (a.kind === 'token') return a.token === null ? { account: null, unavailable: true } : { account: id, env: tokenEnv(a.token), unavailable: false }
+  return a.startable ? { account: id, env: loginEnv(a.folder), unavailable: false } : { account: null, unavailable: true }
 }
 
 export interface AccountStoreOptions {
@@ -137,25 +168,39 @@ export class AccountStore {
     }
   }
 
-  list(): AccountView[] {
-    return this.accounts.map((a) => ({ id: a.id, name: a.name, addedAt: a.addedAt, readable: this.reveal(a) !== null }))
+  list(): AccountEntry[] {
+    return this.accounts.map((a) =>
+      a.kind === 'login'
+        ? { id: a.id, name: a.name, addedAt: a.addedAt, kind: a.kind, folder: a.folder, created: a.created, readable: true }
+        : { id: a.id, name: a.name, addedAt: a.addedAt, kind: a.kind, folder: null, created: false, readable: this.reveal(a) !== null }
+    )
   }
 
   /**
-   * Whether the stored tokens are encrypted. With no account there is nothing to tell, and the system keyring is not
-   * asked: on Linux that could mean an unlock prompt at every start, for people who never use accounts.
+   * Whether the stored tokens are encrypted. With no token account there is nothing to tell, and the system keyring is
+   * not asked: on Linux that could mean an unlock prompt at every start, for people who never use token accounts.
    */
   keyring(): boolean {
-    return this.accounts.length === 0 || this.vault.available()
+    return !this.accounts.some((a) => a.kind === 'token') || this.vault.available()
   }
 
   nameOf(id: string): string | null {
     return this.find(id)?.name ?? null
   }
 
-  /** the account's token, for a tab's launch; null when there is no such account or its token cannot be read */
-  token(id: string): string | null {
+  kindOf(id: string): AccountKind | null {
+    return this.find(id)?.kind ?? null
+  }
+
+  /** a sign-in account's config folder; null for a token account or no such account */
+  folderOf(id: string): string | null {
     const a = this.find(id)
+    return a?.kind === 'login' ? a.folder : null
+  }
+
+  /** the account's token, for a tab's launch; null for a sign-in account, no such account, or a token that cannot be read */
+  token(id: string): string | null {
+    const a = this.findToken(id)
     return a ? this.reveal(a) : null
   }
 
@@ -164,8 +209,29 @@ export class AccountStore {
     if (!n.ok) return n
     const sealed = this.seal(token)
     if (!sealed.ok) return sealed
-    const account: StoredAccount = { id: this.opts.newId?.() ?? randomUUID(), name: n.value, addedAt: this.now(), ...sealed.value }
+    const account: TokenAccount = { kind: 'token', id: this.opts.newId?.() ?? randomUUID(), name: n.value, addedAt: this.now(), ...sealed.value }
     return this.save([...this.accounts, account])
+  }
+
+  /** a sign-in account: its folder is kept as it is; nothing about the login (no email, no plan) is stored */
+  addLogin(a: { id: string; name: unknown; folder: string; created: boolean }): AccountResult {
+    if (this.find(a.id)) return { ok: false, error: 'The account already exists' }
+    const n = checkAccountName(a.name, this.accounts.map((x) => x.name))
+    if (!n.ok) return n
+    if (!isFolder(a.folder)) return { ok: false, error: 'The folder is not an absolute path' }
+    const account: StoredAccount = { kind: 'login', id: a.id, name: n.value, addedAt: this.now(), folder: a.folder, created: a.created }
+    return this.save([...this.accounts, account])
+  }
+
+  /** a token account becomes a sign-in one: same id, the token gone, one write */
+  toLogin(id: unknown, name: unknown, folder: string, created: boolean): AccountResult {
+    const a = this.find(id)
+    if (!a) return NO_ACCOUNT
+    const n = checkAccountName(name, this.accounts.filter((x) => x !== a).map((x) => x.name))
+    if (!n.ok) return n
+    if (!isFolder(folder)) return { ok: false, error: 'The folder is not an absolute path' }
+    const login: StoredAccount = { kind: 'login', id: a.id, name: n.value, addedAt: this.now(), folder, created }
+    return this.save(this.accounts.map((x) => (x === a ? login : x)))
   }
 
   rename(id: unknown, name: unknown): AccountResult {
@@ -176,12 +242,13 @@ export class AccountStore {
     return this.save(this.accounts.map((x) => (x === a ? { ...x, name: n.value } : x)))
   }
 
+  /** a token account's new token; a sign-in account has none to replace */
   setToken(id: unknown, token: unknown): AccountResult {
-    const a = this.find(id)
+    const a = this.findToken(id)
     if (!a) return NO_ACCOUNT
     const sealed = this.seal(token)
     if (!sealed.ok) return sealed
-    return this.save(this.accounts.map((x) => (x === a ? { ...x, addedAt: this.now(), ...sealed.value } : x)))
+    return this.save(this.accounts.map((x) => (x === a ? { ...a, addedAt: this.now(), ...sealed.value } : x)))
   }
 
   remove(id: unknown): AccountResult {
@@ -194,12 +261,17 @@ export class AccountStore {
     return typeof id === 'string' ? this.accounts.find((a) => a.id === id) : undefined
   }
 
+  private findToken(id: unknown): TokenAccount | undefined {
+    const a = this.find(id)
+    return a?.kind === 'token' ? a : undefined
+  }
+
   private now(): string {
     return (this.opts.now?.() ?? new Date()).toISOString()
   }
 
   /** the plain token; null when it cannot be decrypted, or decrypts to something that is no token (Linux's basic store hands back data it cannot read) */
-  private reveal(a: StoredAccount): string | null {
+  private reveal(a: TokenAccount): string | null {
     if (!a.encrypted) return a.token
     try {
       const token = this.vault.decrypt(a.token)
@@ -226,7 +298,7 @@ export class AccountStore {
         this.file.moveAside()
         this.broken = false
       }
-      this.file.write(`${JSON.stringify({ version: 1, accounts: next }, null, 2)}\n`)
+      this.file.write(`${JSON.stringify({ version: 2, accounts: next }, null, 2)}\n`)
     } catch (e) {
       return { ok: false, error: `Cannot save accounts.json: ${(e as Error).message}` }
     }

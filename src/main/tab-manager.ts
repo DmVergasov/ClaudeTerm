@@ -39,6 +39,36 @@ export interface LaunchRequest extends OpenTabRequest {
   strict?: boolean
   /** the Get a token tab: a shell tab running `claude setup-token` */
   setupToken?: boolean
+  /** the sign-in tab: a shell tab running `claude auth login` once, for the account in `folder` */
+  signIn?: SignInLaunch
+}
+
+/** the sign-in tab's account: its config folder, and the email its sign-in page is for (null: none) */
+export interface SignInLaunch {
+  folder: string
+  email: string | null
+}
+
+/**
+ * A conversation moves between processes: `check` before anything ends (a refusal changes nothing), `copy` once the old
+ * process has exited and before the new one starts. `explicit`: the user asked for the move (an account switch); otherwise
+ * the conversation is carried to the account it is on.
+ */
+export interface ConversationMove {
+  tabId: string
+  sessionId: string
+  from: string | null
+  to: string | null
+  explicit: boolean
+  stage: 'check' | 'copy'
+}
+
+/** a restart of the relaunch: what runs once the old process has exited, before the new one starts */
+interface RelaunchOptions {
+  newConversation?: boolean
+  /** a switch of account: the account the tab continues as, told to the restart */
+  continuedAs?: { account: string | null }
+  beforeStart?: () => Promise<void>
 }
 
 export interface TabEvents {
@@ -60,8 +90,10 @@ export interface TabManagerDeps {
   pipeName: string
   events: TabEvents
   onTabStarted?(tab: TabInfo): void
-  /** the tab gets a new process (Restart session, another account): what waited on the old one must not reach the new one */
-  onTabRestarting?(tabId: string): void
+  /** the tab gets a new process (Restart session, another account): what waited on the old one must not reach the new one. A switch of account says the account it continues as */
+  onTabRestarting?(tabId: string, continuedAs?: { account: string | null }): void
+  /** a conversation moves to another account (see ConversationMove); true when it may move. With none, nothing moves */
+  moveConversation?(m: ConversationMove): Promise<boolean>
   /** the new process starts another conversation or folder, not a restart of this one: after onTabRestarting, it says so */
   onTabNewConversation?(tabId: string): void
   onTabClosed?(tabId: string): void
@@ -122,6 +154,8 @@ interface TabRecord {
   agents: boolean
   /** work Claude left in the background when its last turn ended still runs, as the session snapshot keeps it */
   background: boolean
+  /** a tab of the app's own (the sign-in tab): left out of the session snapshot */
+  transient: boolean
 }
 
 export class TabManager {
@@ -132,8 +166,13 @@ export class TabManager {
 
   constructor(private readonly deps: TabManagerDeps) {}
 
-  open(req: OpenTabRequest, opts: { activate?: boolean; setupToken?: boolean } = {}): TabInfo {
-    const launch = this.deps.resolveLaunch({ ...req, account: this.accountFor(req), ...(opts.setupToken ? { setupToken: true } : {}) })
+  open(req: OpenTabRequest, opts: { activate?: boolean; setupToken?: boolean; signIn?: SignInLaunch } = {}): TabInfo {
+    const launch = this.deps.resolveLaunch({
+      ...req,
+      account: this.accountFor(req),
+      ...(opts.setupToken ? { setupToken: true } : {}),
+      ...(opts.signIn ? { signIn: opts.signIn } : {})
+    })
     const info: TabInfo = {
       id: randomUUID(),
       kind: req.kind,
@@ -150,7 +189,7 @@ export class TabManager {
       // a setup-token tab is a shell tab; a Claude tab without a view named opens in the one the setting names
       view: req.kind === 'claude' && !opts.setupToken ? req.view ?? this.deps.defaultView?.() ?? 'terminal' : null
     }
-    const rec: TabRecord = { info, launch, pty: null, chat: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), proc: { exited: true }, restarting: false, preparing: false, working: false, agents: false, background: false }
+    const rec: TabRecord = { info, launch, pty: null, chat: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), proc: { exited: true }, restarting: false, preparing: false, working: false, agents: false, background: false, transient: opts.signIn !== undefined }
     this.tabs.set(info.id, rec)
     const head = info.fork?.of ?? null
     // a fork stands right after its family
@@ -262,6 +301,8 @@ export class TabManager {
     const from = await this.resumeId(rec)
     // the check waited on the disk: a parent closed meanwhile has nothing to fork
     if (from === null || !this.isLive(rec)) return null
+    await this.carryConversation(rec, from)
+    if (!this.isLive(rec)) return null
     const info = rec.info
     return this.open({
       kind: 'claude',
@@ -294,12 +335,13 @@ export class TabManager {
   async restart(tabId: string, opts: { live?: boolean; newConversation?: boolean } = {}): Promise<void> {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.restarting || rec.preparing || (!rec.info.exited && !opts.live)) return
+    let resumed: string | null = null
     if (rec.info.kind === 'claude') {
       rec.preparing = true
       let launch: ResolvedLaunch | null = null
       try {
-        const resumeSessionId = await this.resumeId(rec)
-        launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account: rec.info.account, fork: rec.info.fork })
+        resumed = await this.resumeId(rec)
+        launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: resumed, account: rec.info.account, fork: rec.info.fork })
       } catch {
         // keep the previous launch
       } finally {
@@ -309,7 +351,10 @@ export class TabManager {
       if (this.tabs.get(tabId) !== rec || rec.restarting || (!rec.info.exited && !opts.live)) return
       if (launch) this.setLaunch(rec, launch)
     }
-    await this.relaunch(rec, opts.newConversation === true)
+    await this.relaunch(rec, {
+      newConversation: opts.newConversation === true,
+      beforeStart: rec.info.kind === 'claude' ? () => this.carryConversation(rec, resumed) : undefined
+    })
   }
 
   /**
@@ -352,21 +397,36 @@ export class TabManager {
   async switchAccount(tabId: string, account: string | null): Promise<boolean> {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.kind !== 'claude' || rec.restarting || rec.preparing) return false
+    const from = rec.info.account
     let launch: ResolvedLaunch
+    let resumeSessionId: string | null = null
     rec.preparing = true
     try {
-      const resumeSessionId = await this.resumeId(rec)
+      resumeSessionId = await this.resumeId(rec)
       // the check waited on the disk: the tab may have closed or been restarted meanwhile
       if (this.tabs.get(tabId) !== rec || rec.restarting) return false
       launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account, strict: true, fork: rec.info.fork })
+      // the conversation may move to the new account only if it can: a refusal leaves everything as it is
+      if (resumeSessionId !== null && !(await this.askMove({ tabId, sessionId: resumeSessionId, from, to: account, explicit: true, stage: 'check' }))) return false
+      if (this.tabs.get(tabId) !== rec || rec.restarting) return false
     } catch {
       return false
     } finally {
       rec.preparing = false
     }
+    let copied = true
     this.setLaunch(rec, launch)
-    await this.relaunch(rec)
-    return true
+    await this.relaunch(rec, {
+      continuedAs: { account },
+      beforeStart: async () => {
+        if (resumeSessionId === null) return
+        copied = await this.askMove({ tabId, sessionId: resumeSessionId, from, to: account, explicit: true, stage: 'copy' })
+        if (copied) return
+        // the copy failed: the tab starts again on the account it was on, as a launch that is not strict does
+        this.setLaunch(rec, this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account: from, fork: rec.info.fork }))
+      }
+    })
+    return copied
   }
 
   /**
@@ -394,9 +454,10 @@ export class TabManager {
     // the conversation resumes as a restart resumes it; a launch that cannot be resolved keeps the previous one
     rec.preparing = true
     let launch: ResolvedLaunch | null = null
+    let resumed: string | null = null
     try {
-      const resumeSessionId = await this.resumeId(rec)
-      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account: rec.info.account, fork: rec.info.fork })
+      resumed = await this.resumeId(rec)
+      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: resumed, account: rec.info.account, fork: rec.info.fork })
     } catch {
       // keep the previous launch
     } finally {
@@ -405,6 +466,10 @@ export class TabManager {
     // the check waited on the disk: the tab may have closed meanwhile
     if (!this.isLive(rec) || this.disposed) return false
     if (launch) this.setLaunch(rec, launch)
+    rec.restarting = true
+    await this.carryConversation(rec, resumed)
+    rec.restarting = false
+    if (!this.isLive(rec) || this.disposed) return false
     if (rec.info.exited) {
       rec.info.exited = false
       this.deps.events.updated({ ...rec.info })
@@ -436,7 +501,7 @@ export class TabManager {
     this.deps.events.updated({ ...info })
     this.changed()
     // a fork is a conversation of its own even on the session it shows: it is no restart over the old one
-    await this.relaunch(rec, another || fork !== null)
+    await this.relaunch(rec, { newConversation: another || fork !== null, beforeStart: () => this.carryConversation(rec, sessionId) })
     return this.isLive(rec) && !info.exited
   }
 
@@ -515,16 +580,23 @@ export class TabManager {
     return this.envOf(rec)
   }
 
+  /** whether a tab is transient, as a sign-in tab is: its output and its input stay on this device */
+  isTransient(tabId: string): boolean {
+    return this.tabs.get(tabId)?.transient ?? false
+  }
+
   /** whether a Claude tab is working now: a turn began and its end, an Esc or a Ctrl+C has not yet cleared it */
   isWorking(tabId: string): boolean {
     return this.tabs.get(tabId)?.working ?? false
   }
 
   snapshot(): SessionSnapshotTab[] {
-    return this.order.map((id) => {
+    // the app's own tabs (the sign-in tab) are not the session's: the forks' heads are found among the saved ones
+    const kept = this.order.filter((id) => !this.tabs.get(id)!.transient)
+    return kept.map((id) => {
       const { info: i, working, background } = this.tabs.get(id)!
       const head = i.fork?.of ?? null
-      const headAt = head === null ? -1 : this.order.indexOf(head)
+      const headAt = head === null ? -1 : kept.indexOf(head)
       const fork = i.fork ? { of: headAt < 0 ? null : headAt, from: i.fork.from } : null
       return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, background, fork, view: i.view }
     })
@@ -576,6 +648,26 @@ export class TabManager {
     return (this.deps.resumable ? await this.deps.resumable(rec.info.id, id) : true) ? id : null
   }
 
+  /** asks for a conversation's move; with none wired, nothing needs to move (true); a move that throws is refused */
+  private async askMove(m: ConversationMove): Promise<boolean> {
+    if (!this.deps.moveConversation) return true
+    try {
+      return await this.deps.moveConversation(m)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Rule B: the conversation is carried to the account the tab is on, once its old process has exited and before the new
+   * one starts. Nothing is asked without a conversation; the answer is not looked at.
+   */
+  private async carryConversation(rec: TabRecord, sessionId: string | null): Promise<void> {
+    if (sessionId === null) return
+    const account = rec.info.account
+    await this.askMove({ tabId: rec.info.id, sessionId, from: account, to: account, explicit: false, stage: 'copy' })
+  }
+
   private setLaunch(rec: TabRecord, launch: ResolvedLaunch): void {
     rec.launch = launch
     const account = launch.account ?? null
@@ -585,10 +677,15 @@ export class TabManager {
     this.changed()
   }
 
-  /** an exited tab starts again; a running one is ended first, and the new process starts only once the old one has exited; `newConversation`: it starts another conversation or folder */
-  private async relaunch(rec: TabRecord, newConversation = false): Promise<void> {
-    this.deps.onTabRestarting?.(rec.info.id)
-    if (newConversation) this.deps.onTabNewConversation?.(rec.info.id)
+  /**
+   * An exited tab starts again; a running one is ended first, and the new process starts only once the old one has exited.
+   * `newConversation`: it starts another conversation or folder. `beforeStart` runs once the old process has exited, before
+   * the new one starts; the tab counts as restarting meanwhile.
+   */
+  private async relaunch(rec: TabRecord, opts: RelaunchOptions = {}): Promise<void> {
+    if (opts.continuedAs) this.deps.onTabRestarting?.(rec.info.id, opts.continuedAs)
+    else this.deps.onTabRestarting?.(rec.info.id)
+    if (opts.newConversation) this.deps.onTabNewConversation?.(rec.info.id)
     if (!rec.proc.exited) {
       rec.restarting = true
       const gone = await this.endProcess(rec, this.deps.restartWaitMs ?? 3000, true)
@@ -599,6 +696,15 @@ export class TabManager {
         this.markStuck(rec)
         return
       }
+    }
+    if (opts.beforeStart) {
+      rec.restarting = true
+      try {
+        await opts.beforeStart()
+      } finally {
+        rec.restarting = false
+      }
+      if (!this.isLive(rec) || this.disposed) return
     }
     if (rec.info.exited) {
       rec.info.exited = false

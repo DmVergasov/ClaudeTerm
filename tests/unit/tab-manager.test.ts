@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PtyHandle, SpawnOptions } from '../../src/main/pty-host'
 import type { ClaudeLaunch } from '../../src/main/profiles'
-import { TabManager, type ChatHandle, type ChatStartRequest, type LaunchRequest, type ResolvedLaunch, type TabEvents, type TabManagerDeps } from '../../src/main/tab-manager'
+import { TabManager, type ChatHandle, type ChatStartRequest, type ConversationMove, type LaunchRequest, type ResolvedLaunch, type TabEvents, type TabManagerDeps } from '../../src/main/tab-manager'
 
 const SID_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const SID_B = '9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
@@ -67,6 +67,31 @@ function setup(over: Partial<TabManagerDeps> = {}, opts: { exitOnKill?: boolean 
   }
   return { tm: new TabManager(deps), ptys, log, data, launches, folderChanged, tabFolderChanged, onStateChanged, onTabStarted, onTabClosed }
 }
+
+/** a spawn that records each start and each kill in `events`; a killed PTY exits, as a real process does */
+function trackedSpawn(events: string[]) {
+  const ptys: FakePty[] = []
+  const spawn = (o: SpawnOptions): PtyHandle => {
+    const p = new FakePty(o)
+    p.exitsOnKill = true
+    const kill = p.kill.bind(p)
+    p.kill = () => {
+      events.push('kill')
+      kill()
+    }
+    ptys.push(p)
+    events.push('spawn')
+    return p
+  }
+  return { spawn, ptys }
+}
+
+/** a launch on the account the request names, as an account that can be used */
+const accountLaunch = (req: LaunchRequest): ResolvedLaunch => ({
+  profileName: 'Windows PowerShell',
+  spec: { file: 'powershell.exe', args: ['-NoLogo'] },
+  account: req.account
+})
 
 afterEach(() => { vi.useRealTimers() })
 
@@ -1272,6 +1297,132 @@ describe('TabManager resumeSession', () => {
     expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', resumeSessionId: SID_B }))
     expect(startChat).toHaveBeenCalledTimes(2)
     expect(startChat.mock.calls[1][0].claude.resumeSessionId).toBe(SID_B)
+  })
+
+  it('a sign-in tab runs its launch in the background and is left out of the snapshot', () => {
+    const { tm, ptys, launches } = setup()
+    const shell = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    const signIn = tm.open({ kind: 'shell', cwd: 'D:\\x' }, { activate: false, signIn: { folder: 'D:\\accounts\\work', email: 'dev@example.com' } })
+    expect(launches[1]).toMatchObject({ signIn: { folder: 'D:\\accounts\\work', email: 'dev@example.com' } })
+    expect(ptys).toHaveLength(2)
+    expect(tm.activeTabId()).toBe(shell.id)
+    expect(tm.list().map((t) => t.id)).toContain(signIn.id)
+    expect(tm.snapshot()).toHaveLength(1)
+  })
+
+  it('a switch of account checks the move before ending the process; refused, nothing changes', async () => {
+    const events: string[] = []
+    const { spawn } = trackedSpawn(events)
+    const moves: ConversationMove[] = []
+    const moveConversation = vi.fn(async (m: ConversationMove) => {
+      moves.push(m)
+      events.push(`move ${m.stage}`)
+      return false
+    })
+    const { tm } = setup({ spawn, resolveLaunch: accountLaunch, moveConversation })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: 'alpha' })
+    events.length = 0
+
+    expect(await tm.switchAccount(tab.id, 'beta')).toBe(false)
+    expect(events).toEqual(['move check'])
+    expect(moves).toEqual([{ tabId: tab.id, sessionId: SID_A, from: 'alpha', to: 'beta', explicit: true, stage: 'check' }])
+    expect(tm.get(tab.id)).toMatchObject({ account: 'alpha', claudeSessionId: SID_A, exited: false })
+  })
+
+  it('the copy of a switch runs after the old process has exited and before the new one starts', async () => {
+    const events: string[] = []
+    const { spawn } = trackedSpawn(events)
+    const moveConversation = vi.fn(async (m: ConversationMove) => {
+      events.push(`move ${m.stage}`)
+      return true
+    })
+    const { tm } = setup({ spawn, resolveLaunch: accountLaunch, moveConversation })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: 'alpha' })
+    events.length = 0
+
+    expect(await tm.switchAccount(tab.id, 'beta')).toBe(true)
+    expect(events).toEqual(['move check', 'kill', 'move copy', 'spawn'])
+    expect(moveConversation).toHaveBeenLastCalledWith({ tabId: tab.id, sessionId: SID_A, from: 'alpha', to: 'beta', explicit: true, stage: 'copy' })
+    expect(tm.get(tab.id)?.account).toBe('beta')
+  })
+
+  it('a failed copy starts the tab again on the account it was on', async () => {
+    const events: string[] = []
+    const { spawn, ptys } = trackedSpawn(events)
+    const moveConversation = vi.fn(async (m: ConversationMove) => {
+      events.push(`move ${m.stage}`)
+      return m.stage === 'check'
+    })
+    const resolveLaunch = vi.fn(accountLaunch)
+    const { tm } = setup({ spawn, resolveLaunch, moveConversation })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: 'alpha' })
+    events.length = 0
+
+    expect(await tm.switchAccount(tab.id, 'beta')).toBe(false)
+    expect(events).toEqual(['move check', 'kill', 'move copy', 'spawn'])
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'claude', resumeSessionId: SID_A, account: 'alpha' }))
+    expect(resolveLaunch).toHaveBeenLastCalledWith(expect.not.objectContaining({ strict: true }))
+    expect(tm.get(tab.id)).toMatchObject({ account: 'alpha', exited: false })
+    expect(ptys).toHaveLength(2)
+  })
+
+  it('a restart, a view switch and another conversation bring it by rule B before the start', async () => {
+    const events: string[] = []
+    const { spawn } = trackedSpawn(events)
+    const moves: ConversationMove[] = []
+    // the answer of a rule B copy is not looked at: a refusal still starts the tab
+    const moveConversation = vi.fn(async (m: ConversationMove) => {
+      moves.push(m)
+      events.push(`move ${m.stage}`)
+      return false
+    })
+    const { tm } = setup({ spawn, resolveLaunch: accountLaunch, moveConversation })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: 'alpha' })
+    const ruleB = (sessionId: string) => ({ tabId: tab.id, sessionId, from: 'alpha', to: 'alpha', explicit: false, stage: 'copy' })
+
+    events.length = 0
+    await tm.restart(tab.id, { live: true })
+    expect(events).toEqual(['kill', 'move copy', 'spawn'])
+    expect(moves[moves.length - 1]).toEqual(ruleB(SID_A))
+
+    events.length = 0
+    expect(await tm.setView(tab.id, 'chat')).toBe(true)
+    expect(events).toEqual(['kill', 'move copy', 'spawn'])
+    expect(moves[moves.length - 1]).toEqual(ruleB(SID_A))
+
+    events.length = 0
+    expect(await tm.resumeSession(tab.id, SID_B)).toBe(true)
+    expect(events).toEqual(['kill', 'move copy', 'spawn'])
+    expect(moves[moves.length - 1]).toEqual(ruleB(SID_B))
+  })
+
+  it('a fork brings its head\'s conversation before it opens', async () => {
+    const events: string[] = []
+    const { spawn } = trackedSpawn(events)
+    const moves: ConversationMove[] = []
+    const moveConversation = vi.fn(async (m: ConversationMove) => {
+      moves.push(m)
+      events.push(`move ${m.stage}`)
+      return false
+    })
+    const { tm } = setup({ spawn, resolveLaunch: accountLaunch, moveConversation })
+    const head = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: 'alpha' })
+    events.length = 0
+
+    const fork = await tm.fork(head.id)
+    expect(fork).not.toBeNull()
+    expect(events).toEqual(['move copy', 'spawn'])
+    expect(moves).toEqual([{ tabId: head.id, sessionId: SID_A, from: 'alpha', to: 'alpha', explicit: false, stage: 'copy' }])
+  })
+
+  it('a switch of account tells the restart whom it continues as', async () => {
+    const onTabRestarting = vi.fn()
+    const { spawn } = trackedSpawn([])
+    const { tm } = setup({ spawn, resolveLaunch: accountLaunch, onTabRestarting })
+    const tab = tm.open({ kind: 'claude', cwd: 'D:\\x', account: 'alpha' })
+
+    expect(await tm.switchAccount(tab.id, 'beta')).toBe(true)
+    expect(onTabRestarting).toHaveBeenCalledWith(tab.id, { account: 'beta' })
   })
 })
 

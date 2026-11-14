@@ -413,6 +413,9 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .group-meta { font-weight: 400; white-space: nowrap; }
 .session-meta, .session-last { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-last { opacity: 0.75; }
+/* the account chip after a session's age: 18 px high, a round avatar of the account's colour */
+.session-account { display: inline-flex; align-items: center; gap: 5px; height: 18px; margin-left: 6px; padding: 0 7px 0 2px; vertical-align: middle; border: 1px solid var(--line-2); border-radius: 999px; color: var(--text-2); font-size: 10.5px; white-space: nowrap; }
+.session-avatar { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; font-size: 8px; font-weight: 600; }
 .sessions-empty { padding: 12px 14px; color: var(--muted); }
 .sessions-device { padding: 10px 14px 2px; color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sessions-loading { padding: 6px 14px; color: var(--muted); font-size: 12px; }

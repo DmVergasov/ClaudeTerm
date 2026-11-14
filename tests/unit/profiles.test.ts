@@ -146,6 +146,17 @@ describe('claude launch', () => {
     expect(() => buildLaunch(WSL, 'claude', claude)).toThrow()
     expect(() => buildLaunch(PS, 'claude', null)).toThrow()
   })
+
+  it('a run-once launch ends with its command in every shell', () => {
+    const once = { once: true }
+    const setup = { command: 'claude setup-token', settingsPath: null, resumeSessionId: null, forkSession: false }
+    expect(buildLaunch(PS, 'claude', setup, once)).toEqual({ file: PS.command, args: ['-NoLogo', '-Command', 'claude setup-token'] })
+    expect(buildLaunch(CMD, 'claude', setup, once)).toEqual({ file: CMD.command, args: '/c claude setup-token' })
+    expect(buildLaunch(BASH, 'claude', setup, once)).toEqual({ file: BASH.command, args: ['--login', '-i', '-c', 'claude setup-token'] })
+    expect(buildLaunch(ZSH, 'claude', setup, once)).toEqual({ file: ZSH.command, args: ['-l', '-i', '-c', 'claude setup-token'] })
+    expect(buildLaunch(FISH, 'claude', setup, once)).toEqual({ file: FISH.command, args: ['-l', '-c', 'claude setup-token'] })
+    expect(() => buildLaunch(WSL, 'claude', setup, once)).toThrow()
+  })
 })
 
 describe('parseWslList', () => {

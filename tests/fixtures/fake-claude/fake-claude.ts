@@ -895,7 +895,7 @@ type Market = NonNullable<FakeScript['marketplaces']>[number]
 type Plugin = Market['plugins'][number]
 type McpOptions = NonNullable<FakeScript['mcp']>[string]
 interface CliResult { code: number; stdout: string; stderr: string }
-interface CliCall { words: string[]; flags: Map<string, string>; scope?: Scope; values?: Record<string, string> | null }
+interface CliCall { words: string[]; flags: Map<string, string>; scope?: Scope; values?: Record<string, string> | null; env: Record<string, string>; headers: Record<string, string> }
 interface McpServer { name: string; config: Msg; scope?: string; source: string }
 interface SessionMcp { servers: McpServer[]; disabled: Set<string>; reconnected: Set<string>; startedAt: number }
 
@@ -965,23 +965,41 @@ function saveScopeServers(scope: Scope, servers: Msg): void {
 const out = (text: string): CliResult => ({ code: 0, stdout: `${text}\n`, stderr: '' })
 const bad = (text: string): CliResult => ({ code: 1, stdout: '', stderr: `${text}\n` })
 
-// the words of a CLI call and its options: options are read up to '--', everything after it is a word (commander takes both ways)
-function parseCliArgs(args: string[]): { words: string[]; flags: Map<string, string> } {
+// the options that take a value, under the long name they are read by (-e and -H fill the env and the headers)
+const SHORT_OPTIONS: Record<string, string> = { '-s': '--scope', '-t': '--transport', '-e': '--env', '-H': '--header' }
+const VALUE_OPTIONS = ['--scope', '--transport', '--env', '--header', '--accept-command']
+
+// the words of a CLI call and its options: options are read up to '--', everything after it is a word (commander takes both ways).
+// -y is --yes; -e K=V and -H 'K: V' are read into env and headers
+function parseCliArgs(args: string[]): { words: string[]; flags: Map<string, string>; env: Record<string, string>; headers: Record<string, string> } {
   const words: string[] = []
   const flags = new Map<string, string>()
+  const env: Record<string, string> = {}
+  const headers: Record<string, string> = {}
+  const option = (name: string, value: string): void => {
+    if (name === '--env') {
+      const at = value.indexOf('=')
+      if (at > 0) env[value.slice(0, at)] = value.slice(at + 1)
+    } else if (name === '--header') {
+      const at = value.indexOf(':')
+      if (at > 0) headers[value.slice(0, at).trim()] = value.slice(at + 1).trim()
+    } else flags.set(name, value)
+  }
   let positional = false
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
     if (positional) words.push(arg)
     else if (arg === '--') positional = true
+    else if (arg === '-y') flags.set('--yes', '')
+    else if (Object.hasOwn(SHORT_OPTIONS, arg)) option(SHORT_OPTIONS[arg], args[++i] ?? '')
     else if (arg.startsWith('--')) {
       const eq = arg.indexOf('=')
-      if (eq >= 0) flags.set(arg.slice(0, eq), arg.slice(eq + 1))
-      else if (arg === '--scope') flags.set(arg, args[++i] ?? '')
+      if (eq >= 0) option(arg.slice(0, eq), arg.slice(eq + 1))
+      else if (VALUE_OPTIONS.includes(arg)) option(arg, args[++i] ?? '')
       else flags.set(arg, '')
     } else words.push(arg)
   }
-  return { words, flags }
+  return { words, flags, env, headers }
 }
 
 // the values --values-stdin reads: a JSON object of strings, or null
@@ -1006,6 +1024,15 @@ function readStdin(): Promise<string> {
   })
 }
 
+// writes a server into the call's scope (local by default); a name the scope already holds fails as Claude Code does
+function addServer(name: string, entry: Msg, call: CliCall): CliResult {
+  const scope = call.scope ?? 'local'
+  const servers = scopeServers(scope)
+  if (Object.hasOwn(servers, name)) return bad(`MCP server ${name} already exists in ${scope} config`)
+  saveScopeServers(scope, { ...servers, [name]: entry })
+  return out(`Added ${entry.type ?? 'stdio'} MCP server ${name} to ${scope} config`)
+}
+
 async function mcpCommand(verb: string | undefined, args: string[], call: CliCall): Promise<CliResult> {
   const [name, json] = args
   switch (verb) {
@@ -1017,11 +1044,27 @@ async function mcpCommand(verb: string | undefined, args: string[], call: CliCal
         return bad('Invalid JSON')
       }
       if (name === undefined || entry === null || typeof entry !== 'object' || Array.isArray(entry)) return bad('Invalid JSON')
-      const scope = call.scope ?? 'local'
-      const servers = scopeServers(scope)
-      if (Object.hasOwn(servers, name)) return bad(`MCP server ${name} already exists in ${scope} config`)
-      saveScopeServers(scope, { ...servers, [name]: entry })
-      return out(`Added ${(entry as Msg).type ?? 'stdio'} MCP server ${name} to ${scope} config`)
+      return addServer(name, entry as Msg, call)
+    }
+    case 'add': {
+      // `mcp add <name> <command> [args…]`: a stdio server, or with -t http|sse the URL of one, with its headers
+      const target = json ?? ''
+      const transport = call.flags.get('--transport') ?? 'stdio'
+      const server: Msg = transport === 'stdio'
+        ? { type: 'stdio', command: target, args: args.slice(2), env: call.env }
+        : { type: transport, url: target, headers: call.headers }
+      return addServer(name ?? '', server, call)
+    }
+    case 'get': {
+      // `mcp get <name>`: a user-scope server of .claude.json, as Claude Code names it
+      const servers = scopeServers('user')
+      if (name === undefined || !Object.hasOwn(servers, name)) return bad(`No MCP server found with name: ${name ?? ''}`)
+      const server = servers[name] as Msg
+      const type = typeof server.type === 'string' ? server.type : 'stdio'
+      const lines = [`${name}:`, '  Scope: User config', `  Type: ${type}`]
+      if (type === 'stdio') lines.push(`  Command: ${server.command ?? ''}`, `  Args: ${Array.isArray(server.args) ? server.args.map(String).join(' ') : ''}`)
+      else lines.push(`  URL: ${server.url ?? ''}`)
+      return out(lines.join('\n'))
     }
     case 'remove': {
       const scopes: Scope[] = call.scope === undefined ? ['local', 'project', 'user'] : [call.scope]
@@ -1096,7 +1139,8 @@ function saveInstalled(edit: (plugins: Msg) => void): void {
 }
 
 // the MCP servers a plugin installed at this folder ships (its .mcp.json)
-function pluginServers(installPath: string): Msg {
+function pluginServers(installPath: string | undefined): Msg {
+  if (installPath === undefined) return {}
   return readJsonFile(join(installPath, '.mcp.json')).mcpServers ?? {}
 }
 
@@ -1140,6 +1184,14 @@ async function pluginCommand(verb: string | undefined, args: string[], call: Cli
       if (found === undefined) return bad(`Plugin "${ref}" not found in any marketplace`)
       const { market, plugin } = found
       const id = `${plugin.name}@${market}`
+      // a plugin whose marketplace runs a command to install it waits for a confirmation: -y, or the command's sha256
+      if (plugin.installCommand !== undefined) {
+        const sha = createHash('sha256').update(plugin.installCommand).digest('hex')
+        if (!call.flags.has('--yes') && call.flags.get('--accept-command') !== sha) {
+          const stdout = call.flags.has('--json') ? `${JSON.stringify({ needsConfirmation: true, command: plugin.installCommand, sha256: sha })}\n` : ''
+          return { code: 1, stdout, stderr: "This plugin's marketplace runs a command to install it: confirm with -y or --accept-command <sha256>\n" }
+        }
+      }
       const version = plugin.installVersion ?? plugin.version
       const installPath = cacheDir(market, plugin.name, version)
       writePluginServers(installPath, plugin)
@@ -1150,6 +1202,7 @@ async function pluginCommand(verb: string | undefined, args: string[], call: Cli
         plugins[id] = [...others, { scope, installPath, version, installedAt: now, lastUpdated: now, ...(scope === 'user' ? {} : { projectPath: process.cwd() }) }]
       })
       editJson(settingsFile(), value => { value.enabledPlugins = { ...(value.enabledPlugins ?? {}), [id]: true } })
+      if (call.flags.has('--json')) return out(JSON.stringify({ pluginId: id, scope, installed: true }))
       return out(`Successfully installed plugin: ${id}`)
     }
     case 'uninstall': {
@@ -1170,7 +1223,7 @@ async function pluginCommand(verb: string | undefined, args: string[], call: Cli
       const id = ref ?? ''
       if (!Object.hasOwn(installedPlugins(), id)) return bad(`Plugin "${id}" is not installed`)
       editJson(settingsFile(), value => { value.enabledPlugins = { ...(value.enabledPlugins ?? {}), [id]: verb === 'enable' } })
-      return out(`Successfully ${verb}d plugin: ${id}`)
+      return out(verb === 'enable' ? `Successfully enabled plugin: ${id}` : `Disabled plugin ${id}`)
     }
     case 'update': {
       const id = ref ?? ''
@@ -1258,7 +1311,7 @@ async function marketplaceCommand(action: string | undefined, args: string[]): P
 // a CLI call: its words and options are read, logged (the keys of --values-stdin, never its values), then answered: a cliFail
 // first, then the subcommand
 async function runCli(args: string[], input: () => Promise<string>): Promise<CliResult> {
-  const { words, flags } = parseCliArgs(args)
+  const { words, flags, env: cliEnv, headers } = parseCliArgs(args)
   const values = flags.has('--values-stdin') ? parseValues(await input()) : undefined
   logLine({ cli: args, secretEnv: process.env.MCP_CLIENT_SECRET !== undefined, stdinKeys: values ? Object.keys(values) : null })
   const joined = args.filter(arg => arg !== '--').join(' ')
@@ -1270,7 +1323,7 @@ async function runCli(args: string[], input: () => Promise<string>): Promise<Cli
   if (failure !== undefined) return bad(failure[1])
   const scopeArg = flags.get('--scope')
   if (scopeArg !== undefined && !isScope(scopeArg)) return bad(`Invalid scope: ${scopeArg}`)
-  const call: CliCall = { words, flags, scope: isScope(scopeArg) ? scopeArg : undefined, values }
+  const call: CliCall = { words, flags, scope: isScope(scopeArg) ? scopeArg : undefined, values, env: cliEnv, headers }
   const [group, verb, ...rest] = words
   if (group === 'mcp') return mcpCommand(verb, rest, call)
   if (group === 'plugin') return pluginCommand(verb, rest, call)
@@ -1387,7 +1440,19 @@ function mcpControl(requestId: string, request: Msg): void {
 
 // ---- start ----
 
-logLine({ argv, pid: process.pid })
+// the sign-in variables are logged as set or not, never their values
+const env = process.env
+logLine({
+  argv,
+  pid: process.pid,
+  env: {
+    config: env.CLAUDE_CONFIG_DIR ?? null,
+    oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN !== undefined,
+    refreshToken: env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN !== undefined,
+    apiKey: env.ANTHROPIC_API_KEY !== undefined,
+    authToken: env.ANTHROPIC_AUTH_TOKEN !== undefined
+  }
+})
 
 // the stand-in ends when the process that started it is gone, whatever it waits for (a gate, a stdin): on POSIX its parent
 // changes to init or a subreaper when the parent dies, on Windows the parent's pid stays and must be checked alive
@@ -1401,6 +1466,12 @@ parentWatch.unref()
 
 if (argv[0] === 'mcp' || argv[0] === 'plugin') {
   void cliMode()
+} else if (argv[0] === 'auth') {
+  // the auth command (fake-cli.ts), loaded by URL: the tsconfig does not allow a .ts import
+  const cli = (await import(new URL('./fake-cli.ts', import.meta.url).href)) as typeof import('./fake-cli')
+  const code = await cli.runCli(argv, { script, configDir, cwd: process.cwd(), log: logLine })
+  // stderr is flushed before the exit, as exit() flushes stdout
+  process.stderr.write('', () => exit(code))
 } else if (has('--version')) {
   process.stdout.write(`${script.version ?? VERSION} (Claude Code)\n`)
   exit(0)

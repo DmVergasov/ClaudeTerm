@@ -148,7 +148,7 @@ test('the foot names the account of the tab in front with its plan, and its bell
   // a Claude tab on an extra account names that account
   await page.evaluate(({ cwd, id }) => window.ct.openTab({ kind: 'claude', cwd, account: id }), { cwd: folder, id: work })
   await expect(account.locator('.tp-account-name')).toHaveText('Work')
-  await expect(account.locator('.tp-account-plan')).toHaveText('Extra account')
+  await expect(account.locator('.tp-account-plan')).toHaveText('Token account')
   await expect(account.locator('.tp-avatar')).toHaveText('WO')
 
   await account.locator('.tp-notify').click()

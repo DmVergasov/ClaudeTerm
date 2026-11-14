@@ -217,10 +217,29 @@ export interface LaunchSpec {
   args: string[] | string
 }
 
-export function buildLaunch(profile: ProfileDef, kind: TabKind, claude: ClaudeLaunch | null): LaunchSpec {
+/**
+ * `once`: the shell ends with the command, instead of staying open after it (the sign-in tab runs `claude auth login`
+ * once, and its tab ends with it)
+ */
+export function buildLaunch(profile: ProfileDef, kind: TabKind, claude: ClaudeLaunch | null, opts: { once?: boolean } = {}): LaunchSpec {
   if (kind === 'shell') return { file: profile.command, args: profile.args }
   if (!claude) throw new Error('claude launch options are required for claude tabs')
   const family = shellFamily(profile)
+  if (opts.once) {
+    const line = buildClaudeCommandLine(family, claude)
+    switch (family) {
+      case 'powershell':
+        return { file: profile.command, args: ['-NoLogo', '-Command', line] }
+      case 'cmd':
+        return { file: profile.command, args: `/c ${line}` }
+      case 'bash':
+      case 'zsh':
+      case 'fish':
+        return { file: profile.command, args: [...loginShellCommandFlags(family), line] }
+      default:
+        throw new Error(`profile "${profile.name}" cannot host claude`)
+    }
+  }
   switch (family) {
     case 'powershell':
       return { file: profile.command, args: ['-NoLogo', '-NoExit', '-Command', buildClaudeCommandLine(family, claude)] }

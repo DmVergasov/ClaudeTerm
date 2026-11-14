@@ -10,7 +10,7 @@ import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/re
 import type { McpSection } from '../shared/mcp'
 import { deviceColor, MAX_SNAPSHOT_BYTES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type RemoteDeviceView } from '../shared/remote'
 import type { NotificationCase, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
-import { accountChoices, accountLabel, switchChoices } from './account-items'
+import { accountChoices, accountLabel, footDetail, signInAgainChoices, switchChoices } from './account-items'
 import { DocPanel } from './doc-panel'
 import { MailPanel } from './mail-panel'
 import { McpPanel } from './mcp/mcp-panel'
@@ -171,7 +171,7 @@ function footAccount(): { name: string; detail: string } {
   const t = activeId === null ? undefined : tabs.get(activeId)
   const remote = t?.info.remote
   if (remote) return { name: remote.accountName ?? MAIN_ACCOUNT, detail: `On ${remoteDeviceOf(remote.device)?.name ?? 'another device'}` }
-  if (t && t.info.kind === 'claude' && t.info.account !== null) return { name: accountLabel(t.info.account, accounts), detail: 'Extra account' }
+  if (t && t.info.kind === 'claude' && t.info.account !== null) return { name: accountLabel(t.info.account, accounts), detail: footDetail(accounts.find((a) => a.id === t.info.account)) }
   return { name: MAIN_ACCOUNT, detail: mainPlan ?? 'Claude Code login' }
 }
 const isOnline = (deviceId: string): boolean => remoteDeviceOf(deviceId)?.online === true
@@ -431,6 +431,23 @@ async function stopTaskOf(tabId: string, taskId: string): Promise<boolean> {
     if (tabId === activeId) renderStatus(tabId)
   }
   return stopped
+}
+
+/** a sign-in account that is not signed in: its sign-in tab opens and Settings shows the helper at the sign-in; no tab starts */
+function signInAgain(id: string): void {
+  void ct.beginAccountFlow({ mode: 'sign-in-again', id, name: null, email: null, source: null, items: [], adopt: false }).then((r) => {
+    if (r.ok) ct.openSettingsWindow('add-account')
+    else showToast(r.error)
+  }, (e: unknown) => showToast(`Cannot sign in again: ${String(e)}`))
+}
+
+/** the status bar's account menu, after Continue as …: each sign-in account that is not signed in, and Add account…, once an extra account exists */
+function accountMenuTail(): MenuItem[] {
+  if (accounts.length === 0) return []
+  return [
+    ...signInAgainChoices(accounts).map((c): MenuItem => ({ label: c.label, action: () => signInAgain(c.account) })),
+    { label: 'Add account…', action: () => ct.openSettingsWindow('add-account') }
+  ]
 }
 
 /** Continue as …: the tab's conversation restarts on another account */
@@ -1084,8 +1101,9 @@ function newTabItems(names: string[]): MenuItem[] {
     ...accountChoices(accounts).map((c) => ({
       label: `Claude Code — ${c.label}`,
       disabled: c.disabled,
-      action: () => void ct.openTab({ kind: 'claude', cwd: folder, account: c.account })
-    }))
+      action: () => (c.signInAgain && c.account !== null ? signInAgain(c.account) : void ct.openTab({ kind: 'claude', cwd: folder, account: c.account }))
+    })),
+    ...(accounts.length > 0 ? [{ label: '', separator: true }, { label: 'Add account…', action: () => ct.openSettingsWindow('add-account') }] : [])
   ]
   const tail: MenuItem[] = [
     { label: 'Recent sessions…', hint: shortcutLabel('recentSessions', ct.platform), action: () => void sessionsWindow.open() },
@@ -1389,6 +1407,8 @@ async function boot(): Promise<void> {
     open: (id, device) => ct.openSession(id, device),
     opening: closeMenu,
     setStarred: (id, starred) => void ct.setSessionStarred(id, starred),
+    openAs: (id, account) => ct.openSessionAs(id, account),
+    accounts: () => accounts,
     closed: () => { if (activeId) focusTab(activeId) }
   }, ct.platform)
   folderDialog = new FolderDialog(document.getElementById('folder-dialog')!)
@@ -1400,7 +1420,13 @@ async function boot(): Promise<void> {
     // the menu opens over the status bar, kept inside the window; a remote tab's accounts are asked for first, a local tab's need no answer
     const id = activeId
     if (!id) return
-    const show = (): void => { showMenu({ x: r.left, y: r.top }, continueItems(id)) }
+    const show = (): void => {
+      const items = continueItems(id)
+      // a remote tab's menu offers its device's accounts only: the sign-in and the helper are this window's accounts
+      const extra = tabs.get(id)?.info.remote ? [] : accountMenuTail()
+      const gap: MenuItem[] = items.length > 0 && extra.length > 0 ? [{ label: '', separator: true }] : []
+      showMenu({ x: r.left, y: r.top }, [...items, ...gap, ...extra])
+    }
     if (tabs.get(id)?.info.remote) requestChoices(show)
     else show()
   }, (anchor) => {
