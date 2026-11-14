@@ -238,22 +238,29 @@ function setOwn(target: Obj, key: string, value: unknown): void {
   Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true })
 }
 
-/** the counts the helper shows for each item, in CARRY_ITEMS order; names only for the first three MCP servers */
+/**
+ * The counts the helper shows for each item, in CARRY_ITEMS order; names only for the first three MCP servers. MCP app
+ * secrets count the servers with a client secret in the sign-in store, and are left out unless `withSecrets` (macOS keeps
+ * them in the Keychain, where they are not read).
+ */
 export function previewCounts(
-  read: { settings: unknown; claudeJson: unknown; installed: unknown; known: unknown },
+  read: { settings: unknown; claudeJson: unknown; installed: unknown; known: unknown; credentials: unknown },
   files: Record<FolderItem, number>,
+  withSecrets: boolean,
 ): CarryCount[] {
   const settings = carriedSettings(read.settings)
   const servers = userServers(read.claudeJson)
   const plan = pluginPlan(read.installed, read.known, read.settings)
   const projects = isObject(read.claudeJson) && isObject(read.claudeJson.projects) ? Object.values(read.claudeJson.projects) : []
   const trusted = projects.filter((entry) => isObject(entry) && entry.hasTrustDialogAccepted === true).length
+  const secrets = clientSecrets(read.credentials, servers.map((server) => server.name))
 
   const count = (item: CarryItem, value: number, names: string[] = [], marketplaces = 0): CarryCount => ({ item, count: value, names, marketplaces })
   const byItem: Record<CarryItem, CarryCount> = {
     settings: count('settings', Object.keys(settings).length),
     hooks: count('hooks', countHooks(hooksOf(read.settings))),
     mcp: count('mcp', servers.length, servers.slice(0, 3).map((server) => server.name)),
+    'mcp-secrets': count('mcp-secrets', secrets.size, [...secrets.keys()].slice(0, 3)),
     plugins: count('plugins', plan.plugins.length, [], plan.marketplaces.length),
     skills: count('skills', files.skills),
     agents: count('agents', files.agents),
@@ -263,5 +270,5 @@ export function previewCounts(
     keybindings: count('keybindings', files.keybindings),
     'output-styles': count('output-styles', files['output-styles']),
   }
-  return CARRY_ITEMS.map((item) => byItem[item])
+  return CARRY_ITEMS.filter((item) => withSecrets || item !== 'mcp-secrets').map((item) => byItem[item])
 }

@@ -1192,6 +1192,7 @@ const installedFile = (): string => join(pluginsDir(), 'installed_plugins.json')
 const marketsFile = (): string => join(pluginsDir(), 'known_marketplaces.json')
 const optionsFile = (): string => join(pluginsDir(), 'fake-options.json')
 const authFile = (): string => join(configDir, 'fake-mcp-auth.json')
+const credentialsFile = (): string => join(configDir, '.credentials.json')
 const catalogFile = (market: string): string => join(pluginsDir(), 'marketplaces', market, '.claude-plugin', 'marketplace.json')
 const cacheDir = (market: string, name: string, version: string): string => join(pluginsDir(), 'cache', market, name, version)
 
@@ -1317,6 +1318,15 @@ function addServer(name: string, entry: Msg, call: CliCall): CliResult {
   return out(`Added ${entry.type ?? 'stdio'} MCP server ${name} to ${scope} config`)
 }
 
+// keeps a server's client secret where Claude Code 2.1.323 keeps it: the sign-in store's mcpOAuthClientConfig, keyed by the
+// name and a hash of the server's entry; the other keys of the store stay as they are, and the secret is never logged
+function saveClientSecret(name: string, entry: Msg, secret: string): void {
+  const key = `${name}|${createHash('sha256').update(JSON.stringify(entry)).digest('hex').slice(0, 16)}`
+  editJson(credentialsFile(), value => {
+    value.mcpOAuthClientConfig = { ...(value.mcpOAuthClientConfig ?? {}), [key]: { clientSecret: secret } }
+  })
+}
+
 async function mcpCommand(verb: string | undefined, args: string[], call: CliCall): Promise<CliResult> {
   const [name, json] = args
   switch (verb) {
@@ -1328,7 +1338,13 @@ async function mcpCommand(verb: string | undefined, args: string[], call: CliCal
         return bad('Invalid JSON')
       }
       if (name === undefined || entry === null || typeof entry !== 'object' || Array.isArray(entry)) return bad('Invalid JSON')
-      return addServer(name, entry as Msg, call)
+      // --client-secret takes the secret from MCP_CLIENT_SECRET, never from the arguments
+      const secret = process.env.MCP_CLIENT_SECRET
+      const withSecret = call.flags.has('--client-secret')
+      if (withSecret && (secret === undefined || secret === '')) return bad('--client-secret needs the secret in MCP_CLIENT_SECRET')
+      const added = addServer(name, entry as Msg, call)
+      if (withSecret && secret !== undefined && added.code === 0) saveClientSecret(name, entry as Msg, secret)
+      return added
     }
     case 'add': {
       // `mcp add <name> <command> [args…]`: a stdio server, or with -t http|sse the URL of one, with its headers

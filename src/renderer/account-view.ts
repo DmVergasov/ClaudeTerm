@@ -74,9 +74,12 @@ export interface TickRow {
   disabled: boolean
 }
 
-/** the carry picker's rows, in CARRY_ITEMS order: an item the source does not have is off; trusted folders wait for the target's tabs to close */
+/**
+ * the carry picker's rows, in CARRY_ITEMS order: an item the source does not have is off; trusted folders wait for the target's
+ * tabs to close; MCP app secrets have a row only when the preview counts them
+ */
 export function tickRows(p: CarryPreview, o: { adopt: boolean; mode: FlowMode; targetName: string }): TickRow[] {
-  return CARRY_ITEMS.map((item) => {
+  return CARRY_ITEMS.filter((item) => item !== 'mcp-secrets' || p.items.some((c) => c.item === 'mcp-secrets')).map((item) => {
     const c = p.items.find((x) => x.item === item)
     const n = c?.count ?? 0
     const blocked = item === 'trust' && o.mode === 'carry' && p.targetTabs > 0
@@ -86,17 +89,23 @@ export function tickRows(p: CarryPreview, o: { adopt: boolean; mode: FlowMode; t
   })
 }
 
+/** the names an item's count lists: the first ones, then +rest for the others */
+function namesNote(c: CarryCount | undefined): string {
+  const names = c?.names ?? []
+  const rest = (c?.count ?? 0) - names.length
+  return `${names.join(', ')}${rest > 0 ? ` +${rest}` : ''}`
+}
+
 function noteOf(item: CarryItem, c: CarryCount | undefined): string {
   switch (item) {
     case 'settings':
       return 'Model, permissions, environment, status line'
     case 'hooks':
       return 'Commands Claude Code runs on its events'
-    case 'mcp': {
-      const names = c?.names ?? []
-      const rest = (c?.count ?? 0) - names.length
-      return `${names.join(', ')}${rest > 0 ? ` +${rest}` : ''} · sign-ins are asked again`
-    }
+    case 'mcp':
+      return `${namesNote(c)} · sign-ins are asked again`
+    case 'mcp-secrets':
+      return `${namesNote(c)} · client secrets of their own OAuth apps`
     case 'plugins': {
       const m = c?.marketplaces ?? 0
       return `Installed again from their ${m} ${m === 1 ? 'marketplace' : 'marketplaces'}`

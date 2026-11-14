@@ -24,6 +24,8 @@ const preview: CarryPreview = {
   ]
 }
 
+const withSecrets: CarryPreview = { ...preview, items: [...preview.items, { item: 'mcp-secrets', count: 1, names: ['alpha'], marketplaces: 0 }] }
+
 describe('initials', () => {
   it('takes the first two characters, the first in upper case', () => {
     expect(initials('Main account')).toBe('Ma')
@@ -119,6 +121,13 @@ describe('tickRows', () => {
     expect(rows[5]).toMatchObject({ label: 'Agents', note: 'Your subagents', count: '3' })
     expect(rows[7]).toMatchObject({ label: 'Memory', note: 'CLAUDE.md and rules', count: '2 files' })
     expect(rows[9]).toMatchObject({ label: 'Keybindings', note: 'keybindings.json', count: '1 file' })
+  })
+
+  it('MCP app secrets come right after MCP servers, with the servers that have one, ticked by default; a preview without them has no such row', () => {
+    const rows = tickRows(withSecrets, { adopt: false, mode: 'add', targetName: 'Studio' })
+    expect(rows.map((r) => r.item).slice(2, 5)).toEqual(['mcp', 'mcp-secrets', 'plugins'])
+    expect(rows[3]).toEqual({ item: 'mcp-secrets', label: 'MCP app secrets', note: 'alpha · client secrets of their own OAuth apps', count: '1', ticked: true, disabled: false })
+    expect(tickRows(preview, { adopt: false, mode: 'add', targetName: 'Studio' }).some((r) => r.item === 'mcp-secrets')).toBe(false)
   })
 
   it('an item the source does not have is disabled and unticked, and says so', () => {

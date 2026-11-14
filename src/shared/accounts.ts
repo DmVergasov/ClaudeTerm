@@ -58,7 +58,7 @@ export interface AccountsView {
 export type AccountResult = { ok: true } | { ok: false; error: string }
 
 /** the items a new sign-in account can carry over from another account, in the order the picker lists them */
-export const CARRY_ITEMS = ['settings', 'hooks', 'mcp', 'plugins', 'skills', 'agents', 'commands', 'memory', 'trust', 'keybindings', 'output-styles'] as const
+export const CARRY_ITEMS = ['settings', 'hooks', 'mcp', 'mcp-secrets', 'plugins', 'skills', 'agents', 'commands', 'memory', 'trust', 'keybindings', 'output-styles'] as const
 export type CarryItem = (typeof CARRY_ITEMS)[number]
 /** a line of the carry progress: a carried item, or ClaudeTerm's own tools */
 export type CarryLineItem = CarryItem | 'claudeterm'
@@ -67,6 +67,7 @@ export const CARRY_LABELS: Record<CarryLineItem, string> = {
   settings: 'Settings',
   hooks: 'Hooks',
   mcp: 'MCP servers',
+  'mcp-secrets': 'MCP app secrets',
   plugins: 'Plugins',
   skills: 'Skills',
   agents: 'Agents',

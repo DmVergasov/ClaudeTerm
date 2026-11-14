@@ -6,6 +6,7 @@ import {
   ITEM_PATHS,
   addTrust,
   carriedSettings,
+  clientSecrets,
   countHooks,
   hooksOf,
   mergeSettings,
@@ -37,8 +38,10 @@ export interface CarryDeps {
   source: SourceFolder
   sourceName: string
   target: { id: string; name: string; folder: string }
-  /** runs `claude <args>` with the account's environment */
-  cli(args: string[]): Promise<CliRun>
+  /** runs `claude <args>` with the account's environment, with `env` added to it */
+  cli(args: string[], env?: Record<string, string>): Promise<CliRun>
+  /** the MCP app secrets are ticked: each server that has one is added with it */
+  secrets?: boolean
   log: { warn(m: string): void }
 }
 
@@ -150,16 +153,17 @@ async function countFiles(path: string): Promise<number> {
   }
 }
 
-/** the source's configs and the files of each folder item; reads only, a broken file is null (or 0 files) */
-export async function readSource(s: SourceFolder): Promise<{ settings: unknown; claudeJson: unknown; installed: unknown; known: unknown; files: Record<FolderItem, number> }> {
+/** the source's configs, its sign-in store and the files of each folder item; reads only, a broken file is null (or 0 files) */
+export async function readSource(s: SourceFolder): Promise<{ settings: unknown; claudeJson: unknown; installed: unknown; known: unknown; credentials: unknown; files: Record<FolderItem, number> }> {
   const configs = await readConfigs(s)
+  const credentials = await readJsonOf(join(s.configDir, '.credentials.json'))
   const files = {} as Record<FolderItem, number>
   for (const item of Object.keys(ITEM_PATHS) as FolderItem[]) {
     let count = 0
     for (const path of ITEM_PATHS[item]) count += await countFiles(join(s.configDir, path.replace(/\/+$/, '')))
     files[item] = count
   }
-  return { ...configs, files }
+  return { ...configs, credentials, files }
 }
 
 /** the account's settings.json for a write: its object, {} when missing; null when it cannot be read or is not an object */
@@ -213,22 +217,48 @@ async function carryFolders(item: FolderItem, d: CarryDeps): Promise<CarryLine> 
   return line(item, 'done', counted(files, 'file', 'files'), notes)
 }
 
-async function carryMcp(d: CarryDeps): Promise<CarryLine> {
+/**
+ * The user-scope MCP servers of the source, and with `d.secrets` their MCP app secrets: a server that has one is added
+ * with `--client-secret`, the secret in MCP_CLIENT_SECRET only. The secrets come from the sign-in store, read only then.
+ */
+async function carryMcp(d: CarryDeps): Promise<{ servers: CarryLine; secrets: CarryLine }> {
   const servers = userServers((await readConfigs(d.source)).claudeJson)
+  let secretOf = new Map<string, string>()
+  let storeUnreadable = false
+  if (d.secrets) {
+    const store = await parseJsonFile(join(d.source.configDir, '.credentials.json'))
+    if (store.state === 'unreadable') storeUnreadable = true
+    else if (store.state === 'ok') secretOf = clientSecrets(store.value, servers.map((server) => server.name))
+  }
   let added = 0
+  let withSecret = 0
   let failure: { name: string; message: string } | null = null
+  let secretFailure: { name: string; message: string } | null = null
   for (const server of servers) {
     await d.cli(['mcp', 'remove', '--scope', 'user', '--', server.name])
-    const run = await d.cli(['mcp', 'add-json', '--scope', 'user', '--', server.name, JSON.stringify(server.config)])
+    const secret = secretOf.get(server.name)
+    const args = secret === undefined ? ['mcp', 'add-json', '--scope', 'user'] : ['mcp', 'add-json', '--scope', 'user', '--client-secret']
+    const run = await d.cli([...args, '--', server.name, JSON.stringify(server.config)], secret === undefined ? undefined : { MCP_CLIENT_SECRET: secret })
     if (run.code === 0) {
       added++
+      if (secret !== undefined) withSecret++
       continue
     }
     d.log.warn(`claude mcp add-json failed for ${server.name} (${run.code})`)
-    failure ??= { name: server.name, message: cliMessage(maskedRun(run, serverSecrets(server.config))) }
+    const masked = secret === undefined ? serverSecrets(server.config) : [...serverSecrets(server.config), secret]
+    const failed = { name: server.name, message: cliMessage(maskedRun(run, masked)) }
+    failure ??= failed
+    if (secret !== undefined) secretFailure ??= failed
   }
-  if (failure !== null) return line('mcp', 'failed', `${added} of ${servers.length} · ${failure.name}: ${failure.message}`)
-  return line('mcp', 'done', `${added} added`)
+  const serversLine =
+    failure === null
+      ? line('mcp', 'done', `${added} added`)
+      : line('mcp', 'failed', `${added} of ${servers.length} · ${failure.name}: ${failure.message}`)
+  if (storeUnreadable) return { servers: serversLine, secrets: line('mcp-secrets', 'failed', `.credentials.json of ${d.sourceName} cannot be read`) }
+  if (secretFailure !== null) {
+    return { servers: serversLine, secrets: line('mcp-secrets', 'failed', `${withSecret} of ${secretOf.size} · ${secretFailure.name}: ${secretFailure.message}`) }
+  }
+  return { servers: serversLine, secrets: line('mcp-secrets', 'done', `${withSecret} added`) }
 }
 
 /** the names of the marketplaces `claude plugin marketplace list --json` answers; an entry without a name is skipped */
@@ -363,7 +393,9 @@ export async function carryItem(item: CarryItem, d: CarryDeps): Promise<CarryLin
       case 'hooks':
         return await carryHooks(d)
       case 'mcp':
-        return await carryMcp(d)
+        return (await carryMcp(d)).servers
+      case 'mcp-secrets':
+        return (await carryMcp({ ...d, secrets: true })).secrets
       case 'plugins':
         return await carryPlugins(d)
       case 'trust':
@@ -373,5 +405,26 @@ export async function carryItem(item: CarryItem, d: CarryDeps): Promise<CarryLin
     }
   } catch (error) {
     return line(item, 'failed', error instanceof Error ? error.message : String(error))
+  }
+}
+
+/** the lines of an MCP item that failed as a whole: both lines when MCP app secrets are carried, else the item's own line */
+export function failedLines(item: CarryItem, secrets: boolean, text: string): CarryLine[] {
+  if (item === 'mcp-secrets' || (item === 'mcp' && secrets)) return [line('mcp', 'failed', text), line('mcp-secrets', 'failed', text)]
+  return [line(item, 'failed', text)]
+}
+
+/**
+ * The lines an item answers. MCP servers and MCP app secrets are one run, so they answer together: both lines when the
+ * secrets are ticked. Any other item answers its one line. A failure of the run is a failed line, never a throw.
+ */
+export async function carryLines(item: CarryItem, d: CarryDeps): Promise<CarryLine[]> {
+  if (item !== 'mcp' && item !== 'mcp-secrets') return [await carryItem(item, d)]
+  const withSecrets = item === 'mcp-secrets' || d.secrets === true
+  try {
+    const { servers, secrets } = await carryMcp({ ...d, secrets: withSecrets })
+    return withSecrets ? [servers, secrets] : [servers]
+  } catch (error) {
+    return failedLines('mcp', withSecrets, error instanceof Error ? error.message : String(error))
   }
 }

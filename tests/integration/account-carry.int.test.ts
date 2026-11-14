@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loginEnv } from '../../src/main/accounts'
-import { MASK, MAX_CONFIG_BYTES, carryItem, copyTree, readSource, type CarryDeps, type SourceFolder } from '../../src/main/account-carry-run'
+import { MASK, MAX_CONFIG_BYTES, carryItem, carryLines, copyTree, readSource, type CarryDeps, type SourceFolder } from '../../src/main/account-carry-run'
 import { CliError, runClaudeCli } from '../../src/main/mcp/claude-cli'
 import { buildChildEnv, applyEnvPatch } from '../../src/main/child-env'
 import { resolveChatLaunch, type ChatLaunch } from '../../src/main/chat/claude-spawn'
@@ -55,6 +55,18 @@ function readJson(file: string): Record<string, any> {
 
 function writeScript(script: FakeScript): void {
   writeFileSync(scriptFile, JSON.stringify(script))
+}
+
+const APP_SECRET = 'app-client-secret-0001'
+
+/** the source's sign-in store with a client secret for the server api, as Claude Code 2.1.323 keeps it */
+function seedAppSecret(): void {
+  writeJson(join(source, '.credentials.json'), { claudeAiOauth: { accessToken: MAIN_CREDENTIAL }, mcpOAuthClientConfig: { 'api|0123456789abcdef': { clientSecret: APP_SECRET } } })
+}
+
+/** the CLI calls the stand-in logged: the arguments, and whether MCP_CLIENT_SECRET was set */
+function cliCalls(): { cli: unknown; secretEnv: unknown }[] {
+  return readLog(log).filter((e) => Array.isArray(e.cli)).map((e) => ({ cli: e.cli, secretEnv: e.secretEnv }))
 }
 
 // the plugin catalogue of the source's marketplace: `paid` runs a command to install, `tools` and `old` do not
@@ -139,7 +151,7 @@ function deps(): CarryDeps {
     source: { configDir: source, claudeJson: join(source, '.claude.json') },
     sourceName: SOURCE_NAME,
     target: { id: 'work', name: TARGET_NAME, folder: target },
-    cli: (args) => runClaudeCli(launch, args, { cwd: work, env }),
+    cli: (args, extra) => runClaudeCli(launch, args, { cwd: work, env: { ...env, ...extra } }),
     log: { warn: (m) => warnings.push(m) }
   }
 }
@@ -627,6 +639,64 @@ describe('carry-over', () => {
     expect(line.text).not.toContain('uote-secret')
   })
 
+  it('with MCP app secrets a server with a client secret is added with --client-secret and the secret in MCP_CLIENT_SECRET; the stand-in logs only that one came', async () => {
+    seedAppSecret()
+    const servers = readJson(join(source, '.claude.json')).mcpServers as Record<string, unknown>
+    const lines = await carryLines('mcp', { ...deps(), secrets: true })
+    expect(lines).toEqual([
+      { item: 'mcp', state: 'done', text: '2 added', subs: [] },
+      { item: 'mcp-secrets', state: 'done', text: '1 added', subs: [] }
+    ])
+    expect(cliCalls()).toEqual([
+      { cli: ['mcp', 'remove', '--scope', 'user', '--', 'api'], secretEnv: false },
+      { cli: ['mcp', 'add-json', '--scope', 'user', '--client-secret', '--', 'api', JSON.stringify(servers.api)], secretEnv: true },
+      { cli: ['mcp', 'remove', '--scope', 'user', '--', 'docs'], secretEnv: false },
+      { cli: ['mcp', 'add-json', '--scope', 'user', '--', 'docs', JSON.stringify(servers.docs)], secretEnv: false }
+    ])
+    expect(readFileSync(log, 'utf8')).not.toContain(APP_SECRET)
+    expect(warnings.join('\n')).not.toContain(APP_SECRET)
+    // the account's Claude Code keeps the same secret for api
+    const store = readJson(join(target, '.credentials.json')).mcpOAuthClientConfig as Record<string, unknown>
+    expect(Object.entries(store).filter(([key]) => key.startsWith('api|')).map(([, entry]) => entry)).toEqual([{ clientSecret: APP_SECRET }])
+  })
+
+  it('without MCP app secrets every server is added without a secret', async () => {
+    seedAppSecret()
+    expect((await carryLines('mcp', deps())).map((l) => l.item)).toEqual(['mcp'])
+    const adds = cliCalls().filter((c) => (c.cli as string[])[1] === 'add-json')
+    expect(adds.map((c) => c.secretEnv)).toEqual([false, false])
+    expect(adds.some((c) => (c.cli as string[]).includes('--client-secret'))).toBe(false)
+    expect(existsSync(join(target, '.credentials.json'))).toBe(false)
+  })
+
+  it('a refused secret fails both lines with the secret masked and logs only the name and the code', async () => {
+    seedAppSecret()
+    writeScript({ turns: {}, marketplaces: MARKETPLACE, cliFail: { 'mcp add-json --scope user --client-secret': `invalid_client: ${APP_SECRET} was refused` } })
+    expect(await carryLines('mcp', { ...deps(), secrets: true })).toEqual([
+      { item: 'mcp', state: 'failed', text: `1 of 2 · api: invalid_client: ${MASK} was refused`, subs: [] },
+      { item: 'mcp-secrets', state: 'failed', text: `0 of 1 · api: invalid_client: ${MASK} was refused`, subs: [] }
+    ])
+    expect(warnings).toEqual(['claude mcp add-json failed for api (1)'])
+  })
+
+  it('a sign-in store that cannot be read fails MCP app secrets and still adds the servers', async () => {
+    write(join(source, '.credentials.json'), '{ not json')
+    expect(await carryLines('mcp', { ...deps(), secrets: true })).toEqual([
+      { item: 'mcp', state: 'done', text: '2 added', subs: [] },
+      { item: 'mcp-secrets', state: 'failed', text: '.credentials.json of Main account cannot be read', subs: [] }
+    ])
+  })
+
+  it('carryItem of MCP app secrets adds the servers with their secrets and answers the secrets line; a command that cannot run fails both lines', async () => {
+    seedAppSecret()
+    expect(await carryItem('mcp-secrets', deps())).toEqual({ item: 'mcp-secrets', state: 'done', text: '1 added', subs: [] })
+    const failing: CarryDeps = { ...deps(), secrets: true, cli: () => Promise.reject(new CliError('timeout', 'Claude Code did not answer in 60 s')) }
+    expect((await carryLines('mcp', failing)).map(({ item, state, text }) => ({ item, state, text }))).toEqual([
+      { item: 'mcp', state: 'failed', text: 'Claude Code did not answer in 60 s' },
+      { item: 'mcp-secrets', state: 'failed', text: 'Claude Code did not answer in 60 s' }
+    ])
+  })
+
   it('a command that cannot run fails its item with its message', async () => {
     const failing: CarryDeps = { ...deps(), cli: () => Promise.reject(new CliError('timeout', 'Claude Code did not answer in 60 s')) }
     expect(await carryItem('mcp', failing)).toEqual({ item: 'mcp', state: 'failed', text: 'Claude Code did not answer in 60 s', subs: [] })
@@ -640,6 +710,7 @@ describe('reading the source and copying trees', () => {
     expect(read.claudeJson).toMatchObject({ oauthAccount: { emailAddress: 'main@example.com' } })
     expect(Object.keys(read.installed as object)).toEqual(['version', 'plugins'])
     expect(read.files).toEqual({ skills: 2, agents: 1, commands: 1, 'output-styles': 1, memory: 2, keybindings: 1 })
+    expect(read.credentials).toMatchObject({ claudeAiOauth: { accessToken: MAIN_CREDENTIAL } })
 
     writeFileSync(join(source, 'settings.json'), ' '.repeat(MAX_CONFIG_BYTES + 1))
     expect((await readSource({ configDir: source, claudeJson: join(source, '.claude.json') })).settings).toBeNull()

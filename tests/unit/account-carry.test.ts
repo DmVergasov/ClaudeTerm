@@ -247,12 +247,14 @@ describe('previewCounts', () => {
       },
       installed: { plugins: { 'a@m': [{ scope: 'user' }], 'b@n': [{ scope: 'user' }], 'c@m': [{ scope: 'user' }] } },
       known: { m: { source: { source: 'github', repo: 'a/b' }, installLocation: '/cache/m' } },
+      credentials: { mcpOAuthClientConfig: { 'beta|0123456789abcdef': { clientSecret: 'beta-app-secret' }, 'zeta|0123456789abcdef': { clientSecret: 'zeta-app-secret' } } },
     }
     const files: Record<FolderItem, number> = { skills: 2, agents: 0, commands: 1, 'output-styles': 0, memory: 3, keybindings: 1 }
-    expect(previewCounts(read, files)).toEqual([
+    expect(previewCounts(read, files, true)).toEqual([
       { item: 'settings', count: 2, names: [], marketplaces: 0 },
       { item: 'hooks', count: 3, names: [], marketplaces: 0 },
       { item: 'mcp', count: 4, names: ['alpha', 'beta', 'delta'], marketplaces: 0 },
+      { item: 'mcp-secrets', count: 1, names: ['beta'], marketplaces: 0 },
       { item: 'plugins', count: 3, names: [], marketplaces: 2 },
       { item: 'skills', count: 2, names: [], marketplaces: 0 },
       { item: 'agents', count: 0, names: [], marketplaces: 0 },
@@ -262,6 +264,13 @@ describe('previewCounts', () => {
       { item: 'keybindings', count: 1, names: [], marketplaces: 0 },
       { item: 'output-styles', count: 0, names: [], marketplaces: 0 },
     ])
+    expect(JSON.stringify(previewCounts(read, files, true))).not.toContain('app-secret')
+  })
+
+  it('previewCounts leaves MCP app secrets out where Claude Code keeps them in the Keychain', () => {
+    const files: Record<FolderItem, number> = { skills: 0, agents: 0, commands: 0, 'output-styles': 0, memory: 0, keybindings: 0 }
+    const read = { settings: null, claudeJson: null, installed: null, known: null, credentials: null }
+    expect(previewCounts(read, files, false).map((c) => c.item)).toEqual(['settings', 'hooks', 'mcp', 'plugins', 'skills', 'agents', 'commands', 'memory', 'trust', 'keybindings', 'output-styles'])
   })
 })
 
@@ -279,8 +288,8 @@ describe('malformed files carry nothing and never throw', () => {
       plugins: [],
       marketplaces: [],
     })
-    expect(previewCounts({ settings: null, claudeJson: 'x', installed: null, known: null }, files).map((c) => c.count)).toEqual([
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    expect(previewCounts({ settings: null, claudeJson: 'x', installed: null, known: null, credentials: 'x' }, files, true).map((c) => c.count)).toEqual([
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ])
   })
 })

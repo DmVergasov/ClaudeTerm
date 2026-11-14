@@ -3108,7 +3108,7 @@ function bootstrap(): void {
       sourceName: accountLabel(source),
       sourceEmail: (await identityOfFile(from.claudeJson)).email,
       sourceFolder: from.configDir,
-      items: previewCounts(read, read.files),
+      items: previewCounts(read, read.files, process.platform !== 'darwin'),
       targetTabs: target === null ? 0 : tabsOn(target)
     }
   })
