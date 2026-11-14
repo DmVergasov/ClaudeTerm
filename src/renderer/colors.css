@@ -1,3 +1,4 @@
+/* Graphite's palette, which a window shows until the theme's palette is set on its root (appPalette, src/shared/themes.ts) */
 :root {
   --ground: #0A0A0C;
   --sheet: #111114;
@@ -15,10 +16,53 @@
   --red: #F2867E;
   --blue: #7FA7F5;
   --purple: #A78BFA;
+  --tab-edge: #27272E;
+  --item-hover: #22222A;
+  --panel: #0F0F12;
+  --card: #141418;
+  --well: #0C0C0F;
+  --field: #0E0E11;
+  --line-3: #3A3A43;
+  --card-hover: #1A1A1F;
+  --art-panel: #2E2E36;
+  --chip-line: #26262D;
+  --text-soft: #9D9DA7;
+  --text-4: #55555E;
+  --knob: #9A9AA3;
+  --match: #E5C07B;
+  --tint-1: #FFFFFF08;
+  --tint-2: #FFFFFF0A;
+  --tint-3: #FFFFFF0D;
+  --tint-4: #FFFFFF10;
+  --tint-5: #FFFFFF12;
+  --tint-6: #FFFFFF18;
+  --tint-7: #FFFFFF1A;
+  --scrim: #00000077;
+  --scrim-2: #05050690;
+  --chat-tone-0: #0C0C0E;
+  --chat-tone-1: #0F0F12;
+  --chat-tone-2: #131317;
+  --chat-tone-3: #17171B;
+  --chat-tone-4: #1A1A1F;
+  --chat-tone-5: #1C1C22;
+  --chat-tone-6: #1E1E24;
+  --chat-tone-7: #22222A;
+  --chat-tone-8: #24242B;
+  --chat-tone-9: #26262D;
+  --chat-edge-2: #202026;
+  --chat-edge-3: #222228;
+  --chat-edge-6: #2E2E36;
+  --chat-edge-7: #4A4A54;
+  --chat-ink-1: #9D9DA7;
+  --chat-ink-2: #A3A3AC;
+  --chat-ink-3: #DADADF;
+  --chat-ink-4: #6E6E78;
+  --chat-on-accent: #141414;
   --bg: var(--term);
   --chrome: var(--sheet);
   --chrome-2: var(--raised);
   --fg: var(--text);
   --muted: var(--text-3);
   --border: var(--line-2);
+  color-scheme: dark;
 }

@@ -32,18 +32,23 @@ const GRAPHITE_BG = '#0E0E10'
 const GRAPHITE_FG = '#D4D4DA'
 
 /**
- * The colour tokens of a chat: the window's tokens the chat uses (set on the chat host, so the window's own stay as they are),
- * and the chat's surface, edge and text steps. Graphite's values are the ones the chat has always had.
+ * The app's colour tokens as colors.css writes them out: the window's own tokens, the chat's steps and the tokens of the
+ * panels, cards, tints and scrims. Graphite's palette is these values.
  */
-const GRAPHITE_CHAT: Record<string, string> = {
-  '--bg': '#0E0E10', '--sheet': '#111114', '--raised': '#16161A', '--raised-2': '#1E1E23', '--line': '#1C1C21', '--line-2': '#2A2A31',
-  '--border': '#2A2A31', '--text': '#EDEDF0', '--text-2': '#B5B5BE', '--text-3': '#8C8C96',
-  '--red': '#F2867E', '--green': '#63C08F', '--amber': '#E5B567', '--blue': '#7FA7F5', '--purple': '#A78BFA',
+const GRAPHITE_PALETTE: Record<string, string> = {
+  '--ground': '#0A0A0C', '--sheet': '#111114', '--term': '#0E0E10', '--raised': '#16161A', '--raised-2': '#1E1E23',
+  '--line': '#1C1C21', '--line-2': '#2A2A31', '--text': '#EDEDF0', '--text-2': '#B5B5BE', '--text-3': '#8C8C96',
+  '--accent': '#D97757', '--green': '#63C08F', '--amber': '#E5B567', '--red': '#F2867E', '--blue': '#7FA7F5', '--purple': '#A78BFA',
+  '--bg': '#0E0E10', '--chrome': '#111114', '--chrome-2': '#16161A', '--fg': '#EDEDF0', '--muted': '#8C8C96', '--border': '#2A2A31',
+  '--tab-edge': '#27272E', '--item-hover': '#22222A', '--panel': '#0F0F12', '--card': '#141418', '--well': '#0C0C0F',
+  '--field': '#0E0E11', '--line-3': '#3A3A43', '--card-hover': '#1A1A1F', '--art-panel': '#2E2E36', '--chip-line': '#26262D',
+  '--text-soft': '#9D9DA7', '--text-4': '#55555E', '--knob': '#9A9AA3', '--match': '#E5C07B',
+  '--tint-1': '#FFFFFF08', '--tint-2': '#FFFFFF0A', '--tint-3': '#FFFFFF0D', '--tint-4': '#FFFFFF10', '--tint-5': '#FFFFFF12',
+  '--tint-6': '#FFFFFF18', '--tint-7': '#FFFFFF1A', '--scrim': '#00000077', '--scrim-2': '#05050690',
   '--chat-tone-0': '#0C0C0E', '--chat-tone-1': '#0F0F12', '--chat-tone-2': '#131317', '--chat-tone-3': '#17171B', '--chat-tone-4': '#1A1A1F',
   '--chat-tone-5': '#1C1C22', '--chat-tone-6': '#1E1E24', '--chat-tone-7': '#22222A', '--chat-tone-8': '#24242B', '--chat-tone-9': '#26262D',
   '--chat-edge-2': '#202026', '--chat-edge-3': '#222228', '--chat-edge-6': '#2E2E36', '--chat-edge-7': '#4A4A54',
-  '--chat-ink-1': '#9D9DA7', '--chat-ink-2': '#A3A3AC', '--chat-ink-3': '#DADADF', '--chat-ink-4': '#6E6E78',
-  '--chat-on-accent': '#141414'
+  '--chat-ink-1': '#9D9DA7', '--chat-ink-2': '#A3A3AC', '--chat-ink-3': '#DADADF', '--chat-ink-4': '#6E6E78', '--chat-on-accent': '#141414'
 }
 
 type Rgb = [number, number, number]
@@ -80,26 +85,30 @@ function shareOf(hex: string): number {
 }
 
 /**
- * The chat's colour tokens for a terminal theme. Graphite gives its own values; another theme mixes the chat's steps from its
- * background and foreground. On a light theme the status colours are the theme's own, which read on a light ground.
+ * The app's colour tokens for a terminal theme: every token of colors.css, set on the root of both windows. Graphite gives
+ * colors.css's own values; another theme mixes the steps from its background and foreground; on a light theme the status
+ * colours are the theme's own.
  */
-export function chatPalette(theme: ITheme): Record<string, string> {
+export function appPalette(theme: ITheme): Record<string, string> {
   // a colour the theme gives in a form that is not hex is not read: the Graphite one stands in for it
   const b = parseHex(theme.background) ?? rgbOf(GRAPHITE_BG)
   const f = parseHex(theme.foreground) ?? rgbOf(GRAPHITE_FG)
   const bg = hexOf(b)
   const fg = hexOf(f)
-  if (bg === GRAPHITE_BG && fg === GRAPHITE_FG) return { ...GRAPHITE_CHAT, 'color-scheme': 'dark' }
+  if (bg === GRAPHITE_BG && fg === GRAPHITE_FG) return { ...GRAPHITE_PALETTE, 'color-scheme': 'dark' }
   const palette: Record<string, string> = {}
-  for (const [name, literal] of Object.entries(GRAPHITE_CHAT)) palette[name] = hexOf(mix(b, f, shareOf(literal)))
-  palette['--bg'] = bg
-  palette['--text'] = fg
-  // the native scrollbars and form controls of the chat follow the theme's lightness, as the window's do not
+  for (const [name, literal] of Object.entries(GRAPHITE_PALETTE)) {
+    if (name === '--accent') palette[name] = literal
+    else if (name.startsWith('--tint-')) palette[name] = fg + literal.slice(7)
+    else if (name === '--scrim' || name === '--scrim-2') palette[name] = bg + literal.slice(7)
+    else palette[name] = hexOf(mix(b, f, shareOf(literal)))
+  }
+  // the native scrollbars and form controls of the window follow the theme's lightness, as Graphite's do
   const light = (b[0] * 299 + b[1] * 587 + b[2] * 114) / 1000 > 128
   palette['color-scheme'] = light ? 'light' : 'dark'
   const status = (value: string | undefined, name: string): string => {
     const c = parseHex(value)
-    return c === null ? GRAPHITE_CHAT[name]! : hexOf(c)
+    return c === null ? GRAPHITE_PALETTE[name]! : hexOf(c)
   }
   if (light) {
     palette['--red'] = status(theme.red, '--red')
@@ -107,8 +116,9 @@ export function chatPalette(theme: ITheme): Record<string, string> {
     palette['--amber'] = status(theme.yellow, '--amber')
     palette['--blue'] = status(theme.blue, '--blue')
     palette['--purple'] = status(theme.magenta, '--purple')
+    palette['--match'] = status(theme.yellow, '--match')
   } else {
-    for (const name of ['--red', '--green', '--amber', '--blue', '--purple']) palette[name] = GRAPHITE_CHAT[name]!
+    for (const name of ['--red', '--green', '--amber', '--blue', '--purple', '--match']) palette[name] = GRAPHITE_PALETTE[name]!
   }
   return palette
 }

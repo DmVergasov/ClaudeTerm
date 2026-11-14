@@ -1,7 +1,7 @@
 import { NUMBER_LIMITS } from '../shared/settings-keys'
 import { MAX_TEST_PATTERNS, MAX_TEST_PATTERN_LENGTH } from '../shared/test-files'
 import type { Settings } from '../shared/types'
-import { resolveTheme, THEMES } from './themes'
+import { resolveTheme, THEMES } from '../shared/themes'
 
 // What the settings window shows and accepts, kept apart from the DOM.
 
