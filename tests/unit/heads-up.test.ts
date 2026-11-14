@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatItem, HeadsUpCard } from '../../src/shared/chat'
 import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, excerpt, parseFinding } from '../../src/main/chat/heads-up'
+import { BACKGROUND_PROMPT } from '../../src/main/auto-continue'
 
 const FINDING = [
   'topic: The test database is the production one, so the cleanup step deletes real orders.',
@@ -93,6 +94,15 @@ describe('excerpt', () => {
 
   it('keeps the latest part when the conversation is longer than the limit', () => {
     expect(excerpt(items, 40)).toBe('Claude: The build is fixed.')
+  })
+
+  it("ClaudeTerm's own nudges are not the person's words, whether sent now or read back from the history", () => {
+    const sent: ChatItem[] = [
+      { kind: 'user', id: '1', text: 'Почини сборку', attachments: [], queued: false },
+      { kind: 'user', id: '2', text: BACKGROUND_PROMPT, attachments: [], queued: false },
+      { kind: 'user', id: '3', text: 'The usage limit has reset.', attachments: [], queued: false, from: 'auto' }
+    ]
+    expect(excerpt(sent)).toBe(`Person: Почини сборку\nClaudeTerm: ${BACKGROUND_PROMPT}\nClaudeTerm: The usage limit has reset.`)
   })
 })
 
@@ -210,6 +220,29 @@ describe('HeadsUp', () => {
     asked[1]!.reject(new Error('timeout'))
     await settle()
     expect(shown.at(-1)).toMatchObject({ explaining: false, more: null, explainError: 'The explanation could not be fetched.' })
+  })
+
+  it("the side agent gets the person's own latest messages for their language, also when the session's latest part has none", async () => {
+    const said = (id: string, text: string, from?: 'auto' | 'review'): ChatItem => ({ kind: 'user', id, text, attachments: [], queued: false, ...(from ? { from } : {}) })
+    const items: ChatItem[] = [
+      said('u1', 'Перенеси замеры\nв отчёт'),
+      said('u2', 'че там долго еще?'),
+      said('u3', BACKGROUND_PROMPT),
+      said('u4', 'Go on.', 'auto'),
+      said('u5', 'Review comments on src/a.ts: rename it', 'review'),
+      // Claude's long English work after them: the excerpt's window no longer reaches the person's messages
+      ...Array.from({ length: 200 }, (_, i): ChatItem => ({ kind: 'text', id: `c${i}`, markdown: 'The collector now sorts long freezes into sustained drops. '.repeat(3), streaming: false }))
+    ]
+    const { h, asked, settle } = setup({ items })
+    h.message('t', init)
+    h.message('t', toolUse(HEADS_UP_EVERY))
+    const block = '<person>\nПеренеси замеры в отчёт\nче там долго еще?\n</person>'
+    expect(asked[0]!.prompt).not.toContain('Person: Перенеси')
+    expect(asked[0]!.prompt).toContain(block)
+    asked[0]!.resolve(FINDING)
+    await settle()
+    h.act('t', 'card-1', 'explain')
+    expect(asked[1]!.prompt).toContain(block)
   })
 
   it('an answer to a card the tab does not show is refused, and a closed tab draws nothing', async () => {

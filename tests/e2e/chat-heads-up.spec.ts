@@ -75,6 +75,18 @@ test(`a Heads up card shows above the message box after the ${HEADS_UP_EVERY}th 
   }
 })
 
+test("the side question gives the person's own messages apart, so the card comes in their language", async () => {
+  const { app, page, log } = await launchChatTab({ turns: { 'почисти базу': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  try {
+    await sendMessage(page, 'почисти базу')
+    await expect(page.locator(CARD)).toBeVisible({ timeout: 20_000 })
+    const question = userMessages(log).find((m) => m.startsWith('Offered already'))
+    expect(question).toContain('<person>\nпочисти базу\n</person>')
+  } finally {
+    await app.close()
+  }
+})
+
 test('Not relevant closes the card, and a turn of fewer tool calls asks nothing', async () => {
   const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY), 'look': work(HEADS_UP_EVERY - 1) }, headsUp: { check: FINDING } }, { headsUp: true })
   try {
