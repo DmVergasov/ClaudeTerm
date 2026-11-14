@@ -1014,6 +1014,8 @@
   margin-top: 0;
   opacity: 1;
   visibility: visible;
+  /* the dock is there at once for the keyboard: a visibility that slides in is hidden in its first frame, and a row cannot take the focus then */
+  transition: max-height 150ms ease, margin-top 150ms ease, opacity 150ms ease, visibility 0s;
 }
 
 /* the card has the measure of the conversation's messages */

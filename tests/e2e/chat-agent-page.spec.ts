@@ -156,6 +156,25 @@ test('Enter and Space on a dock row open the page', async () => {
   }
 })
 
+test('a dock row takes the focus the moment it is drawn, while the dock is still sliding in', async () => {
+  const { app, page } = await launchChatTab({ turns: { team: [{ task: liveTask('release-search') }, { text: 'Done.' }] } })
+  try {
+    // the page's animations stand at their first frame: a busy machine draws the dock's slide-in that late, and a key press in that frame must work
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Animation.enable')
+    await cdp.send('Animation.setPlaybackRate', { playbackRate: 0 })
+    await sendMessage(page, 'team')
+    const row = page.locator(ROWS)
+    await expect(row).toHaveCount(1)
+    await row.focus()
+    expect(await page.evaluate(() => document.activeElement?.classList.contains('chat-agent'))).toBe(true)
+    await page.keyboard.press('Enter')
+    await expect(page.locator(PAGE)).toBeVisible()
+  } finally {
+    await app.close()
+  }
+})
+
 test('a snapshot that fails opens no page and leaves no error on the page', async () => {
   const { app, page } = await launchChatTab({ turns: { team: [{ task: liveTask('release-snapshot') }, { text: 'Done.' }] } })
   const errors: string[] = []
