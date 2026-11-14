@@ -75,9 +75,9 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const isDevice = (v: unknown): v is string | null => v === null || isUuid(v)
 const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
 
-/** a name: 1 to NAME_MAX characters, none of them a control character */
-function isName(v: unknown): v is string {
-  if (typeof v !== 'string' || v.length < 1 || v.length > NAME_MAX) return false
+/** a name: 1 to max characters (NAME_MAX by default), none of them a control character */
+function isName(v: unknown, max = NAME_MAX): v is string {
+  if (typeof v !== 'string' || v.length < 1 || v.length > max) return false
   for (let i = 0; i < v.length; i++) {
     const c = v.charCodeAt(i)
     if (c < 32 || c === 127) return false
@@ -94,7 +94,7 @@ function parseReport(v: unknown): CoordReport | null {
   if (!isObject(v) || !isUuid(v.id) || !isTime(v.at)) return null
   const outcome = v.outcome
   if (!REPORT_OUTCOMES.includes(outcome as ReportOutcome)) return null
-  if (v.reason !== null && (typeof v.reason !== 'string' || v.reason.length > MAIL_REASON_MAX)) return null
+  if (v.reason !== null && !isName(v.reason, MAIL_REASON_MAX)) return null
   return { id: v.id, outcome: outcome as ReportOutcome, reason: v.reason as string | null, at: v.at }
 }
 

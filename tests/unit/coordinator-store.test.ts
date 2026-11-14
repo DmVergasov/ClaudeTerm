@@ -9,9 +9,13 @@ const A2 = '40516273-8d9e-4f0a-9b2c-3d4e5f607182'
 const S = '2e3f4051-6b7c-4d8e-9f0a-1b2c3d4e5f60'
 const S2 = '3f405162-7c8d-4e9f-8a1b-2c3d4e5f6071'
 const S3 = '5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d'
+const S4 = '6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f'
 const DEV = '62738495-0fb0-4b2c-9d4e-5f6071829304'
 const TASK = '73849506-1ac1-4c3d-8e5f-60718293a4b5'
 const REPORT = '84950617-2bd2-4d4e-9f60-718293a4b5c6'
+
+/** the n-th id of a test, a UUID */
+const uuid = (n: number): string => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`
 
 const coord: StoredCoordinator = {
   session: A,
@@ -103,11 +107,13 @@ describe('coordinator store', () => {
     const dir = newDir()
     const badAttachment = { ...coord.attachments[0], name: 'Check\nout' }
     const outcomeless = { ...coord.attachments[0], session: S3, lastReport: { id: REPORT, outcome: 'maybe', reason: null, at: 1 } }
+    const emptyReason = { ...coord.attachments[0], session: S4, lastReport: { id: REPORT, outcome: 'failed', reason: '', at: 1 } }
+    const controlReason = { ...coord.attachments[0], session: S4, lastReport: { id: REPORT, outcome: 'stopped', reason: 'a\u0007b', at: 1 } }
     const doneTask = { ...hosted.tasks[0], state: 'done' }
     const raw = {
       version: 1,
       coordinators: [
-        { ...coord, attachments: [...coord.attachments, badAttachment, outcomeless] },
+        { ...coord, attachments: [...coord.attachments, badAttachment, outcomeless, emptyReason, controlReason] },
         { ...coord, session: 'not-a-uuid', project: { key: '/work/x', name: 'X' } },
         { ...coord, session: S3, project: { key: '/bad\u0000key', name: 'Bad' } }
       ],
@@ -120,8 +126,56 @@ describe('coordinator store', () => {
     writeFileSync(join(dir, 'coordinators.json'), JSON.stringify(raw), 'utf8')
 
     const store = new CoordinatorStore(dir)
+    expect(store.coordinator(A)?.attachments).toHaveLength(2)
     expect(store.coordinators()).toEqual([coord])
     expect(store.allHosted()).toEqual([hosted, { ...hosted, session: S3, tasks: [] }])
+  })
+
+  it('the load keeps the first 50 coordinators, 200 attachments of one, 500 hosted sessions and 20 tasks of one, in file order', () => {
+    const dir = newDir()
+    const coordinators = Array.from({ length: 51 }, (_, i) => ({
+      session: uuid(i + 1),
+      project: { key: `/work/p${i}`, name: `P${i}` },
+      since: 1,
+      attachments:
+        i === 0
+          ? Array.from({ length: 201 }, (_, j) => ({
+              device: null,
+              session: uuid(10_000 + j),
+              name: `S${j}`,
+              attachedAt: 1,
+              resolved: false,
+              failed: false,
+              lastReport: null
+            }))
+          : []
+    }))
+    const hosted = Array.from({ length: 501 }, (_, i) => ({
+      session: uuid(20_000 + i),
+      coordinator: { device: null, session: uuid(1), name: 'Coordinator' },
+      project: 'P0',
+      tasks:
+        i === 0
+          ? Array.from({ length: 21 }, (_, j) => ({
+              id: uuid(30_000 + j),
+              from: { device: null, session: uuid(1), name: 'Coordinator' },
+              state: 'queued',
+              queuedAt: j + 1,
+              deliveredAt: null
+            }))
+          : []
+    }))
+    writeFileSync(join(dir, 'coordinators.json'), JSON.stringify({ version: 1, coordinators, hosted }), 'utf8')
+
+    const store = new CoordinatorStore(dir)
+    const kept = store.coordinators()
+    expect(kept.map((c) => c.session)).toEqual(coordinators.slice(0, 50).map((c) => c.session))
+    expect(kept[0].attachments).toHaveLength(200)
+    expect(kept[0].attachments.map((a) => a.session)).toEqual(coordinators[0].attachments.slice(0, 200).map((a) => a.session))
+    const all = store.allHosted()
+    expect(all.map((h) => h.session)).toEqual(hosted.slice(0, 500).map((h) => h.session))
+    expect(all[0].tasks).toHaveLength(20)
+    expect(all[0].tasks.map((t) => t.id)).toEqual(hosted[0].tasks.slice(0, 20).map((t) => t.id))
   })
 
   it('a file that is not coordinators is moved aside and the store opens empty', () => {
