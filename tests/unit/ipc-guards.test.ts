@@ -3,7 +3,7 @@ import { MAX_ADDRESS_LENGTH } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
-import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isLineNo, isLineSpan, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions } from '../../src/main/ipc-guards'
+import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -107,6 +107,16 @@ describe('review guards', () => {
     expect(isHash('0123456789abcdef0123456789abcdef01234567')).toBe(true)
     expect(isHash('binary:' + 'f'.repeat(64))).toBe(true)
     expect(isHash('x'.repeat(129))).toBe(false)
+  })
+
+  it('isFileLinkPaths accepts at most 200 path texts of 1 to 4096 characters, each on one line', () => {
+    for (const v of [[], ['src/a.ts:12', 'C:\\x.md'], Array(200).fill('a/b.md')]) expect(isFileLinkPaths(v)).toBe(true)
+    for (const v of [Array(201).fill('a/b.md'), [''], ['x'.repeat(4097)], ['a\nb.md'], [42], 'a/b.md', null, undefined]) expect(isFileLinkPaths(v)).toBe(false)
+  })
+
+  it('isOptionalLineNo accepts null or a line number', () => {
+    for (const v of [null, 1, 12]) expect(isOptionalLineNo(v)).toBe(true)
+    for (const v of [0, -1, 1.5, '12', undefined]) expect(isOptionalLineNo(v)).toBe(false)
   })
 
   it('isLineSpan takes the lines of one expand click: whole numbers from 1, in order, at most 1000 of them', () => {

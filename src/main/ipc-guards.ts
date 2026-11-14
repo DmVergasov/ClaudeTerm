@@ -5,6 +5,7 @@ import type { ImageAction } from '../shared/ipc'
 import { MAX_ADDRESS_LENGTH } from '../shared/devices'
 import { MAX_NOTE_LENGTH, NOTE_FORMS, NOTE_SIDES, isNoteSize, isProjectKey, type NoteForm, type NoteSide, type NoteSize } from '../shared/note'
 import { isUuid } from '../shared/protocol'
+import { MAX_FILE_LINKS } from '../shared/chat-paths'
 import { MAX_HASH, REVIEW_SCOPES, type ReviewScope } from '../shared/review'
 import { MAX_FOLDED_GROUPS, type OpenTabRequest, type TabLayout } from '../shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../shared/remote'
@@ -127,10 +128,16 @@ export const isLocalDropPaths = (v: unknown): v is string[] =>
 /** a path of any system, as text: bounded, and nothing else checked; the device that owns the path checks it with its own rules */
 export const isPathText = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_PATH_TEXT
 
+/** the path texts a chat text asks main to resolve: at most MAX_FILE_LINKS, each of 1 to MAX_PATH_TEXT characters on one line */
+export const isFileLinkPaths = (v: unknown): v is string[] => Array.isArray(v) && v.length <= MAX_FILE_LINKS && v.every((p) => typeof p === 'string' && p.length >= 1 && p.length <= MAX_PATH_TEXT && !/[\x00-\x1f\x7f]/.test(p))
+
 /** a folder as the user typed it for Change folder: bounded text, and nothing else checked; `~`, relative paths and the other system's paths are read on the tab's device */
 export const isFolderInput = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_PATH_TEXT
 
 export const isLineNo = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10_000_000
+
+/** a line a chat link names: null when the text names none, else a line number */
+export const isOptionalLineNo = (v: unknown): v is number | null => v === null || isLineNo(v)
 
 /** the lines one expand click in the Changes panel asks for: from..to, at most 1000 of them */
 export const isLineSpan = (from: unknown, to: unknown): boolean => isLineNo(from) && isLineNo(to) && from <= to && to - from < 1000
