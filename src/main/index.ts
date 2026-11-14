@@ -22,7 +22,7 @@ import { AccountChecks, STATUS_TIMEOUT_MS } from './account-checks'
 import { CliError, CLI_TIMEOUT_MS, cliMessage, runClaudeCli, type CliRun } from './mcp/claude-cli'
 import { AccountFlow } from './account-flow'
 import { removeAccount } from './account-remove'
-import { carryItem, readSource, type SourceFolder } from './account-carry-run'
+import { carryLines, failedLines, readSource, type SourceFolder } from './account-carry-run'
 import { previewCounts } from './account-carry'
 import { accountSessionStore, copyAt, copyTranscript, decideMove, findCopies, type TranscriptCopy, type TranscriptRoot } from './transcript-move'
 import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
@@ -358,10 +358,10 @@ function bootstrap(): void {
   /** the environment of a CLI run for a sign-in account: its folder, and none of the environment's token or key */
   const accountEnv = (folder: string): Record<string, string> => applyEnvPatch(childEnv(), loginEnv(folder))
   /** `claude <args>` for a sign-in account, started the way a chat starts Claude Code; rejects with a CliError when it cannot run */
-  const accountCli = async (folder: string, args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<CliRun> => {
+  const accountCli = async (folder: string, args: string[], timeoutMs = CLI_TIMEOUT_MS, extraEnv: Record<string, string> = {}): Promise<CliRun> => {
     const launch = await resolveChatLaunch(settings.claude.command, chatLaunchDeps)
     if (launch.how === 'none') throw new CliError('failed', launch.reason)
-    return runClaudeCli(launch, args, { cwd: homedir(), env: accountEnv(folder), timeoutMs })
+    return runClaudeCli(launch, args, { cwd: homedir(), env: { ...accountEnv(folder), ...extraEnv }, timeoutMs })
   }
   /** the root the sign-in accounts' folders are made under (CLAUDETERM_ACCOUNTS_ROOT, else the data folder) */
   const accountsRootDir = accountsRoot(process.env, homedir(), dataDir)
@@ -496,11 +496,11 @@ function bootstrap(): void {
       }
       return list
     },
-    carry: async (item, target, source) => {
+    carry: async (item, target, source, items) => {
       const from = sourceFolder(source)
-      if (from === null) return { item, state: 'failed', text: 'The account to carry from is not available', subs: [] }
+      if (from === null) return failedLines(item, items.includes('mcp-secrets'), 'The account to carry from is not available')
       return inOrder(target.folder, () =>
-        carryItem(item, { source: from, sourceName: accountLabel(source), target, cli: (args) => accountCli(target.folder, args), log: { warn: (m) => log.warn(m) } })
+        carryLines(item, { source: from, sourceName: accountLabel(source), target, secrets: items.includes('mcp-secrets'), cli: (args, env) => accountCli(target.folder, args, CLI_TIMEOUT_MS, env), log: { warn: (m) => log.warn(m) } })
       )
     },
     register: (folder) => inOrder(folder, () => registerIn(folder)),

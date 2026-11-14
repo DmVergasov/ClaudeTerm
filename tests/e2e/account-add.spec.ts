@@ -279,6 +279,31 @@ test('Carry over… on a row lists the items and carries the ticked ones', async
   await app.close()
 })
 
+test('Carry over… with MCP app secrets adds the server with its client secret; the stand-in logs that one came, and no window shows it', async () => {
+  test.skip(process.platform === 'darwin', 'Claude Code keeps the client secrets in the Keychain on macOS')
+  const { app, page, root, config, log } = await launchAccounts({ accounts: workEntry, main: appSecretSetup, script: { turns: {} } })
+  const folder = join(root, 'accounts', 'work')
+  const context7 = (JSON.parse(readFileSync(join(config, '.claude.json'), 'utf8')) as { mcpServers: Record<string, unknown> }).mcpServers.context7
+  const win = await accountsWindow(app, page)
+  await row(win, 'Work').getByRole('button', { name: 'Carry over…' }).click()
+  const dialog = helper(win)
+  await expect(tick(win, 'MCP app secrets').locator('input')).toBeChecked(LONG)
+  await dialog.getByRole('button', { name: 'Carry over', exact: true }).click()
+  const line = dialog.locator('.helper-line', { hasText: 'MCP app secrets' })
+  await expect(line).toHaveAttribute('data-state', 'done', LONG)
+  await expect(line).toContainText('1 added')
+  await expect(dialog.locator('.helper-line[data-state="running"]')).toHaveCount(0, LONG)
+
+  const adds = log().filter((e) => Array.isArray(e.cli) && (e.cli as string[])[1] === 'add-json' && (e.cli as string[]).includes('context7'))
+  expect(adds.map((e) => ({ cli: e.cli, secretEnv: e.secretEnv }))).toEqual([
+    { cli: ['mcp', 'add-json', '--scope', 'user', '--client-secret', '--', 'context7', JSON.stringify(context7)], secretEnv: true }
+  ])
+  expect(JSON.stringify(log())).not.toContain(APP_SECRET)
+  for (const html of [await win.content(), await page.content()]) expect(html).not.toContain(APP_SECRET)
+  const store = JSON.parse(readFileSync(join(folder, '.credentials.json'), 'utf8')) as { mcpOAuthClientConfig: Record<string, unknown> }
+  expect(Object.entries(store.mcpOAuthClientConfig).filter(([key]) => key.startsWith('context7|')).map(([, entry]) => entry)).toEqual([{ clientSecret: APP_SECRET }])
+  await app.close()
+})
 test('the picker lists MCP app secrets right after MCP servers with their count, and turns them off with MCP servers', async () => {
   test.skip(process.platform === 'darwin', 'Claude Code keeps the client secrets in the Keychain on macOS')
   const { app, page } = await launchAccounts({ script: { turns: {} }, main: appSecretSetup })

@@ -46,7 +46,8 @@ export interface AccountFlowDeps {
   logout(folder: string): Promise<boolean>
   /** Main account first, then the other sign-in accounts */
   others(except: string | null): Promise<{ label: string; identity: Identity }[]>
-  carry(item: CarryItem, target: FlowTarget, source: string | null): Promise<CarryLine>
+  /** MCP servers with MCP app secrets in `items` settle the secrets' line too: the answer is every line the run settles */
+  carry(item: CarryItem, target: FlowTarget, source: string | null, items: readonly CarryItem[]): Promise<CarryLine[]>
   register(folder: string): Promise<CarryLine>
   tabsOn(id: string): number
   settingsOpen(): boolean
@@ -99,7 +100,7 @@ interface Start {
 
 type Planned = { ok: true; start: Start } | { ok: false; error: string }
 
-/** the order the carry-over runs its items in; the lines are shown in CARRY_ITEMS order, then ClaudeTerm's tools */
+/** the order the carry-over runs its items in; MCP app secrets run with MCP servers, under its 'mcp' entry; the lines are shown in CARRY_ITEMS order, then ClaudeTerm's tools */
 const RUN_ORDER: CarryLineItem[] = ['settings', 'hooks', 'skills', 'agents', 'commands', 'output-styles', 'memory', 'keybindings', 'mcp', 'plugins', 'claudeterm', 'trust']
 const LAST_LINE_MAX = 200
 const BUSY = 'An account is being added: finish or cancel it first'
@@ -219,7 +220,9 @@ export class AccountFlow {
         if (step !== 'done') return
         const line = f.view.lines.find((l) => l.item === a.item)
         if (!line || (line.state !== 'failed' && line.state !== 'skipped')) return
-        this.setLine(f, a.item, { item: a.item, state: 'running', text: CARRY_LABELS[a.item], subs: [] })
+        const lines = this.together(f, a.item)
+        if (f.view.lines.some((l) => lines.includes(l.item) && l.state === 'running')) return
+        for (const item of lines) this.setLine(f, item, { item, state: 'running', text: CARRY_LABELS[item], subs: [] })
         this.show(f)
         return this.runLine(f, a.item)
       }
@@ -483,7 +486,7 @@ export class AccountFlow {
     }
     if (saves && !this.d.settingsOpen()) this.d.toast(this.readyText(f))
 
-    const ticked = CARRY_ITEMS.filter((item) => f.items.includes(item))
+    const ticked = CARRY_ITEMS.filter((item) => f.items.includes(item) && (item !== 'mcp-secrets' || f.items.includes('mcp')))
     v.step = 'done'
     v.lines = [...ticked, 'claudeterm' as const].map((item): CarryLine => ({ item, state: 'running', text: CARRY_LABELS[item], subs: [] }))
     this.show(f)
@@ -497,21 +500,32 @@ export class AccountFlow {
     }
   }
 
-  /** one line of the carry-over: the item's result replaces its line; a failure is that line's, the others go on */
+  /** the lines one run of an item settles: MCP servers and MCP app secrets are one run, so either one settles both; else its own line */
+  private together(f: Flow, item: CarryLineItem): CarryLineItem[] {
+    if (item !== 'mcp' && item !== 'mcp-secrets') return [item]
+    return (['mcp', 'mcp-secrets'] as const).filter((i) => f.view.lines.some((l) => l.item === i))
+  }
+
+  /** one line of the carry-over: the item's answer replaces its line(s); a failure is that line's, the others go on */
   private async runLine(f: Flow, item: CarryLineItem): Promise<void> {
     const v = f.view
-    let line: CarryLine
+    const lines = this.together(f, item)
+    const items = f.view.lines.map((l) => l.item).filter((i): i is CarryItem => i !== 'claudeterm')
+    let answered: CarryLine[]
     if (item === 'trust' && v.mode === 'carry' && this.d.tabsOn(v.id) > 0) {
-      line = { item, state: 'skipped', text: `Close the tabs on ${v.name} to carry over trusted folders`, subs: [] }
+      answered = [{ item, state: 'skipped', text: `Close the tabs on ${v.name} to carry over trusted folders`, subs: [] }]
     } else {
       try {
-        line = item === 'claudeterm' ? await this.d.register(v.folder) : await this.d.carry(item, { id: v.id, name: v.name, folder: v.folder }, f.source)
+        answered = item === 'claudeterm' ? [await this.d.register(v.folder)] : await this.d.carry(item === 'mcp-secrets' ? 'mcp' : item, { id: v.id, name: v.name, folder: v.folder }, f.source, items)
       } catch (e) {
-        line = { item, state: 'failed', text: e instanceof Error ? e.message : String(e), subs: [] }
+        const text = e instanceof Error ? e.message : String(e)
+        answered = lines.map((i): CarryLine => ({ item: i, state: 'failed', text, subs: [] }))
       }
     }
     if (this.flow !== f) return
-    this.setLine(f, item, line)
+    for (const line of answered) {
+      if (f.view.lines.some((l) => l.item === line.item)) this.setLine(f, line.item, line)
+    }
     this.show(f)
   }
 

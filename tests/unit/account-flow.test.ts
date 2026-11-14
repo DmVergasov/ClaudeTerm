@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { AccountFlow, type AccountFlowDeps } from '../../src/main/account-flow'
 import { NO_IDENTITY, type AuthStatus, type Identity } from '../../src/main/account-login'
 import type { AccountEntry } from '../../src/main/accounts'
-import type { AccountBegin, AccountFlowView, CarryItem } from '../../src/shared/accounts'
+import type { AccountBegin, AccountFlowView, CarryItem, CarryLine } from '../../src/shared/accounts'
 
 const ROOT = join(tmpdir(), 'claude-accounts')
 const MAIN = join(tmpdir(), 'main-config')
@@ -45,6 +45,7 @@ function setup(over: Options = {}) {
     status: { state: 'signed-in', identity: ANA } as AuthStatus,
     identity: NO_IDENTITY as Identity,
     failCarry: new Map<CarryItem, string>(),
+    ticked: [] as CarryItem[][],
     gates: new Map<CarryItem, Promise<void>>(),
     statusGate: null as Promise<void> | null,
     logoutGate: null as Promise<void> | null,
@@ -102,13 +103,16 @@ function setup(over: Options = {}) {
       return true
     },
     others: async () => w.others,
-    carry: async (item, target, source) => {
+    carry: async (item, target, source, items) => {
       calls.push(`carry ${item} ${target.name} ${source ?? 'main'}`)
+      w.ticked.push([...items])
       const held = w.gates.get(item)
       if (held) await held
       const failure = w.failCarry.get(item)
       if (failure !== undefined) throw new Error(failure)
-      return { item, state: 'done', text: `${item} copied`, subs: [] }
+      const lines: CarryLine[] = [{ item, state: 'done', text: `${item} copied`, subs: [] }]
+      if (item === 'mcp' && items.includes('mcp-secrets')) lines.push({ item: 'mcp-secrets', state: 'done', text: 'mcp-secrets copied', subs: [] })
+      return lines
     },
     register: async () => {
       calls.push('register')
@@ -522,6 +526,50 @@ describe('AccountFlow', () => {
     expect(t.flow.view()?.lines.map((l) => l.item)).toEqual(['mcp', 'claudeterm'])
   })
 
+  it('MCP app secrets come with MCP servers: one run settles both lines and is told the ticked items', async () => {
+    const t = setup({ entries: [login()] })
+    t.dirs.add(OLD)
+    await t.flow.begin(carryReq(['mcp', 'mcp-secrets']))
+    await settle()
+    expect(t.calls.filter((c) => /^(carry|register)/.test(c))).toEqual(['carry mcp Old main', 'register'])
+    expect(t.w.ticked).toEqual([['mcp', 'mcp-secrets']])
+    expect(t.flow.view()?.lines).toEqual([
+      { item: 'mcp', state: 'done', text: 'mcp copied', subs: [] },
+      { item: 'mcp-secrets', state: 'done', text: 'mcp-secrets copied', subs: [] },
+      { item: 'claudeterm', state: 'done', text: "ClaudeTerm's tools added", subs: [] }
+    ])
+  })
+
+  it('MCP app secrets without MCP servers have no line and carry nothing', async () => {
+    const t = setup({ entries: [login()] })
+    t.dirs.add(OLD)
+    await t.flow.begin(carryReq(['mcp-secrets', 'plugins']))
+    await settle()
+    expect(t.flow.view()?.lines.map((l) => l.item)).toEqual(['plugins', 'claudeterm'])
+    expect(t.calls.filter((c) => /^(carry|register)/.test(c))).toEqual(['carry plugins Old main', 'register'])
+  })
+
+  it('a failed MCP servers run fails both lines; Try again on MCP app secrets runs MCP servers again once and settles both', async () => {
+    const t = setup({ entries: [login()] })
+    t.dirs.add(OLD)
+    t.w.failCarry.set('mcp', 'boom')
+    await t.flow.begin(carryReq(['mcp', 'mcp-secrets']))
+    await settle()
+    expect(t.flow.view()?.lines.slice(0, 2)).toEqual([
+      { item: 'mcp', state: 'failed', text: 'boom', subs: [] },
+      { item: 'mcp-secrets', state: 'failed', text: 'boom', subs: [] }
+    ])
+    t.w.failCarry.delete('mcp')
+    const held = gate()
+    t.w.gates.set('mcp', held.wait)
+    const retry = t.flow.action({ kind: 'retry-item', item: 'mcp-secrets' })
+    expect(t.flow.view()?.lines.slice(0, 2).map((l) => l.state)).toEqual(['running', 'running'])
+    await t.flow.action({ kind: 'retry-item', item: 'mcp' })
+    held.open()
+    await retry
+    expect(t.flow.view()?.lines.slice(0, 2).map((l) => l.state)).toEqual(['done', 'done'])
+    expect(t.calls.filter((c) => c === 'carry mcp Old main')).toHaveLength(2)
+  })
   it('carry never calls confirmed or saves: no sign-in ran', async () => {
     const t = setup({ entries: [login()] })
     t.dirs.add(OLD)
