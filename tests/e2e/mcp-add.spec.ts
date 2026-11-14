@@ -11,7 +11,7 @@ import { cliCalls, readJsonFile } from './mcp-helpers'
 
 type DividerItem = Extract<ChatItem, { kind: 'divider' }>
 
-const TOGGLE = '.tab-mcp-toggle'
+const TOGGLE = '#statusbar .status-mcp'
 const ADD_BUTTON = '.panel-mcp .mcp-footer .mcp-btn.primary'
 const DIALOG = '.mcp-add'
 const FIELD = '.mcp-add-field'

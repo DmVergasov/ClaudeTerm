@@ -7,7 +7,7 @@ import type { MailUnread } from '../shared/mail'
 import { noteProjectOf } from '../shared/note'
 import type { TabView } from '../shared/chat'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
-import type { McpSection } from '../shared/mcp'
+import type { McpSection, McpServersView } from '../shared/mcp'
 import { deviceColor, MAX_SNAPSHOT_BYTES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type RemoteDeviceView } from '../shared/remote'
 import type { NotificationCase, Settings, TabInfo, TabPlace, TabPosition } from '../shared/types'
 import { accountChoices, accountLabel, footDetail, signInAgainChoices, switchChoices } from './account-items'
@@ -324,15 +324,41 @@ function refreshPanelButtons(): void {
   sheetHeader.setDocs(docs, sidePanel.isShowing('docs'))
   sheetHeader.setMessages(settings.agentMessages.enabled, sidePanel.isShowing('messages'), unreadMail, activeId)
   sheetHeader.setNote(claude, claude && noteOverlay.isShown())
-  sheetHeader.setMcp(mcpAvailable(activeId ? tabs.get(activeId) : undefined), sidePanel.isShowing('mcp'))
 }
 
 /** the MCP · Plugins panel is the chat's: a local Claude tab in its chat view. The terminal view keeps Claude Code's own /mcp, and a member's tab has its host's servers */
 const mcpAvailable = (t: TabState | undefined): boolean => t !== undefined && t.info.kind === 'claude' && !t.info.remote && isChatView(t)
 
-/** the panel is offered for the tab in front, as its header button is */
+/** the panel is offered for the tab in front, and its servers' segment of the status bar is asked for */
 function syncMcpPanel(): void {
   sidePanel.setAvailable('mcp', mcpAvailable(activeId ? tabs.get(activeId) : undefined))
+  refreshMcpStatus()
+}
+
+/** the MCP servers of the tab in front, for their segment of the status bar (null: not known yet) */
+let mcpStatus: { tabId: string; view: McpServersView | null } | null = null
+let mcpStatusSeq = 0
+let mcpStatusTimer: ReturnType<typeof setTimeout> | null = null
+/** a server that connects is asked for again this often, until it has an answer, as the panel does */
+const MCP_PENDING_MS = 2000
+
+/** asks again for the servers of the tab in front: after a tab or view switch, and when they change */
+function refreshMcpStatus(): void {
+  if (mcpStatusTimer !== null) clearTimeout(mcpStatusTimer)
+  mcpStatusTimer = null
+  const tabId = activeId
+  const seq = ++mcpStatusSeq
+  if (!tabId || !mcpAvailable(tabs.get(tabId))) {
+    mcpStatus = null
+    return
+  }
+  if (mcpStatus?.tabId !== tabId) mcpStatus = { tabId, view: null }
+  void ct.mcpServers(tabId).catch(() => null).then((view) => {
+    if (seq !== mcpStatusSeq) return
+    mcpStatus = { tabId, view }
+    if (activeId === tabId) renderStatus(tabId)
+    if (view?.servers.some((s) => s.status === 'pending')) mcpStatusTimer = setTimeout(refreshMcpStatus, MCP_PENDING_MS)
+  })
 }
 
 /** /mcp and /plugin in a chat: the panel opens on the section; a member's tab names its host, whose Claude Code keeps the servers */
@@ -399,7 +425,8 @@ function renderStatus(tabId: string): void {
   refreshModes()
   // a chat-view tab's status bar leaves the model to the composer, and stops its background tasks through the chat
   const t = tabs.get(tabId)
-  const chat = t && isChatView(t) ? { tab: tabId, stopTask: (taskId: string) => stopTaskOf(tabId, taskId) } : undefined
+  const mcp = mcpAvailable(t) && mcpStatus?.tabId === tabId ? mcpStatus.view : null
+  const chat = t && isChatView(t) ? { tab: tabId, mcp, stopTask: (taskId: string) => stopTaskOf(tabId, taskId) } : undefined
   statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null, Date.now(), chat)
   renderMeters(tabId)
 }
@@ -1311,10 +1338,6 @@ async function boot(): Promise<void> {
   tabPanel = new TabPanel(document.getElementById('tabpanel')!, tabCallbacks, ct.platform, layout, (change) => ct.setTabLayout(change))
   sheetHeader = new SheetHeader(document.getElementById('sheet-header')!, {
     ...tabCallbacks,
-    toggleMcp: () => {
-      sidePanel.toggle('mcp')
-      if (activeId) focusTab(activeId)
-    },
     switchView: (view) => { if (activeId) switchTo(activeId, view) },
     // files dropped on the header go to the chat in front, as a drop on the sheet does
     drop: (files) => {
@@ -1449,6 +1472,10 @@ async function boot(): Promise<void> {
   }, (anchor) => {
     const p = activeId ? planUpdates.get(activeId) : undefined
     if (p?.plan) planList.toggle(anchor, p.plan, !!p.agentList)
+  }, () => {
+    // the MCP servers' segment opens and closes MCP · Plugins beside the chat
+    sidePanel.toggle('mcp')
+    if (activeId) focusTab(activeId)
   })
   statusBar.alignTo(document.getElementById('terminals')!)
   ct.onAccounts((v) => {
@@ -1613,7 +1640,9 @@ async function boot(): Promise<void> {
   }
   // the servers change under the panel: a restart, a sign-in, a change Claude made to the configuration
   ct.onMcpChanged((tabId) => {
-    if (tabId === activeId) mcpPanel.refresh()
+    if (tabId !== activeId) return
+    mcpPanel.refresh()
+    refreshMcpStatus()
   })
   // the unread counts change with the mail: the badges, and the panel when it shows the messages
   ct.onMail((unread) => {

@@ -16,8 +16,6 @@ function signature(item: TabBarItem | null, deviceColor: string | undefined): st
 }
 
 export type SheetHeaderCallbacks = Pick<TabBarCallbacks, 'rename' | 'toggleImages' | 'toggleChanges' | 'toggleDocs' | 'toggleMessages' | 'toggleNote'> & {
-  /** the MCP · Plugins button: the panel of the chat in front's servers and plugins */
-  toggleMcp(): void
   /** the Chat | Terminal switch: the tab in front shows the other view (after the user's word when background tasks would stop) */
   switchView(view: TabView): void
   /** files dropped on the header: attached to the chat in front, as a drop on the sheet is */
@@ -43,7 +41,6 @@ export class SheetHeader {
   private readonly images: HTMLButtonElement
   private readonly messages: HTMLButtonElement
   private readonly docs: HTMLButtonElement
-  private readonly mcp: HTMLButtonElement
   private readonly note: HTMLButtonElement
   private readonly spacer = document.createElement('div')
   private readonly modes = document.createElement('div')
@@ -89,9 +86,8 @@ export class SheetHeader {
     this.images = this.toggle('tab-images-toggle', 'Media', `Media (${shortcutLabel('toggleImages', platform)})`, icon('image', 16), () => cb.toggleImages(), true)
     this.messages = this.toggle('tab-messages-toggle', '', 'Agent messages', icon('mail', 16), () => cb.toggleMessages(), true)
     this.docs = this.toggle('tab-docs-toggle', '', `Docs (${shortcutLabel('toggleDocs', platform)})`, icon('file-text', 16), () => cb.toggleDocs(), false)
-    this.mcp = this.toggle('tab-mcp-toggle', 'MCP · Plugins', 'MCP servers and plugins', icon('plug', 16), () => cb.toggleMcp(), false)
     this.note = this.toggle('tab-note-toggle', '', `Note (${shortcutLabel('toggleNote', platform)})`, noteIcon(16), () => cb.toggleNote(), false)
-    this.root.replaceChildren(this.spacer, this.modes, this.changes, this.images, this.messages, this.docs, this.mcp, this.note)
+    this.root.replaceChildren(this.spacer, this.modes, this.changes, this.images, this.messages, this.docs, this.note)
     // files dropped on the header are attached to the chat in front, as a drop on the sheet is
     this.root.addEventListener('dragover', (e) => {
       if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
@@ -104,7 +100,6 @@ export class SheetHeader {
     this.setImages(false, 0, null)
     this.setMessages(false, false, 0, null)
     this.setDocs(false, false)
-    this.setMcp(false, false)
     this.setNote(false, false)
   }
 
@@ -251,12 +246,6 @@ export class SheetHeader {
   setDocs(available: boolean, visible: boolean): void {
     this.docs.hidden = !available
     this.docs.classList.toggle('active', visible)
-  }
-
-  /** the MCP · Plugins button exists only for a local Claude tab's chat; it is lit while the panel is shown */
-  setMcp(available: boolean, visible: boolean): void {
-    this.mcp.hidden = !available
-    this.mcp.classList.toggle('active', visible)
   }
 
   /** the Note button exists only for Claude tabs; it is lit while the note is shown */

@@ -6,7 +6,7 @@ import { chatStarts, cliCalls, runStandIn } from './mcp-helpers'
 // installs, the marketplaces, and the options a plugin with required settings asks for after its install. The stand-in Claude Code
 // answers for the session and for the CLI; its marketplaces are the script's, added by the CLI calls below.
 
-const TOGGLE = '.tab-mcp-toggle'
+const TOGGLE = '#statusbar .status-mcp'
 const PANEL = '.panel-mcp'
 const PLUGINS_SEG = '.panel-mcp [data-section="plugins"]'
 const SERVERS_SEG = '.panel-mcp [data-section="servers"]'

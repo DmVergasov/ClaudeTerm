@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { accountSegment, changesSegment, formatTokens, levelFor, limitPace, modelFamily, planSegment, statusSegments } from '../../src/renderer/status-bar'
+import { accountSegment, changesSegment, formatTokens, levelFor, limitPace, mcpSegment, modelFamily, planSegment, statusSegments } from '../../src/renderer/status-bar'
+import type { McpReload, McpServerView, McpServersView, McpStatus } from '../../src/shared/mcp'
 import type { AgentStatus, MainStatus, PlanStatus } from '../../src/shared/types'
 import { taskListStatus } from '../../src/shared/task-list'
 
@@ -104,6 +105,44 @@ describe('changesSegment', () => {
       icon: 'file-diff', diff: { files: '3 files', added: '+40', removed: '−12' }
     })
     expect(changesSegment({ files: 1, additions: 1, deletions: 0, title: 't' }).text).toBe('1 file +1 −0')
+  })
+})
+
+describe('mcpSegment', () => {
+  const server = (name: string, status: McpStatus, tools: string[] = []): McpServerView =>
+    ({ name, status, scope: 'user', plugin: null, transport: 'stdio', target: `npx ${name}`, tools, error: null, version: null })
+  const view = (servers: McpServerView[], reload: McpReload | null = null, live = true): McpServersView => ({ live, servers, reload })
+
+  it('counts the connected servers quietly, with a plug, and lists every server on hover with what a click does', () => {
+    expect(mcpSegment(view([server('github', 'connected', ['a', 'b']), server('context7', 'connected', ['c']), server('memory', 'disabled')]))).toEqual({
+      key: 'mcp', text: 'MCP 2', level: 'normal', icon: 'plug',
+      title: 'context7: 1 tool\ngithub: 2 tools\nmemory: Disabled\nClick for MCP servers and plugins'
+    })
+  })
+
+  it('a server that failed turns it red: the connected out of the servers on, and how many failed', () => {
+    expect(mcpSegment(view([server('github', 'connected'), server('linear', 'failed'), server('sentry', 'needs-auth'), server('memory', 'disabled')]))).toMatchObject({
+      text: 'MCP 1/3 · 1 failed', level: 'crit'
+    })
+  })
+
+  it('a server waiting for its sign-in or its approval turns it amber and says what it waits for', () => {
+    expect(mcpSegment(view([server('github', 'connected'), server('sentry', 'needs-auth'), server('linear', 'needs-auth')]))).toMatchObject({ text: 'MCP · sign in to 2', level: 'warn' })
+    expect(mcpSegment(view([server('github', 'connected'), server('postgres', 'pending-approval')]))).toMatchObject({ text: 'MCP · approve 1', level: 'warn' })
+  })
+
+  it('changes the session has not loaded turn it blue: a restart loads or drops them, and the hover says so', () => {
+    const added = mcpSegment(view([server('github', 'connected')], { changes: 2, verb: 'load' }))
+    expect(added).toMatchObject({ text: 'MCP · restart to load 2', level: 'info' })
+    expect(added.title).toBe('github: 0 tools\nRestart the session to load 2 changes\nClick for MCP servers and plugins')
+    expect(mcpSegment(view([], { changes: 1, verb: 'drop' }))).toMatchObject({ text: 'MCP · restart to drop 1', level: 'info' })
+  })
+
+  it('with no session running it counts the servers configured and on; with none it says MCP alone', () => {
+    expect(mcpSegment(view([server('github', 'configured'), server('notes', 'configured'), server('memory', 'disabled')], null, false))).toMatchObject({
+      text: 'MCP 2', level: 'normal', title: 'github: configured\nmemory: Disabled\nnotes: configured\nClick for MCP servers and plugins'
+    })
+    expect(mcpSegment(view([]))).toMatchObject({ text: 'MCP', level: 'normal', title: 'No MCP servers\nClick for MCP servers and plugins' })
   })
 })
 

@@ -271,6 +271,30 @@ describe('RestartCoordinator', () => {
     expect(h.restarts).toEqual(['t1'])
   })
 
+  it('waiting tells the changes a tab has not loaded while its card is up: how many, and whether a restart loads or drops them', async () => {
+    const { h, c } = harness()
+    h.files.set('t1', cfg([srv('notes')]))
+    h.files.set('t2', cfg([srv('notes')]))
+    c.started('t1')
+    c.started('t2')
+    await flush()
+    expect(c.waiting('t2')).toBeNull()
+    h.files.set('t1', cfg([srv('notes'), srv('context7'), srv('github')]))
+    h.files.set('t2', cfg([srv('notes'), srv('context7'), srv('github')]))
+    c.madeHere('t1')
+    await flush()
+    expect(c.waiting('t2')).toEqual({ changes: 2, verb: 'load' })
+    h.files.set('t2', cfg())
+    await c.compareAll()
+    expect(c.waiting('t2')).toEqual({ changes: 1, verb: 'drop' })
+    // a restart on its way loads them: nothing waits any more
+    expect(c.restartNow('t2')).toBe(true)
+    await flush()
+    expect(h.restarts).toContain('t2')
+    expect(c.waiting('t2')).toBeNull()
+    expect(c.waiting('unknown')).toBeNull()
+  })
+
   it('a change undone before the restart takes the card away', async () => {
     const { h, c } = harness()
     c.started('t1')

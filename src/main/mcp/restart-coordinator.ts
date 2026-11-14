@@ -1,4 +1,4 @@
-import type { ReloadAction } from '../../shared/mcp'
+import type { McpReload, ReloadAction } from '../../shared/mcp'
 import type { McpLiveServer } from '../chat/chat-engine'
 import { maskUrls } from '../../shared/mcp-add'
 import { diffConfig, type ConfigChange, type ConfigChangeKind, type TabConfig } from './mcp-config'
@@ -293,6 +293,13 @@ export class RestartCoordinator {
 
   tracked(): string[] {
     return [...this.states.keys()]
+  }
+
+  /** the changes the tab's card is up for, which its session has not loaded: none once a restart is on its way */
+  waiting(tab: string): McpReload | null {
+    const s = this.states.get(tab)
+    if (s === undefined || s.mode === null || s.mode === 'restarting' || s.pending.length === 0) return null
+    return { changes: s.pending.length, verb: s.pending.every(drops) ? 'drop' : 'load' }
   }
 
   removeTab(tab: string): void {

@@ -440,7 +440,7 @@ test("a member's /mcp goes to the host's Claude Code and says where to manage MC
   // the member's panel does not open: the host's servers are the host's, and the line says where they are managed
   await expect(b.page.locator(COMPOSER_NOTE)).toHaveText(`Manage MCP on ${a.name}`, SLOW)
   await expect.poll(() => userMessages(stand.log).includes('/mcp'), SLOW).toBe(true)
-  await expect(b.page.locator('.tab-mcp-toggle')).toBeHidden()
+  await expect(b.page.locator('#statusbar .status-mcp')).toHaveCount(0)
 })
 
 test("a member's agent page says Read-only on this device", async () => {

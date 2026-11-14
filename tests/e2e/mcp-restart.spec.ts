@@ -127,6 +127,25 @@ test('Not now keeps the card with Restart, and Restart restarts', async () => {
   }
 })
 
+test('a change the session has not loaded turns the MCP segment blue, until the restart loads it', async () => {
+  const { app, page, tabId, config } = await launchChatTab({ turns: { 'add context7': ADD_CONTEXT7 }, mcp: CONTEXT7_LOADS })
+  try {
+    await chatReady(page)
+    const segment = page.locator('#statusbar .status-mcp')
+    await expect(segment).toHaveText('MCP')
+    await sendMessage(page, 'add context7')
+    await expect.poll(() => reloadCard(page, tabId), { timeout: 20_000 }).toMatchObject({ action: 'not-now' })
+    await expect(segment).toHaveText('MCP · restart to load 1')
+    await expect(segment).toHaveClass(/\binfo\b/)
+    writeFileSync(join(config, 'answer-done'), '')
+    // the restart after the answer loads context7: the segment counts it, quietly
+    await expect(segment).toHaveText('MCP 1', { timeout: 30_000 })
+    await expect(segment).not.toHaveClass(/\binfo\b/)
+  } finally {
+    await app.close()
+  }
+})
+
 test('another chat on the same config folder gets the card with Restart and is not restarted', async () => {
   const { app, page, work, config, log } = await launchChatTab({ turns: {} })
   try {

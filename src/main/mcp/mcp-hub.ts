@@ -2,7 +2,7 @@ import { win32 } from 'node:path'
 import type { McpLiveServer } from '../chat/chat-engine'
 import type { ChatHub } from '../chat/chat-hub'
 import type { ChatLaunch } from '../chat/claude-spawn'
-import type { McpAction, McpAddRequest, McpEditScope, McpResult, McpScope, McpServerView, McpServersView, McpStatus, McpTransport, PluginAction, PluginOffer, PluginOption, PluginsView } from '../../shared/mcp'
+import type { McpAction, McpAddRequest, McpEditScope, McpReload, McpResult, McpScope, McpServerView, McpServersView, McpStatus, McpTransport, PluginAction, PluginOffer, PluginOption, PluginsView } from '../../shared/mcp'
 import { marketplaceSource } from '../../shared/mcp'
 import { isServerName, maskedConfig, maskText, maskUrl, maskUrls, parseAddInput, secretsOf, targetOf, type McpConfig, type McpOauth } from '../../shared/mcp-add'
 import { isWindowsPath, nativePath, pathKey } from '../path-key'
@@ -33,6 +33,7 @@ export interface McpHubDeps {
   readJson(file: string): Promise<unknown>                        // the shared jsonFileCache
   run: typeof runClaudeCli
   session: Pick<ChatHub, 'mcpStatus' | 'reconnectMcp' | 'toggleMcp'>
+  reload(tabId: string): McpReload | null                         // the changes its session has not loaded (RestartCoordinator.waiting)
   changed(tabId: string, madeHere: boolean): void                 // the panel reloads; madeHere: this tab changed the configuration
   hold(tabId: string): void; release(tabId: string): void         // used by Task 10
   openPath(file: string): Promise<string>                         // shell.openPath: '' or its error
@@ -68,7 +69,7 @@ export class McpHub {
 
     if (statuses === null) {
       const servers = config.servers.map((s) => configuredView(s, s.disabled ? 'disabled' : waiting(s) ? 'pending-approval' : 'configured'))
-      return { live: false, servers }
+      return { live: false, servers, reload: null }
     }
     const live = (Array.isArray(statuses) ? statuses : []).filter((s): s is McpLiveServer => typeof s === 'object' && s !== null)
     const servers = live.map(liveView)
@@ -76,7 +77,7 @@ export class McpHub {
     for (const s of config.servers) {
       if (waiting(s) && !listed.has(s.name)) servers.push(configuredView(s, 'pending-approval'))
     }
-    return { live: true, servers }
+    return { live: true, servers, reload: this.d.reload(tabId) }
   }
 
   async action(tabId: string, a: McpAction): Promise<McpResult> {

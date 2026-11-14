@@ -575,6 +575,14 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 #statusbar .status-added { color: var(--green); }
 #statusbar .status-removed { color: var(--red); }
 #statusbar .status-changes:hover { color: var(--fg); }
+/* the MCP servers: quiet while all is well; red, amber or blue with a dot when they need the person */
+#statusbar .status-mcp { cursor: pointer; gap: 6px; color: var(--text-3); }
+#statusbar .status-mcp .status-icon { color: inherit; }
+#statusbar .status-mcp:hover { color: var(--fg); }
+#statusbar .status-mcp.crit { color: var(--red); }
+#statusbar .status-mcp.warn { color: var(--amber); }
+#statusbar .status-mcp.info { color: var(--blue); }
+#statusbar .status-mcp:is(.crit, .warn, .info)::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 #statusbar .status-plan { cursor: pointer; min-width: 0; max-width: 40ch; }
 #statusbar .status-plan:hover { color: var(--fg); }
 #statusbar .status-plan .status-bar::before { background: var(--accent); }

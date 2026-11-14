@@ -1,12 +1,15 @@
 import type { StatusUpdate } from '../shared/ipc'
+import type { McpServersView, McpStatus } from '../shared/mcp'
 import type { ReviewCounter } from '../shared/review'
 import type { AgentStatus, BackgroundTask, PlanStatus } from '../shared/types'
 import { icon, type IconName } from './icons'
+import { detailOf } from './mcp/mcp-view-model'
 
-export type Level = 'normal' | 'warn' | 'crit'
+/** info: something waits for the person that is not a warning (the MCP changes a restart loads) */
+export type Level = 'normal' | 'warn' | 'crit' | 'info'
 
 export interface Segment {
-  key: 'account' | 'model' | 'context' | 'agents' | 'background' | 'plan' | 'changes'
+  key: 'account' | 'model' | 'context' | 'agents' | 'background' | 'plan' | 'mcp' | 'changes'
   text: string
   title: string
   level: Level
@@ -152,6 +155,34 @@ export function planSegment(p: PlanStatus): Segment {
   return { key: 'plan', text, title: `${p.title} — ${p.done} of ${p.total} done. Click for the task list`, level: 'normal', fill: p.done / p.total }
 }
 
+/**
+ * the MCP servers of the chat in front, at the end of the bar before the changes: quiet while they are connected, red when one
+ * failed, amber when one waits for its sign-in or approval, blue while changes wait for a restart; every server on hover
+ */
+export function mcpSegment(v: McpServersView): Segment {
+  const count = (status: McpStatus): number => v.servers.filter((s) => s.status === status).length
+  const on = v.servers.filter((s) => s.status !== 'disabled').length
+  const connected = v.live ? count('connected') : on
+  const failed = count('failed')
+  const signIn = count('needs-auth')
+  const approve = count('pending-approval')
+  const r = v.reload
+  const [text, level]: [string, Level] =
+    failed > 0 ? [`MCP ${connected}/${on} · ${failed} failed`, 'crit']
+      : signIn > 0 ? [`MCP · sign in to ${signIn}`, 'warn']
+        : approve > 0 ? [`MCP · approve ${approve}`, 'warn']
+          : r !== null ? [`MCP · restart to ${r.verb} ${r.changes}`, 'info']
+            : [connected > 0 ? `MCP ${connected}` : 'MCP', 'normal']
+  const servers = [...v.servers].sort((a, b) => (a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1))
+    .map((s) => `${s.name}: ${s.status === 'configured' ? 'configured' : detailOf(s)}`)
+  const lines = [
+    ...(servers.length > 0 ? servers : ['No MCP servers']),
+    ...(r !== null ? [`Restart the session to ${r.verb} ${r.changes} ${r.changes === 1 ? 'change' : 'changes'}`] : []),
+    'Click for MCP servers and plugins'
+  ]
+  return { key: 'mcp', text, title: lines.join('\n'), level, icon: 'plug' }
+}
+
 /** the tab's account, once extra accounts exist: first, and there before Claude's first status too */
 export function accountSegment(label: string): Segment {
   return { key: 'account', text: label, title: 'The account this tab runs on — click to switch', level: 'normal' }
@@ -159,14 +190,16 @@ export function accountSegment(label: string): Segment {
 
 const ZONES = ['start', 'middle', 'end'] as const
 
-/** where a segment sits on the bar: the account at its start, the changes at its end, the session in its middle */
+/** where a segment sits on the bar: the account at its start, the MCP servers and the changes at its end, the session in its middle */
 function zoneOf(key: Segment['key']): (typeof ZONES)[number] {
-  return key === 'account' ? 'start' : key === 'changes' ? 'end' : 'middle'
+  return key === 'account' ? 'start' : key === 'mcp' || key === 'changes' ? 'end' : 'middle'
 }
 
 /** a chat tab's side of the status bar: its Stop for a background task, and the tab those tasks belong to */
 export interface ChatStatus {
   tab: string
+  /** the chat's MCP servers, for their segment: null while not known, and for a chat that has no panel of them (a member's) */
+  mcp: McpServersView | null
   /** resolves true when main sent the stop: the task then leaves the status, and so the list */
   stopTask(taskId: string): Promise<boolean>
 }
@@ -192,7 +225,7 @@ export class StatusBar {
   private readonly stopping = new Set<string>()
   private readonly onClick: (e: MouseEvent) => void
 
-  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}, onPlanClick: (anchor: HTMLElement) => void = () => {}) {
+  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}, onPlanClick: (anchor: HTMLElement) => void = () => {}, onMcpClick: () => void = () => {}) {
     this.list.className = 'status-tasks'
     this.list.hidden = true
     this.list.setAttribute('role', 'dialog')
@@ -201,6 +234,7 @@ export class StatusBar {
     this.onClick = (e) => {
       const target = e.target as HTMLElement
       if (target.closest('.status-changes')) onChangesClick()
+      if (target.closest('.status-mcp')) onMcpClick()
       const account = target.closest<HTMLElement>('.status-account')
       if (account) onAccountClick(account)
       const planSeg = target.closest<HTMLElement>('.status-plan')
@@ -220,6 +254,7 @@ export class StatusBar {
       ...(account !== null ? [accountSegment(account)] : []),
       ...(u ? statusSegments(u, now).filter((s) => chat === undefined || s.key !== 'model') : []),
       ...(plan ? [planSegment(plan)] : []),
+      ...(chat?.mcp ? [mcpSegment(chat.mcp)] : []),
       ...(changes ? [changesSegment(changes)] : [])
     ]
     this.el.hidden = segments.length === 0

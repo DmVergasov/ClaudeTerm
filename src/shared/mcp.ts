@@ -8,7 +8,9 @@ export interface McpServerView {
   transport: McpTransport; target: string   // the URL (secret query values masked) or the command line; '' unknown
   tools: string[]; error: string | null; version: string | null
 }
-export interface McpServersView { live: boolean; servers: McpServerView[] }   // live false: no running session in the tab
+/** the configuration changes the running session has not loaded yet: a restart loads them, or drops them when each is a removal or a turn-off */
+export interface McpReload { changes: number; verb: 'load' | 'drop' }
+export interface McpServersView { live: boolean; servers: McpServerView[]; reload: McpReload | null }   // live false: no running session in the tab
 export type McpEditScope = 'user' | 'project' | 'local'
 export const MCP_EDIT_SCOPES: readonly McpEditScope[] = ['user', 'project', 'local']
 export type McpSection = 'servers' | 'plugins'

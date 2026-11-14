@@ -4,7 +4,7 @@ import type { ChatLaunch } from '../../src/main/chat/claude-spawn'
 import { CliError, LOGIN_TIMEOUT_MS, type CliOptions, type CliRun } from '../../src/main/mcp/claude-cli'
 import { configPaths, type ConfigPaths } from '../../src/main/mcp/mcp-config'
 import { McpHub } from '../../src/main/mcp/mcp-hub'
-import type { PluginAction } from '../../src/shared/mcp'
+import type { McpReload, PluginAction } from '../../src/shared/mcp'
 import { MASK } from '../../src/shared/mcp-add'
 
 const HOME = 'C:\\Users\\Dana'
@@ -33,6 +33,7 @@ function setup(o: Partial<{
   openError: string
   json: Record<string, unknown>   // more files, by their full path
   tabGate: Promise<void>          // the tab lookup waits for this (a realpath still running)
+  reload: McpReload | null        // the changes the restart coordinator says the session has not loaded
 }> = {}) {
   const paths = configPaths(ENV, HOME, FOLDER)
   const files = new Map<string, unknown>()
@@ -71,6 +72,7 @@ function setup(o: Partial<{
         toggles.push([name, enabled])
       }
     },
+    reload: () => o.reload ?? null,
     changed: (tab, madeHere) => {
       changed.push([tab, madeHere])
       order.push(`changed:${tab}:${madeHere}`)
@@ -136,7 +138,8 @@ describe('McpHub', () => {
         { name: 'plugin:docs:notes', status: 'failed', scope: 'plugin', plugin: 'docs', transport: 'stdio', target: 'npx notes', tools: [], error: 'boom', version: null },
         { name: 'waiting', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'uvx w', tools: [], error: null, version: null },
         { name: 'blocked', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'node', tools: [], error: null, version: null }
-      ]
+      ],
+      reload: null
     })
   })
 
@@ -167,8 +170,16 @@ describe('McpHub', () => {
         { name: 'search', status: 'disabled', scope: 'user', plugin: null, transport: 'http', target: `https://mcp.example.com/sse?token=${MASK}`, tools: [], error: null, version: null },
         { name: 'waiting', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'uvx w', tools: [], error: null, version: null },
         { name: 'notes', status: 'configured', scope: 'local', plugin: null, transport: 'stdio', target: 'node n.js', tools: [], error: null, version: null }
-      ]
+      ],
+      reload: null
     })
+  })
+
+  it('the view of a running session says the changes it has not loaded yet, as the restart coordinator counts them; with none running it has none', async () => {
+    const running = setup({ live: [live({})], reload: { changes: 2, verb: 'load' } })
+    expect((await running.hub.servers(TAB))?.reload).toEqual({ changes: 2, verb: 'load' })
+    const stopped = setup({ reload: { changes: 2, verb: 'load' } })
+    expect((await stopped.hub.servers(TAB))?.reload).toBeNull()
   })
 
   it('reconnect and toggle go to the session; with none they say Claude Code is not running', async () => {

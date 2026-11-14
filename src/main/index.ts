@@ -1241,6 +1241,7 @@ function bootstrap(): void {
     readJson,
     run: runClaudeCli,
     session: chatHub,
+    reload: (id) => coordinator.waiting(id),
     changed: (id, madeHere) => {
       if (madeHere) coordinator.madeHere(id)
       send(IPC.evMcpChanged, id)

@@ -38,6 +38,7 @@ const board: McpServersView = {
     server('claudeterm', { scope: 'plugin', plugin: 'claudeterm', target: 'node claudeterm-mcp.js', tools: toolNames('claudeterm', 6) }),
     server('memory', { status: 'disabled', scope: 'user', target: 'npx -y @modelcontextprotocol/server-memory' }),
   ],
+  reload: null,
 }
 
 function names(view: ReturnType<typeof serverGroups>): [string, string[]][] {
@@ -54,7 +55,7 @@ describe('serverGroups', () => {
   })
 
   it('leaves out an empty group', () => {
-    const connectedOnly: McpServersView = { live: true, servers: [server('github'), server('context7')] }
+    const connectedOnly: McpServersView = { live: true, servers: [server('github'), server('context7')], reload: null }
     expect(names(serverGroups(connectedOnly, ''))).toEqual([['Connected', ['context7', 'github']]])
   })
 
@@ -73,6 +74,7 @@ describe('serverGroups', () => {
         server('github', { status: 'configured', target: 'https://api.githubcopilot.com/mcp/' }),
         server('memory', { status: 'configured', target: 'npx -y @modelcontextprotocol/server-memory' }),
       ],
+      reload: null,
     }
     expect(names(serverGroups(configured, ''))).toEqual([['Configured', ['github', 'memory']]])
     expect(rowActions(configured.servers[0], false)).toEqual({

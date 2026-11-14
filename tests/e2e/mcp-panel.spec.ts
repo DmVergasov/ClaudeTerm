@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,11 +7,11 @@ import { CHAT_INPUT, chatReady, launchChatTab, userMessages } from './chat-helpe
 import { bufferText, keepingClipboard } from './helpers'
 import { chatStarts, cliCalls } from './mcp-helpers'
 
-// The MCP · Plugins panel of a Claude tab's chat: its button, the /mcp and /plugin commands, the servers grouped by what they need,
+// The MCP · Plugins panel of a Claude tab's chat: its segment of the status bar, the /mcp and /plugin commands, the servers grouped by what they need,
 // and the filter. The stand-in Claude Code answers for the session and the configuration folder holds the servers.
 
 const PANEL = '.panel-mcp'
-const TOGGLE = '.tab-mcp-toggle'
+const TOGGLE = '#statusbar .status-mcp'
 const GROUP_HEAD = '.panel-mcp .mcp-group-head'
 const FILTER = '.panel-mcp .mcp-filter'
 const GITHUB = { type: 'http', url: 'https://example.com/github' }
@@ -24,10 +25,12 @@ function projectWork(): string {
   return work
 }
 
-test('the header button opens MCP · Plugins beside the chat and closes it', async () => {
+test('the MCP segment of the status bar opens MCP · Plugins beside the chat and closes it; the header has no MCP button', async () => {
   const { app, page } = await launchChatTab({ turns: {} })
   try {
     await chatReady(page)
+    await expect(page.locator(TOGGLE)).toHaveText('MCP')
+    await expect(page.locator('#sheet-header .tab-mcp-toggle')).toHaveCount(0)
     await page.locator(TOGGLE).click()
     await expect(page.locator(PANEL)).toBeVisible()
     await expect(page.locator('#image-panel .panel-title')).toHaveText('MCP · Plugins')
@@ -109,6 +112,43 @@ test('servers are grouped by what they need, with their source, tools and error'
   }
 })
 
+test('the status bar names the servers at its end, before the changes: the connected count, red with a failed one, every server on hover', async () => {
+  // a repository with a change, so the changes counter is on the bar too
+  const work = mkdtempSync(join(tmpdir(), 'ct-mcp-segment-'))
+  const git = (...args: string[]): void => void execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd: work })
+  writeFileSync(join(work, 'notes.txt'), 'one\n')
+  git('init', '-q')
+  git('add', '.')
+  git('commit', '-q', '-m', 'init')
+  writeFileSync(join(work, 'notes.txt'), 'two\n')
+  const { app, page } = await launchChatTab(
+    { turns: {}, mcp: { github: { tools: ['search', 'read'] }, sentry: { status: 'failed', error: 'connect ECONNREFUSED' } } },
+    { work, claude: { mcpServers: { github: GITHUB, sentry: SENTRY } } }
+  )
+  try {
+    await chatReady(page)
+    const segment = page.locator(TOGGLE)
+    await expect(segment).toHaveText('MCP 1/2 · 1 failed')
+    await expect(segment).toHaveClass(/\bcrit\b/)
+    await expect(segment).toHaveAttribute('title', 'github: 2 tools · v1.0.0\nsentry: Failed to start\nClick for MCP servers and plugins')
+    await expect(page.locator('#statusbar .status-changes')).toBeVisible()
+    expect(await page.locator('#statusbar .status-zone-end .status-seg').evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.key))).toEqual(['mcp', 'changes'])
+  } finally {
+    await app.close()
+  }
+})
+
+test('a server waiting for its sign-in turns the segment amber', async () => {
+  const { app, page } = await launchChatTab({ turns: {}, mcp: { sentry: { status: 'needs-auth' } } }, { claude: { mcpServers: { github: GITHUB, sentry: SENTRY } } })
+  try {
+    await chatReady(page)
+    await expect(page.locator(TOGGLE)).toHaveText('MCP · sign in to 1')
+    await expect(page.locator(TOGGLE)).toHaveClass(/\bwarn\b/)
+  } finally {
+    await app.close()
+  }
+})
+
 test('the filter finds a server by one of its tools, and Esc clears it', async () => {
   const { app, page } = await launchChatTab(
     { turns: {}, mcp: { github: { tools: ['search_issues', 'create_gist'] }, sentry: { status: 'needs-auth' } } },
@@ -160,7 +200,7 @@ test('a row keeps the focus when Enter opens its tools', async () => {
   }
 })
 
-test('a terminal-view tab has no MCP button', async () => {
+test('a terminal-view tab has no MCP segment', async () => {
   const { app, page } = await launchChatTab({ turns: {} })
   try {
     await chatReady(page)
