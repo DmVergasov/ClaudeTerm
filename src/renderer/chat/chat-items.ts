@@ -26,6 +26,8 @@ export interface ItemCallbacks {
   revealChange(path: string): void
   /** an http(s) address Claude wrote, opened in the browser */
   openExternal(url: string): void
+  /** a file link Claude wrote, opened by main: a document in Docs, anything else in the editor at its line (null: no line) */
+  openFile(file: string, line: number | null): void
   copy(text: string): void
 }
 
@@ -110,7 +112,7 @@ function textNode(item: Extract<ChatItem, { kind: 'text' }>, cb: ItemCallbacks):
     node.append(el('div', 'chat-tail'))
     streamText(node, item.markdown)
   } else {
-    node.innerHTML = chatMarkdownHtml(item.markdown)
+    node.innerHTML = chatMarkdownHtml(item.markdown, { paths: true })
   }
   return node
 }
@@ -126,11 +128,11 @@ export function streamText(node: HTMLElement, markdown: string): void {
   if (!tailNode) return
   if (stable.length > done) {
     const part = el('div', 'chat-part')
-    part.innerHTML = chatMarkdownHtml(stable.slice(done))
+    part.innerHTML = chatMarkdownHtml(stable.slice(done), { paths: true })
     node.insertBefore(part, tailNode)
     drawnStable.set(node, stable.length)
   }
-  tailNode.innerHTML = chatMarkdownHtml(tail)
+  tailNode.innerHTML = chatMarkdownHtml(tail, { paths: true })
 }
 
 function userItem(item: Extract<ChatItem, { kind: 'user' }>, cb: ItemCallbacks): HTMLElement {

@@ -5,6 +5,8 @@ import { spinner } from '../tab-row'
 import { ChatComposer } from './chat-composer'
 import { QuoteButton, splitQuotes } from './chat-quote'
 import { HeadsUpView } from './heads-up-card'
+import { FileLinker } from './file-linker'
+import type { FileLink } from '../../shared/chat-paths'
 import { renderItem, type ItemCallbacks } from './chat-items'
 import { focusCard, renderCard, waitingCard } from './chat-cards'
 import { agentColor, elapsedText, fillAgentsCard, setSettled, tickAgentTimes, type StepKeep } from './chat-steps'
@@ -50,6 +52,10 @@ export interface ChatViewOptions {
   openImages(cards: ImageCard[], index: number): void
   revealChange(path: string): void
   openExternal(url: string): void
+  /** a file link Claude wrote is opened by main: a document in Docs, any other file in the editor at its line */
+  openFile(file: string, line: number | null): void
+  /** the window asks main which of the paths in Claude's text are files of this tab; null on a remote tab, whose files are on its device */
+  fileLinks: ((paths: string[]) => Promise<FileLink[]>) | null
   copy(text: string): void
   /** the person's answer to the chat's Heads up card */
   headsUp(cardId: string, action: HeadsUpAction): void
@@ -109,6 +115,8 @@ export class ChatView {
   /** the Heads up card, above the message box */
   private readonly headsUpView: HeadsUpView
   private readonly cb: ItemCallbacks
+  /** the paths of Claude's text that are files of the tab, made links; null on a remote tab */
+  private readonly links: FileLinker | null
   private items: ChatItem[] = []
   /** the dock: the subagents of the Agent calls that run, the column's last message, right before the working line */
   private readonly dock = document.createElement('div')
@@ -239,6 +247,7 @@ export class ChatView {
       },
       revealChange: (path) => o.revealChange(path),
       openExternal: (url) => o.openExternal(url),
+      openFile: (file, line) => o.openFile(file, line),
       copy: (text) => o.copy(text)
     }
     this.composer = new ChatComposer({
@@ -299,6 +308,7 @@ export class ChatView {
     })
     this.body.append(this.scroll, this.fade, this.pill)
     this.resize.observe(this.dock)
+    this.links = o.fileLinks === null ? null : new FileLinker(this.column, o.fileLinks)
     this.headsUpView = new HeadsUpView({ act: (cardId, action) => o.headsUp(cardId, action), openExternal: (url) => o.openExternal(url), copy: (text) => o.copy(text), ask: (cardId, text) => o.headsUpAsk(cardId, text), focusComposer: () => this.composer.focus() })
     this.composer.element.prepend(this.headsUpView.element)
     this.element.append(this.body, this.composer.element)
@@ -763,6 +773,7 @@ export class ChatView {
     this.resize.disconnect()
     this.composer.dispose()
     this.quote.dispose()
+    this.links?.dispose()
     this.frames.drop()
     this.stopClock()
     this.stopDockTimer()
@@ -822,13 +833,17 @@ export class ChatView {
         this.frames.add(`call:${p.id}:${p.call.id}`, () => this.drawCall(p.id, p.call.id))
         break
       }
-      case 'state':
+      case 'state': {
+        const turn = this.state.turn
         this.state = p.state
         this.page?.setChatExited(p.state.exited)
         this.composer.setState(p.state)
+        // Claude may have written the files it named during the turn: the paths that were not files are asked again
+        if (turn !== 'idle' && p.state.turn === 'idle') this.links?.recheck()
         this.resettleBefore(this.items.length)
         this.frames.add('state', () => this.showState())
         break
+      }
       case 'reset':
         this.replaceAll({ tabId: this.o.tabId, rev: this.rev, items: p.items, hasOlder: p.hasOlder, state: this.state })
         break
@@ -962,6 +977,8 @@ export class ChatView {
       }
       before = node
     }
+    // every drawing path ends here: the paths of the text drawn are asked about once it settles
+    this.links?.scan()
   }
 
   /** the column drawn again from its window, every node made new: the steps' choices and the thinking blocks' are kept */
@@ -990,6 +1007,8 @@ export class ChatView {
     // an item out of the window has no node: the window draws it when it comes in
     if (!item || !node) return
     drawInPlace(item, node, this.cb, () => this.paint(item, node))
+    // a streamed text is drawn here, not by reconcile: its new paths are asked about too
+    this.links?.scan()
   }
 
   /** a call's patch: its row is filled where it is, and the rest of the step is left as it is */

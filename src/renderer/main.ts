@@ -877,6 +877,9 @@ function makeChat(tabId: string, remote: boolean): ChatView {
       reviewPanel.revealFile(tabId, path)
     },
     openExternal: (url) => ct.openExternal(url),
+    // the files Claude names are main's to check: a remote tab's are on its device, so it asks for none
+    fileLinks: remote ? null : (paths) => ct.chatFileLinks(tabId, paths),
+    openFile: (file, line) => ct.chatOpenFile(tabId, file, line),
     copy: (text) => ct.writeClipboardText(text),
     headsUp: (cardId, action) => ct.chatHeadsUpAction(tabId, cardId, action),
     headsUpAsk: (cardId, text) => ct.chatHeadsUpAsk(tabId, cardId, text)

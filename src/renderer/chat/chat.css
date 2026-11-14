@@ -637,6 +637,17 @@
   cursor: default;
 }
 
+/* a path Claude wrote that is a file of the tab: a link, with or without an address */
+.chat-text .chat-file-link,
+.chat-text a.chat-file-link:not([href]) {
+  color: var(--blue);
+  cursor: pointer;
+}
+
+.chat-text .chat-file-link:hover {
+  text-decoration: underline;
+}
+
 .chat-text .chat-table {
   max-width: 100%;
   overflow-x: auto;

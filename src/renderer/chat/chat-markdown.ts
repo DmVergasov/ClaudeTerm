@@ -120,11 +120,18 @@ export function splitStable(text: string): { stable: string; tail: string } {
 const copyTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
 
 /**
- * A click in Claude's Markdown, the same for a message's text and a plan card: a web link opens in the browser, every link is
- * kept from navigating, and a Copy button copies its block's code.
+ * A click in Claude's Markdown, the same for a message's text and a plan card: a file link opens its file, a web link opens in the
+ * browser, every link is kept from navigating, and a Copy button copies its block's code.
  */
-export function markdownClick(e: MouseEvent, cb: { openExternal(url: string): void; copy(text: string): void }): void {
+export function markdownClick(e: MouseEvent, cb: { openExternal(url: string): void; copy(text: string): void; openFile?(file: string, line: number | null): void }): void {
   const target = e.target as Element | null
+  // a file link of a path Claude wrote opens the file in the window's own way (main checks it), at its line when it has one
+  const file = target?.closest<HTMLElement>('.chat-file-link')
+  if (file && file.dataset.file !== undefined && cb.openFile) {
+    e.preventDefault()
+    cb.openFile(file.dataset.file, file.dataset.line === undefined ? null : Number(file.dataset.line))
+    return
+  }
   const link = target?.closest('a')
   if (link) {
     // a link never navigates the window: only an openable address goes to the browser

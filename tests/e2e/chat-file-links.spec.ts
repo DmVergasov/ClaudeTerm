@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { launchChatTab } from './chat-helpers'
+import { launchChatTab, sendMessage } from './chat-helpers'
 
 /** a stand-in editor: each run appends `<file>\t<line>` as a line; the test never starts a real editor */
 function standInEditor(): { command: string; runs(): string[][] } {
@@ -53,6 +53,87 @@ test('main answers the paths that are files of a local Claude tab, and opens onl
     await open(answer[1]!.file, null)
     await expect(page.locator('.panel-title')).toHaveText('Docs')
     await expect(page.locator('.doc-md h1')).toHaveText('Spec')
+  } finally {
+    await app.close()
+  }
+})
+
+test('paths in an answer that are files are links: a document opens in Docs, another file in the editor at its line; a missing one stays text', async () => {
+  const editor = standInEditor()
+  const work = project()
+  const { app, page } = await launchChatTab({ turns: { files: [{ text: 'Read .superpowers/sdd/plan.md, then `src/a.ts:12`, [the notes](notes.md) and missing/file.md.', chunks: 6, pace: 60 }] } }, { work, review: { editor: editor.command } })
+  try {
+    await sendMessage(page, 'files')
+    const links = page.locator('.chat-text .chat-file-link')
+    await expect(links).toHaveText(['.superpowers/sdd/plan.md', 'src/a.ts:12', 'the notes'])
+    await expect(page.locator('.chat-text')).toContainText('missing/file.md')
+    await expect(links.nth(0)).toHaveCSS('cursor', 'pointer')
+    await expect(links.nth(0)).toHaveAttribute('title', /^Open .*plan\.md in Docs$/)
+    await expect(links.nth(1)).toHaveAttribute('title', /^Open .*a\.ts:12 in the editor$/)
+    await links.nth(0).click()
+    await expect(page.locator('.panel-title')).toHaveText('Docs')
+    await expect(page.locator('.doc-md h1')).toHaveText('The plan')
+    await links.nth(1).click()
+    await expect.poll(() => editor.runs().length).toBe(1)
+    const [file, line] = editor.runs()[0]!
+    expect(realpathSync.native(file!)).toBe(realpathSync.native(join(work, 'src', 'a.ts')))
+    expect(line).toBe('12')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a path Claude names before the file is written becomes a link when the turn ends', async () => {
+  const work = project()
+  const { app, page, config } = await launchChatTab({ turns: { later: [{ text: 'I will write notes/later.md next.' }, { gate: 'write' }, { text: 'Written.' }] } }, { work })
+  try {
+    await sendMessage(page, 'later')
+    // main was asked while the file is missing: the path stays text
+    await expect(page.locator('.chat-text .chat-path[data-link="none"]')).toHaveText(['notes/later.md'])
+    mkdirSync(join(work, 'notes'))
+    writeFileSync(join(work, 'notes', 'later.md'), '# Later\n')
+    writeFileSync(join(config, 'write'), '')
+    await expect(page.locator('.chat-text', { hasText: 'Written.' })).toHaveCount(1)
+    await expect(page.locator('.chat-text .chat-file-link')).toHaveText(['notes/later.md'])
+  } finally {
+    await app.close()
+  }
+})
+
+test('an answer naming more paths than one request carries links them all', async () => {
+  const work = project()
+  mkdirSync(join(work, 'f'))
+  const names = Array.from({ length: 205 }, (_, i) => `f/${i}.md`)
+  for (const name of names) writeFileSync(join(work, name), '# x\n')
+  const { app, page } = await launchChatTab({ turns: { many: [{ text: names.join(' ') }] } }, { work })
+  try {
+    await sendMessage(page, 'many')
+    await expect(page.locator('.chat-text .chat-file-link')).toHaveCount(205)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a streamed answer asks main once it settles, not once per piece', async () => {
+  const work = project()
+  const { app, page } = await launchChatTab({ turns: { stream: [{ text: 'Read .superpowers/sdd/plan.md, then src/a.ts:12 and docs/spec.md for the change.', chunks: 12, pace: 40 }] } }, { work })
+  try {
+    // the registered handler is wrapped in place: it counts the calls and answers as before
+    await app.evaluate(({ ipcMain }) => {
+      const counter = globalThis as unknown as { fileLinkAsks: number }
+      counter.fileLinkAsks = 0
+      const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })._invokeHandlers
+      const original = handlers.get('chat:file-links')!
+      handlers.set('chat:file-links', (...args: unknown[]) => {
+        counter.fileLinkAsks++
+        return original(...args)
+      })
+    })
+    await sendMessage(page, 'stream')
+    await expect(page.locator('.chat-text .chat-file-link')).toHaveCount(3)
+    const asks = await app.evaluate(() => (globalThis as unknown as { fileLinkAsks: number }).fileLinkAsks)
+    expect(asks).toBeGreaterThanOrEqual(1)
+    expect(asks).toBeLessThan(4)
   } finally {
     await app.close()
   }
