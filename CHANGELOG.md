@@ -27,6 +27,7 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 - In a large repository, the changed files counter and the Changes panel come as soon as a chat starts, instead of after your first message: when git takes too long the first time, ClaudeTerm tries again shortly.
 - The bars of running agents in a chat move as soon as you come back to its tab, instead of standing still for a second or more.
 - A chat's list of agents, once it has more rows than it shows, scrolls to its newest ones, unless you scrolled up in it.
+- A long line in the **Changes** panel stays inside its file's card: the card scrolls it sideways, instead of the line running past the card's edge.
 
 ## 0.19.0
 
