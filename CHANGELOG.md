@@ -2,6 +2,21 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.21.0
+
+### New
+
+- **File paths in Claude's answers are links.** A path Claude writes to a file of the tab's folder — `docs/plan.md`, `src/app.ts:120`, an absolute path, or the target of a Markdown link — becomes a link once ClaudeTerm has checked the file is there: a document opens in **Docs** beside the chat, any other file in the editor you set in **Settings**, at its line when the path has one. A path that is not a file stays text, and a file Claude writes during its answer becomes a link when the answer ends.
+- **The theme colours the whole app.** **Settings → Appearance → Theme** now sets the colours of everything — the title bar and its buttons, the tabs, menus and dialogs, the side panels, the status bar, the Settings window and the MCP panel — not only the chat, and a theme change applies at once. A light theme gives a light window from its first frame; Graphite looks as before.
+- **Ask Claude from a Heads up card.** Every Heads up card has a field and an **Ask Claude** button of its own: what you type there goes to the conversation with the card quoted above it, so you can ask about what the card points out without copying it.
+- **MCP app secrets.** An MCP server that signs in through an OAuth app of your own needs that app's client secret. **Carry over** to an extra account now brings these secrets with the MCP servers (on Windows and Linux; on macOS Claude Code keeps them in the Keychain), and the **MCP** panel has a **Client secret** field for such a server, which also opens by itself when a sign-in fails for want of one. The secret goes to Claude Code only, never into a command line, a log or a message.
+
+### Fixes
+
+- A chat on an extra account keeps the whole history of a long conversation after a restart.
+- A resumed chat shows a compaction as its divider, instead of Claude Code's summary as a message from you.
+- Heads up cards are in your language even when your messages are few and short.
+
 ## 0.20.0
 
 ### New
