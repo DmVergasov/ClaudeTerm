@@ -200,7 +200,7 @@
   border: 1px solid var(--chat-tone-9);
   border-radius: 12px;
   background: var(--raised);
-  box-shadow: 0 1px 0 #ffffff08 inset;
+  box-shadow: 0 1px 0 var(--tint-1) inset;
 }
 
 .chat-field:focus-within {

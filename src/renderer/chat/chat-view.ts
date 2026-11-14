@@ -13,10 +13,8 @@ import { agentColor, elapsedText, fillAgentsCard, setSettled, tickAgentTimes, ty
 import { AgentPage } from './agent-page'
 import { BOTTOM_SLACK, drawCallInPlace, drawInPlace, drawSafely, EDGE_ZONE, FrameQueue, joinSnapshot, keepAtNode, keepFold, OlderPages, pageDownWin, pageUpInView, pageUpWin, revealWin, scrollToMiddle, settledAfter, stepBefore, tailWin, topItemOf, windowAt } from './column-draw'
 import type { FindView } from './chat-find'
-import { appPalette } from '../../shared/themes'
 import { countdown, resetClock } from '../limit-meters'
 import './chat.css'
-import type { ITheme } from '@xterm/xterm'
 
 export interface ChatViewOptions {
   tabId: string
@@ -725,11 +723,6 @@ export class ChatView {
     this.stick = this.to === len && this.distanceToBottom() <= BOTTOM_SLACK
     this.updatePill()
     return true
-  }
-
-  /** the chat's colours follow the terminal theme: the host takes the theme's chat tokens, and the window's own stay as they are */
-  setTheme(theme: ITheme): void {
-    for (const [name, value] of Object.entries(appPalette(theme))) this.element.style.setProperty(name, value)
   }
 
   /** the setting: the conversation and the message box take the chat's whole width, not a reading column */

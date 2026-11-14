@@ -885,7 +885,6 @@ function makeChat(tabId: string, remote: boolean): ChatView {
     headsUp: (cardId, action) => ct.chatHeadsUpAction(tabId, cardId, action),
     headsUpAsk: (cardId, text) => ct.chatHeadsUpAsk(tabId, cardId, text)
   })
-  chat.setTheme(resolveTheme(settings.theme))
   chat.setFullWidth(settings.chat.fullWidth)
   // a card the chat had before this view was made: later ones come with onChatHeadsUp
   void ct.chatHeadsUp(tabId).then((card) => chat.showHeadsUp(card))
@@ -1255,7 +1254,6 @@ function applySettings(s: Settings): void {
     applyTheme(s.theme)
     const theme = resolveTheme(s.theme)
     for (const t of tabs.values()) t.view?.setTheme(theme)
-    for (const t of tabs.values()) t.chat?.setTheme(theme)
     // the sheet's surround in the terminal's own background: the gutter reads as part of the terminal in every theme
     document.documentElement.style.setProperty('--term-bg', resolveTheme(s.theme).background ?? '')
   }
