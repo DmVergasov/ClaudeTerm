@@ -130,6 +130,19 @@ describe('tickRows', () => {
     expect(tickRows(preview, { adopt: false, mode: 'add', targetName: 'Studio' }).some((r) => r.item === 'mcp-secrets')).toBe(false)
   })
 
+  it('MCP app secrets are off while MCP servers is unticked, and follow its default tick otherwise', () => {
+    const o = { adopt: false, mode: 'add' as const, targetName: 'Studio' }
+    const secretsRow = (p: CarryPreview, over: { adopt?: boolean; mcpTicked?: boolean }) => tickRows(p, { ...o, ...over }).find((r) => r.item === 'mcp-secrets')
+    expect(secretsRow(withSecrets, { mcpTicked: false })).toEqual({ item: 'mcp-secrets', label: 'MCP app secrets', note: 'Comes with the servers above', count: '1', ticked: false, disabled: true })
+    expect(secretsRow(withSecrets, { mcpTicked: true })).toMatchObject({ ticked: true, disabled: false })
+    expect(secretsRow(withSecrets, { adopt: true, mcpTicked: true })).toMatchObject({ ticked: false, disabled: false })
+    // without mcpTicked the servers' own default decides: ticked unless the folder is adopted
+    expect(secretsRow(withSecrets, {})).toMatchObject({ ticked: true, disabled: false })
+    expect(secretsRow(withSecrets, { adopt: true })).toMatchObject({ ticked: false, disabled: true })
+    const none: CarryPreview = { ...withSecrets, items: withSecrets.items.map((c) => (c.item === 'mcp-secrets' ? { ...c, count: 0, names: [] } : c)) }
+    expect(secretsRow(none, { mcpTicked: false })?.note).toBe('None in Main account')
+  })
+
   it('an item the source does not have is disabled and unticked, and says so', () => {
     const skills = tickRows(preview, { adopt: false, mode: 'add', targetName: 'Studio' })[4]
     expect(skills).toEqual({ item: 'skills', label: 'Skills', note: 'None in Main account', count: '0', ticked: false, disabled: true })

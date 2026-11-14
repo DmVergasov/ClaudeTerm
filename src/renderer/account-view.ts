@@ -76,15 +76,18 @@ export interface TickRow {
 
 /**
  * the carry picker's rows, in CARRY_ITEMS order: an item the source does not have is off; trusted folders wait for the target's
- * tabs to close; MCP app secrets have a row only when the preview counts them
+ * tabs to close; MCP app secrets have a row only when the preview counts them, and are off while MCP servers is unticked
+ * (mcpTicked; by default the servers' own tick: on unless the folder is adopted)
  */
-export function tickRows(p: CarryPreview, o: { adopt: boolean; mode: FlowMode; targetName: string }): TickRow[] {
+export function tickRows(p: CarryPreview, o: { adopt: boolean; mode: FlowMode; targetName: string; mcpTicked?: boolean }): TickRow[] {
+  const mcpOn = o.mcpTicked ?? (!o.adopt && (p.items.find((x) => x.item === 'mcp')?.count ?? 0) > 0)
   return CARRY_ITEMS.filter((item) => item !== 'mcp-secrets' || p.items.some((c) => c.item === 'mcp-secrets')).map((item) => {
     const c = p.items.find((x) => x.item === item)
     const n = c?.count ?? 0
     const blocked = item === 'trust' && o.mode === 'carry' && p.targetTabs > 0
-    const disabled = n === 0 || blocked
-    const note = n === 0 ? `None in ${p.sourceName}` : blocked ? `Close the tabs on ${o.targetName} to carry over trusted folders` : noteOf(item, c)
+    const withServers = item === 'mcp-secrets' && !mcpOn
+    const disabled = n === 0 || blocked || withServers
+    const note = n === 0 ? `None in ${p.sourceName}` : blocked ? `Close the tabs on ${o.targetName} to carry over trusted folders` : withServers ? 'Comes with the servers above' : noteOf(item, c)
     return { item, label: CARRY_LABELS[item], note, count: countOf(item, n), ticked: !o.adopt && !disabled, disabled }
   })
 }

@@ -9,6 +9,7 @@ const FAKE_CREDENTIAL = 'fake-credential-never-shown-0001'
 const MAIN_KEY = 'sk-main-secret'
 const HEADER_KEY = 'sk-header-secret'
 const SECRETS = [FAKE_CREDENTIAL, MAIN_CREDENTIAL, MAIN_KEY, HEADER_KEY, CI_TOKEN]
+const APP_SECRET = 'app-secret-never-shown-0001'
 const LONG = { timeout: 15_000 }
 
 /** Main account's own setup: settings with a model and an env, a hook, an MCP server with a header, a skill and CLAUDE.md */
@@ -82,6 +83,17 @@ async function fillAdd(win: Page, name: string, email: string | null): Promise<v
   await helper(win).getByLabel('Name', { exact: true }).fill(name)
   if (email !== null) await helper(win).getByLabel('Email (optional)').fill(email)
 }
+
+/** Main account's setup with a client secret for context7 in its sign-in store, as Claude Code keeps one on Windows and Linux */
+function appSecretSetup(config: string): void {
+  mainSetup(config)
+  const store = JSON.parse(readFileSync(join(config, '.credentials.json'), 'utf8')) as Record<string, unknown>
+  store.mcpOAuthClientConfig = { 'context7|0123456789abcdef': { clientSecret: APP_SECRET } }
+  writeFileSync(join(config, '.credentials.json'), JSON.stringify(store))
+}
+
+/** a tick of the helper, by its exact label */
+const tick = (win: Page, label: string) => helper(win).locator('.account-tick', { has: win.locator('b', { hasText: new RegExp(`^${label}$`) }) })
 
 test('Add account… → name and ticks → Sign in…: the helper waits, then shows who signed in and one line per item, and the row', async () => {
   const { app, page, config, root, log } = await launchAccounts({
@@ -264,6 +276,39 @@ test('Carry over… on a row lists the items and carries the ticked ones', async
   expect(settings.model).toBe('claude-test-model')
   expect(settings.env?.ANTHROPIC_API_KEY).toBeUndefined()
   expect(existsSync(join(folder, 'skills', 'review', 'SKILL.md'))).toBe(false)
+  await app.close()
+})
+
+test('the picker lists MCP app secrets right after MCP servers with their count, and turns them off with MCP servers', async () => {
+  test.skip(process.platform === 'darwin', 'Claude Code keeps the client secrets in the Keychain on macOS')
+  const { app, page } = await launchAccounts({ script: { turns: {} }, main: appSecretSetup })
+  const win = await accountsWindow(app, page)
+  await fillAdd(win, 'Work', null)
+  const secrets = tick(win, 'MCP app secrets')
+  await expect(secrets).toContainText('context7', LONG)
+  await expect(secrets.locator('.helper-count')).toHaveText('1')
+  const labels = await helper(win).locator('.account-tick b').allTextContents()
+  expect(labels.indexOf('MCP app secrets')).toBe(labels.indexOf('MCP servers') + 1)
+  await expect(secrets.locator('input')).toBeChecked()
+  const servers = tick(win, 'MCP servers').locator('input')
+  await servers.uncheck()
+  await expect(secrets.locator('input')).toBeDisabled()
+  await expect(secrets.locator('input')).not.toBeChecked()
+  await expect(servers).toBeFocused()
+  await servers.check()
+  await expect(secrets.locator('input')).toBeEnabled()
+  await expect(secrets.locator('input')).toBeChecked()
+  expect(await win.content()).not.toContain(APP_SECRET)
+  await app.close()
+})
+
+test('on macOS the picker has no MCP app secrets', async () => {
+  test.skip(process.platform !== 'darwin', 'the client secrets are read from .credentials.json on Windows and Linux')
+  const { app, page } = await launchAccounts({ script: { turns: {} }, main: appSecretSetup })
+  const win = await accountsWindow(app, page)
+  await fillAdd(win, 'Work', null)
+  await expect(tick(win, 'MCP servers')).toContainText('context7', LONG)
+  await expect(tick(win, 'MCP app secrets')).toHaveCount(0)
   await app.close()
 })
 

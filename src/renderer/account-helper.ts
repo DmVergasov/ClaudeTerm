@@ -236,7 +236,7 @@ function paintTicks(f: Form): void {
   } else if (f.preview === null) {
     box.replaceChildren()
   } else {
-    box.replaceChildren(...tickRows(f.preview, tickOptions(f)).map((r) => tickBox(f, r)))
+    box.replaceChildren(...tickRows(f.preview, { ...tickOptions(f), mcpTicked: f.ticks.has('mcp') }).map((r) => tickBox(f, r)))
   }
 }
 
@@ -245,16 +245,29 @@ function tickBox(f: Form, r: TickRow): HTMLElement {
   input.addEventListener('change', () => {
     if (input.checked) f.ticks.add(r.item)
     else f.ticks.delete(r.item)
+    if (r.item === 'mcp') followServers(f, input.checked)
   })
-  return el('label', { className: r.disabled ? 'account-tick disabled' : 'account-tick' },
+  const label = el('label', { className: r.disabled ? 'account-tick disabled' : 'account-tick' },
     input,
     el('span', { className: 'account-tick-text' }, el('b', { textContent: r.label }), el('small', { textContent: r.note })),
     el('span', { className: 'helper-count', textContent: r.count }))
+  label.dataset.item = r.item
+  return label
+}
+
+/** MCP app secrets come with the MCP servers: their tick follows the servers' box, and the focus goes back to that box once it is drawn again */
+function followServers(f: Form, on: boolean): void {
+  if (f.preview === null) return
+  const secrets = tickRows(f.preview, { ...tickOptions(f), mcpTicked: on }).find((r) => r.item === 'mcp-secrets')
+  if (secrets?.ticked) f.ticks.add('mcp-secrets')
+  else f.ticks.delete('mcp-secrets')
+  paintTicks(f)
+  f.ticksEl?.querySelector<HTMLInputElement>('[data-item="mcp"] input')?.focus()
 }
 
 function selectAll(f: Form, on: boolean): void {
   if (f.preview === null) return
-  f.ticks = on ? new Set(tickRows(f.preview, tickOptions(f)).filter((r) => !r.disabled).map((r) => r.item)) : new Set()
+  f.ticks = on ? new Set(tickRows(f.preview, { ...tickOptions(f), mcpTicked: on }).filter((r) => !r.disabled).map((r) => r.item)) : new Set()
   paintTicks(f)
 }
 
