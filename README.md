@@ -32,9 +32,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="ClaudeTerm: Open Claude Code here from Explorer, charts appearing in the image panel, subagents in the status bar, the full-size viewer, a tab waiting for permission and recent sessions">
+  <img src="docs/images/demo.gif" alt="ClaudeTerm with the tabs on the left, grouped by project: a chat where Claude runs tools and three subagents, charts in the Media panel, the full-size viewer, a question card answered with a click, and a tab that pulses until its permission request is allowed">
   <br>
-  <img src="docs/images/review.gif" alt="The Changes panel: Claude edits two files, a comment on a changed line goes to Claude with Send to Claude, and the diff updates as Claude fixes it">
+  <img src="docs/images/review.gif" alt="The Changes panel beside the chat: a comment on a changed line goes to Claude with Send to Claude, the diff follows Claude's edits, and a spec Claude shows opens formatted in the Docs panel">
   <br>
   <sub>Screenshots use demo data.</sub>
 </p>

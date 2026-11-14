@@ -27,6 +27,7 @@
     "dist:linux": "npm run build && electron-builder --linux deb",
     "dist:mac": "npm run build && electron-builder --mac",
     "screenshots": "npm run build && playwright test -c playwright.screenshots.config.ts",
+    "gifs": "npm run build && playwright test -c playwright.gifs.config.ts",
     "perf": "npm run build && playwright test -c playwright.perf.config.ts"
   },
   "dependencies": {

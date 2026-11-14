@@ -31,6 +31,7 @@ On Ubuntu 24.04 and in WSL the development Electron has no setuid sandbox helper
 | `npm test` | Unit and integration tests (Vitest) |
 | `npm run test:e2e` | Build, then end-to-end tests against the real Electron app (Playwright) |
 | `npm run screenshots` | Regenerate the README screenshots and the app icon |
+| `npm run gifs` | Record the README GIFs, `docs/images/demo.gif` and `review.gif` (needs ffmpeg on the `PATH`) |
 | `npm run dist` | Build the installer into `dist\` |
 | `npm run dist:linux` | Build the .deb into `dist/` (Linux) |
 | `npm run dist:mac` | Build the .dmg and .zip files into `dist/` (macOS) |

@@ -33,6 +33,7 @@ npm run typecheck     # the app, the tests and the configs
 npm test              # unit and integration tests (Vitest)
 npm run test:e2e      # builds, then end-to-end tests against the real Electron app (Playwright)
 npm run screenshots   # regenerates the README images
+npm run gifs          # records the README GIFs (needs ffmpeg on the PATH)
 ```
 
 CI runs typecheck, `npm test`, the build and the e2e suite on **`windows-latest`, `ubuntu-latest` and `macos-latest`**,
