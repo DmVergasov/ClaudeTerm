@@ -1,5 +1,5 @@
-import { accountNameError, CARRY_ITEMS, CARRY_LABELS, MAIN_ACCOUNT, type AccountBegin, type AccountFlowView, type AccountView, type AccountsView, type CarryItem, type CarryLine, type CarryPreview, type FlowAction, type FlowMode, type PickedFolder } from '../shared/accounts'
-import { helperTitle, primaryLabel, shortPath, tickRows, type TickRow } from './account-view'
+import { accountNameError, CARRY_ITEMS, CARRY_LABELS, MAIN_ACCOUNT, type AccountBegin, type AccountFlowView, type AccountView, type AccountsView, type CarryItem, type CarryLine, type CarryPreview, type FlowAction, type FlowMode, type FlowStep, type PickedFolder } from '../shared/accounts'
+import { helperTitle, primaryLabel, shortPath, staysDismissed, tickRows, type TickRow } from './account-view'
 import { el } from './dom'
 
 const ct = window.ct
@@ -41,6 +41,8 @@ let dialog: Dialog | null = null
 let form: Form | null = null
 /** the flow main runs, as it last published it */
 let flow: AccountFlowView | null = null
+/** the step the flow was in when the person dismissed the helper: the updates that leave it closed are told by staysDismissed */
+let dismissedAt: FlowStep | null = null
 /** the element that had the focus before the helper opened: it gets the focus back */
 let returnFocus: HTMLElement | null = null
 /** the home folder, which paths are shortened by */
@@ -66,6 +68,8 @@ export function helperOpen(): boolean {
 async function open(o: { mode: FlowMode; account: AccountView | null; accounts: AccountsView }): Promise<void> {
   const running = await ct.accountFlow()
   if (running !== null) {
+    // asking for the helper shows the flow again, even where it was dismissed
+    dismissedAt = null
     onFlow(running)
     return
   }
@@ -94,9 +98,12 @@ async function signInAgain(a: AccountView): Promise<void> {
 function onFlow(v: AccountFlowView | null): void {
   flow = v
   if (v === null) {
+    dismissedAt = null
     if (form === null) closeDialog()
     return
   }
+  if (dialog === null && staysDismissed(dismissedAt, v.step)) return
+  dismissedAt = null
   form = null
   ensureDialog()
   draw()
@@ -131,6 +138,8 @@ function dismiss(): void {
   if (form === null && flow?.step === 'done') {
     flow = null
     ct.accountFlowAction({ kind: 'close' })
+  } else if (form === null && flow !== null) {
+    dismissedAt = flow.step
   }
   closeDialog()
 }

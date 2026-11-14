@@ -1,5 +1,14 @@
-import { CARRY_ITEMS, CARRY_LABELS, type AccountView, type CarryCount, type CarryItem, type CarryPreview, type FlowMode, type MainAccountView } from '../shared/accounts'
+import { CARRY_ITEMS, CARRY_LABELS, type AccountView, type CarryCount, type CarryItem, type CarryPreview, type FlowMode, type FlowStep, type MainAccountView } from '../shared/accounts'
 import { validUntil } from './account-items'
+
+/**
+ * Whether a flow update leaves the helper closed after the person dismissed it with Esc or ✕ at `dismissed`: an update
+ * in the same step, or the sign-in being confirmed, is not news to them; a step that needs them (failed, same-login,
+ * done) brings the helper back.
+ */
+export function staysDismissed(dismissed: FlowStep | null, step: FlowStep): boolean {
+  return dismissed !== null && (step === dismissed || step === 'sign-in' || step === 'confirming')
+}
 
 /** the letters on an account's avatar: the first two characters, the first in upper case */
 export function initials(name: string): string {

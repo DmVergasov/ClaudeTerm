@@ -16,6 +16,7 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 - A chat on an extra account keeps the whole history of a long conversation after a restart.
 - A resumed chat shows a compaction as its divider, instead of Claude Code's summary as a message from you.
 - Heads up cards are in your language even when your messages are few and short.
+- **Esc** during an extra account's sign-in closes the helper for good: it no longer comes back a moment later over the Settings window, where nothing could be clicked. **Add account…** shows it again.
 
 ## 0.20.0
 

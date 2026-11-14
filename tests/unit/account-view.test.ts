@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { avatarColor, helperTitle, initials, mainLine, primaryLabel, rowLine, shortPath, tickRows } from '../../src/renderer/account-view'
+import { avatarColor, helperTitle, initials, mainLine, primaryLabel, rowLine, shortPath, staysDismissed, tickRows } from '../../src/renderer/account-view'
 import type { AccountView, CarryPreview } from '../../src/shared/accounts'
 
 const home = 'C:\\Users\\rim28'
@@ -176,5 +176,20 @@ describe('helperTitle and primaryLabel', () => {
     expect(primaryLabel('add', { signedIn: false })).toBe('Sign in…')
     expect(primaryLabel('add', { signedIn: true })).toBe('Add')
     expect(primaryLabel('carry', null)).toBe('Carry over')
+  })
+})
+
+describe('staysDismissed', () => {
+  it('keeps the helper closed for updates in the step it was dismissed at, and while the sign-in is confirmed', () => {
+    expect(staysDismissed('sign-in', 'sign-in')).toBe(true)
+    expect(staysDismissed('sign-in', 'confirming')).toBe(true)
+  })
+  it('brings it back for a step that needs the person', () => {
+    expect(staysDismissed('sign-in', 'failed')).toBe(false)
+    expect(staysDismissed('sign-in', 'same-login')).toBe(false)
+    expect(staysDismissed('sign-in', 'done')).toBe(false)
+  })
+  it('does nothing when the helper was not dismissed', () => {
+    expect(staysDismissed(null, 'sign-in')).toBe(false)
   })
 })

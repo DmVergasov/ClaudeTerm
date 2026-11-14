@@ -477,6 +477,28 @@ test('Esc in the sign-in step leaves the sign-in running: Add account… shows i
   await app.close()
 })
 
+test('a flow update in the same step after Esc does not bring the helper back; Add account… shows it again', async () => {
+  const { app, page } = await launchAccounts({ script: { turns: {}, auth: { work: { gate: 'go' } } } })
+  const win = await accountsWindow(app, page)
+  await fillAdd(win, 'Work', null)
+  await helper(win).getByRole('button', { name: 'Sign in…', exact: true }).click()
+  await expect(helper(win)).toContainText('Waiting for the sign-in in your browser…', LONG)
+  await win.keyboard.press('Escape')
+  await expect(helper(win)).toHaveCount(0)
+  const running = await flow(page)
+  expect(running?.step).toBe('sign-in')
+  // main publishes the flow again while it is still in the sign-in step: the renderer must keep the helper closed
+  await app.evaluate(({ BrowserWindow }, view) => {
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send('ev:account-flow', view)
+  }, running)
+  // the update has been handled once the window has painted a frame after it
+  await win.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))))
+  await expect(win.locator('.account-scrim')).toHaveCount(0)
+  await win.getByRole('button', { name: '＋ Add account…' }).click()
+  await expect(helper(win)).toContainText('Waiting for the sign-in in your browser…', LONG)
+  await app.close()
+})
+
 test('a sign-in begun from the main window opens the helper in an open Settings window', async () => {
   const { app, page } = await launchAccounts({ script: { turns: {}, auth: { work: { gate: 'go' } } } })
   const win = await accountsWindow(app, page)
