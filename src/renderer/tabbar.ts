@@ -1,6 +1,7 @@
+import type { CoordMark } from '../shared/coordinator'
 import { REMOTE_COPY } from '../shared/remote'
 import { WORKTREE_COLORS, type TabActivity, type TabKind, type TabPlace } from '../shared/types'
-import { groupLabels, moveInGroup, panelOrder, showsGroupLabels, storedGroups, type PanelGroup } from './tab-groups'
+import { arrangeCoordinators, groupLabels, moveInGroup, panelOrder, showsGroupLabels, storedGroups, type PanelGroup } from './tab-groups'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
 
@@ -38,6 +39,8 @@ export interface TabBarItem {
   deviceName: string | null
   /** the tab's device is offline: the tab is dimmed */
   dim: boolean
+  /** the tab's part in a coordinator of this device; null: none */
+  coord: CoordMark | null
 }
 
 /** a device whose tabs this device shows in the tab bar, as a chip before them */
@@ -121,7 +124,13 @@ export class TabBar {
 
   /** this device's tab ids in the order the bar shows them: group by group, as the left panel groups them; no other device's */
   get visualOrder(): string[] {
-    return panelOrder(storedGroups(this.items.filter((i) => i.group === null)))
+    return panelOrder(this.ownGroups(this.items))
+  }
+
+  /** this device's groups as the bar shows them: each group's tabs in their order, a coordinator's attached tabs right after it */
+  private ownGroups(items: TabBarItem[]): PanelGroup[] {
+    const coordOf = (id: string): CoordMark | null => items.find((i) => i.id === id)?.coord ?? null
+    return arrangeCoordinators(storedGroups(items.filter((i) => i.group === null)), coordOf, false)
   }
 
   /**
@@ -136,7 +145,7 @@ export class TabBar {
     const list = document.createElement('div')
     list.className = 'tabs'
     const byId = new Map(items.map((item) => [item.id, item]))
-    const own = storedGroups(items.filter((i) => i.group === null))
+    const own = this.ownGroups(items)
     const labelled = showsGroupLabels(own)
     const labels = groupLabels(own)
     own.forEach((group, n) => {
@@ -241,7 +250,7 @@ export class TabBar {
     el.draggable = true
     el.title = item.group === null || item.deviceName === null ? `${item.title}\n${item.folder}` : REMOTE_COPY.tabTooltip(item.title, item.deviceName, item.folder)
     const parts = tabParts(item, this.platform, this.cb)
-    el.append(parts.icon, parts.label, ...parts.marks, parts.close)
+    el.append(parts.icon, parts.label, ...(parts.coord ? [parts.coord] : []), ...parts.marks, parts.close)
     // a linked worktree's tab carries its worktree's colour along the bottom
     if (item.place?.worktree) {
       const line = document.createElement('span')
@@ -271,7 +280,7 @@ export class TabBar {
     if (!dragged || !target || dragged.group !== target.group) return
     // this device's tabs move within their project group, in the order the bar shows them
     if (target.group === null) {
-      const order = moveInGroup(storedGroups(this.items.filter((i) => i.group === null)), from, targetId)
+      const order = moveInGroup(this.ownGroups(this.items), from, targetId)
       if (order) this.cb.reorder(order, null)
       return
     }

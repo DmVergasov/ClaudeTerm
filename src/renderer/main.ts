@@ -4,6 +4,7 @@ import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import type { MailUnread } from '../shared/mail'
+import type { CoordMark, CoordMarks } from '../shared/coordinator'
 import { noteProjectOf } from '../shared/note'
 import type { TabView } from '../shared/chat'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
@@ -108,6 +109,10 @@ const inputLog = new Map<string, string>()
 const sizeLog = new Map<string, string[]>()
 /** every place event each tab got, in test runs: a null place is kept apart from no event */
 const placeLog = new Map<string, (TabPlace | null)[]>()
+/** the coordinator marks of this device's tabs, as main last sent them */
+let coordMarks: CoordMarks = {}
+/** whether the marks came in as an event: then the answer to the first request is older and is not applied */
+let coordMarksSeen = false
 let lightbox: Lightbox
 let sessionsWindow: RecentSessionsWindow
 let folderDialog: FolderDialog
@@ -199,6 +204,14 @@ function mailMarks(): string {
   return Object.keys(mailUnread).filter(mailMarked).sort().join(' ')
 }
 
+/** a tab's part in a coordinator of this device; null: none */
+const coordMarkOf = (id: string | null): CoordMark | null => (id === null ? null : coordMarks[id] ?? null)
+
+function applyMarks(m: CoordMarks): void {
+  coordMarks = m
+  renderTabs()
+}
+
 function tabBarItem(id: string): TabBarItem | null {
   const t = tabs.get(id)
   if (!t) return null
@@ -222,7 +235,8 @@ function tabBarItem(id: string): TabBarItem | null {
     forkOf: t.info.fork?.of ?? null,
     group: remote?.device ?? null,
     deviceName: remote ? remoteDeviceOf(remote.device)?.name ?? null : null,
-    dim: remote !== undefined && !isOnline(remote.device)
+    dim: remote !== undefined && !isOnline(remote.device),
+    coord: coordMarkOf(id)
   }
 }
 
@@ -1387,6 +1401,14 @@ async function boot(): Promise<void> {
     // a new active tab unfolds its group once its place is known: until then it is in No project, which must stay folded;
     // a group the user folded in the meantime stays folded
     if (first && id === activeId && settings.tabs.position === 'left') tabPanel.unfoldFor(id, true)
+  })
+  // the marks come as events; the answer to the first request is applied only when no event came before it
+  ct.onCoordMarks((m) => {
+    coordMarksSeen = true
+    applyMarks(m)
+  })
+  void ct.coordMarks().then((m) => {
+    if (!coordMarksSeen) applyMarks(m)
   })
   searchBar = new SearchBar(
     document.getElementById('search')!,

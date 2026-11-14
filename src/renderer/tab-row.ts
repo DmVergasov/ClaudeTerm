@@ -84,6 +84,8 @@ const WAITING_WORDS: Record<TabWaiting, { text: string; title: string }> = {
 export interface TabParts {
   icon: HTMLElement
   label: HTMLElement
+  /** the coordinator's label, after the title; null for a tab that is no coordinator */
+  coord: HTMLElement | null
   /** the note, muted, bell, envelope and images marks, then the attention badge or the waiting word, in this order */
   marks: HTMLElement[]
   close: HTMLButtonElement
@@ -100,6 +102,13 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
   const label = document.createElement('span')
   label.className = 'tab-title'
   label.textContent = item.title
+  let coord: HTMLElement | null = null
+  if (item.coord?.role === 'coordinator') {
+    coord = document.createElement('span')
+    coord.className = 'tab-coord'
+    coord.textContent = 'Coordinator'
+    coord.title = `Coordinator of ${item.coord.project}`
+  }
   const marks: HTMLElement[] = []
   if (item.note) {
     const n = document.createElement('span')
@@ -148,7 +157,7 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
     e.stopPropagation()
     cb.close(item.id)
   })
-  return { icon: kindIcon, label, marks, close }
+  return { icon: kindIcon, label, coord, marks, close }
 }
 
 /**

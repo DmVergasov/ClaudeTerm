@@ -193,6 +193,11 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .tp-branch { display: flex; align-items: center; gap: 4px; height: 15px; overflow: hidden; color: var(--text-3); font-size: 11.5px; }
 .tp-branch span { overflow: hidden; text-overflow: ellipsis; }
 .tp-branch svg { flex-shrink: 0; }
+/* the coordinator's label, its block of attached rows with their guide line, and an attached row elsewhere */
+.tab-coord { flex: none; margin-left: 6px; color: var(--accent); font-size: 11px; white-space: nowrap; }
+.tp-tab.coord-attached { margin-left: 16px; }
+.tp-tab.coord-attached::before { content: ''; position: absolute; left: -9px; top: -3px; bottom: -3px; border-left: 1px solid var(--line-3); }
+.tp-coord-to { flex: none; margin-left: 6px; color: var(--text-3); font-size: 11px; white-space: nowrap; }
 /* a linked worktree's tab: a 2 px bar at its left edge, and its branch in the same color */
 .tp-wtbar { position: absolute; left: 3px; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; }
 /* another device's section: a 2 px line in its colour along the left edge; offline, faded, with no line and a dashed bar */

@@ -1,10 +1,17 @@
+import type { CoordMark } from '../shared/coordinator'
 import type { TabPlace } from '../shared/types'
 
 /** The group of tabs that are not in a git repository; always the last group. */
 export const NO_PROJECT = '~none'
 
 export interface GroupInput { id: string; place: TabPlace | null; forkOf: string | null }
-export interface PanelRow { id: string; fork: boolean }
+export interface PanelRow {
+  id: string; fork: boolean
+  /** the row stands in a coordinator's block: the coordinator's tab id; absent outside one */
+  block?: string
+  /** a row of the block other than the coordinator's family: an attached session (or a fork of one), drawn indented */
+  attached?: true
+}
 export interface PanelGroup { key: string; project: TabPlace['project'] | null; rows: PanelRow[] }
 
 /**
@@ -241,4 +248,53 @@ export function moveInGroup(groups: PanelGroup[], dragId: string, targetId: stri
 
   const next = groups.flatMap((g) => (g === group ? ids : g.rows.map((r) => r.id)))
   return sameOrder(next, panelOrder(groups)) ? null : next
+}
+
+/**
+ * Each group that holds a coordinator (a row whose mark is { role: 'coordinator' }): the units whose first row is attached to
+ * it (mark { role: 'attached', coordinatorTabId: <its id> }) move right after the coordinator's unit, in their order; the
+ * coordinator's unit gets `block`, the moved units `block` and `attached`. A unit is a row and the fork rows after it when
+ * `families` (the left panel), a single row otherwise (the tab bar). A group without a coordinator is returned as it is.
+ */
+export function arrangeCoordinators(groups: PanelGroup[], coordOf: (id: string) => CoordMark | null, families: boolean): PanelGroup[] {
+  return groups.map((group) => {
+    const units = unitsOf(group.rows, families)
+    const markOf = (unit: PanelRow[]): CoordMark | null => coordOf(unit[0].id)
+    const coordinators = units.filter((unit) => markOf(unit)?.role === 'coordinator')
+    if (coordinators.length === 0) return group
+
+    const moved = new Set<PanelRow[]>()
+    const attachedTo = new Map<PanelRow[], PanelRow[][]>()
+    for (const coordinator of coordinators) {
+      const attached = units.filter((unit) => {
+        const mark = markOf(unit)
+        return !moved.has(unit) && mark?.role === 'attached' && mark.coordinatorTabId === coordinator[0].id
+      })
+      for (const unit of attached) moved.add(unit)
+      attachedTo.set(coordinator, attached)
+    }
+
+    const rows: PanelRow[] = units.flatMap((unit) => {
+      if (moved.has(unit)) return []
+      const attached = attachedTo.get(unit)
+      if (!attached) return unit
+      const block = unit[0].id
+      return [
+        ...unit.map((row) => ({ ...row, block })),
+        ...attached.flatMap((family) => family.map((row) => ({ ...row, block, attached: true as const })))
+      ]
+    })
+    return { ...group, rows }
+  })
+}
+
+/** a group's units: a row that is not a fork starts one, and with `families` the fork rows after it join it; each row alone otherwise */
+function unitsOf(rows: PanelRow[], families: boolean): PanelRow[][] {
+  const units: PanelRow[][] = []
+  for (const row of rows) {
+    const last = units[units.length - 1]
+    if (families && row.fork && last !== undefined && !last[0].fork) last.push(row)
+    else units.push([row])
+  }
+  return units
 }

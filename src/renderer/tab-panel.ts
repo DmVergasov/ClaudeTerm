@@ -1,6 +1,6 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
 import { REMOTE_COPY } from '../shared/remote'
-import { deviceGroups, groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
+import { arrangeCoordinators, deviceGroups, groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
 import { icon } from './icons'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
@@ -138,11 +138,13 @@ export class TabPanel {
    */
   private sections(): Section[] {
     const own = this.items.filter((item) => item.group === null)
+    // a coordinator's attached tabs of the project come right after it: the groups are arranged before the order is read
+    const arranged = (groups: PanelGroup[]): PanelGroup[] => arrangeCoordinators(groups, (id) => this.items.find((i) => i.id === id)?.coord ?? null, true)
     return [
-      { device: null, groups: panelGroups(own) },
+      { device: null, groups: arranged(panelGroups(own)) },
       ...this.devices.flatMap((device) => {
         const tabs = this.items.filter((item) => item.group === device.id)
-        return tabs.length === 0 && !device.online ? [] : [{ device, groups: deviceGroups(device.id, tabs) }]
+        return tabs.length === 0 && !device.online ? [] : [{ device, groups: arranged(deviceGroups(device.id, tabs)) }]
       })
     ]
   }
@@ -277,7 +279,7 @@ export class TabPanel {
     const place = item.place
     const el = document.createElement('div')
     const remote = item.group !== null
-    el.className = `tp-tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${item.waiting === 'done' ? ' attn-done' : ''}${item.waiting !== null ? ' has-status' : ''}${row.fork ? ' fork' : ''}${remote ? ' remote' : ''}${item.dim ? ' dim' : ''}`
+    el.className = `tp-tab${active ? ' active' : ''}${item.exited ? ' exited' : ''}${item.attention ? ' attention' : ''}${item.waiting === 'done' ? ' attn-done' : ''}${item.waiting !== null ? ' has-status' : ''}${row.fork ? ' fork' : ''}${row.attached ? ' coord-attached' : ''}${remote ? ' remote' : ''}${item.dim ? ' dim' : ''}`
     el.dataset.tabId = item.id
     // the row's soft pulse runs on the word's clock, so a redraw carries it on in step with the word
     if (item.attention) el.style.setProperty('--pulse-delay', pulseDelay())
@@ -309,9 +311,17 @@ export class TabPanel {
       mark.textContent = '↳'
       line.append(mark)
     }
-    line.append(parts.icon, parts.label, ...parts.marks, parts.close)
+    line.append(parts.icon, parts.label, ...(parts.coord ? [parts.coord] : []), ...parts.marks, parts.close)
     el.append(line)
 
+    // an attached tab outside its coordinator's block says which coordinator it reports to; in the block the block says it
+    let to: HTMLElement | null = null
+    if (item.coord?.role === 'attached' && row.block === undefined) {
+      to = document.createElement('span')
+      to.className = 'tp-coord-to'
+      to.textContent = `↳ ${item.coord.project}`
+      to.title = `Reports to the ${item.coord.project} coordinator`
+    }
     if (place) {
       const branch = document.createElement('div')
       branch.className = 'tp-branch'
@@ -320,7 +330,14 @@ export class TabPanel {
       text.textContent = place.branch
       branch.append(text)
       if (place.worktree) branch.style.color = WORKTREE_COLORS[place.worktree.color]
+      if (to) branch.append(to)
       el.append(branch)
+    } else if (to) {
+      // a row without a place has no branch: its line holds the mark alone, without the branch icon
+      const line2 = document.createElement('div')
+      line2.className = 'tp-branch'
+      line2.append(to)
+      el.append(line2)
     }
 
     bindTab(el, item, this.cb, () => this.startRename(parts.label, item))

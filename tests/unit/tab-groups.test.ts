@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   NO_PROJECT,
+  arrangeCoordinators,
   groupLabels,
   moveGroup,
   moveTab,
@@ -14,6 +15,7 @@ import {
   type PanelGroup
 } from '../../src/renderer/tab-groups'
 import type { TabPlace } from '../../src/shared/types'
+import type { CoordMark } from '../../src/shared/coordinator'
 
 function place(path: string, parent = 'w'): TabPlace {
   return {
@@ -221,5 +223,41 @@ describe('writing the panel order back', () => {
 
   it('an order that is already the panel order is not written', () => {
     expect(orderToWrite(['A', 'B'], ['A', 'B'], true)).toBeNull()
+  })
+})
+
+describe('coordinator blocks', () => {
+  const C: CoordMark = { role: 'coordinator', project: 'acme', sessions: 2, waiting: 0 }
+  const to = (coordinatorTabId: string): CoordMark => ({ role: 'attached', project: 'acme', coordinator: 'coord · Desktop', coordinatorTabId })
+  const marks = (m: Record<string, CoordMark>) => (id: string): CoordMark | null => m[id] ?? null
+  /** a row as `A`, `A1 (fork)`, with its block: `A [C attached]` */
+  const shown = (g: PanelGroup): string[] => g.rows.map((r) => `${r.id}${r.fork ? ' (fork)' : ''}${r.block ? ` [${r.block}${r.attached ? ' attached' : ''}]` : ''}`)
+
+  it('the attached tabs of the coordinator\'s group come right after it, in their tab order, and the block is marked', () => {
+    const g = arrangeCoordinators(panelGroups([tab('A1', acme), tab('C', acme), tab('X', acme), tab('A2', acme)]), marks({ C, A1: to('C'), A2: to('C') }), true)
+    expect(shown(g[0])).toEqual(['C [C]', 'A1 [C attached]', 'A2 [C attached]', 'X'])
+  })
+  it('a tab attached from another group, or to a coordinator that is not in its group, keeps its place and has no block', () => {
+    const g = arrangeCoordinators(panelGroups([tab('C', acme), tab('B', blog), tab('Y', acme)]), marks({ C, B: to('C'), Y: to('Z') }), true)
+    expect(shown(g[0])).toEqual(['C [C]', 'Y'])
+    expect(shown(g[1])).toEqual(['B'])
+  })
+  it('with families an attached tab brings its forks, and the coordinator keeps its own', () => {
+    const g = arrangeCoordinators(panelGroups([tab('A', acme), tab('C', acme), tab('A1', acme, 'A'), tab('C1', acme, 'C')]), marks({ C, A: to('C') }), true)
+    expect(shown(g[0])).toEqual(['C [C]', 'C1 (fork) [C]', 'A [C attached]', 'A1 (fork) [C attached]'])
+  })
+  it('without families (the tab bar) each tab moves alone, a fork too', () => {
+    const g = arrangeCoordinators(storedGroups([tab('F', acme, 'X'), tab('X', acme), tab('C', acme)]), marks({ C, F: to('C') }), false)
+    expect(g[0].rows.map((r) => r.id)).toEqual(['X', 'C', 'F'])
+  })
+  it('arranging the order it gave changes nothing, so the written order stays', () => {
+    const m = marks({ C, A2: to('C') })
+    const once = panelOrder(arrangeCoordinators(panelGroups(['A2', 'X', 'C'].map((id) => tab(id, acme))), m, true))
+    expect(once).toEqual(['X', 'C', 'A2'])
+    expect(panelOrder(arrangeCoordinators(panelGroups(once.map((id) => tab(id, acme))), m, true))).toEqual(once)
+  })
+  it('a group without a coordinator is the same', () => {
+    const groups = panelGroups([tab('A', acme), tab('B', acme)])
+    expect(arrangeCoordinators(groups, marks({ B: to('Z') }), true)).toEqual(groups)
   })
 })
