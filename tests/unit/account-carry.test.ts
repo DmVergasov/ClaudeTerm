@@ -337,7 +337,8 @@ describe('clientSecrets', () => {
     entries['other|h'] = { clientSecret: 'other-secret-0001' }
     const started = performance.now()
     const result = clientSecrets({ mcpOAuthClientConfig: entries }, ['other'])
-    expect(performance.now() - started).toBeLessThan(200)
+    // the old quadratic scan took over 30 s here: 2 s keeps the guard and leaves room for a loaded CI runner
+    expect(performance.now() - started).toBeLessThan(2000)
     expect(result).toEqual(new Map([['other', 'other-secret-0001']]))
   })
 })
