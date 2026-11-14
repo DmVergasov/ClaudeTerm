@@ -58,6 +58,9 @@ export const isChatOrigin = (v: unknown): boolean => v === 'auto' || v === 'revi
 /** a text the person sends to an agent: not blank, at most 1 MiB */
 export const isAgentText = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= SEND_TEXT_CAP
 
+/** the words the person sends with a Heads up card: the same rule as a text to an agent */
+export const isHeadsUpAskText = (v: unknown): v is string => isAgentText(v)
+
 /** a message the user sent, with its attachments; its origin, when it has one, is one the window may name */
 export function isChatSend(v: unknown): v is ChatSend {
   return isObj(v) && isText(v.text, SEND_TEXT_CAP) && Array.isArray(v.attachments)

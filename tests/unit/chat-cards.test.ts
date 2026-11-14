@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { toolSubject } from '../../src/main/chat/chat-model'
 import { answeredLine, cardFor, resultFor, suggestionLabel, type PermissionAsk } from '../../src/main/chat/chat-cards'
-import { isAgentText, isChatAnswer, isChatSend, isPermissionMode } from '../../src/main/chat/chat-guards'
+import { isAgentText, isChatAnswer, isChatSend, isHeadsUpAskText, isPermissionMode } from '../../src/main/chat/chat-guards'
 import type { ChatAnswer, ChatCard } from '../../src/shared/chat'
 import { fixtureLines } from '../fixtures/chat-fixtures'
 
@@ -391,5 +391,13 @@ describe('chat guards', () => {
     expect(isAgentText('  ')).toBe(false)
     expect(isAgentText('x'.repeat(1024 * 1024 + 1))).toBe(false)
     expect(isAgentText(7)).toBe(false)
+  })
+
+  it('isHeadsUpAskText takes the same text as isAgentText: not blank, at most 1 MiB', () => {
+    expect(isHeadsUpAskText('Fix it now')).toBe(true)
+    expect(isHeadsUpAskText('x'.repeat(1024 * 1024))).toBe(true)
+    expect(isHeadsUpAskText('\n ')).toBe(false)
+    expect(isHeadsUpAskText('x'.repeat(1024 * 1024 + 1))).toBe(false)
+    expect(isHeadsUpAskText(null)).toBe(false)
   })
 })

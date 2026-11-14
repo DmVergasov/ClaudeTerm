@@ -178,6 +178,7 @@ const api: CtApi = {
   chatFiles: (tabId, query) => ipcRenderer.invoke(IPC.chatFiles, tabId, query),
   chatHeadsUp: (tabId) => ipcRenderer.invoke(IPC.chatHeadsUp, tabId),
   chatHeadsUpAction: (tabId, cardId, action) => ipcRenderer.send(IPC.chatHeadsUpAction, tabId, cardId, action),
+  chatHeadsUpAsk: (tabId, cardId, text) => ipcRenderer.invoke(IPC.chatHeadsUpAsk, tabId, cardId, text),
   onChatHeadsUp: (cb) => on(IPC.evChatHeadsUp, cb),
   onChatPatch: (cb) => on(IPC.evChatPatch, cb),
   onChatReload: (cb) => on(IPC.evChatReload, cb),

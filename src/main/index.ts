@@ -72,7 +72,7 @@ import { ChatSessions } from './chat/chat-sessions'
 import { isHandoffLine, openInTerminal, type HandoffDeps } from './chat/terminal-handoff'
 import { chatPromptState, planChatResume, routeChatResume, type ChatResumeDeps } from './chat/chat-routing'
 import { scaleChatImage } from './chat/chat-image'
-import { isAgentText, isChatAnswer, isChatSend, isHeadsUpAction, isPermissionMode } from './chat/chat-guards'
+import { isAgentText, isChatAnswer, isChatSend, isHeadsUpAction, isHeadsUpAskText, isPermissionMode } from './chat/chat-guards'
 import { canonicalFolder, readTrustFile } from './chat/chat-files'
 import { attachFiles, attachmentOf, isChatPaths, isChatQuery, type AttachDeps } from './chat/chat-attachments'
 import { matchFiles, projectFiles } from './chat/project-files'
@@ -1272,6 +1272,7 @@ function bootstrap(): void {
       if (side === null) return Promise.reject(new Error('the chat does not run'))
       return askOnce({ launch: side.launch, cwd: side.cwd, env: side.env, model: HEADS_UP_MODEL, system, prompt, timeoutMs: HEADS_UP_TIMEOUT_MS })
     },
+    send: (tabId, text) => chatHub.send(tabId, { text, attachments: [] }),
     show: (tabId, card) => send(IPC.evChatHeadsUp, tabId, card),
     newId: () => randomUUID(),
     log
@@ -2821,6 +2822,8 @@ function bootstrap(): void {
   ipcMain.on(IPC.chatHeadsUpAction, (_e, tabId: unknown, cardId: unknown, action: unknown) => {
     if (isLocalClaudeTab(tabId) && isChatRef(cardId) && isHeadsUpAction(action)) headsUp.act(tabId, cardId, action)
   })
+  ipcMain.handle(IPC.chatHeadsUpAsk, (_e, tabId: unknown, cardId: unknown, text: unknown): Promise<string | null> =>
+    (isLocalClaudeTab(tabId) && isChatRef(cardId) && isHeadsUpAskText(text) ? headsUp.ask(tabId, cardId, text) : Promise.resolve('The card is gone.')))
   ipcMain.handle(IPC.chatAnswer, (_e, tabId: unknown, cardId: unknown, a: unknown): boolean | Promise<boolean> => {
     if (!isId(tabId) || !isChatRef(cardId) || !isChatAnswer(a)) return false
     if (remote?.viewer.has(tabId)) return remote.actions.chatAnswer(tabId, cardId, a)

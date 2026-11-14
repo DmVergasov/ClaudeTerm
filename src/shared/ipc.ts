@@ -194,6 +194,7 @@ export const IPC = {
   /** the Heads up card of a chat: the one the window shows per tab, and the person's answer to it */
   chatHeadsUp: 'chat:heads-up',
   chatHeadsUpAction: 'chat:heads-up-action',
+  chatHeadsUpAsk: 'chat:heads-up-ask',
   evChatHeadsUp: 'ev:chat-heads-up',
   /** the patches of a chat, in order: from the rev the window had to the rev they make */
   evChatPatch: 'ev:chat-patch',
@@ -584,6 +585,8 @@ export interface CtApi {
   chatHeadsUp(tabId: string): Promise<HeadsUpCard | null>
   /** the person's answer to a chat's Heads up card */
   chatHeadsUpAction(tabId: string, cardId: string, action: HeadsUpAction): void
+  /** Ask Claude on a chat's Heads up card: the words go to the chat with the card quoted. Null when sent, else the error to show */
+  chatHeadsUpAsk(tabId: string, cardId: string, text: string): Promise<string | null>
   /** a chat's Heads up card came, changed (Explain more) or went (null) */
   onChatHeadsUp(cb: (tabId: string, card: HeadsUpCard | null) => void): Unsubscribe
   /** a chat's patches: from the rev the window had to the rev they make; a window that is not at fromRev asks for a snapshot */

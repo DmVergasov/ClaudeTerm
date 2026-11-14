@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatItem, HeadsUpCard } from '../../src/shared/chat'
-import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, excerpt, parseFinding } from '../../src/main/chat/heads-up'
+import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, askMessage, excerpt, parseFinding } from '../../src/main/chat/heads-up'
 import { BACKGROUND_PROMPT } from '../../src/main/auto-continue'
 
 const FINDING = [
@@ -21,9 +21,10 @@ const toolUse = (n = 1, parent: string | null = null) => ({
 
 interface Asked { system: string; prompt: string; resolve(answer: string): void; reject(e: Error): void }
 
-function setup(o: { enabled?: boolean; items?: readonly ChatItem[] | null } = {}) {
+function setup(o: { enabled?: boolean; items?: readonly ChatItem[] | null; sendError?: string } = {}) {
   const asked: Asked[] = []
   const shown: (HeadsUpCard | null)[] = []
+  const sent: { tabId: string; text: string }[] = []
   let ids = 0
   const enabled = { on: o.enabled ?? true }
   const items: readonly ChatItem[] | null = o.items === undefined ? [{ kind: 'user', id: 'u', text: 'Clean up the old orders', attachments: [], queued: false }] : o.items
@@ -31,12 +32,13 @@ function setup(o: { enabled?: boolean; items?: readonly ChatItem[] | null } = {}
     enabled: () => enabled.on,
     items: () => items,
     ask: (_tabId, system, prompt) => new Promise<string>((resolve, reject) => { asked.push({ system, prompt, resolve, reject }) }),
+    send: (tabId, text) => { sent.push({ tabId, text }); return Promise.resolve(o.sendError ?? null) },
     show: (_tabId, card) => { shown.push(card) },
     newId: () => `card-${++ids}`,
     log: { info: () => undefined, warn: () => undefined }
   })
   const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
-  return { h, asked, shown, enabled, settle }
+  return { h, asked, shown, sent, enabled, settle }
 }
 
 describe('parseFinding', () => {
@@ -255,5 +257,52 @@ describe('HeadsUp', () => {
     await settle()
     expect(shown).toEqual([])
     expect(h.card('t')).toBeNull()
+  })
+
+  const QUOTED = '> Heads up: The tests run against production\n>\n> The `.env` the tests read points at the **production** database.\n>\n> - Point `DATABASE_URL` at a test database before the next run.'
+
+  it('Ask Claude sends the words with the card quoted to the conversation, and closes the card', async () => {
+    const { h, asked, shown, sent, settle } = setup()
+    h.message('t', init)
+    h.message('t', toolUse(HEADS_UP_EVERY))
+    asked[0]!.resolve(FINDING)
+    await settle()
+    expect(await h.ask('t', 'card-1', '  Fix it now  ')).toBeNull()
+    expect(sent).toEqual([{ tabId: 't', text: `Fix it now\n\n${QUOTED}` }])
+    expect(shown.at(-1)).toBeNull()
+    expect(h.card('t')).toBeNull()
+  })
+
+  it('the message quotes the longer explanation too once Explain more brought it', async () => {
+    const { h, asked, sent, settle } = setup()
+    h.message('t', init)
+    h.message('t', toolUse(HEADS_UP_EVERY))
+    asked[0]!.resolve(FINDING)
+    await settle()
+    h.act('t', 'card-1', 'explain')
+    asked[1]!.resolve('Your `.env` holds the production URL.')
+    await settle()
+    expect(await h.ask('t', 'card-1', 'Why?')).toBeNull()
+    expect(sent[0]!.text).toBe(`Why?\n\n${QUOTED}\n>\n> Your \`.env\` holds the production URL.`)
+  })
+
+  it('a You should know card is quoted with its own tag', () => {
+    const card: HeadsUpCard = { id: 'card-1', tag: 'should-know', title: 'Keys are per user', text: 'Each user gets a cache.\n\n- Clear it per user.', more: null, explaining: false, explainError: null }
+    expect(askMessage(card, 'Why?')).toBe('Why?\n\n> You should know: Keys are per user\n>\n> Each user gets a cache.\n>\n> - Clear it per user.')
+  })
+
+  it('Ask Claude on a card the tab does not show sends nothing, and a failed send keeps the card', async () => {
+    const gone = setup()
+    expect(await gone.h.ask('t', 'card-9', 'x')).toBe('The card is gone.')
+    expect(gone.sent).toEqual([])
+
+    const failing = setup({ sendError: 'The chat has ended.' })
+    failing.h.message('t', init)
+    failing.h.message('t', toolUse(HEADS_UP_EVERY))
+    failing.asked[0]!.resolve(FINDING)
+    await failing.settle()
+    expect(await failing.h.ask('t', 'card-1', 'x')).toBe('The chat has ended.')
+    expect(failing.h.card('t')).not.toBeNull()
+    expect(failing.shown.at(-1)).not.toBeNull()
   })
 })

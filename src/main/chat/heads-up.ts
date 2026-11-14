@@ -191,6 +191,14 @@ export function explainPrompt(card: HeadsUpCard, topic: string, session: string,
   ].join('\n')
 }
 
+/** the person's words for a card, with the card quoted under them: the message Ask Claude sends to the chat */
+export function askMessage(card: HeadsUpCard, text: string): string {
+  const quote = (md: string): string => md.split('\n').map((line) => (line.trim() === '' ? '>' : `> ${line}`)).join('\n')
+  const parts = [text.trim(), '', `> ${card.tag === 'heads-up' ? 'Heads up' : 'You should know'}: ${card.title}`, '>', quote(card.text)]
+  if (card.more !== null) parts.push('>', quote(card.more))
+  return parts.join('\n')
+}
+
 export interface HeadsUpDeps {
   /** claude.headsUp */
   enabled(): boolean
@@ -198,6 +206,8 @@ export interface HeadsUpDeps {
   items(tabId: string): readonly ChatItem[] | null
   /** one question to Claude Code on HEADS_UP_MODEL in the tab's folder and account, without tools or history: its answer */
   ask(tabId: string, system: string, prompt: string): Promise<string>
+  /** a message to the tab's chat, sent as the person's own: the chat's send result, an error text or null when it was sent */
+  send(tabId: string, text: string): Promise<string | null>
   /** the tab's card changed: the window draws it, or takes it away (null) */
   show(tabId: string, card: HeadsUpCard | null): void
   newId(): string
@@ -272,6 +282,21 @@ export class HeadsUp {
     s.card = null
     this.d.show(tabId, null)
     return true
+  }
+
+  /** Ask Claude: the person's words with the card quoted go to the tab's chat, and the card closes once sent. Else the error text */
+  async ask(tabId: string, cardId: string, text: string): Promise<string | null> {
+    const s = this.tabs.get(tabId)
+    const card = s?.card
+    if (!s || !card || card.id !== cardId) return 'The card is gone.'
+    const error = await this.d.send(tabId, askMessage(card, text))
+    if (error !== null) return error
+    // the card may have been closed or replaced while the message went
+    if (this.tabs.get(tabId) === s && s.card?.id === cardId) {
+      s.card = null
+      this.d.show(tabId, null)
+    }
+    return null
   }
 
   /** the tab closed */
