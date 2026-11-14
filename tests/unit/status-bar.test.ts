@@ -110,7 +110,7 @@ describe('changesSegment', () => {
 
 describe('mcpSegment', () => {
   const server = (name: string, status: McpStatus, tools: string[] = []): McpServerView =>
-    ({ name, status, scope: 'user', plugin: null, transport: 'stdio', target: `npx ${name}`, tools, error: null, version: null })
+    ({ name, status, scope: 'user', plugin: null, transport: 'stdio', target: `npx ${name}`, tools, error: null, version: null, oauthApp: false })
   const view = (servers: McpServerView[], reload: McpReload | null = null, live = true): McpServersView => ({ live, servers, reload })
   /** the segment with its alerts on (chat.mcpAlerts) */
   const alerting = (v: McpServersView) => mcpSegment(v, true)

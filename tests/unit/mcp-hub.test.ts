@@ -134,10 +134,10 @@ describe('McpHub', () => {
     expect(await hub.servers(TAB)).toEqual({
       live: true,
       servers: [
-        { name: 'github', status: 'connected', scope: 'user', plugin: null, transport: 'http', target: `https://api.example.com/mcp?key=${MASK}`, tools: ['search'], error: null, version: '1.2.0' },
-        { name: 'plugin:docs:notes', status: 'failed', scope: 'plugin', plugin: 'docs', transport: 'stdio', target: 'npx notes', tools: [], error: 'boom', version: null },
-        { name: 'waiting', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'uvx w', tools: [], error: null, version: null },
-        { name: 'blocked', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'node', tools: [], error: null, version: null }
+        { name: 'github', status: 'connected', scope: 'user', plugin: null, transport: 'http', target: `https://api.example.com/mcp?key=${MASK}`, tools: ['search'], error: null, version: '1.2.0', oauthApp: false },
+        { name: 'plugin:docs:notes', status: 'failed', scope: 'plugin', plugin: 'docs', transport: 'stdio', target: 'npx notes', tools: [], error: 'boom', version: null, oauthApp: false },
+        { name: 'waiting', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'uvx w', tools: [], error: null, version: null, oauthApp: false },
+        { name: 'blocked', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'node', tools: [], error: null, version: null, oauthApp: false }
       ],
       reload: null
     })
@@ -167,9 +167,9 @@ describe('McpHub', () => {
     expect(await hub.servers(TAB)).toEqual({
       live: false,
       servers: [
-        { name: 'search', status: 'disabled', scope: 'user', plugin: null, transport: 'http', target: `https://mcp.example.com/sse?token=${MASK}`, tools: [], error: null, version: null },
-        { name: 'waiting', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'uvx w', tools: [], error: null, version: null },
-        { name: 'notes', status: 'configured', scope: 'local', plugin: null, transport: 'stdio', target: 'node n.js', tools: [], error: null, version: null }
+        { name: 'search', status: 'disabled', scope: 'user', plugin: null, transport: 'http', target: `https://mcp.example.com/sse?token=${MASK}`, tools: [], error: null, version: null, oauthApp: false },
+        { name: 'waiting', status: 'pending-approval', scope: 'project', plugin: null, transport: 'stdio', target: 'uvx w', tools: [], error: null, version: null, oauthApp: false },
+        { name: 'notes', status: 'configured', scope: 'local', plugin: null, transport: 'stdio', target: 'node n.js', tools: [], error: null, version: null, oauthApp: false }
       ],
       reload: null
     })
@@ -345,6 +345,56 @@ describe('McpHub', () => {
     expect(result.ok).toBe(false)
     expect(JSON.stringify(result)).not.toContain('sk-')
     expect(result.ok === false && result.error.endsWith(`${MASK}END`)).toBe(true)
+  })
+
+  const ASANA = { type: 'http', url: 'https://mcp.asana.test/mcp', oauth: { clientId: 'asana-client-0001' } }
+  const APP_SECRET = 'app-secret-0001'
+
+  it('a server whose config has oauth.clientId is an OAuth app in the view, live or configured', async () => {
+    const files = { userConfig: { mcpServers: { asana: ASANA, github: { type: 'http', url: 'https://api.example.com/mcp' } } } }
+    const running = setup({ live: [live({ name: 'asana', status: 'needs-auth', transport: 'http' }), live({ name: 'github' })], files })
+    expect((await running.hub.servers(TAB))?.servers.map((s) => [s.name, s.oauthApp])).toEqual([['asana', true], ['github', false]])
+    const idle = setup({ files })
+    expect((await idle.hub.servers(TAB))?.servers.map((s) => [s.name, s.oauthApp])).toEqual([['asana', true], ['github', false]])
+  })
+
+  it('set-secret adds the server again in its scope with the same config, the secret in MCP_CLIENT_SECRET with --client-secret; the restart waits meanwhile', async () => {
+    const { hub, runs, order } = setup({ files: { userConfig: { mcpServers: { asana: ASANA } } } })
+    expect(await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'user', secret: APP_SECRET })).toEqual({ ok: true })
+    expect(runs.map((r) => r.args)).toEqual([
+      ['mcp', 'remove', '--scope', 'user', '--', 'asana'],
+      ['mcp', 'add-json', '--scope', 'user', '--client-secret', '--', 'asana', JSON.stringify(ASANA)]
+    ])
+    expect(runs[0].o.env).toEqual(ENV)
+    expect(runs[1].o.env).toEqual({ ...ENV, MCP_CLIENT_SECRET: APP_SECRET })
+    expect(JSON.stringify(runs.map((r) => r.args))).not.toContain(APP_SECRET)
+    expect(order).toEqual([`hold:${TAB}`, `changed:${TAB}:true`, `release:${TAB}`])
+  })
+
+  it('a refused secret puts the server back without it; the message masks the secret, plain and JSON-escaped; nothing logged with it', async () => {
+    const secret = 'se"cr\\et-0001'
+    const reply: Reply = async (args) => (args.includes('--client-secret') ? { code: 1, stdout: '', stderr: `invalid_client: ${secret} / ${JSON.stringify(secret)}` } : { code: 0, stdout: '', stderr: '' })
+    const { hub, runs, warns } = setup({ reply, files: { userConfig: { mcpServers: { asana: ASANA } } } })
+    expect(await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'user', secret })).toEqual({ ok: false, error: `Could not save the client secret: invalid_client: ${MASK} / "${MASK}"` })
+    expect(runs.map((r) => r.args)).toEqual([
+      ['mcp', 'remove', '--scope', 'user', '--', 'asana'],
+      ['mcp', 'add-json', '--scope', 'user', '--client-secret', '--', 'asana', JSON.stringify(ASANA)],
+      ['mcp', 'add-json', '--scope', 'user', '--', 'asana', JSON.stringify(ASANA)]
+    ])
+    expect(runs[2].o.env).toEqual(ENV)
+    expect(warns).toEqual(['claude mcp add-json failed (1)'])
+  })
+
+  it('when the server cannot be put back either, the message says so', async () => {
+    const reply: Reply = async (args) => (args[1] === 'add-json' ? { code: 1, stdout: '', stderr: 'disk full' } : { code: 0, stdout: '', stderr: '' })
+    const { hub } = setup({ reply, files: { userConfig: { mcpServers: { asana: ASANA } } } })
+    expect(await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'user', secret: APP_SECRET })).toEqual({ ok: false, error: 'Could not save the client secret: disk full — asana could not be added back: disk full' })
+  })
+
+  it('set-secret of a server its scope does not have runs nothing', async () => {
+    const { hub, runs } = setup({ files: { userConfig: { mcpServers: { asana: ASANA } } } })
+    expect(await hub.action(TAB, { kind: 'set-secret', name: 'asana', scope: 'project', secret: APP_SECRET })).toEqual({ ok: false, error: 'No such server in this scope' })
+    expect(runs).toEqual([])
   })
 
   it('commands of one config folder run one after the other', async () => {

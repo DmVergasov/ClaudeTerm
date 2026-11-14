@@ -9,7 +9,7 @@ import { MAX_FILE_LINKS } from '../shared/chat-paths'
 import { MAX_HASH, REVIEW_SCOPES, type ReviewScope } from '../shared/review'
 import { MAX_FOLDED_GROUPS, type OpenTabRequest, type TabLayout } from '../shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../shared/remote'
-import { MCP_EDIT_SCOPES, marketplaceSource, type McpAction, type McpAddRequest, type McpEditScope, type PluginAction, type ReloadAction } from '../shared/mcp'
+import { MCP_EDIT_SCOPES, isClientSecret, marketplaceSource, type McpAction, type McpAddRequest, type McpEditScope, type PluginAction, type ReloadAction } from '../shared/mcp'
 import { isServerName } from '../shared/mcp-add'
 
 // Runtime checks for untrusted renderer IPC arguments.
@@ -217,7 +217,6 @@ export const isPromptInput = (data: string): boolean => isUserInput(data) && !RE
 const MAX_MCP_TEXT = 65_536
 const MAX_MCP_NAMES = 20
 const MAX_MCP_NAME = 200
-const MAX_MCP_SECRET = 4096
 const MAX_PLUGIN_ID = 200
 const MAX_PLUGIN_SOURCE = 2000
 const MAX_PLUGIN_VALUES = 50
@@ -253,6 +252,8 @@ export const isMcpAction = (v: unknown): v is McpAction => {
       return isMcpName(a.name) && isMcpEditScope(a.scope)
     case 'open-config':
       return isMcpEditScope(a.scope)
+    case 'set-secret':
+      return isMcpName(a.name) && isMcpEditScope(a.scope) && isClientSecret(a.secret)
     default:
       return false
   }
@@ -265,7 +266,7 @@ export const isMcpAddRequest = (v: unknown): v is McpAddRequest => {
   return typeof r.text === 'string' && r.text.length <= MAX_MCP_TEXT &&
     Array.isArray(r.names) && r.names.length <= MAX_MCP_NAMES && r.names.every((n) => typeof n === 'string' && isServerName(n)) &&
     isMcpEditScope(r.scope) &&
-    (r.clientSecret === null || oneLine(r.clientSecret, MAX_MCP_SECRET))
+    (r.clientSecret === null || isClientSecret(r.clientSecret))
 }
 
 const isPluginId = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_PLUGIN_ID && PLUGIN_ID.test(v)

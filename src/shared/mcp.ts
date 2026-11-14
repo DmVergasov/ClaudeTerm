@@ -7,6 +7,8 @@ export interface McpServerView {
   name: string; status: McpStatus; scope: McpScope; plugin: string | null   // plugin: the plugin's name for scope 'plugin'
   transport: McpTransport; target: string   // the URL (secret query values masked) or the command line; '' unknown
   tools: string[]; error: string | null; version: string | null
+  /** the config signs in through the person's own OAuth app (oauth.clientId is set), so a client secret can be saved for it */
+  oauthApp: boolean
 }
 /** the configuration changes the running session has not loaded yet: a restart loads them, or drops them when each is a removal or a turn-off */
 export interface McpReload { changes: number; verb: 'load' | 'drop' }
@@ -19,6 +21,7 @@ export type McpAction =
   | { kind: 'remove'; name: string; scope: McpEditScope }
   | { kind: 'login'; name: string } | { kind: 'cancel-login'; name: string } | { kind: 'logout'; name: string }
   | { kind: 'copy-config'; name: string; scope: McpEditScope } | { kind: 'open-config'; scope: McpEditScope }
+  | { kind: 'set-secret'; name: string; scope: McpEditScope; secret: string }
 export interface McpAddRequest { text: string; names: string[]; scope: McpEditScope; clientSecret: string | null }
 export interface PluginView { id: string; name: string; marketplace: string; version: string; scope: string; enabled: boolean; update: string | null; description: string; mcpServers: number; errors: string[] }
 export interface PluginOffer { id: string; name: string; marketplace: string; description: string; version: string | null; installs: number | null }

@@ -393,6 +393,17 @@ describe('device guards', () => {
 })
 
 describe('MCP guards', () => {
+  it('isMcpAction takes set-secret with a name, an edit scope and a one-line secret of at most 4096 characters', () => {
+    const ok = { kind: 'set-secret', name: 'asana', scope: 'user', secret: 'cs-123' }
+    expect(isMcpAction(ok)).toBe(true)
+    expect(isMcpAction({ ...ok, secret: 'x'.repeat(4096) })).toBe(true)
+    const refused: unknown[] = [
+      { ...ok, secret: '' }, { ...ok, secret: 'a\nb' }, { ...ok, secret: 'x'.repeat(4097) }, { ...ok, secret: 1 },
+      { ...ok, scope: 'plugin' }, { ...ok, name: '-x' }, { kind: 'set-secret', name: 'asana', scope: 'user' }
+    ]
+    for (const v of refused) expect(isMcpAction(v)).toBe(false)
+  })
+
   it('isMcpName takes 1 to 200 characters, no control character, not starting with -', () => {
     for (const v of ['github', 'my server', 'a'.repeat(200)]) expect(isMcpName(v)).toBe(true)
     for (const v of ['', 'a'.repeat(201), '-x', 'a\nb', 'a\u0007', 1, null]) expect(isMcpName(v)).toBe(false)

@@ -15,7 +15,7 @@ import {
 } from '../../src/renderer/mcp/mcp-view-model'
 
 function server(name: string, over: Partial<McpServerView> = {}): McpServerView {
-  return { name, status: 'connected', scope: 'user', plugin: null, transport: 'stdio', target: '', tools: [], error: null, version: null, ...over }
+  return { name, status: 'connected', scope: 'user', plugin: null, transport: 'stdio', target: '', tools: [], error: null, version: null, oauthApp: false, ...over }
 }
 
 function toolNames(prefix: string, count: number): string[] {

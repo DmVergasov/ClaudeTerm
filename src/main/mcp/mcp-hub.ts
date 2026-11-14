@@ -72,7 +72,7 @@ export class McpHub {
       return { live: false, servers, reload: null }
     }
     const live = (Array.isArray(statuses) ? statuses : []).filter((s): s is McpLiveServer => typeof s === 'object' && s !== null)
-    const servers = live.map(liveView)
+    const servers = live.map((s) => liveView(s, config.servers))
     const listed = new Set(servers.map((s) => s.name))
     for (const s of config.servers) {
       if (waiting(s) && !listed.has(s.name)) servers.push(configuredView(s, 'pending-approval'))
@@ -103,6 +103,8 @@ export class McpHub {
         return this.copyConfig(tab, a.name, a.scope)
       case 'open-config':
         return this.openConfig(tab, a.scope)
+      case 'set-secret':
+        return this.setSecret(tabId, tab, a.name, a.scope, a.secret)
     }
   }
 
@@ -290,6 +292,34 @@ export class McpHub {
     }
   }
 
+  /** the server is removed and added again with the secret in MCP_CLIENT_SECRET; when Claude Code refuses the secret, the server is added back without it */
+  private setSecret(tabId: string, tab: Tab, name: string, scope: McpEditScope, secret: string): Promise<McpResult> {
+    return this.queued(tab, async () => {
+      const config = await readTabConfig(this.paths(tab), tab.folder, this.d.readJson)
+      const server = config.servers.find((s) => s.name === name && s.scope === scope)
+      if (server === undefined) return fail('No such server in this scope')
+      const json = JSON.stringify(server.config)
+      const mcp = mcpConfigOf(server.config)
+      const secrets = [secret, ...(mcp === null ? [] : secretsOf(mcp))]
+      this.d.hold(tabId)
+      try {
+        const removed = await this.cli(tab, ['mcp', 'remove', '--scope', scope, '--', name], { secrets })
+        if ('error' in removed) return fail(`Could not save the client secret: ${removed.error}`)
+        this.d.changed(tabId, true)
+        const added = await this.cli(tab, ['mcp', 'add-json', '--scope', scope, '--client-secret', '--', name, json], { secrets, env: { ...tab.env, MCP_CLIENT_SECRET: secret } })
+        if ('error' in added) {
+          const error = `Could not save the client secret: ${added.error}`
+          // the server must not be lost: it is added back without the secret
+          const back = await this.cli(tab, ['mcp', 'add-json', '--scope', scope, '--', name, json], { secrets })
+          return fail('error' in back ? `${error} — ${name} could not be added back: ${back.error}` : error)
+        }
+        return { ok: true }
+      } finally {
+        this.d.release(tabId)
+      }
+    })
+  }
+
   /** a plugin command: the install's options are asked after it, a configure sends its values on stdin */
   private async pluginJob(tabId: string, tab: Tab, a: PluginAction): Promise<McpResult> {
     switch (a.kind) {
@@ -454,7 +484,13 @@ function transportOf(value: unknown): McpTransport {
   return TRANSPORTS.find((t) => t === value) ?? 'other'
 }
 
-function liveView(s: McpLiveServer): McpServerView {
+/** a configuration entry signs in through an OAuth app of the person's own: its oauth.clientId is a non-empty string */
+function hasOauthApp(raw: Json): boolean {
+  return isRecord(raw.oauth) && typeof raw.oauth.clientId === 'string' && raw.oauth.clientId !== ''
+}
+
+/** a running server is an OAuth app when a configured server of its name and scope is one */
+function liveView(s: McpLiveServer, configured: ConfiguredServer[]): McpServerView {
   const name = text(s.name, MAX_NAME)
   const scope = liveScope(s)
   const target = text(s.target, MAX_TARGET)
@@ -467,7 +503,8 @@ function liveView(s: McpLiveServer): McpServerView {
     target: /^[a-z][a-z0-9+.-]*:\/\//i.test(target) ? maskUrl(target) : target,
     tools: Array.isArray(s.tools) ? s.tools.filter((t): t is string => typeof t === 'string').slice(0, MAX_TOOLS).map((t) => t.slice(0, MAX_NAME)) : [],
     error: typeof s.error === 'string' ? maskUrls(s.error).slice(0, MAX_ERROR) : null,
-    version: typeof s.version === 'string' ? s.version.slice(0, MAX_NAME) : null
+    version: typeof s.version === 'string' ? s.version.slice(0, MAX_NAME) : null,
+    oauthApp: configured.some((c) => c.name === name && c.scope === scope && hasOauthApp(c.config))
   }
 }
 
@@ -482,7 +519,8 @@ function configuredView(s: ConfiguredServer, status: McpStatus): McpServerView {
     target: mcp === null ? '' : targetOf(mcp),
     tools: [],
     error: null,
-    version: null
+    version: null,
+    oauthApp: hasOauthApp(s.config)
   }
 }
 
