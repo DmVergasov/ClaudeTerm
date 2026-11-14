@@ -263,7 +263,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .update-notes li { padding: 2px 0; }
 
 /* The panel lies over the right of the workspace; the terminal gives it room with a margin, except when it is an overlay. */
-#image-panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 10; display: flex; flex-direction: column; background: #0F0F12; border-left: 1px solid var(--line); min-width: 180px; }
+#image-panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 10; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line); min-width: 180px; }
 #image-panel.collapsed { display: none; }
 #image-panel.overlay { box-shadow: -8px 0 24px #0008; }
 /* expanded, the panel covers the sheet below its header (52 px): the header's toggles, the title bar and the tabs stay in view.
@@ -317,12 +317,12 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 #image-panel.resizing iframe { pointer-events: none; }
 .doc-select { max-width: 220px; min-width: 0; margin: 0 2px; padding: 2px 6px; background: var(--term); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; font: inherit; font-size: 12px; }
 .doc-select[hidden], .doc-more[hidden] { display: none; }
-/* a media card: radius 10 on #141418, its picture on a darker well, its meta line in secondary text */
-.card { background: #141418; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: zoom-in; flex-shrink: 0; }
-.card img { display: block; width: 100%; max-height: 260px; object-fit: contain; background: #0C0C0F; }
+/* a media card: radius 10 on --card, its picture on a darker well (--well), its meta line in secondary text */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: zoom-in; flex-shrink: 0; }
+.card img { display: block; width: 100%; max-height: 260px; object-fit: contain; background: var(--well); }
 .card.deleted img { filter: grayscale(1) opacity(0.4); }
 .card.media { cursor: pointer; }
-.card-icon { display: flex; align-items: center; justify-content: center; height: 96px; background: #0C0C0F; font-size: 36px; }
+.card-icon { display: flex; align-items: center; justify-content: center; height: 96px; background: var(--well); font-size: 36px; }
 .card.deleted .card-icon { filter: grayscale(1) opacity(0.4); }
 .card-meta { padding: 8px 10px 9px; }
 .card-name { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -456,11 +456,11 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .review-files { flex: 1; overflow: auto; min-width: 0; }
 .review-tree { position: relative; flex: none; width: 200px; max-width: calc(100% - 120px); display: flex; flex-direction: column; border-right: 1px solid var(--line); font-size: 12px; }
 .review-tree-resize { position: absolute; top: 0; bottom: 0; right: -3px; width: 6px; cursor: col-resize; z-index: 2; }
-.review-tree-resize:hover { background: #ffffff18; }
+.review-tree-resize:hover { background: var(--tint-6); }
 .review-tree-filter { margin: 6px; padding: 3px 6px; background: var(--term); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; font: inherit; }
 .review-tree-list { flex: 1; overflow: auto; padding-bottom: 6px; }
 .review-tree-dir, .review-tree-file { display: flex; align-items: center; gap: 4px; padding: 2px 6px; white-space: nowrap; cursor: pointer; user-select: none; }
-.review-tree-dir:hover, .review-tree-file:hover { background: #ffffff10; }
+.review-tree-dir:hover, .review-tree-file:hover { background: var(--tint-4); }
 .review-tree-dir { color: var(--text-3); }
 .review-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .review-tree-file.viewed { opacity: 0.6; }
@@ -484,7 +484,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .review-note { padding: 8px 12px; color: var(--text-3); font-size: 12px; }
 .review-force { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
 .review-hunk { width: max-content; min-width: 100%; }
-.review-hunk-head { display: flex; min-height: 19px; color: var(--muted); background: #ffffff08; font: 11px Consolas, monospace; }
+.review-hunk-head { display: flex; min-height: 19px; color: var(--muted); background: var(--tint-1); font: 11px Consolas, monospace; }
 .review-hunk-text { align-self: center; padding: 2px 8px 2px 6px; white-space: pre; }
 /* the expand buttons of the lines a hunk hides, in the line numbers' column: ↑ above the hunk, ↓ under the hunk before, ↕ all of them */
 .review-gap-btns { flex: none; width: 46px; display: flex; flex-direction: column; }
@@ -507,7 +507,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .md-seg.removed .md-body { opacity: 0.75; text-decoration: line-through; text-decoration-color: rgba(255, 155, 148, 0.7); }
 .md-seg.selected { border-left-color: var(--accent); background: rgba(217, 119, 87, 0.12); }
 .md-seg.review-match-block { box-shadow: inset 0 0 0 1px rgba(229, 192, 123, 0.45); }
-.md-seg.review-match-block.current { box-shadow: inset 0 0 0 2px #e5c07b; }
+.md-seg.review-match-block.current { box-shadow: inset 0 0 0 2px var(--match); }
 .md-plus { left: 6px; top: 5px; }
 .md-seg:hover .md-plus { visibility: visible; }
 .md-body { overflow-wrap: anywhere; }
@@ -545,13 +545,13 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .review-find-prev, .review-find-next, .review-find-close { background: none; border: 0; color: var(--text-3); cursor: pointer; font: inherit; padding: 2px 6px; }
 .review-find-prev:hover, .review-find-next:hover, .review-find-close:hover { color: var(--fg); }
 .review-match { background: rgba(229, 192, 123, 0.35); color: inherit; border-radius: 2px; }
-.review-match.current { background: #e5c07b; color: #111; }
+.review-match.current { background: var(--match); color: #111; }
 /* a comment is an accent-tinted card with an accent border at 40% */
 .review-comment, .review-comment-box { margin: 4px 8px 6px 52px; padding: 8px 10px; max-width: 560px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 12%, transparent); font: 12px "Segoe UI", system-ui, sans-serif; white-space: normal; }
 .review-outside .review-comment, .review-outside .review-comment-box { margin-left: 0; }
 .review-comment.outdated { border-style: dashed; }
 .review-comment-meta { margin-bottom: 3px; color: var(--text-3); font-size: 11px; }
-.review-outdated { color: #e5c07b; }
+.review-outdated { color: var(--match); }
 .review-comment-text { white-space: pre-wrap; }
 .review-comment-input { width: 100%; min-height: 54px; box-sizing: border-box; resize: vertical; padding: 4px 6px; background: var(--term); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; font: inherit; }
 .review-comment-input:focus { outline: none; border-color: var(--accent); }

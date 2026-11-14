@@ -126,3 +126,16 @@ test('in a light theme Recent sessions opens on a light scrim, with a light sche
     await app.close()
   }
 })
+
+test('in a light theme the side panel is light, with dark text', async () => {
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, theme: LIGHT } })
+  try {
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    await page.locator('#sheet-header .tab-images-toggle').click()
+    await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
+    expect(await computed(page, '#image-panel', 'backgroundColor')).toBe('rgb(249, 249, 249)')
+    expect(await computed(page, '#image-panel .panel-title', 'color')).toBe('rgb(56, 58, 66)')
+  } finally {
+    await app.close()
+  }
+})
