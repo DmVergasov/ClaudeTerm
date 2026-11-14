@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { sendPipeMessage } from '../shared/pipe-client'
 import { defaultPipeName, isUuid } from '../shared/protocol'
 import { AGENT_INSTRUCTIONS, listAgents, messageAgent } from './agent-tools'
+import { COORD_TOOL_DESCRIPTIONS, coordTool, type CoordToolDeps } from './coordinator-tools'
 import { handleDeviceStatus, handleOpenDeviceSettings } from './device-tools'
 import { NOTE_INSTRUCTIONS, registerNoteTools } from './note-tools'
 import { handleShowDiff } from './show-diff-tool'
@@ -219,6 +220,113 @@ server.registerTool(
         send: (pipe, msg) => sendPipeMessage(pipe, msg, 3000)
       }
     )
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+/** what the coordinator tools need from this tab and its ClaudeTerm */
+function coordDeps(): CoordToolDeps {
+  const tabId = process.env.CLAUDETERM_TAB_ID
+  return {
+    tabId: isUuid(tabId) ? tabId : null,
+    pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+    cwd: process.cwd(),
+    send: sendPipeMessage
+  }
+}
+
+server.registerTool(
+  'list_sessions',
+  { title: 'List coordinated sessions in ClaudeTerm', description: COORD_TOOL_DESCRIPTIONS.list_sessions, inputSchema: {} },
+  async () => {
+    const r = await coordTool('list_sessions', { op: 'list' }, coordDeps())
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'start_session',
+  {
+    title: 'Start a coordinated session in ClaudeTerm',
+    description: COORD_TOOL_DESCRIPTIONS.start_session,
+    inputSchema: {
+      task: z.string(),
+      name: z.string().optional(),
+      folder: z.string().optional(),
+      device: z.string().optional(),
+      worktree: z.string().optional()
+    }
+  },
+  async ({ task, name, folder, device, worktree }) => {
+    const r = await coordTool('start_session', { op: 'start', task, name: name ?? null, folder: folder ?? null, device: device ?? null, worktree: worktree ?? null }, coordDeps())
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'attach_session',
+  {
+    title: 'Attach a session in ClaudeTerm',
+    description: COORD_TOOL_DESCRIPTIONS.attach_session,
+    inputSchema: { session: z.string().describe('a ref or a name from list_sessions or list_agents') }
+  },
+  async ({ session }) => {
+    const r = await coordTool('attach_session', { op: 'attach', session }, coordDeps())
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'detach_session',
+  {
+    title: 'Detach a session in ClaudeTerm',
+    description: COORD_TOOL_DESCRIPTIONS.detach_session,
+    inputSchema: { session: z.string().describe('a ref or a name from list_sessions or list_agents') }
+  },
+  async ({ session }) => {
+    const r = await coordTool('detach_session', { op: 'detach', session }, coordDeps())
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'message_session',
+  {
+    title: 'Give a task to a coordinated session',
+    description: COORD_TOOL_DESCRIPTIONS.message_session,
+    inputSchema: {
+      session: z.string().describe('a ref or a name from list_sessions or list_agents'),
+      text: z.string().describe('The task, at most 7000 characters')
+    }
+  },
+  async ({ session, text }) => {
+    const r = await coordTool('message_session', { op: 'message', session, text }, coordDeps())
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'read_session',
+  {
+    title: 'Read a coordinated session in ClaudeTerm',
+    description: COORD_TOOL_DESCRIPTIONS.read_session,
+    inputSchema: { session: z.string().describe('a ref or a name from list_sessions or list_agents') }
+  },
+  async ({ session }) => {
+    const r = await coordTool('read_session', { op: 'read', session }, coordDeps())
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
+server.registerTool(
+  'resolve_session',
+  {
+    title: 'Resolve a coordinated session in ClaudeTerm',
+    description: COORD_TOOL_DESCRIPTIONS.resolve_session,
+    inputSchema: { session: z.string().describe('a ref or a name from list_sessions or list_agents') }
+  },
+  async ({ session }) => {
+    const r = await coordTool('resolve_session', { op: 'resolve', session }, coordDeps())
     return { content: [{ type: 'text', text: r.text }], isError: r.isError }
   }
 )

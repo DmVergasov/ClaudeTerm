@@ -60,7 +60,13 @@ describe('hook files', () => {
     const hook = [{ hooks: [run] }]
     expect(JSON.parse(claudeTabSettingsJson(hookRun, 'status command', 5, null))).toEqual({
       statusLine: { type: 'command', command: 'status command', refreshInterval: 5 },
-      permissions: { allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent'] },
+      permissions: {
+        allow: [
+          'mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent',
+          'mcp__claudeterm__list_sessions', 'mcp__claudeterm__start_session', 'mcp__claudeterm__attach_session', 'mcp__claudeterm__detach_session',
+          'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session'
+        ]
+      },
       hooks: {
         SessionStart: hook,
         SubagentStart: hook,
@@ -75,9 +81,13 @@ describe('hook files', () => {
     })
   })
 
-  it('permissions allow the four claudeterm tools', () => {
+  it('permissions allow the claudeterm tools', () => {
     expect(JSON.parse(claudeTabSettingsJson({ command: 'hook' }, 'status command', null, null)).permissions).toEqual({
-      allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent']
+      allow: [
+        'mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent',
+        'mcp__claudeterm__list_sessions', 'mcp__claudeterm__start_session', 'mcp__claudeterm__attach_session', 'mcp__claudeterm__detach_session',
+        'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session'
+      ]
     })
   })
 

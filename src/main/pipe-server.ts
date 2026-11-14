@@ -1,5 +1,5 @@
 import { createServer, type Socket } from 'node:net'
-import { type AgentListMessage, type AgentSendMessage, type AttentionMessage, type DeviceStatusMessage, type EditBeforeMessage, encodeMessage, type MailWaitMessage, type NoteAddMessage, type NoteCheckMessage, type NoteReadMessage, type OpenDeviceSettingsMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TaskListGetMessage, type TaskListMessage, type TurnMessage } from '../shared/protocol'
+import { type AgentListMessage, type AgentSendMessage, type AttentionMessage, type CoordMessage, type DeviceStatusMessage, type EditBeforeMessage, encodeMessage, type MailWaitMessage, type NoteAddMessage, type NoteCheckMessage, type NoteReadMessage, type OpenDeviceSettingsMessage, parsePipeMessage, type PipeResponse, type SessionEndMessage, type SessionMessage, type ShowDiffMessage, type ShowDocumentMessage, type ShowImageMessage, type StatusMessage, type SubagentMessage, type TaskListGetMessage, type TaskListMessage, type TurnMessage } from '../shared/protocol'
 
 export interface PipeHandlers {
   showImage(msg: ShowImageMessage): Promise<PipeResponse>
@@ -21,6 +21,7 @@ export interface PipeHandlers {
   noteRead(msg: NoteReadMessage): PipeResponse
   noteAdd(msg: NoteAddMessage): PipeResponse
   noteCheck(msg: NoteCheckMessage): PipeResponse
+  coord(msg: CoordMessage): Promise<PipeResponse>
   /** held until the watcher has mail or is superseded; `closed` aborts when its socket closes */
   mailWait(msg: MailWaitMessage, closed: AbortSignal): Promise<PipeResponse>
 }
@@ -56,6 +57,7 @@ async function handleLine(line: string, h: PipeHandlers, closed: AbortSignal): P
       case 'note_read': return h.noteRead(m)
       case 'note_add': return h.noteAdd(m)
       case 'note_check': return h.noteCheck(m)
+      case 'coord': return await h.coord(m)
       case 'mail_wait': return await h.mailWait(m, closed)
     }
   } catch (e) {

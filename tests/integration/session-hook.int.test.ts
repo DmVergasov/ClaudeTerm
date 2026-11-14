@@ -75,7 +75,7 @@ async function listen(mailAnswer: PipeResponse = { ok: true }): Promise<{ pipe: 
     showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take, attention: take,
     turn: take, editBefore: take, showDiff: async (m) => take(m),
     showDocument: async () => ({ ok: true }), taskList: take, taskListGet: take, deviceStatus: take, openDeviceSettings: take,
-    agentList: take, agentSend: take,
+    agentList: take, agentSend: take, coord: async (m) => take(m),
     noteRead: () => ({ ok: true }), noteAdd: () => ({ ok: true }), noteCheck: () => ({ ok: true }),
     mailWait: async (m) => {
       got.push(m)

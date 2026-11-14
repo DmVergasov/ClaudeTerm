@@ -2382,6 +2382,7 @@ function bootstrap(): void {
       remote?.host.changed()
       return reply
     },
+    coord: async () => ({ ok: false, error: 'not wired yet' }),
     mailWait: (msg, closed) => mailHub.wait(msg.tabId, msg.sessionId, closed)
   })
     .then((h) => { pipe = h })

@@ -29,6 +29,7 @@ const okHandlers: PipeHandlers = {
   openDeviceSettings: () => ({ ok: true }),
   agentList: () => ({ ok: true }),
   agentSend: () => ({ ok: true }),
+  coord: async () => ({ ok: true }),
   mailWait: async () => ({ ok: true })
 }
 
@@ -182,6 +183,12 @@ describe('pipe server + client', () => {
     expect(await sendPipeMessage(pipe, { v: 1, type: 'agent_send', tabId: TAB, to: 'reviewer', text: 'hi', replyTo: null })).toEqual({ ok: true, info: 'sent' })
     expect(await sendPipeMessage(pipe, { v: 1, type: 'mail_wait', tabId: TAB, sessionId: SID })).toEqual({ ok: true, info: 'mail' })
     expect(got).toEqual(['agent_list', 'agent_send:reviewer', 'mail_wait'])
+  })
+
+  it('routes coord to its handler', async () => {
+    const pipe = newPipe()
+    server = await startPipeServer(pipe, { ...okHandlers, coord: async () => ({ ok: true, info: 'listed' }) })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'coord', tabId: TAB, op: 'list' })).toEqual({ ok: true, info: 'listed' })
   })
 
   it('a held mailWait does not delay another socket\'s message', async () => {

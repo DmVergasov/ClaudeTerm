@@ -78,7 +78,13 @@ export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string, r
       // so /effort and /model alone would not show up without it. Each run starts a few processes, so it is a setting.
       statusLine: { type: 'command', command: statusCommand, ...(refreshInterval !== null ? { refreshInterval } : {}) },
       // the task list tools are ClaudeTerm's own, bundled with it: Claude may keep its list without asking each time
-      permissions: { allow: ['mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent'] },
+      permissions: {
+        allow: [
+          'mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent',
+          'mcp__claudeterm__list_sessions', 'mcp__claudeterm__start_session', 'mcp__claudeterm__attach_session', 'mcp__claudeterm__detach_session',
+          'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session'
+        ]
+      },
       hooks: {
         SessionStart: sessionHook,
         SubagentStart: hook,

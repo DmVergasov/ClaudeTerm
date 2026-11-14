@@ -361,6 +361,32 @@ describe('parsePipeMessage: the agent messages', () => {
   })
 })
 
+describe('parsePipeMessage: the coordinator messages', () => {
+  const coord = (over: Record<string, unknown>) => parsePipeMessage(JSON.stringify({ v: 1, type: 'coord', tabId: TAB, ...over }))
+  const FOLDER = WIN ? 'C:\\proj\\pkg' : '/proj/pkg'
+
+  it('coord parses each op and fills absent optional fields with null', () => {
+    expect(coord({ op: 'list' })).toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'list' } })
+    expect(coord({ op: 'start', task: 'x' }))
+      .toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'start', task: 'x', name: null, folder: null, device: null, worktree: null } })
+    expect(coord({ op: 'start', task: 'x', name: 'parser', folder: FOLDER, device: 'Laptop', worktree: 'parser-fix' }))
+      .toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'start', task: 'x', name: 'parser', folder: FOLDER, device: 'Laptop', worktree: 'parser-fix' } })
+    for (const op of ['attach', 'detach', 'read', 'resolve']) {
+      expect(coord({ op, session: 'a10000' })).toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op, session: 'a10000' } })
+    }
+    expect(coord({ op: 'message', session: 'a10000', text: 'Fix the parser.' }))
+      .toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'message', session: 'a10000', text: 'Fix the parser.' } })
+  })
+
+  it('coord refuses a text over 7000 characters, a relative folder, a worktree with a slash and an unknown op', () => {
+    expect(coord({ op: 'message', session: 'a10000', text: 'x'.repeat(7001) })).toEqual({ ok: false, error: 'text must be 1 to 7000 characters' })
+    expect(coord({ op: 'message', session: 'a10000', text: 'x'.repeat(7000) }).ok).toBe(true)
+    expect(coord({ op: 'start', task: 'x', folder: 'pkg' })).toEqual({ ok: false, error: 'folder must be an absolute path of at most 4096 characters' })
+    expect(coord({ op: 'start', task: 'x', worktree: 'parser/fix' })).toEqual({ ok: false, error: 'worktree must be a plain name, not a path' })
+    expect(coord({ op: 'fly' })).toEqual({ ok: false, error: 'unknown coord op: fly' })
+  })
+})
+
 describe('parsePipeMessage: the note messages', () => {
   it('accepts note_read, note_add and note_check', () => {
     expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'note_read', tabId: TAB }))).toEqual({ ok: true, message: { v: 1, type: 'note_read', tabId: TAB } })

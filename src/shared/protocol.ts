@@ -1,4 +1,5 @@
 import { isAbsolute, posix } from 'node:path'
+import { COORD_NAME_MAX, COORD_TASK_MAX, isWorktreeName, type CoordOp } from './coordinator'
 import { MAIL_TEXT_MAX, MAIL_TO_MAX } from './mail'
 import { NOTE_ADD_MAX, NOTE_ITEM_MAX, NOTE_SIDES, type NoteSide } from './note'
 import { REVIEW_SCOPES, type ReviewScope } from './review'
@@ -18,6 +19,7 @@ const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,200}$/
 const MAX_REF = 200
 const MAX_PATHS = 100
 const MAX_FOLDER = 4096
+const COORD_DEVICE_MAX = 200
 const ATTENTION_REASONS: readonly string[] = ['permission', 'question', 'done'] satisfies AttentionReason[]
 /** the longest last answer a Stop passes, and the longest line of a pending permission or question, in characters */
 export const LAST_MESSAGE_MAX = 8000
@@ -222,12 +224,15 @@ export interface NoteCheckMessage {
   checked: boolean
 }
 
+/** a coordinator tool of the MCP server: one operation of the tab's coordinator */
+export type CoordMessage = { v: 1; type: 'coord'; tabId: string } & CoordOp
+
 export type PipeMessage =
   | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
   | TurnMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
   | TaskListMessage | TaskListGetMessage | DeviceStatusMessage | OpenDeviceSettingsMessage
   | AgentListMessage | AgentSendMessage | MailWaitMessage
-  | NoteReadMessage | NoteAddMessage | NoteCheckMessage
+  | NoteReadMessage | NoteAddMessage | NoteCheckMessage | CoordMessage
 export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
@@ -284,6 +289,38 @@ function parseTasks(raw: unknown[]): BackgroundTask[] {
     tasks.push({ id: t.id, type: label(t.type) ?? 'task', description: label(t.description), command })
   }
   return tasks
+}
+
+/** a text field of 1 to max characters, or absent: null; undefined when it is given and not valid */
+function optionalField(v: unknown, valid: (s: string) => boolean): string | null | undefined {
+  if (v === null || v === undefined) return null
+  return typeof v === 'string' && valid(v) ? v : undefined
+}
+
+const sized = (v: unknown, max: number): v is string => typeof v === 'string' && v.length >= 1 && v.length <= max
+
+/** the fields of a coordinator op as the MCP server sends them; an absent optional field becomes null */
+function parseCoordOp(m: Obj): { ok: true; op: CoordOp } | { ok: false; error: string } {
+  if (m.op === 'list') return { ok: true, op: { op: 'list' } }
+  if (m.op === 'start') {
+    if (!sized(m.task, COORD_TASK_MAX)) return { ok: false, error: `task must be 1 to ${COORD_TASK_MAX} characters` }
+    const name = optionalField(m.name, (s) => sized(s, COORD_NAME_MAX))
+    if (name === undefined) return { ok: false, error: `name must be 1 to ${COORD_NAME_MAX} characters` }
+    const folder = optionalField(m.folder, (s) => s.length <= MAX_FOLDER && !s.includes('\0') && isAbsolute(s))
+    if (folder === undefined) return { ok: false, error: `folder must be an absolute path of at most ${MAX_FOLDER} characters` }
+    const device = optionalField(m.device, (s) => sized(s, COORD_DEVICE_MAX))
+    if (device === undefined) return { ok: false, error: `device must be 1 to ${COORD_DEVICE_MAX} characters` }
+    const worktree = optionalField(m.worktree, isWorktreeName)
+    if (worktree === undefined) return { ok: false, error: 'worktree must be a plain name, not a path' }
+    return { ok: true, op: { op: 'start', task: m.task, name, folder, device, worktree } }
+  }
+  if (m.op === 'attach' || m.op === 'detach' || m.op === 'read' || m.op === 'resolve' || m.op === 'message') {
+    if (!sized(m.session, MAIL_TO_MAX)) return { ok: false, error: `session must be 1 to ${MAIL_TO_MAX} characters` }
+    if (m.op !== 'message') return { ok: true, op: { op: m.op, session: m.session } }
+    if (!sized(m.text, COORD_TASK_MAX)) return { ok: false, error: `text must be 1 to ${COORD_TASK_MAX} characters` }
+    return { ok: true, op: { op: 'message', session: m.session, text: m.text } }
+  }
+  return { ok: false, error: `unknown coord op: ${String(m.op)}` }
 }
 
 export function parsePipeMessage(line: string): ParseResult {
@@ -380,6 +417,12 @@ export function parsePipeMessage(line: string): ParseResult {
     if (typeof m.item !== 'string' || m.item.length < 1 || m.item.length > NOTE_ITEM_MAX) return { ok: false, error: `item must be 1 to ${NOTE_ITEM_MAX} characters` }
     if (typeof m.checked !== 'boolean') return { ok: false, error: 'checked must be a boolean' }
     return { ok: true, message: { v: 1, type: 'note_check', tabId: m.tabId, note, item: m.item, checked: m.checked } }
+  }
+  if (m.type === 'coord') {
+    if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
+    const parsed = parseCoordOp(m)
+    if (!parsed.ok) return { ok: false, error: parsed.error }
+    return { ok: true, message: { v: 1, type: 'coord', tabId: m.tabId, ...parsed.op } }
   }
   if (m.type === 'device_status') return { ok: true, message: { v: 1, type: 'device_status' } }
   if (m.type === 'open_device_settings') return { ok: true, message: { v: 1, type: 'open_device_settings' } }
