@@ -21,10 +21,12 @@ const toolUse = (n = 1, parent: string | null = null) => ({
 
 interface Asked { system: string; prompt: string; resolve(answer: string): void; reject(e: Error): void }
 
-function setup(o: { enabled?: boolean; items?: readonly ChatItem[] | null; sendError?: string } = {}) {
+function setup(o: { enabled?: boolean; items?: readonly ChatItem[] | null; sendError?: string; hold?: boolean } = {}) {
   const asked: Asked[] = []
   const shown: (HeadsUpCard | null)[] = []
   const sent: { tabId: string; text: string }[] = []
+  // with hold, each send waits until the test resolves it with its error text or null
+  const held: ((error: string | null) => void)[] = []
   let ids = 0
   const enabled = { on: o.enabled ?? true }
   const items: readonly ChatItem[] | null = o.items === undefined ? [{ kind: 'user', id: 'u', text: 'Clean up the old orders', attachments: [], queued: false }] : o.items
@@ -32,13 +34,17 @@ function setup(o: { enabled?: boolean; items?: readonly ChatItem[] | null; sendE
     enabled: () => enabled.on,
     items: () => items,
     ask: (_tabId, system, prompt) => new Promise<string>((resolve, reject) => { asked.push({ system, prompt, resolve, reject }) }),
-    send: (tabId, text) => { sent.push({ tabId, text }); return Promise.resolve(o.sendError ?? null) },
+    send: (tabId, text) => {
+      sent.push({ tabId, text })
+      if (o.hold) return new Promise<string | null>((resolve) => { held.push(resolve) })
+      return Promise.resolve(o.sendError ?? null)
+    },
     show: (_tabId, card) => { shown.push(card) },
     newId: () => `card-${++ids}`,
     log: { info: () => undefined, warn: () => undefined }
   })
   const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
-  return { h, asked, shown, sent, enabled, settle }
+  return { h, asked, shown, sent, held, enabled, settle }
 }
 
 describe('parseFinding', () => {
@@ -284,6 +290,25 @@ describe('HeadsUp', () => {
     await settle()
     expect(await h.ask('t', 'card-1', 'Why?')).toBeNull()
     expect(sent[0]!.text).toBe(`Why?\n\n${QUOTED}\n>\n> Your \`.env\` holds the production URL.`)
+  })
+
+  it('a second Ask Claude while the first message is still being sent sends nothing, and a failed first send lets the card be asked again', async () => {
+    const { h, asked, sent, held, settle } = setup({ hold: true })
+    h.message('t', init)
+    h.message('t', toolUse(HEADS_UP_EVERY))
+    asked[0]!.resolve(FINDING)
+    await settle()
+    const first = h.ask('t', 'card-1', 'Fix it now')
+    expect(await h.ask('t', 'card-1', 'Fix it now')).toBe('The message is already being sent.')
+    expect(sent).toHaveLength(1)
+    held[0]!('The chat has ended.')
+    expect(await first).toBe('The chat has ended.')
+    expect(h.card('t')).not.toBeNull()
+    const retry = h.ask('t', 'card-1', 'Fix it now')
+    held[1]!(null)
+    expect(await retry).toBeNull()
+    expect(sent).toHaveLength(2)
+    expect(h.card('t')).toBeNull()
   })
 
   it('a You should know card is quoted with its own tag', () => {

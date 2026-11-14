@@ -225,6 +225,8 @@ interface TabState {
   offeredTurn: number
   /** the card shown, and the topic behind it */
   card: HeadsUpCard | null
+  /** the card whose message to the chat is being sent: no second send of it meanwhile */
+  asking: string | null
   topic: string
   offered: string[]
   known: string[]
@@ -289,7 +291,14 @@ export class HeadsUp {
     const s = this.tabs.get(tabId)
     const card = s?.card
     if (!s || !card || card.id !== cardId) return 'The card is gone.'
-    const error = await this.d.send(tabId, askMessage(card, text))
+    if (s.asking === cardId) return 'The message is already being sent.'
+    s.asking = cardId
+    let error: string | null
+    try {
+      error = await this.d.send(tabId, askMessage(card, text))
+    } finally {
+      s.asking = null
+    }
     if (error !== null) return error
     // the card may have been closed or replaced while the message went
     if (this.tabs.get(tabId) === s && s.card?.id === cardId) {
@@ -357,7 +366,7 @@ export class HeadsUp {
   private state(tabId: string): TabState {
     let s = this.tabs.get(tabId)
     if (!s) {
-      s = { calls: 0, turn: 0, checking: false, offeredTurn: -1, card: null, topic: '', offered: [], known: [] }
+      s = { calls: 0, turn: 0, checking: false, offeredTurn: -1, card: null, asking: null, topic: '', offered: [], known: [] }
       this.tabs.set(tabId, s)
     }
     return s
