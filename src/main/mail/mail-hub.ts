@@ -41,6 +41,8 @@ export interface MailHubDeps {
   localTab(session: string): string | null // the tab on this device running that session
   tabOpen(tabId: string): boolean // true for a local tab that exists and has not exited
   working?(tabId: string): boolean | undefined // false when the tab is not working now: an Esc-interrupted turn has no Stop
+  accepts?(r: MailRecord, tabId: string, into: HandOver): boolean // absent: true for every record that is not a signal
+  handedOver?(tabId: string, taken: MailRecord[], into: HandOver): void
   sender(a: MailAddress): { folder: string | null; branch: string | null }
   self(): string | null // the id of this device
   deviceName(device: string | null): string | null // null when unknown
@@ -59,6 +61,10 @@ interface Watcher {
   dispose(): void
 }
 
+/** how mail reaches a tab: an idle one is woken; a busy one takes it into its running turn; "next": the watcher came in
+ *  the turn that ends now (the Stop race), its wake starts the next turn; "prompt": ClaudeTerm writes it as a prompt */
+export type HandOver = 'idle' | 'running' | 'next' | 'prompt'
+
 /** the turns of one Claude tab, as the mail and the prompts of the user start and end them */
 interface TabTurns {
   /** a turn is in progress */
@@ -69,6 +75,8 @@ interface TabTurns {
   mailTurns: number
   /** a watcher that arrived during a turn took mail: its turn starts when this one ends */
   deferred: number
+  /** mail was written as a prompt: the user's turn that this prompt starts is a mail turn */
+  promptMail: boolean
 }
 
 const OFF = 'Agent messages are turned off in ClaudeTerm on this device.'
@@ -200,6 +208,7 @@ export class MailHub {
     const t = this.turnsOf(tabId)
     const had = t.mailTurns > 0
     if (had) t.mailTurns--
+    t.promptMail = false
     t.busy = false
     if (t.deferred > 0) {
       t.mailTurns += t.deferred
@@ -213,10 +222,48 @@ export class MailHub {
   /** a prompt the user typed starts a turn that is the user's, not a mail turn */
   userTurn(tabId: string): void {
     const t = this.turnsOf(tabId)
-    t.mailTurns = 0
+    // mail written as this turn's prompt makes it a mail turn
+    t.mailTurns = t.promptMail ? 1 : 0
+    t.promptMail = false
     t.deferred = 0
     t.busy = true
     t.seq++
+  }
+
+  /** a turn Esc or Ctrl+C ended: it has no Stop, so the tab is not busy and its mail turns are dropped */
+  interrupted(tabId: string): void {
+    const t = this.turnsOf(tabId)
+    t.busy = false
+    t.mailTurns = 0
+  }
+
+  /** a wait of the tab is held now */
+  hasWatcher(tabId: string): boolean {
+    return this.watchers.has(tabId)
+  }
+
+  /** the tab's turn state says a turn runs; false for a tab not seen yet */
+  busy(tabId: string): boolean {
+    return this.turns.get(tabId)?.busy ?? false
+  }
+
+  /** whether takeForPrompt would take mail for this session in this tab */
+  canTakeForPrompt(tabId: string, session: string): boolean {
+    return this.promptable(tabId, session).length > 0
+  }
+
+  /**
+   * Takes the waiting mail of a session as a prompt the tab is about to get: the wake text of the oldest that fit,
+   * marked delivered. The user's turn that the prompt starts is then a mail turn. Null when nothing is taken.
+   */
+  takeForPrompt(tabId: string, session: string): { info: string; taken: MailRecord[] } | null {
+    const mail = this.promptable(tabId, session)
+    if (mail.length === 0) return null
+    const { taken, info } = wakeTextWithin(mail, a => this.deps.sender(a), WAKE_MAX)
+    this.deps.store.mark(taken.map(r => r.id), 'delivered')
+    this.turnsOf(tabId).promptMail = true
+    this.deps.handedOver?.(tabId, taken, 'prompt')
+    return { info, taken }
   }
 
   unreadByTab(tabs: { tabId: string; device: string | null; session: string | null }[]): MailUnread {
@@ -343,16 +390,40 @@ export class MailHub {
     }
     const session = this.current(w.session)
     if (this.deps.localTab(session) !== w.tabId) return
-    const mail = this.deps.store
-      .all()
-      .filter(r => !r.delivered && !isSignal(r) && this.isThisDevice(r.to.device) && this.current(r.to.session) === session)
+    const t = this.turnsOf(w.tabId)
+    // a turn Esc interrupted never gets its Stop: the tab's working flag says it is idle again
+    const into: HandOver = !t.busy || this.deps.working?.(w.tabId) === false ? 'idle' : w.seq === t.seq ? 'next' : 'running'
+    const mail = this.pending(w.tabId, session, into)
     if (mail.length === 0) return
     // the oldest messages that fit one wake text; the rest wait for the next watcher
     const { taken, info } = wakeTextWithin(mail, a => this.deps.sender(a), WAKE_MAX)
-    this.handOver(w)
+    this.handOver(w, into)
     // finish() first: marking the mail notifies the watchers, and this one must already be off the hold
     this.finish(w, { ok: true, info })
     this.deps.store.mark(taken.map(r => r.id), 'delivered')
+    this.deps.handedOver?.(w.tabId, taken, into)
+  }
+
+  /** the undelivered mail of a session (its current id) that this device hands to the tab, and that accepts allows */
+  private pending(tabId: string, session: string, into: HandOver): MailRecord[] {
+    return this.deps.store
+      .all()
+      .filter(
+        r =>
+          !r.delivered &&
+          !isSignal(r) &&
+          this.isThisDevice(r.to.device) &&
+          this.current(r.to.session) === session &&
+          (this.deps.accepts?.(r, tabId, into) ?? true)
+      )
+  }
+
+  /** the mail takeForPrompt gives a tab: none unless messages are on and the tab runs the session */
+  private promptable(tabId: string, session: string): MailRecord[] {
+    if (!this.deps.enabled()) return []
+    const current = this.current(session)
+    if (this.deps.localTab(current) !== tabId) return []
+    return this.pending(tabId, current, 'prompt')
   }
 
   /**
@@ -360,15 +431,13 @@ export class MailHub {
    * turn: the watcher is the Stop race, so its wake starts the next turn, at the end of this one. Otherwise the mail
    * goes into the running turn, which is not a mail turn.
    */
-  private handOver(w: Watcher): void {
+  private handOver(w: Watcher, into: HandOver): void {
     const t = this.turnsOf(w.tabId)
-    // a turn Esc interrupted never gets its Stop: the tab's working flag says it is idle again
-    const idle = !t.busy || this.deps.working?.(w.tabId) === false
-    if (idle) {
+    if (into === 'idle') {
       t.mailTurns++
       t.busy = true
       t.seq++
-    } else if (w.seq === t.seq) {
+    } else if (into === 'next') {
       t.deferred++
     }
   }
@@ -376,7 +445,7 @@ export class MailHub {
   private turnsOf(tabId: string): TabTurns {
     let t = this.turns.get(tabId)
     if (!t) {
-      t = { busy: false, seq: 0, mailTurns: 0, deferred: 0 }
+      t = { busy: false, seq: 0, mailTurns: 0, deferred: 0, promptMail: false }
       this.turns.set(tabId, t)
     }
     return t
@@ -426,6 +495,7 @@ export class MailHub {
     const seen = new Set<string>()
     const newest = [...this.deps.store.all()].reverse()
     for (const r of newest) {
+      if (isSignal(r)) continue
       if (!this.sameEnd(r.from, caller) && !this.sameEnd(r.to, caller)) continue
       for (const end of [r.from, r.to]) {
         // a session known only by its Claude Code name is reached with SendMessage, not with message_agent

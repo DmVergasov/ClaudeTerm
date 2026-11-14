@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { nameAgents, formatAgentList, type AgentTab } from '../../src/main/mail/agent-directory'
 import { checkMailRecord } from '../../src/main/mail/mail-record'
-import { MailHub, type CallerTab, type MailHubDeps } from '../../src/main/mail/mail-hub'
+import { MailHub, type CallerTab, type HandOver, type MailHubDeps } from '../../src/main/mail/mail-hub'
 import { MailStore } from '../../src/main/mail/mail-store'
 import { wakeText } from '../../src/main/mail/wake-text'
 import { MAIL_TEXT_MAX, type MailAddress, type MailConversationView, type MailRecord } from '../../src/shared/mail'
@@ -81,7 +81,7 @@ interface World {
   names: Record<string, string>
 }
 
-function setup() {
+function setup(extra: Partial<MailHubDeps> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'ct-hub-'))
   dirs.push(dir)
   const store = MailStore.open({ dir, now: () => NOW, debounceMs: 100000 })
@@ -122,7 +122,8 @@ function setup() {
     deviceName: device => (device === null ? 'Desktop' : (world.names[device] ?? null)),
     onUnread,
     now: () => NOW,
-    newId: () => `20000000-0000-4000-8000-${String(++ids).padStart(12, '0')}`
+    newId: () => `20000000-0000-4000-8000-${String(++ids).padStart(12, '0')}`,
+    ...extra
   }
   const hub = new MailHub(deps)
   return { hub, store, world, onUnread }
@@ -938,5 +939,146 @@ describe('MailHub record kinds', () => {
     expect(store.get(detach.id)?.delivered).toBe(false)
     ctrl.abort()
     await expect(p).resolves.toEqual({ ok: true })
+  })
+})
+
+describe('MailHub hand-over rules', () => {
+  const signal = (): AbortSignal => new AbortController().signal
+
+  it('accepts sees "idle" for an idle tab, "running" for a busy tab whose watcher came before the turn, "next" for a watcher that came in the turn', async () => {
+    const seen: HandOver[] = []
+    const { hub, store } = setup({
+      accepts: (_r, _tabId, into) => {
+        seen.push(into)
+        return true
+      }
+    })
+    store.add(record({ from: MAC, to: LOCAL, text: 'to an idle tab' }))
+    await hub.wait('tab-2', SES_LOCAL, signal())
+    hub.takeMailTurn('tab-2')
+
+    const earlier = hub.wait('tab-2', SES_LOCAL, signal())
+    hub.userTurn('tab-2')
+    store.add(record({ from: MAC, to: LOCAL, text: 'into the running turn' }))
+    await earlier
+    hub.takeMailTurn('tab-2')
+
+    hub.userTurn('tab-2')
+    const inTurn = hub.wait('tab-2', SES_LOCAL, signal())
+    store.add(record({ from: MAC, to: LOCAL, text: 'the Stop race' }))
+    await inTurn
+    expect(seen).toEqual(['idle', 'running', 'next'])
+  })
+
+  it('a record accepts refuses stays undelivered, and tabsChanged hands it over once accepts allows it', async () => {
+    let allow = false
+    const { hub, store } = setup({ accepts: () => allow })
+    const r = record({ from: MAC, to: LOCAL, text: 'held back for now' })
+    store.add(r)
+    const p = hub.wait('tab-2', SES_LOCAL, signal())
+    const state = settledOf(p)
+    await tick()
+    expect(state.done).toBe(false)
+    expect(store.get(r.id)?.delivered).toBe(false)
+
+    allow = true
+    hub.tabsChanged()
+    expect(await p).toMatchObject({ ok: true, info: expect.stringContaining('held back for now') })
+    expect(store.get(r.id)?.delivered).toBe(true)
+  })
+
+  it('handedOver gets the taken records and how they went', async () => {
+    const handed: { tabId: string; ids: string[]; into: HandOver }[] = []
+    const { hub, store } = setup({
+      handedOver: (tabId, taken, into) => {
+        handed.push({ tabId, ids: taken.map(r => r.id), into })
+      }
+    })
+    const r = record({ from: MAC, to: LOCAL })
+    store.add(r)
+    await hub.wait('tab-2', SES_LOCAL, signal())
+    expect(handed).toEqual([{ tabId: 'tab-2', ids: [r.id], into: 'idle' }])
+  })
+
+  it('hasWatcher is true while a wait is held and false once it is answered or aborted', async () => {
+    const { hub, store } = setup()
+    expect(hub.hasWatcher('tab-2')).toBe(false)
+    const p = hub.wait('tab-2', SES_LOCAL, signal())
+    expect(hub.hasWatcher('tab-2')).toBe(true)
+    store.add(record({ from: MAC, to: LOCAL }))
+    await p
+    expect(hub.hasWatcher('tab-2')).toBe(false)
+
+    const ac = new AbortController()
+    const q = hub.wait('tab-2', SES_LOCAL, ac.signal)
+    expect(hub.hasWatcher('tab-2')).toBe(true)
+    ac.abort()
+    await q
+    expect(hub.hasWatcher('tab-2')).toBe(false)
+  })
+
+  it('busy is true from a hand-over to an idle tab until the next done, and false after interrupted', async () => {
+    const { hub, store } = setup()
+    expect(hub.busy('tab-2')).toBe(false)
+    store.add(record({ from: MAC, to: LOCAL, text: 'first' }))
+    await hub.wait('tab-2', SES_LOCAL, signal())
+    expect(hub.busy('tab-2')).toBe(true)
+    hub.takeMailTurn('tab-2')
+    expect(hub.busy('tab-2')).toBe(false)
+
+    store.add(record({ from: MAC, to: LOCAL, text: 'second' }))
+    await hub.wait('tab-2', SES_LOCAL, signal())
+    expect(hub.busy('tab-2')).toBe(true)
+    hub.interrupted('tab-2')
+    expect(hub.busy('tab-2')).toBe(false)
+    expect(hub.takeMailTurn('tab-2')).toBe(false)
+  })
+
+  it('takeForPrompt returns the wake text of what accepts allows as "prompt", marks it delivered, and the next user turn is a mail turn', () => {
+    const refused = record({ from: MAC, to: LOCAL, text: 'refused' })
+    const r = record({ from: MAC, to: LOCAL, text: 'a prompt for you' })
+    const { hub, store } = setup({ accepts: (rec, _tabId, into) => into === 'prompt' && rec.id !== refused.id })
+    store.add(refused)
+    store.add(r)
+    expect(hub.canTakeForPrompt('tab-2', SES_LOCAL)).toBe(true)
+    expect(hub.takeForPrompt('tab-2', SES_LOCAL)).toEqual({
+      info: expect.stringContaining(`> ${r.text}`),
+      taken: [expect.objectContaining({ id: r.id })]
+    })
+    expect(store.get(r.id)!.delivered).toBe(true)
+    expect(store.get(refused.id)!.delivered).toBe(false)
+    hub.userTurn('tab-2')
+    expect(hub.takeMailTurn('tab-2')).toBe(true)
+  })
+
+  it('takeForPrompt and canTakeForPrompt give nothing when mail is off, nothing waits, or the tab does not run the session', () => {
+    const { hub, store, world } = setup()
+    const r = record({ from: MAC, to: LOCAL, text: 'waiting' })
+    store.add(r)
+    world.enabled = false
+    expect(hub.canTakeForPrompt('tab-2', SES_LOCAL)).toBe(false)
+    expect(hub.takeForPrompt('tab-2', SES_LOCAL)).toBeNull()
+    world.enabled = true
+    expect(hub.canTakeForPrompt('tab-1', SES_LOCAL)).toBe(false)
+    expect(hub.takeForPrompt('tab-1', SES_LOCAL)).toBeNull()
+    expect(store.get(r.id)?.delivered).toBe(false)
+
+    expect(hub.takeForPrompt('tab-2', SES_LOCAL)).not.toBeNull()
+    expect(hub.canTakeForPrompt('tab-2', SES_LOCAL)).toBe(false)
+    expect(hub.takeForPrompt('tab-2', SES_LOCAL)).toBeNull()
+  })
+})
+
+describe('MailHub recent addresses', () => {
+  it('an attach record between two tabs does not put the other end in the recent list of send', () => {
+    const { hub, store, world } = setup()
+    world.agentTabs = [world.agentTabs[0]]
+    store.add(record({ kind: 'attach', from: CALLER, to: LOCAL }))
+    expect(hub.send('tab-1', 'parser · Desktop', 'hi', null)).toEqual({
+      ok: false,
+      error: 'No agent named "parser · Desktop"; call list_agents.'
+    })
+    store.add(record({ from: CALLER, to: LOCAL, text: 'a message' }))
+    expect(hub.send('tab-1', 'parser · Desktop', 'hi', null)).toEqual({ ok: true, info: 'Delivered to parser · Desktop.' })
   })
 })
