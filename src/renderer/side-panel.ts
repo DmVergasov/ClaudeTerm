@@ -3,7 +3,7 @@ import { icon } from './icons'
 
 export type PanelTab = 'images' | 'changes' | 'docs' | 'messages' | 'sessions' | 'mcp'
 
-const TABS: readonly PanelTab[] = ['images', 'changes', 'docs', 'messages', 'sessions', 'mcp']
+const TABS: readonly PanelTab[] = ['images', 'changes', 'sessions', 'docs', 'messages', 'mcp']
 const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs', messages: 'Agent messages', sessions: 'Sessions', mcp: 'MCP · Plugins' }
 /** how wide a drag may make each tab, as a share of the workspace (the window less the left tab panel) */
 const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85, messages: 0.85, sessions: 0.7, mcp: 0.7 }

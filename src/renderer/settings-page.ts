@@ -263,11 +263,11 @@ root.append(el('div', { className: 'settings-inner' },
       switchRow({ label: 'Hide test files' }, 'review.hideTests', (v) => v.settings.review.hideTests),
       switchRow({ label: 'Show Markdown files formatted' }, 'review.renderMarkdown', (v) => v.settings.review.renderMarkdown),
       listRow({ label: 'Test files', description: TEST_FILES_HINT }, 'review.testPatterns', (v) => v.settings.review.testPatterns, DEFAULT_TEST_PATTERNS)),
-    section('Agent messages', null,
+    Object.assign(section('Agent messages', null,
       switchRow({ label: "Let agents message tabs that Claude Code's own messaging can't reach", description: "Agents use SendMessage first. ClaudeTerm carries a message only to a tab SendMessage doesn't list: another device, another account." },
         'agentMessages.enabled', (v) => v.settings.agentMessages.enabled),
       switchRow({ label: "Mark tabs that got messages you haven't read", description: 'An envelope on the tab and a counter; no sound, no pop-up.' },
-        'agentMessages.marks', (v) => v.settings.agentMessages.marks))),
+        'agentMessages.marks', (v) => v.settings.agentMessages.marks)), { id: 'agent-messages' })),
   tabPage('accounts', accountsSection()),
   tabPage('devices', devicesSection([switchRow({ label: REMOTE_COPY.keepAwake }, 'devices.keepAwake', (v) => v.settings.devices.keepAwake)])),
   searchEmpty,
@@ -487,7 +487,7 @@ ct.onSettingsView(render)
 void ct.getSettingsView().then(render)
 
 /** the sections a Settings window can be opened at, each with the tab it lives in: the #hash of a new window, or a section sent to an open one */
-const SECTIONS = new Map<string, TabId>([['devices', 'devices'], ['notifications', 'notifications'], ['accounts', 'accounts'], ['add-account', 'accounts']])
+const SECTIONS = new Map<string, TabId>([['devices', 'devices'], ['notifications', 'notifications'], ['accounts', 'accounts'], ['add-account', 'accounts'], ['agent-messages', 'panels']])
 
 function showSection(name: string): void {
   const tab = SECTIONS.get(name)

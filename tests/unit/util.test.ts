@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { claudeTitle, folderName, windowsPtyOption } from '../../src/renderer/util'
+import { claudeTitle, clockOf, folderName, windowsPtyOption } from '../../src/renderer/util'
 
 describe('windowsPtyOption', () => {
   it('ConPTY handling on Windows only', () => {
     expect(windowsPtyOption(22631)).toEqual({ windowsPty: { backend: 'conpty', buildNumber: 22631 } })
     expect(windowsPtyOption(null)).toEqual({})
+  })
+})
+
+describe('clockOf', () => {
+  it('is the local clock time as HH:MM, zero-padded', () => {
+    expect(clockOf(new Date(2026, 10, 14, 9, 5).getTime())).toBe('09:05')
   })
 })
 

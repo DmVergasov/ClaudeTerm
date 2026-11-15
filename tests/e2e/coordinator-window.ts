@@ -11,6 +11,9 @@ export const tabOrder = (page: Page): Promise<string[]> => page.evaluate(() => w
 export const pill = (page: Page, id: string): Locator => page.locator(`#tabbar .tab[data-tab-id="${id}"]`)
 export const tpRow = (page: Page, id: string): Locator => page.locator(`#tabpanel .tp-tab[data-tab-id="${id}"]`)
 export const sessionsToggle = (page: Page): Locator => page.locator('#sheet-header .tab-sessions-toggle')
+export const sessionRow = (page: Page, key: string): Locator => page.locator(`#image-panel .panel-sessions .coord-row[data-key="${key}"]`)
+export const sessionGroup = (page: Page, group: string): Locator => page.locator(`#image-panel .panel-sessions .coord-group[data-group="${group}"]`)
+export const rowKey = (sid: string): string => `local:${sid}`
 
 /** opens the Sessions panel with its toggle and waits until it has slid in */
 export async function openSessions(page: Page): Promise<void> {

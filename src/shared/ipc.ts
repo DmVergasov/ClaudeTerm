@@ -299,8 +299,8 @@ export interface SettingsView {
 export type SetSettingResult = { ok: true } | { ok: false; error: string }
 
 /** the sections a Settings window can be opened at */
-export type SettingsSection = 'devices' | 'notifications' | 'accounts' | 'add-account'
-export const isSettingsSection = (v: unknown): v is SettingsSection => v === 'devices' || v === 'notifications' || v === 'accounts' || v === 'add-account'
+export type SettingsSection = 'devices' | 'notifications' | 'accounts' | 'add-account' | 'agent-messages'
+export const isSettingsSection = (v: unknown): v is SettingsSection => v === 'devices' || v === 'notifications' || v === 'accounts' || v === 'add-account' || v === 'agent-messages'
 
 export type Unsubscribe = () => void
 

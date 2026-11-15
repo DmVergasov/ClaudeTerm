@@ -646,3 +646,31 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .sh-coord b, .sh-reports b { color: var(--text-2); font-weight: 600; }
 .sh-detach { flex: none; padding: 2px 8px; border: 1px solid var(--line-2); border-radius: 6px; background: none; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
 .sh-detach:hover { color: var(--text); }
+
+/* the Sessions panel: its notice, its groups and its rows */
+.coord-problem { display: flex; align-items: center; gap: 8px; }
+.coord-problem[hidden] { display: none; }
+.coord-link { flex: none; margin-left: auto; padding: 2px 8px; border: 1px solid var(--line-2); border-radius: 6px; background: none; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
+.coord-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
+.coord-gh { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; margin-top: 8px; padding: 0 6px; border: 0; background: none; color: var(--text-3); font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
+.coord-gh .n { margin-left: auto; font-weight: 500; letter-spacing: 0; }
+.coord-gh .tp-chevron { display: inline-flex; }
+.coord-group.folded .coord-gh .tp-chevron { transform: rotate(-90deg); }
+.coord-row { padding: 7px 10px 8px; border-radius: 8px; }
+.coord-row:hover { background: var(--item-hover); }
+.coord-row.marker-offline { opacity: 0.6; }
+.coord-l1 { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--text); font-size: 13px; }
+.coord-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coord-time { flex: none; margin-left: auto; color: var(--text-4); font-size: 11px; }
+.coord-l2 { margin: 2px 0 0 19px; overflow: hidden; color: var(--text-3); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.coord-l3 { margin: 3px 0 0 19px; color: var(--text-2); font-size: 12px; overflow-wrap: anywhere; }
+.coord-l3.warn { color: var(--amber); }
+.coord-l3.err { color: var(--red); }
+.coord-ico { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 12px; height: 12px; color: var(--green); }
+.coord-dot { flex: none; width: 7px; height: 7px; margin: 0 2.5px; border-radius: 50%; background: var(--text-4); }
+.coord-dot.amber { background: var(--amber); }
+.coord-dot.red { background: var(--red); }
+.coord-dev { display: inline-flex; flex: none; align-items: center; gap: 5px; color: var(--text-3); font-size: 11px; }
+.coord-dev i { width: 3px; height: 11px; border-radius: 2px; }
+.coord-prog { height: 3px; margin: 6px 0 0 19px; overflow: hidden; border-radius: 2px; background: var(--raised-2); }
+.coord-prog i { display: block; height: 100%; background: var(--blue); }

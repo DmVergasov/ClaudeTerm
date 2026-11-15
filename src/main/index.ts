@@ -2166,7 +2166,10 @@ function bootstrap(): void {
       // the side effects of the answer: a failure here is logged, it must not reject the probe's promise
       try {
         if (mailWatcher() !== watcherBefore) writeTabSettings()
-        if (localVersion() !== versionBefore) mailSync.announce()
+        if (localVersion() !== versionBefore) {
+          mailSync.announce()
+          coordSoon.request()
+        }
       } catch (e) {
         log.warn(`cannot apply the Claude Code version answer: ${String(e)}`)
       }
@@ -3644,7 +3647,10 @@ function bootstrap(): void {
       // the peers hear of the agent messages setting at once; a command not asked this run is asked now, its version decides the watcher
       const agentsChanged = JSON.stringify(settings.agentMessages) !== agentsBefore
       // the peers carry this device's accept: its setting, whether its version lets it wake a session, and the version itself
-      if (agentsChanged || localVersion() !== versionBefore || localWakes() !== wakesBefore) mailSync.announce()
+      if (agentsChanged || localVersion() !== versionBefore || localWakes() !== wakesBefore) {
+        mailSync.announce()
+        coordSoon.request()
+      }
       // messages off releases the held waits and on hands over waiting mail: the tabs are offered them again
       if (agentsChanged) mailTabsChanged()
       if (settings.claude.command !== commandBefore) probeVersion()

@@ -1,6 +1,7 @@
 import type { MailConversationView, MailMessageView } from '../shared/mail'
 import { deviceColor } from '../shared/remote'
 import type { SidePanel } from './side-panel'
+import { labelOf } from './util'
 
 export interface MailPanelCallbacks {
   /** the conversations of a tab, or of every tab for null */
@@ -18,12 +19,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
   e.className = className
   if (text !== undefined) e.textContent = text
   return e
-}
-
-/** a conversation's name for a tab: the tab's own name without its device, which is the part after the last " · " */
-const labelOf = (name: string): string => {
-  const at = name.lastIndexOf(' · ')
-  return at >= 0 ? name.slice(0, at) : name
 }
 
 /** the header of a conversation: the other end's name and this tab's label, or both names when every conversation is shown */

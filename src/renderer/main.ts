@@ -14,6 +14,7 @@ import type { NotificationCase, Settings, TabInfo, TabPlace, TabPosition } from 
 import { accountChoices, accountLabel, footDetail, signInAgainChoices, switchChoices } from './account-items'
 import { DocPanel } from './doc-panel'
 import { MailPanel } from './mail-panel'
+import { SessionsPanel } from './sessions-panel'
 import { McpPanel } from './mcp/mcp-panel'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
@@ -96,6 +97,7 @@ const reviewUpdates = new Map<string, ReviewUpdate>()
 const pendingReveal = new Set<string>()
 let docPanel: DocPanel
 let mailPanel: MailPanel
+let sessionsPanel: SessionsPanel
 let mcpPanel: McpPanel
 /** the MCP · Plugins panel's width when it opens: a fixed size, not a setting */
 const MCP_PANEL_WIDTH = 420
@@ -359,9 +361,19 @@ function syncMcpPanel(): void {
   refreshMcpStatus()
 }
 
-/** the Sessions panel is offered for a coordinator's tab in front */
+/** the Sessions panel is offered for a coordinator's tab in front, with that tab's view */
 function syncSessions(): void {
-  sidePanel.setAvailable('sessions', coordMarkOf(activeId)?.role === 'coordinator')
+  const id = activeId
+  const coordinator = id !== null && coordMarkOf(id)?.role === 'coordinator'
+  sidePanel.setAvailable('sessions', coordinator)
+  if (id === null || !coordinator) {
+    sessionsPanel.show(null, null)
+    return
+  }
+  const held = coordViews.get(id)
+  sessionsPanel.show(id, held ?? null)
+  // no view held yet: it is asked for, and drawn when it comes while this tab is still in front
+  if (held === undefined) void coordViewOf(id).then((view) => { if (activeId === id) sessionsPanel.show(id, view) })
 }
 
 /** the MCP servers of the tab in front, for their segment of the status bar (null: not known yet) */
@@ -1490,6 +1502,7 @@ async function boot(): Promise<void> {
   ct.onCoordView((tabId, view) => {
     if (view) coordViews.set(tabId, view)
     else coordViews.delete(tabId)
+    if (tabId === activeId) sessionsPanel.show(tabId, view)
   })
   searchBar = new SearchBar(
     document.getElementById('search')!,
@@ -1730,6 +1743,7 @@ async function boot(): Promise<void> {
     conversations: (tabId) => ct.getMailConversations(tabId),
     markRead: (ids) => ct.markMailRead(ids)
   })
+  sessionsPanel = new SessionsPanel(sidePanel.bodies.sessions, sidePanel, { openSettings: () => ct.openSettingsWindow('agent-messages') })
   sidePanel.onCover = () => noteOverlay.relayout()
   mcpPanel = new McpPanel(sidePanel.bodies.mcp, sidePanel, {
     servers: (tabId) => ct.mcpServers(tabId),
@@ -1749,6 +1763,7 @@ async function boot(): Promise<void> {
     docPanel.panelChanged()
     mailPanel.refresh()
     mcpPanel.refresh()
+    sessionsPanel.refresh()
     refreshPanelButtons()
   }
   // the servers change under the panel: a restart, a sign-in, a change Claude made to the configuration
