@@ -574,6 +574,15 @@ describe("a report's card: the mirror checks its item, a member draws it as it i
     expect(itemForMembers(reportItem())).toEqual(reportItem())
   })
 
+  it('a report names its device when it came from another one: a name of 1 to 64 characters without control characters, or none', () => {
+    expect(parseChatPush(snapshot([reportItem({ device: 'Laptop' })]))).toEqual({ snapshot: snapshot([reportItem({ device: 'Laptop' })]) })
+    expect(parseChatPush(snapshot([reportItem()]))).not.toBeNull()
+    expect(parseChatPush(snapshot([reportItem({ device: '' })]))).toBeNull()
+    expect(parseChatPush(snapshot([reportItem({ device: 'x'.repeat(65) })]))).toBeNull()
+    expect(parseChatPush(snapshot([reportItem({ device: 'Lap\ntop' })]))).toBeNull()
+    expect(parseChatPush(snapshot([reportItem({ device: 7 })]))).toBeNull()
+  })
+
   it('a report with an unknown outcome, an oversize text or an oversize reason does not validate', () => {
     expect(parseChatPush(snapshot([reportItem({ outcome: 'done' })]))).toBeNull()
     expect(parseChatPush(snapshot([reportItem({ text: 'x'.repeat(1024 * 1024 + 1) })]))).toBeNull()

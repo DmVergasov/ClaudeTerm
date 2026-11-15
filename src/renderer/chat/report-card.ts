@@ -8,6 +8,9 @@ import type { ItemCallbacks } from './chat-items'
 /** a report's card as the column draws it: the report's item, without its kind and id */
 export type ReportCardData = Omit<Extract<ChatItem, { kind: 'report' }>, 'kind' | 'id'>
 
+/** the card head's label: the session's label, and the name of its device after it when the report came from another device */
+export const reportLabel = (card: ReportCardData): string => (card.device ? `${labelOf(card.name)} · ${card.device}` : labelOf(card.name))
+
 const el = (tag: string, className: string, text = ''): HTMLElement => {
   const e = document.createElement(tag)
   e.className = className
@@ -35,7 +38,7 @@ export function reportCard(card: ReportCardData, cb: ItemCallbacks): HTMLElement
   state.innerHTML = icon(card.outcome === 'finished' ? 'check' : 'x', 13)
   const title = el('span', 'coord-report-title')
   const label = document.createElement('b')
-  label.textContent = labelOf(card.name)
+  label.textContent = reportLabel(card)
   title.append(label, ` · ${outcomeText(card.outcome, card.reason)}${card.at === null ? '' : ` · ${clockOf(card.at)}`}`)
   const acts = el('span', 'coord-report-acts')
   if (cb.report !== null) {

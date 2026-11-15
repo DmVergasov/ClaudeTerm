@@ -272,10 +272,12 @@ describe('coordinator blocks', () => {
     it('a Claude tab dropped on the coordinator\'s row attaches it', () => {
       expect(panelDrop(g, row('X'), row('C'))).toEqual({ kind: 'attach', coordinator: 'C', tab: 'X' })
     })
-    it('the coordinator\'s own attached tab, a shell tab and another device\'s tab dropped on it do nothing', () => {
+    it('the coordinator\'s own attached tab and a shell tab dropped on it do nothing', () => {
       expect(panelDrop(g, row('A1'), row('C'))).toBeNull()
       expect(panelDrop(g, row('S', { claude: false }), row('C'))).toBeNull()
-      expect(panelDrop(g, row('X', { local: false }), row('C'))).toBeNull()
+    })
+    it('a Claude tab of another device dropped on the coordinator\'s row attaches it: the hub decides', () => {
+      expect(panelDrop(g, row('X', { local: false }), row('C'))).toEqual({ kind: 'attach', coordinator: 'C', tab: 'X' })
     })
     it('an attached row dropped on a row outside the block is detached and put there', () => {
       expect(panelDrop(g, row('A1'), row('X'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'A2', 'X', 'A1', 'S'] })

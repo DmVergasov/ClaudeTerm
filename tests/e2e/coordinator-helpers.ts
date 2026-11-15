@@ -102,8 +102,8 @@ async function claudeTabOf(d: Device, cwd: string): Promise<{ tab: string; sid: 
  * Studio and Laptop paired, the stand-in Claude Code 2.1.400 and its mail watcher on both; on each a Claude tab with a session in a
  * repository named acme. Studio's is made the coordinator, and returns once its view lists Laptop's session as not attached.
  */
-export async function coordDevices(o: { b?: AppOptions } = {}): Promise<{ a: Device; b: Device; coordTab: string; coordSid: string; sessionTab: string; sessionSid: string; repoA: string; repoB: string }> {
-  const { a, b } = await pairedApps({ a: { settings: VERSION_SETTINGS }, b: { settings: VERSION_SETTINGS, ...o.b } })
+export async function coordDevices(o: { a?: AppOptions; b?: AppOptions } = {}): Promise<{ a: Device; b: Device; coordTab: string; coordSid: string; sessionTab: string; sessionSid: string; repoA: string; repoB: string }> {
+  const { a, b } = await pairedApps({ a: { settings: VERSION_SETTINGS, ...o.a }, b: { settings: VERSION_SETTINGS, ...o.b } })
   const repoA = gitRepo('acme')
   const repoB = gitRepo('acme')
   const own = await claudeTabOf(a, repoA)

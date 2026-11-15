@@ -1275,7 +1275,7 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
 /** the coordinator items of a local Claude tab's menu: Detach when it is attached, Stop coordinating when it coordinates, else Make project coordinator when git has given it a project */
 function coordMenuItems(id: string, sessionId: string | null): MenuItem[] {
   const mark = coordMarkOf(id)
-  if (mark?.role === 'attached' && mark.coordinatorTabId !== null) return [{ label: `Detach from the ${mark.project} coordinator`, action: () => void detachFromCoordinator(id) }]
+  if (mark?.role === 'attached') return [{ label: `Detach from the ${mark.project} coordinator`, action: () => void detachFromCoordinator(id) }]
   if (mark?.role === 'coordinator') return [{ label: 'Stop coordinating', action: () => void ct.coordStop(id).then(toastFailure) }]
   if (places.get(id)) return [{ label: 'Make project coordinator', disabled: sessionId === null, action: () => void makeCoordinatorFrom(id) }]
   return []
@@ -1295,10 +1295,10 @@ function toastFailure(r: CoordResult): void {
   if (!r.ok) showToast(r.error)
 }
 
-/** a tab dropped on a coordinator's Sessions panel attaches when it is a local Claude tab other than the coordinator */
+/** a tab dropped on a coordinator's Sessions panel attaches when it is a Claude tab other than the coordinator, of this device or a paired one: the hub decides */
 function canAttachTo(coordinatorTabId: string, tabId: string): boolean {
   const t = tabs.get(tabId)
-  return tabId !== coordinatorTabId && !!t && !t.info.remote && t.info.kind === 'claude'
+  return tabId !== coordinatorTabId && !!t && t.info.kind === 'claude'
 }
 
 /** the row a report card names, in this coordinator's view (cardRow says which); a toast says so when there is none */
@@ -1327,19 +1327,37 @@ async function resolveReportSession(coordinatorTabId: string, ref: string, name:
 function attachTabs(): AttachTab[] {
   return order.flatMap((id): AttachTab[] => {
     const t = tabs.get(id)
-    if (!t) return []
-    return [{ id, title: titleOf(t), claude: t.info.kind === 'claude', local: !t.info.remote, session: t.info.claudeSessionId, exited: t.info.exited, folder: t.info.folder, branch: places.get(id)?.branch ?? null }]
+    // a paired device's tab is offered while its device is online: an offline device's tabs take no input, and nothing can attach there
+    if (!t || !writable(t)) return []
+    const device = t.info.remote ? (remoteDeviceOf(t.info.remote.device)?.name ?? t.info.remote.device) : null
+    return [{ id, title: titleOf(t), claude: t.info.kind === 'claude', device, session: t.info.claudeSessionId, exited: t.info.exited, folder: t.info.folder, branch: places.get(id)?.branch ?? null }]
   })
 }
 
-/** Detach of an attached tab (its menu, its header, a drag out of its block): the coordinator's view names its row */
+/** Detach of an attached tab (its menu, its header, a drag out of its block): a tab of this device leaves through coordLeave; a paired device's session is the coordinator's row, which the view names */
 async function detachFromCoordinator(tabId: string): Promise<void> {
   const mark = coordMarkOf(tabId)
-  if (mark?.role !== 'attached' || mark.coordinatorTabId === null) return
-  const coordinatorTabId = mark.coordinatorTabId
+  if (mark?.role !== 'attached') return
   // the tab shows as unattached from now on: a drop's order reaches main before the new marks, and the old block would pull the tab back
   detaching.add(tabId)
   renderTabs()
+  // a tab of this device leaves its coordinator, on this device or on a paired one, by its own id
+  if (!tabs.get(tabId)?.info.remote) {
+    const r = await ct.coordLeave(tabId)
+    if (!r.ok) {
+      detaching.delete(tabId)
+      renderTabs()
+    }
+    toastFailure(r)
+    return
+  }
+  // a paired device's session is a row of the coordinator here: its view names the row
+  if (mark.coordinatorTabId === null) {
+    detaching.delete(tabId)
+    renderTabs()
+    return
+  }
+  const coordinatorTabId = mark.coordinatorTabId
   const view = await coordViewOf(coordinatorTabId)
   const row = view?.sessions.find((r) => r.tabId === tabId)
   if (!row) {

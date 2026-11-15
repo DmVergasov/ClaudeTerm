@@ -110,19 +110,20 @@ export function startError(r: CoordResult): string | null {
   return r.error === COORD_REFUSED ? 'ClaudeTerm refused these fields.' : r.error
 }
 
-/** a tab as Attach… reads it: a local Claude tab's session, its folder and its branch */
-export interface AttachTab { id: string; title: string; claude: boolean; local: boolean; session: string | null; exited: boolean; folder: string; branch: string | null }
+/** a tab as Attach… reads it: a Claude tab's session, its folder and its branch; device: the name of the paired device it runs on, null for this device's */
+export interface AttachTab { id: string; title: string; claude: boolean; device: string | null; session: string | null; exited: boolean; folder: string; branch: string | null }
 export interface AttachChoice { tabId: string; title: string; where: string; note: string | null }
 
-/** the tabs Attach… offers, in their order: this device's Claude tabs with a session that run, other than the coordinator, a tab attached to it, and any coordinator; where is "folder · branch"; note: `Attached to the ${project} coordinator` for a tab attached elsewhere */
+/** the tabs Attach… offers, in their order: the Claude tabs with a session that run, of this device or a paired one, other than the coordinator, a tab attached to it, and any coordinator; where is "folder · branch", with the device's name in front for a paired one; note: `Attached to the ${project} coordinator` for a tab attached elsewhere */
 export function attachChoices(tabs: AttachTab[], coordinator: string, marks: CoordMarks): AttachChoice[] {
   const choices: AttachChoice[] = []
   for (const t of tabs) {
-    if (!t.claude || !t.local || t.session === null || t.exited || t.id === coordinator) continue
+    if (!t.claude || t.session === null || t.exited || t.id === coordinator) continue
     const mark = marks[t.id]
     if (mark?.role === 'coordinator') continue
     if (mark?.role === 'attached' && mark.coordinatorTabId === coordinator) continue
-    const where = t.branch === null ? t.folder : `${t.folder} · ${t.branch}`
+    const place = t.branch === null ? t.folder : `${t.folder} · ${t.branch}`
+    const where = t.device === null ? place : `${t.device} · ${place}`
     const note = mark?.role === 'attached' ? `Attached to the ${mark.project} coordinator` : null
     choices.push({ tabId: t.id, title: t.title, where, note })
   }

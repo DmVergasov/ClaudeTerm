@@ -101,13 +101,14 @@ it('startError is null for a start that was made, says the fields are refused fo
   expect(startError({ ok: false, error: 'Invalid request' })).toBe('ClaudeTerm refused these fields.')
   expect(startError({ ok: false, error: 'No folder D:\\gone on this device.' })).toBe('No folder D:\\gone on this device.')
 })
-it('attachChoices offers the other running Claude sessions of this device and says where one is attached', () => {
-  const t = (id: string, o: Partial<AttachTab> = {}): AttachTab => ({ id, title: id, claude: true, local: true, session: `s-${id}`, exited: false, folder: `D:\\Work\\${id}`, branch: 'main', ...o })
+it('attachChoices offers the other running Claude sessions, of this device and of a paired one, and says where one is attached', () => {
+  const t = (id: string, o: Partial<AttachTab> = {}): AttachTab => ({ id, title: id, claude: true, device: null, session: `s-${id}`, exited: false, folder: `D:\\Work\\${id}`, branch: 'main', ...o })
   const marks: CoordMarks = { c: { role: 'coordinator', project: 'acme', sessions: 1, waiting: 0 }, a: { role: 'attached', project: 'acme', coordinator: 'c · Desktop', coordinatorTabId: 'c' },
     b: { role: 'attached', project: 'beta', coordinator: 'k · Desktop', coordinatorTabId: 'k' }, k: { role: 'coordinator', project: 'beta', sessions: 1, waiting: 0 } }
-  const tabs = [t('c'), t('a'), t('b'), t('k'), t('x', { branch: null }), t('sh', { claude: false }), t('r', { local: false }), t('n', { session: null }), t('e', { exited: true })]
+  const tabs = [t('c'), t('a'), t('b'), t('k'), t('x', { branch: null }), t('sh', { claude: false }), t('r', { device: 'Laptop' }), t('n', { session: null }), t('e', { exited: true }), t('p', { device: 'Laptop', exited: true })]
   expect(attachChoices(tabs, 'c', marks)).toEqual([
     { tabId: 'b', title: 'b', where: 'D:\\Work\\b · main', note: 'Attached to the beta coordinator' },
-    { tabId: 'x', title: 'x', where: 'D:\\Work\\x', note: null }
+    { tabId: 'x', title: 'x', where: 'D:\\Work\\x', note: null },
+    { tabId: 'r', title: 'r', where: 'Laptop · D:\\Work\\r · main', note: null }
   ])
 })

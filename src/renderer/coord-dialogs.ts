@@ -1,4 +1,4 @@
-// The Sessions panel's dialogs for a coordinator: New session starts a Claude tab, Attach… attaches a session of this device
+// The Sessions panel's dialogs for a coordinator: New session starts a Claude tab, Attach… attaches a session of this device or a paired one
 
 import { COORD_NAME_MAX, COORD_TASK_MAX, type CoordResult, type CoordStartRequest } from '../shared/coordinator'
 import { el } from './dom'
@@ -71,7 +71,7 @@ export function openAttachDialog(o: { choices: AttachChoice[]; attach(tabId: str
     return pick
   })
   const list = picks.length === 0
-    ? el('div', { className: 'coord-picks-empty', textContent: 'No other Claude session runs on this device.' })
+    ? el('div', { className: 'coord-picks-empty', textContent: 'No other Claude session is running.' })
     : el('div', { className: 'coord-picks' }, ...picks)
   let handle: DialogHandle
   async function attachNow(pick: HTMLButtonElement, tabId: string): Promise<void> {
@@ -97,7 +97,7 @@ export function openAttachDialog(o: { choices: AttachChoice[]; attach(tabId: str
   handle = openDialog({
     id: 'attach',
     title: 'Attach a session',
-    body: [el('div', { className: 'coord-dialog-text', textContent: 'Pick a Claude session of this device. It is not told and goes on as it is.' }), list],
+    body: [el('div', { className: 'coord-dialog-text', textContent: 'Pick a Claude session, on this device or a paired one. It is not told and goes on as it is.' }), list],
     action: null
   })
 }

@@ -63,8 +63,9 @@ export type ChatItem =
   | { kind: 'prompt'; id: string; text: string; first: boolean }
   // agent pages only: a message the person sent to the agent, and how its forward goes (reason: why it did not go)
   | { kind: 'forward'; id: string; agentId: string; label: string; text: string; state: ForwardState; reason: string | null }
-  // a report a coordinator was handed: its card (the mail it came in, the session that sent it by its name and ref, how its task ended, when)
-  | { kind: 'report'; id: string; mailId: string; name: string; ref: string; outcome: ReportOutcome; reason: string | null; at: number | null; text: string }
+  // a report a coordinator was handed: its card (the mail it came in, the session that sent it by its name and ref, how its task ended, when);
+  // device: the name of the paired device the session runs on, when it is another device's
+  | { kind: 'report'; id: string; mailId: string; name: string; ref: string; outcome: ReportOutcome; reason: string | null; at: number | null; text: string; device?: string }
 
 /** a forward's state: queued, being sent through Claude, delivered, failed, or skipped (the agent is gone, or Claude did not send it) */
 export type ForwardState = 'queued' | 'sending' | 'delivered' | 'failed' | 'skipped'

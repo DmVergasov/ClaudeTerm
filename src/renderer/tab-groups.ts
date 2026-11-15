@@ -295,9 +295,9 @@ export type PanelDrop =
   | { kind: 'detach'; coordinator: string; tab: string; order: string[] | null }
   | { kind: 'reorder'; order: string[] }
 
-/** a Claude tab of this device, no coordinator itself, dropped on another tab that is a coordinator it is not attached to (one attached to another coordinator is asked for too: main answers with the refusal) */
+/** a Claude tab, of this device or a paired one, no coordinator itself, dropped on another tab that is a coordinator it is not attached to (one attached to another coordinator is asked for too: main answers with the refusal, and the hub decides for a tab of another device) */
 export function dropAttaches(drag: DropRow, target: DropRow): boolean {
-  if (!drag.claude || !drag.local || drag.coord?.role === 'coordinator' || target.coord?.role !== 'coordinator') return false
+  if (!drag.claude || drag.coord?.role === 'coordinator' || target.coord?.role !== 'coordinator') return false
   return !(drag.coord?.role === 'attached' && drag.coord.coordinatorTabId === target.id)
 }
 

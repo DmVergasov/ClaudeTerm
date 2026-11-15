@@ -340,15 +340,13 @@ export class SheetHeader {
         project.textContent = item.coord.project
         reports.append('↳ Reports to ', project, ' coordinator')
         parts.push(reports)
-        if (item.coord.coordinatorTabId !== null) {
-          const detach = document.createElement('button')
-          detach.className = 'sh-detach'
-          detach.type = 'button'
-          detach.textContent = 'Detach'
-          detach.title = `Detach from the ${item.coord.project} coordinator`
-          detach.addEventListener('click', () => this.cb.detachTab(item.id))
-          parts.push(detach)
-        }
+        const detach = document.createElement('button')
+        detach.className = 'sh-detach'
+        detach.type = 'button'
+        detach.textContent = 'Detach'
+        detach.title = `Detach from the ${item.coord.project} coordinator`
+        detach.addEventListener('click', () => this.cb.detachTab(item.id))
+        parts.push(detach)
       }
     }
     for (const el of this.left) el.remove()

@@ -98,7 +98,7 @@ test('Attach… lists the other Claude sessions of this device, of another proje
     await openSessions(page)
     await bar(page, 'Attach…').click()
     const dialog = dialogOf(page, 'attach')
-    await expect(dialog.locator('.coord-dialog-text')).toHaveText('Pick a Claude session of this device. It is not told and goes on as it is.')
+    await expect(dialog.locator('.coord-dialog-text')).toHaveText('Pick a Claude session, on this device or a paired one. It is not told and goes on as it is.')
     const picks = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.coord-dialog[data-dialog="attach"] .coord-pick')].map((b) => b.dataset.tabId))
     expect(picks).toEqual([t1, other.tabId])
     await dialog.locator(`.coord-pick[data-tab-id="${other.tabId}"]`).click()
@@ -116,7 +116,7 @@ test('Attach… with no other session says so', async () => {
     await openSessions(page)
     await bar(page, 'Attach…').click()
     const dialog = dialogOf(page, 'attach')
-    await expect(dialog.locator('.coord-picks-empty')).toHaveText('No other Claude session runs on this device.')
+    await expect(dialog.locator('.coord-picks-empty')).toHaveText('No other Claude session is running.')
     await expect(dialog.locator('.coord-pick')).toHaveCount(0)
   } finally { await l.app.close() }
 })
