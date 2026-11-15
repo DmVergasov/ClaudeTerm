@@ -126,7 +126,7 @@ export const worktreeInstruction = (name: string): string =>
   `First enter a new git worktree named "${name}" with your EnterWorktree tool, and do the task below there.\n\n`
 
 /** a record the hub writes: its version, id, time and flags are set by write() */
-type RecordInput = Omit<MailRecord, 'v' | 'id' | 'sentAt' | 'delivered' | 'read'> & { delivered?: boolean; read?: boolean }
+type RecordInput = Omit<MailRecord, 'v' | 'id' | 'sentAt' | 'delivered' | 'read'> & { delivered?: boolean; read?: boolean; sentAt?: number }
 
 export const HUB_TEXT = {
   notCoordinator: "This tab is not a coordinator. The person makes a Claude tab the coordinator of its project from the tab's context menu: Make project coordinator.",
@@ -156,9 +156,11 @@ export const HUB_TEXT = {
   fullCoordinators: `This device has ${MAX_COORDINATORS} coordinators already, the most it keeps; stop one first.`,
   fullAttached: `This coordinator has ${MAX_ATTACHMENTS} sessions attached already, the most it keeps; detach one first.`,
   fullHosted: `This device has ${MAX_HOSTED} attached sessions already, the most it keeps; detach one first.`,
+  fullHostedThere: (device: string) => `${device} has ${MAX_HOSTED} attached sessions already, the most it keeps; detach one there first.`,
   notSaved: 'ClaudeTerm could not save this; nothing was changed.',
   noDevice: (device: string) => `No paired device named "${device}".`,
   noFolder: (folder: string) => `No folder ${folder} on this device.`,
+  openedNoTab: (device: string) => `${device} did not open a new tab; the start is refused.`,
   notOpened: 'The new tab could not be opened.',
   closedEarly: 'The new tab closed before its session started.',
   startCancelled: 'The new session was detached before its session started; it gets no task.',
@@ -180,7 +182,7 @@ export const HUB_TEXT = {
   queuedOffline: (name: string, ref: string, device: string) =>
     `Task given to ${name} [${ref}]. ${device} is not connected: the task goes out when it connects and reaches the session when it is idle; its report comes to you by itself.`,
   detachedPending: (name: string) => `${name} was detached before its device confirmed it.`,
-  closedThere: (name: string) => `${name} is no longer open on its device.`,
+  closedThere: (name: string) => `${name} is not open under this session id on its device: it was closed, or cleared to a new session id.`,
   problemThere: (device: string, problem: string) => `${device} cannot take coordinated sessions now: ${problem}`,
   noProjectGiven: 'The attach request named no project.',
   notAttached: 'This tab is not attached to a coordinator.'
@@ -322,8 +324,9 @@ export class CoordinatorHub {
       if (a.device === null) {
         this.write({ kind: 'attach', from: this.address(null, session), to: this.address(null, a.session), replyTo: null, text: HUB_TEXT.attachText(project.name), project: project.name, delivered: true, read: true })
       } else if (other) {
-        // a session on another device is told that this coordinator replaces the old one; the attachment keeps its pending attach
-        this.write({ kind: 'attach', from: this.address(null, session), to: { device: a.device, session: a.session, name: a.name }, replyTo: null, text: HUB_TEXT.attachText(project.name), project: project.name, replaces: other.session, delivered: false, read: false })
+        // a session on another device is told that this coordinator replaces the old one; a pending attachment now waits for that attach
+        const id = this.write({ kind: 'attach', from: this.address(null, session), to: { device: a.device, session: a.session, name: a.name }, replyTo: null, text: HUB_TEXT.attachText(project.name), project: project.name, replaces: other.session, delivered: false, read: false })
+        if (id !== null && a.pending !== null) this.repend(session, a.session, a.pending, id)
       }
     }
     if (other) this.forwardFormer(other.session)
@@ -458,6 +461,8 @@ export class CoordinatorHub {
     const owner = this.own(tabId)
     if (!owner) return fail(HUB_TEXT.notCoordinator)
     if (!opened.ok) return fail(opened.error)
+    // a reply that names a tab of this device, or a start already kept, is no new tab of the peer's: the start is refused
+    if (this.d.tabs().some((t) => t.tabId === opened.tabId) || this.starts.has(opened.tabId)) return fail(HUB_TEXT.openedNoTab(peer.name))
     const place = remoteFolderText({ cwd: opened.cwd, asked: folder, fromTab, defaulted: opened.defaulted, project: owner.project.name })
     return new Promise<PipeResponse>((answer) => {
       const start: PendingStart = {
@@ -898,7 +903,7 @@ export class CoordinatorHub {
     const replied = new Set(this.d.mail.all().filter((r) => kindOf(r) === 'report' && r.replyTo !== null).map((r) => r.replyTo))
     const open = this.d.mail
       .all()
-      .filter((r) => kindOf(r) === 'task' && r.from.session === c.session && this.norm(r.from.device) === null && r.to.session === att.session && this.norm(r.to.device) === device && r.sentAt >= att.attachedAt && !replied.has(r.id))
+      .filter((r) => kindOf(r) === 'task' && this.wroteAs(r, c) && r.to.session === att.session && this.norm(r.to.device) === device && r.sentAt >= att.attachedAt && !replied.has(r.id))
     if (open.length >= MAX_TASKS_PER_SESSION) return fail(HUB_TEXT.tooMany(row.name))
     // the record goes first: the device takes the task into its hosted entry when it has the record
     if (!this.giveTask(c, att, { device, session: att.session, name: row.name }, text)) return fail(HUB_TEXT.notSaved)
@@ -941,8 +946,10 @@ export class CoordinatorHub {
 
   /** a session id came to a tab that a start opened: the session is attached and given the task, or the start answers why not */
   private startArrived(tabId: string, session: string): void {
-    const s = this.dropStart(tabId)
-    if (!s) return
+    const s = this.starts.get(tabId)
+    // a remote start is settled by its device's list of tabs, never by a tab of this device
+    if (!s || s.remote !== null) return
+    this.dropStart(tabId)
     const c = this.d.store.coordinator(s.coordinator)
     if (!c) return this.answerStart(s, fail(HUB_TEXT.startCancelled))
     // the task record is checked before the attach, so a record that cannot be written changes nothing
@@ -1111,6 +1118,16 @@ export class CoordinatorHub {
     this.d.store.putCoordinator({ ...c, attachments: c.attachments.map((a) => (a.session === session ? { ...a, ...patch } : a)) })
   }
 
+  /** a pending attachment now waits for the attach that replaces its old one: the tool waiting on the old attach is answered by the new one, and a late refusal of the old one does not remove it */
+  private repend(session: string, attached: string, old: string, id: string): void {
+    const c = this.d.store.coordinator(session)
+    if (c) this.patchAttachment(c, attached, { pending: id })
+    const wait = this.attachWaits.get(old)
+    if (!wait) return
+    this.attachWaits.delete(old)
+    this.attachWaits.set(id, wait)
+  }
+
   private detachRecord(from: string, to: MailAddress, project: string): RecordInput {
     return {
       kind: 'detach',
@@ -1140,7 +1157,7 @@ export class CoordinatorHub {
     this.answerAttach(a.pending, answer)
     const ids = this.d.mail
       .all()
-      .filter((r) => kindOf(r) === 'task' && !r.delivered && r.from.session === c.session && this.norm(r.from.device) === null && r.to.session === a.session && this.norm(r.to.device) === a.device)
+      .filter((r) => kindOf(r) === 'task' && !r.delivered && this.wroteAs(r, c) && r.to.session === a.session && this.norm(r.to.device) === a.device)
       .map((r) => r.id)
     if (ids.length === 0) return
     this.d.mail.mark(ids, 'delivered')
@@ -1188,7 +1205,7 @@ export class CoordinatorHub {
     const hosted = this.d.store.hostedBy(session)
     const same = hosted !== null && this.norm(hosted.coordinator.device) === from.device && hosted.coordinator.session === from.session
     if (hosted && !same) return refuse(HUB_TEXT.elsewhere(name, hosted.project, hosted.coordinator.name))
-    if (!same && this.d.store.allHosted().length >= MAX_HOSTED) return refuse(HUB_TEXT.fullHosted)
+    if (!same && this.d.store.allHosted().length >= MAX_HOSTED) return refuse(HUB_TEXT.fullHostedThere(this.d.selfName()))
     if (!same) this.d.store.putHosted({ session, coordinator: from, project: r.project, tasks: [], former: [] })
     this.d.mail.mark([r.id], 'delivered')
     this.d.mail.mark([r.id], 'read')
@@ -1280,6 +1297,7 @@ export class CoordinatorHub {
     const copy = this.write({
       kind,
       from: r.from,
+      sentAt: r.sentAt,
       to: { device: r.to.device, session: holder.session, name: this.nameOf(holder.session) },
       replyTo: r.replyTo,
       text: r.text,
@@ -1293,6 +1311,11 @@ export class CoordinatorHub {
     this.d.mail.mark([r.id], 'delivered')
     this.d.mail.mark([r.id], 'read')
     return true
+  }
+
+  /** a record this device's coordinator c wrote, under its id now or an id it had before a clear or a replace */
+  private wroteAs(r: MailRecord, c: StoredCoordinator): boolean {
+    return this.norm(r.from.device) === null && (r.from.session === c.session || c.former.includes(r.from.session))
   }
 
   /** whether a coordinator takes a report from another device: its session is attached to it */
@@ -1438,7 +1461,7 @@ export class CoordinatorHub {
     const open: MailRecord[] = []
     for (const r of this.d.mail.all()) {
       if (kindOf(r) === 'report' && r.replyTo !== null) replied.add(r.replyTo)
-      else if (kindOf(r) === 'task' && !r.delivered && r.from.session === c.session && this.norm(r.from.device) === null) open.push(r)
+      else if (kindOf(r) === 'task' && !r.delivered && this.wroteAs(r, c)) open.push(r)
     }
     const oldest = new Map<string, CoordTaskInfo>()
     for (const r of open) {

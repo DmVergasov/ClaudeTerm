@@ -4,7 +4,7 @@ import { MAX_ATTACHMENTS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachme
 import { checkMailRecord } from '../../src/main/mail/mail-record'
 import { coordinatorProblem, type CoordSessionRow, type CoordinatorView } from '../../src/shared/coordinator'
 import { MAIL_MIN_CLAUDE, type MailRecord } from '../../src/shared/mail'
-import { attachDirect, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NEW, NO_FACTS, NOW, peerOf, records, remoteTab, S, sync, uid, world, type World } from '../fixtures/coordinator-world'
+import { attachDirect, ACME, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NEW, NO_FACTS, NOW, peerOf, records, remoteTab, S, sync, tab, uid, world, type World } from '../fixtures/coordinator-world'
 
 const TASK = '7a000000-0000-4000-8000-000000000001'
 const ATTACH_ID = '7b000000-0000-4000-8000-000000000002'
@@ -461,7 +461,7 @@ describe('attach, detach and tasks across devices', () => {
     const answer = c.hub.tool('tab-c', { op: 'attach', session: 'e10000' })
     await tick()
     sync(c, s)
-    expect(await answer).toEqual({ ok: false, error: HUB_TEXT.fullHosted })
+    expect(await answer).toEqual({ ok: false, error: 'Laptop has 500 attached sessions already, the most it keeps; detach one there first.' })
     expect(s.store.hosted(L.one)).toBeNull()
   })
 
@@ -555,6 +555,36 @@ describe('attach, detach and tasks across devices', () => {
     })
     expect(s.store.hosted(L.one)).toMatchObject({ coordinator: { device: DEV_C, session: S.coord } })
     expect(s.mail.get(OTHER_DETACH)).toMatchObject({ delivered: true, read: true })
+  })
+
+  it('a replace while an attach is pending: the replacing attach is the pending one, so a late refusal of the replaced attach does not remove it', () => {
+    c.hub.attach('tab-c', 'e10000')
+    const replaced = att().id
+    c.hub.make('tab-2', true)
+    const replacing = records(c, 'attach').at(-1)!.id
+    expect(c.store.coordinator(S.two)!.attachments).toEqual([expect.objectContaining({ device: DEV_S, session: L.one, pending: replacing })])
+    c.mail.add({
+      v: 1,
+      id: '7b100000-0000-4000-8000-000000000009',
+      from: { device: DEV_S, session: L.one, name: 'parser · Laptop' },
+      to: { device: DEV_C, session: S.two, name: 'docs · Studio' },
+      replyTo: replaced,
+      text: 'Refused.',
+      sentAt: NOW,
+      delivered: false,
+      read: false,
+      kind: 'detach'
+    })
+    expect(c.store.coordinator(S.two)!.attachments).toEqual([expect.objectContaining({ device: DEV_S, session: L.one, pending: replacing })])
+  })
+
+  it('a session that cleared on Laptop before the attach arrived is refused as not open under its session id, not as closed', async () => {
+    const answer = c.hub.tool('tab-c', { op: 'attach', session: 'e10000' })
+    await tick()
+    s.tabs = s.tabs.map((t) => (t.tabId === 'tab-l1' ? { ...t, session: NEW.one } : t))
+    s.hub.sessionStarted('tab-l1', L.one, NEW.one, 'clear')
+    sync(c, s)
+    expect(await answer).toEqual({ ok: false, error: 'parser · Laptop is not open under this session id on its device: it was closed, or cleared to a new session id.' })
   })
 })
 
@@ -695,6 +725,54 @@ describe('new ids across devices', () => {
     const report = records(c, 'report').at(-1)!
     expect(report).toMatchObject({ to: { session: NEW.coord }, text: 'Parser fixed.' })
     expect(report.text.startsWith('(This task was given by the previous coordinator')).toBe(false)
+  })
+
+  it('a task sent before a clear still counts toward the cap, and is the queued task of its session', () => {
+    for (let i = 0; i < MAX_TASKS_PER_SESSION; i++) expect(c.hub.message('tab-c', 'e10000', `Task ${i}.`)).toMatchObject({ ok: true })
+    const first = records(c, 'task')[0]
+    clear(c, 'tab-c', S.coord, NEW.coord)
+    expect(c.hub.view('tab-c')!.sessions[0].task).toEqual({ id: first.id, state: 'queued', since: NOW })
+    expect(c.hub.message('tab-c', 'e10000', 'One more.')).toEqual({ ok: false, error: HUB_TEXT.tooMany('parser · Laptop') })
+    expect(records(c, 'task')).toHaveLength(MAX_TASKS_PER_SESSION)
+  })
+
+  it('a task sent before a clear is marked delivered and read when the attach that followed the clear is refused', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    const task = records(c, 'task')[0]
+    clear(c, 'tab-c', S.coord, NEW.coord)
+    c.hub.detach('tab-c', 'e10000')
+    c.hub.attach('tab-c', 'e10000')
+    const attachId = records(c, 'attach').at(-1)!.id
+    expect(c.store.coordinator(NEW.coord)!.attachments).toEqual([expect.objectContaining({ device: DEV_S, session: L.one, pending: attachId })])
+    c.mail.add({
+      v: 1,
+      id: '7b200000-0000-4000-8000-000000000001',
+      from: { device: DEV_S, session: L.one, name: 'parser · Laptop' },
+      to: { device: DEV_C, session: NEW.coord, name: 'coord · Studio' },
+      replyTo: attachId,
+      text: 'Refused.',
+      sentAt: NOW,
+      delivered: false,
+      read: false,
+      kind: 'detach'
+    })
+    expect(c.store.coordinator(NEW.coord)!.attachments).toEqual([])
+    expect(c.mail.get(task.id)).toMatchObject({ delivered: true, read: true })
+  })
+
+  it('a forwarded copy keeps the sentAt of the record it copies, so the clock of this device cannot reorder it', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    clear(c, 'tab-c', S.coord, NEW.coord) // Laptop finishes before it hears of the clear
+    s.hub.turnEnded('tab-l1', { background: false, lastMessage: 'Parser fixed.' })
+    fire(s)
+    c.now = NOW + 5000 // Studio's clock is ahead of Laptop's when the copy is written
+    sync(c, s)
+    const reports = records(c, 'report')
+    const original = reports.find((r) => r.to.session === S.coord)!
+    const copy = reports.find((r) => r.to.session === NEW.coord)!
+    expect(copy.sentAt).toBe(original.sentAt)
   })
 })
 
@@ -899,5 +977,24 @@ describe('start on another device', () => {
     const task = records(c, 'task')[0]
     expect(task.sentAt).toBeGreaterThanOrEqual(attach.sentAt)
     expect(task.sentAt).toBeGreaterThanOrEqual(c.store.coordinator(S.coord)!.attachments[0].attachedAt)
+  })
+
+  it('a reply to open-tab that names a tab of this device is refused, and no tab of this device is taken for the start', async () => {
+    c.remoteAnswer = { ok: true, tabId: 'tab-1', cwd: '/home/sam/acme', accountName: 'Main account', defaulted: false }
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    expect(await answer).toEqual({ ok: false, error: 'Laptop did not open a new tab; the start is refused.' })
+    expect(c.hub.view('tab-c')!.sessions).toEqual([])
+  })
+
+  it('a local tab that later takes the tab id of a remote start does not settle that start', async () => {
+    c.remoteAnswer = { ok: true, tabId: 'rt-x', cwd: '/home/sam/acme', accountName: 'Main account', defaulted: false }
+    void c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    const local = uid(0x40000)
+    c.tabs.push(tab('rt-x', local, ACME))
+    c.hub.tabSession('rt-x', local)
+    expect(c.store.hosted(local)).toBeNull()
+    expect(records(c, 'task')).toEqual([])
   })
 })
