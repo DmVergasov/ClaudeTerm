@@ -64,8 +64,12 @@ The mockups were made on the real window (master build, tabs on the left, the Gr
 
 - The coordinator's row shows a small **Coordinator** label (accent colour) after its title.
 - The sessions attached to it from the same group come right after it, indented, with a thin guide line on their left.
-- An attached session in another group or on another device shows `↳ <coordinator's project>` at the end of its second
+- An attached session in another group of this device shows `↳ <coordinator's project>` at the end of its second
   line (e.g. `↳ Offroad`).
+- An attached session on another device is shown in the coordinator's block only, after the attached rows of this
+  device, with its device's chip (the colour bar and the device's name) at the end of its second line; its device's
+  section no longer lists it. Detached, it is back in its device's section. (Decided on 2026-11-15 on a mockup, over
+  showing it in both places.)
 - A session that is not attached looks exactly as today.
 - Row states are today's: the spinning icon while working, the attention style while it waits for the person.
 
@@ -106,10 +110,18 @@ there is no drop between rows. So:
   puts it there. Moving attached rows next to the coordinator is a real tab reorder (the panel writes its order back);
   after a detach the row stays where it was dropped.
 - Dropping a tab onto the **Sessions panel** attaches it too.
-- A tab of a paired device can be dropped onto the coordinator the same way.
+- A tab of a paired device can be dropped onto the coordinator the same way. Dropped onto a row outside the
+  coordinator's block, an attached tab of a paired device is detached and goes back to its device's section; inside the
+  block it is not reordered (its device owns its order).
 - **Tabs at the top** (the other tab layout): the coordinator's tab shows the Coordinator mark, a drop onto it attaches,
   and attached tabs move next to it; there is no indentation and no `↳` there. Detaching is by the panel or the tab's
-  context menu.
+  context menu. Tabs of paired devices stay where they are in this layout.
+
+**The tab's context menu.** Besides drag and drop, a Claude tab's context menu attaches and detaches (decided on
+2026-11-15 on a mockup): a tab that has a session, is no coordinator and is not attached has **Attach to the <project>
+coordinator**, one item per coordinator of this device, the tab's own project's first (a local tab keeps **Make project
+coordinator** under them); an attached tab has **Detach from the <project> coordinator**. A tab of a paired device has
+the same items, and never Make or Stop: a coordinator is used from its own device's window.
 
 ## Behaviour
 
