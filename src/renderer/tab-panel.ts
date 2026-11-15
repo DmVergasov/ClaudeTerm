@@ -296,6 +296,7 @@ export class TabPanel {
     const el = document.createElement('button')
     el.type = 'button'
     el.className = `tp-coord-chip ${chip.kind}`
+    el.setAttribute('aria-label', chip.kind === 'running' ? 'Coordinator' : 'Start a coordinator')
     const mark = document.createElement('span')
     mark.className = 'tp-coord-chip-mark'
     if (chip.kind === 'start') mark.innerHTML = icon('plus', 10)
