@@ -94,6 +94,7 @@ test('Attach… lists the other Claude sessions of this device, of another proje
   try {
     const other = await claudeTabIn(l, gitRepo())
     expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    await expect(page.locator(`#tabbar .tab[data-tab-id="${t0}"] .tab-coord`)).toHaveText('Coordinator')
     await activate(page, t0)
     await openSessions(page)
     await bar(page, 'Attach…').click()

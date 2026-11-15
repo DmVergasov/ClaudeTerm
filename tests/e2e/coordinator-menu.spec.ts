@@ -27,6 +27,7 @@ test('a second tab of the project asks before it replaces the coordinator: Cance
   const { page, pipeName, tabs: [t0, t1, t2], sids, repo } = l
   try {
     await makeCoordinator(page, t0)
+    await expect(pill(page, t0).locator('.tab-coord')).toHaveText('Coordinator')
     await coord(pipeName, t0, { op: 'attach', session: refOf(sids[2]) })
     const dialog = page.locator('.coord-dialog[data-dialog="replace"]')
     await menuItem(page, t1, 'Make project coordinator')
@@ -52,6 +53,7 @@ test('Esc closes the replace question and types nothing into the tab', async () 
   const { page, pipeName, tabs: [t0, t1], sids, repo } = l
   try {
     await makeCoordinator(page, t0)
+    await expect(pill(page, t0).locator('.tab-coord')).toHaveText('Coordinator')
     await coord(pipeName, t0, { op: 'attach', session: refOf(sids[2]) })
     const dialog = page.locator('.coord-dialog[data-dialog="replace"]')
     await menuItem(page, t1, 'Make project coordinator')
@@ -81,6 +83,7 @@ test('a local tab is attached from its menu, and Make project coordinator stays 
   const { page, tabs: [t0, t1], repo } = l
   try {
     await makeCoordinator(page, t0)
+    await expect(pill(page, t0).locator('.tab-coord')).toHaveText('Coordinator')
     // a right-click that lands while the menu's answers are on their way is tried again
     await expect(async () => {
       await pill(page, t1).click({ button: 'right' })
@@ -118,6 +121,7 @@ test('the ✕ and a press on the scrim close the replace question, and neither r
   const { page, tabs: [t0, t1] } = l
   try {
     await makeCoordinator(page, t0)
+    await expect(pill(page, t0).locator('.tab-coord')).toHaveText('Coordinator')
     const dialog = page.locator('.coord-dialog[data-dialog="replace"]')
     await menuItem(page, t1, 'Make project coordinator')
     await expect(dialog).toBeVisible()
