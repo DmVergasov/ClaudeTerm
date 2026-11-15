@@ -220,4 +220,22 @@ describe('roleNoteText', () => {
     const view = roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] })
     expect(roleNoteText({ ...view, problem })).toBe(`${roleNoteText(view)} ${problem}`)
   })
+
+  it('a name or a line is cut by characters: an emoji at the cut point is kept whole, and no lone surrogate is left', () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    const text = roleNoteText(roleView({ sessions: [row({ name: `${'n'.repeat(39)}😀tail`, line: `${'l'.repeat(59)}😀tail` })] }))
+    expect(text).toContain(`${'n'.repeat(39)}😀 — ${'l'.repeat(59)}😀)`)
+    expect(text).not.toMatch(lone)
+  })
+
+  it('the note is cut to ROLE_NOTE_MAX characters, and an emoji at that cut is not split either', () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    const view = roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] })
+    const base = roleNoteText(view)
+    // the emoji's first unit is the 1200th of the note, so a cut by units would leave it as the last character
+    const problem = `${'q'.repeat(ROLE_NOTE_MAX - base.length - 2)}😀z`
+    const text = roleNoteText({ ...view, problem })
+    expect(text.length).toBeLessThanOrEqual(ROLE_NOTE_MAX)
+    expect(text).not.toMatch(lone)
+  })
 })

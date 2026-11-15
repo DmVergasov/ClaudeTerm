@@ -1,5 +1,6 @@
 import type { ChatItem, HeadsUpAction, HeadsUpCard } from '../../shared/chat'
 import { quoteMarkdown } from '../../shared/quote-markdown'
+import { WAKE_HEADS } from '../../shared/report-wake'
 import { BACKGROUND_PROMPT, CONTINUE_PROMPT, LIMIT_PROMPT, RESUME_PROMPT } from '../auto-continue'
 import type { Logger } from '../log'
 
@@ -111,8 +112,12 @@ const clip = (text: string, cap: number): string => (text.length <= cap ? text :
 /** what ClaudeTerm types itself to get Claude going again: from the history these come back as plain user messages */
 const OWN_PROMPTS = new Set([CONTINUE_PROMPT, RESUME_PROMPT, BACKGROUND_PROMPT, LIMIT_PROMPT])
 
-/** a user item ClaudeTerm sent, not the person: an auto-continue nudge, live (from auto) or read back from the history */
-const fromClaudeTerm = (item: Extract<ChatItem, { kind: 'user' }>): boolean => item.from === 'auto' || OWN_PROMPTS.has(item.text.trim())
+/**
+ * a user item ClaudeTerm sent, not the person: an auto-continue nudge, live (from auto) or read back from the history, or a wake text
+ * ClaudeTerm wrote (a role note, a report or a message, all with a head of WAKE_HEADS): none of their words are the person's
+ */
+const fromClaudeTerm = (item: Extract<ChatItem, { kind: 'user' }>): boolean =>
+  item.from === 'auto' || OWN_PROMPTS.has(item.text.trim()) || WAKE_HEADS.some((h) => item.text.startsWith(h))
 
 /** one item of the conversation as the side agent reads it; null for what it does not need (thinking, cards, notices) */
 function itemLine(item: ChatItem): string | null {

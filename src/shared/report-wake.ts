@@ -39,25 +39,31 @@ const REPORT_HEAD = /^ its task (finished|failed|was stopped by the user)(?:: (.
 const REPORT_ID = /^id: (\S+)  \(the report on task \S+; read_session "([^"]*)" shows the session\)$/
 
 /**
- * A wake text's report blocks, and its other blocks as the rest (joined by a blank line). A text that is not wholly wake blocks
- * has no reports, and its rest is the text itself: a line out of the shape of a block anywhere makes the whole text no wake.
+ * A wake text's report blocks, its role notes (each as its text, quoted lines unquoted), and its other blocks as the rest (joined
+ * by a blank line). A text that is not wholly wake blocks has no reports or notes, and its rest is the text itself: a line out of
+ * the shape of a block anywhere makes the whole text no wake.
  */
-export function splitWake(text: string): { reports: ReportWake[]; rest: string } {
+export function splitWake(text: string): { reports: ReportWake[]; notes: string[]; rest: string } {
   const blocks = blocksOf(text)
-  if (blocks === null) return { reports: [], rest: text }
+  if (blocks === null) return { reports: [], notes: [], rest: text }
   const reports: ReportWake[] = []
+  const notes: string[] = []
   const rest: string[] = []
   for (const b of blocks) {
+    if (b.head.startsWith(ROLE_NOTE_HEAD)) {
+      notes.push(b.quoted.join('\n'))
+      continue
+    }
     if (!b.head.startsWith(REPORT_WAKE_HEAD)) {
       rest.push(b.raw)
       continue
     }
     const report = reportOf(b)
     // a report block that does not read as one is no wake at all
-    if (report === null) return { reports: [], rest: text }
+    if (report === null) return { reports: [], notes: [], rest: text }
     reports.push(report)
   }
-  return { reports, rest: rest.join('\n\n') }
+  return { reports, notes, rest: rest.join('\n\n') }
 }
 
 /** the blocks of a text, or null when a line is out of their shape */

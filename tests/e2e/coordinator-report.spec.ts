@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { labelOf } from '../../src/renderer/util'
+import { roleBlock } from '../../src/main/coordinator/session-text'
 import { REPORT_WAKE_HEAD } from '../../src/shared/report-wake'
 import type { CoordinatorView } from '../../src/shared/coordinator'
 import { gitRepo, KEYS, openTabInFront } from './helpers'
@@ -255,6 +256,22 @@ test('the chat\'s Find finds a word of the report\'s text', async () => {
     await l.page.locator('#search input').selectText()
     await l.page.keyboard.type('fixed')
     await expect.poll(() => highlightCount(l.page, 'chat-find')).toBe(1)
+  } finally {
+    await l.app.close()
+  }
+})
+
+test('a role note in the chat is drawn as ClaudeTerm\'s row, folded, and never as the person\'s bubble', async () => {
+  const note = roleBlock('You coordinate acme in ClaudeTerm: 1 session (parser — Idle). Reports come by themselves when a task ends; use list_sessions for more.')
+  // the stand-in writes the note as a user line of the conversation, as Claude Code writes what a watcher hands it
+  const l = await launchChatTab({ turns: { hello: [{ inject: { text: note } }, { text: 'Hi there' }] }, fallback: [{ text: 'Noted.' }] }, { work: gitRepo() })
+  try {
+    await readyChat(l.page, l.tabId)
+    const row = l.page.locator('.chat-host:visible .chat-event', { hasText: 'ClaudeTerm told the coordinator its role' })
+    await expect(row).toHaveCount(1)
+    await expect(l.page.locator('.chat-host:visible .chat-user', { hasText: 'Note from ClaudeTerm' })).toHaveCount(0)
+    await row.locator('.chat-event-head').click()
+    await expect(row.locator('.chat-event-body')).toContainText('You coordinate acme in ClaudeTerm')
   } finally {
     await l.app.close()
   }

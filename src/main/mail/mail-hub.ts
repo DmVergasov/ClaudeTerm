@@ -402,14 +402,15 @@ export class MailHub {
     const note = into === 'running' ? (this.deps.roleNote?.(w.tabId) ?? null) : null
     const mail = this.pending(w.tabId, session, into)
     if (mail.length === 0 && note === null) return
-    // the oldest messages that fit one wake text after the note; the rest wait for the next watcher
-    const wake = mail.length === 0 ? null : this.wakeOf(session, mail, false, WAKE_MAX - (note === null ? 0 : note.length + 2))
-    if (mail.length > 0 && !wake) return
-    const info = [note, wake?.info].filter(Boolean).join('\n\n')
+    const wake = mail.length === 0 ? null : this.wakeOf(session, mail, false)
+    // the note rides with the mail when both fit one wake text; when they do not, the mail goes alone and the note stays due
+    // for the next running hand-over, so the wake never passes WAKE_MAX
+    const withNote = note !== null && (wake === null || note.length + 2 + wake.info.length <= WAKE_MAX)
+    const info = [withNote ? note : null, wake?.info].filter(Boolean).join('\n\n')
     this.handOver(w, into)
     // finish() first: marking the mail notifies the watchers, and this one must already be off the hold
     this.finish(w, { ok: true, info })
-    if (note !== null) this.deps.roleNoteTaken?.(w.tabId)
+    if (withNote) this.deps.roleNoteTaken?.(w.tabId)
     if (wake) {
       this.deps.store.mark(wake.taken.map(r => r.id), 'delivered')
       this.deps.handedOver?.(w.tabId, wake.taken, into)
@@ -434,11 +435,11 @@ export class MailHub {
    * The wake text of the oldest of the mail that fits, then the session's pending stopped reports ride along, oldest
    * first, while the whole wake still fits: a coordinator woken by a report learns of a stop in the same wake. The
    * riders never take the place of the mail, and a rider that does not fit waits for a later hand-over. A prompt takes
-   * riders only when its mail holds a report. Null when none of the mail fits.
+   * riders only when its mail holds a report. Null only when there is no mail: the oldest record always takes the wake, whatever its size.
    */
-  private wakeOf(session: string, mail: MailRecord[], prompt: boolean, max = WAKE_MAX): { taken: MailRecord[]; info: string } | null {
+  private wakeOf(session: string, mail: MailRecord[], prompt: boolean): { taken: MailRecord[]; info: string } | null {
     const senders = (a: MailAddress): { folder: string | null; branch: string | null } => this.deps.sender(a)
-    const real = wakeTextWithin(mail, senders, max).taken
+    const real = wakeTextWithin(mail, senders, WAKE_MAX).taken
     if (real.length === 0) return null
     if (prompt && !real.some(r => kindOf(r) === 'report')) return { taken: real, info: wakeText(real, senders) }
     const ids = new Set(mail.map(r => r.id))
@@ -446,7 +447,7 @@ export class MailHub {
     for (const rider of this.pendingStops(session)) {
       if (ids.has(rider.id)) continue
       const next = [...taken, rider]
-      if (wakeText(next, senders).length > max) break
+      if (wakeText(next, senders).length > WAKE_MAX) break
       taken = next
     }
     return { taken, info: wakeText(taken, senders) }

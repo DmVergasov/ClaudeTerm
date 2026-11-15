@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatItem, HeadsUpCard } from '../../src/shared/chat'
-import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, askMessage, excerpt, parseFinding } from '../../src/main/chat/heads-up'
+import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, askMessage, excerpt, parseFinding, personWords } from '../../src/main/chat/heads-up'
 import { BACKGROUND_PROMPT } from '../../src/main/auto-continue'
 
 const FINDING = [
@@ -111,6 +111,16 @@ describe('excerpt', () => {
       { kind: 'user', id: '3', text: 'The usage limit has reset.', attachments: [], queued: false, from: 'auto' }
     ]
     expect(excerpt(sent)).toBe(`Person: Почини сборку\nClaudeTerm: ${BACKGROUND_PROMPT}\nClaudeTerm: The usage limit has reset.`)
+  })
+
+  it("a wake text ClaudeTerm writes (its role note) is ClaudeTerm's words: the excerpt labels it so, and the person's language does not read it", () => {
+    const note = 'Note from ClaudeTerm, not from the user:\nfrom: ClaudeTerm\nid: role-note\n\n> You coordinate acme in ClaudeTerm: 1 session (parser — Idle).'
+    const items: ChatItem[] = [
+      { kind: 'user', id: '1', text: 'Почини сборку', attachments: [], queued: false },
+      { kind: 'user', id: '2', text: note, attachments: [], queued: false }
+    ]
+    expect(excerpt(items)).toBe(`Person: Почини сборку\nClaudeTerm: ${note}`)
+    expect(personWords(items)).toEqual(['Почини сборку'])
   })
 })
 

@@ -1234,6 +1234,17 @@ describe('the role note of a coordinator', () => {
     expect(w.hub.roleNote('tab-c')).toBeNull()
   })
 
+  it('a resume does not make the note due: a restored coordinator is not told its role again', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.roleNoteTaken('tab-c')
+    const RESUMED = uid(0x2006)
+    update(w, 'tab-c', { session: RESUMED })
+    w.hub.sessionStarted('tab-c', S.coord, RESUMED, 'resume')
+    expect(w.store.coordinator(RESUMED)).toMatchObject({ session: RESUMED })
+    expect(w.hub.roleNote('tab-c')).toBeNull()
+  })
+
   it('a stop, a closed tab and an exited tab each drop the note', () => {
     const stopped = world()
     stopped.hub.make('tab-c', false)

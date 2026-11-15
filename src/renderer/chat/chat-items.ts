@@ -142,16 +142,21 @@ export function streamText(node: HTMLElement, markdown: string): void {
   tailNode.innerHTML = chatMarkdownHtml(tail, { paths: true })
 }
 
+/** the title of a role note's row: what ClaudeTerm told the coordinator, not what the person wrote */
+const ROLE_NOTE_TITLE = 'ClaudeTerm told the coordinator its role'
+
 /**
  * A message the person or ClaudeTerm sent. A wake text's report blocks are cards, drawn in place of the text; a report the column
- * holds already (one handed to the tab) is not drawn again. The rest of the text, and the files, are the message as it was.
+ * holds already (one handed to the tab) is not drawn again. A role note is a compact event row, its text folded under it, never a
+ * bubble. The rest of the text, and the files, are the message as it was.
  */
 function userItem(item: Extract<ChatItem, { kind: 'user' }>, cb: ItemCallbacks): HTMLElement {
   // a wake text starts with one of its heads: a text that does not is no wake, and is not read
-  const { reports, rest } = WAKE_HEADS.some((h) => item.text.startsWith(h)) ? splitWake(item.text) : { reports: [], rest: item.text }
+  const { reports, notes, rest } = WAKE_HEADS.some((h) => item.text.startsWith(h)) ? splitWake(item.text) : { reports: [], notes: [], rest: item.text }
   const row = userRow(item, rest, cb)
-  if (reports.length === 0) return row
+  if (reports.length === 0 && notes.length === 0) return row
   const wake = el('div', 'chat-item coord-wake')
+  for (const note of notes) wake.append(eventItem('message', ROLE_NOTE_TITLE, null, note))
   for (const r of reports) {
     if (cb.hasItem(`report:${r.mailId}`)) continue
     wake.append(reportCard({ mailId: r.mailId, name: r.name, ref: r.ref, outcome: r.outcome, reason: r.reason, at: null, text: r.text }, cb))

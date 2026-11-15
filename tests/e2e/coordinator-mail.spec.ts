@@ -82,10 +82,14 @@ test('the role note reaches the coordinator at its next typed turn and wakes not
 
     // /clear gives the coordinator a new session: its next typed turn carries the note again, with the sessions as they are then
     await coord(pipeName, t0, { op: 'message', session: refOf(sids[1]), text: 'Fix the parser.' })
+    // the turn ends before the clear, as a real /clear comes between turns: the watcher after it is the idle case
+    await done(pipeName, t0, sids[0])
     const next = randomUUID()
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: t0, sessionId: next, source: 'clear', transcriptPath: null })).toEqual({ ok: true })
     const after = (await page.evaluate((id) => window.ct.coordView(id), t0)) as CoordinatorView
     const attached = after.sessions.find((r) => r.session === sids[1])!
+    // the note is built when it is handed over: the row has moved on since the first note
+    expect(attached.line).not.toBe(row.line)
     const third = waitForMail(pipeName, t0, next)
     await stillWaiting(third, 1000)
     await turnOf(pipeName, t0, next)
@@ -96,6 +100,8 @@ test('the role note reaches the coordinator at its next typed turn and wakes not
     await activate(page, t0)
     await openPanelFocused(page)
     await expect(page.locator('#image-panel')).toBeVisible()
+    // the panel has drawn the messages first: the check of the note is not met by an empty panel
+    await expect(page.locator('#image-panel .mail-message', { hasText: 'Second turn.' })).toHaveCount(1)
     await expect(page.locator('#image-panel .mail-message', { hasText: 'You coordinate' })).toHaveCount(0)
   } finally { await l.app.close() }
 })

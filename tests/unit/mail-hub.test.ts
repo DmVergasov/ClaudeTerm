@@ -1203,7 +1203,7 @@ describe('MailHub role note', () => {
     expect(due.has('tab-2')).toBe(false)
   })
 
-  it('the note takes its place in the wake budget: mail that no longer fits waits for the next watcher', async () => {
+  it('a note that does not fit in one wake with the mail goes out later: the mail is handed over alone and the note stays due', async () => {
     const note = `Note ${'n'.repeat(1195)}`
     let allow = false
     const { hub, store, due } = noteSetup(note, { accepts: () => allow })
@@ -1219,13 +1219,35 @@ describe('MailHub role note', () => {
     allow = true
     hub.tabsChanged()
     const answer = (await held) as { info: string }
-    expect(answer.info.startsWith(`${note}\n\n`)).toBe(true)
+    expect(answer.info.startsWith(note)).toBe(false)
     expect(answer.info).toContain('a'.repeat(6500))
-    expect(answer.info).not.toContain('b'.repeat(10))
+    expect(answer.info).toContain('b'.repeat(1500))
     expect(answer.info.length).toBeLessThanOrEqual(9500)
     expect(store.get(first.id)?.delivered).toBe(true)
-    expect(store.get(second.id)?.delivered).toBe(false)
-    expect(due.has('tab-2')).toBe(false)
+    expect(store.get(second.id)?.delivered).toBe(true)
+    expect(due.has('tab-2')).toBe(true)
+  })
+
+  it('a note that would push the wake past WAKE_MAX, with one message of MAIL_TEXT_MAX on many lines, goes out later: the message goes alone and the note stays due', async () => {
+    const note = `Note ${'n'.repeat(1195)}`
+    let allow = false
+    const { hub, store, due } = noteSetup(note, { accepts: () => allow })
+    due.delete('tab-2')
+    const held = hub.wait('tab-2', SES_LOCAL, signal())
+    hub.userTurn('tab-2')
+    // a line every 28 characters: the quoting adds two characters to each of about 285 lines, so the message alone is about 8,800
+    const text = Array.from({ length: 300 }, (_, i) => `line ${i} ${'x'.repeat(20)}`).join('\n').slice(0, MAIL_TEXT_MAX)
+    const big = record({ from: MAC, to: LOCAL, text, sentAt: NOW })
+    store.add(big)
+    due.add('tab-2')
+    allow = true
+    hub.tabsChanged()
+    const answer = (await held) as { info: string }
+    expect(answer.info.length).toBeLessThanOrEqual(9500)
+    expect(answer.info).toContain(`> line 0 ${'x'.repeat(20)}`)
+    expect(answer.info.startsWith(note)).toBe(false)
+    expect(store.get(big.id)?.delivered).toBe(true)
+    expect(due.has('tab-2')).toBe(true)
   })
 
   it('the same two messages with no note both fit one wake', async () => {

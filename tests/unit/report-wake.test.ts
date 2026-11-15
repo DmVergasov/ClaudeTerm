@@ -12,7 +12,7 @@ const where = () => ({ folder: 'D:\\Work\\acme', branch: 'main' })
 
 describe('splitWake reads the report blocks of a wake text', () => {
   it('reads a finished report: its mail id, the session\'s name and ref, and its text', () => {
-    expect(splitWake(wakeText([report({})], where))).toEqual({ reports: [{ mailId: report({}).id, name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, text: 'Parser fixed.' }], rest: '' })
+    expect(splitWake(wakeText([report({})], where))).toEqual({ reports: [{ mailId: report({}).id, name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, text: 'Parser fixed.' }], notes: [], rest: '' })
   })
 
   it('reads a failed and a stopped report with their reasons, and a text of several lines', () => {
@@ -35,8 +35,8 @@ describe('splitWake reads the report blocks of a wake text', () => {
   })
 
   it('a text that is not wholly wake blocks is no wake', () => {
-    expect(splitWake('Report from a session attached to you, through ClaudeTerm: its task finished.\nplain')).toEqual({ reports: [], rest: 'Report from a session attached to you, through ClaudeTerm: its task finished.\nplain' })
-    expect(splitWake('Fix the parser.')).toEqual({ reports: [], rest: 'Fix the parser.' })
+    expect(splitWake('Report from a session attached to you, through ClaudeTerm: its task finished.\nplain')).toEqual({ reports: [], notes: [], rest: 'Report from a session attached to you, through ClaudeTerm: its task finished.\nplain' })
+    expect(splitWake('Fix the parser.')).toEqual({ reports: [], notes: [], rest: 'Fix the parser.' })
   })
 })
 
@@ -60,24 +60,32 @@ describe('splitWake reads a report of any shape in linear time', () => {
   it('a long text that is no wake is read in time, and stays the rest', () => {
     const long = `Report from a session attached to you, through ClaudeTerm: its task finished.\nfrom: x${' [a] ('.repeat(200_000)}`
     const started = performance.now()
-    expect(splitWake(long)).toEqual({ reports: [], rest: long })
+    expect(splitWake(long)).toEqual({ reports: [], notes: [], rest: long })
     expect(performance.now() - started).toBeLessThan(2000)
     const plain = 'x'.repeat(1024 * 1024)
-    expect(splitWake(plain)).toEqual({ reports: [], rest: plain })
+    expect(splitWake(plain)).toEqual({ reports: [], notes: [], rest: plain })
   })
 })
 
 describe('splitWake reads the role note of the coordinator', () => {
-  it('a role note riding with a report: the report is read, and the note stays the rest', () => {
-    const note = roleBlock('You coordinate acme in ClaudeTerm: no sessions are attached yet.')
-    const text = [note, wakeText([report({})], where)].join('\n\n')
-    expect(splitWake(text)).toEqual({ reports: [{ mailId: report({}).id, name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, text: 'Parser fixed.' }], rest: note })
+  it('a role note riding with a report: the report is read, and the note is read apart, its text as the note', () => {
+    const body = 'You coordinate acme in ClaudeTerm: no sessions are attached yet.'
+    const text = [roleBlock(body), wakeText([report({})], where)].join('\n\n')
+    expect(splitWake(text)).toEqual({ reports: [{ mailId: report({}).id, name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, text: 'Parser fixed.' }], notes: [body], rest: '' })
   })
 
-  it('a role note alone is no report, and its text is the rest', () => {
-    const note = roleBlock('You coordinate acme in ClaudeTerm: 1 session (parser — Idle).\n> quoted-looking line')
-    expect(splitWake(note)).toEqual({ reports: [], rest: note })
+  it('a role note alone is no report and no message: its text is the note, quoted lines and all, and the rest is empty', () => {
+    const body = 'You coordinate acme in ClaudeTerm: 1 session (parser — Idle).\n> quoted-looking line'
+    const note = roleBlock(body)
+    expect(splitWake(note)).toEqual({ reports: [], notes: [body], rest: '' })
     expect(note.startsWith(ROLE_NOTE_HEAD)).toBe(true)
+  })
+
+  it('a role note with a message: the message stays the rest, and the note is apart', () => {
+    const DOCS = { device: null, session: 'b2000000-0000-4000-8000-000000000003', name: 'docs · Desktop' }
+    const message: MailRecord = { v: 1, id: '2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a', from: DOCS, to: COORD, text: 'hello from docs', replyTo: null, sentAt: 1, delivered: false, read: false }
+    const body = 'You coordinate acme in ClaudeTerm: no sessions are attached yet.'
+    expect(splitWake([roleBlock(body), wakeText([message], where)].join('\n\n'))).toEqual({ reports: [], notes: [body], rest: wakeText([message], where) })
   })
 })
 
