@@ -68,7 +68,7 @@ test('the role note reaches the coordinator at its next typed turn and wakes not
     const view = (await page.evaluate((id) => window.ct.coordView(id), t0)) as CoordinatorView
     const row = view.sessions.find((r) => r.session === sids[1])!
     expect(note.info!.startsWith(`${ROLE_NOTE_HEAD}\n`)).toBe(true)
-    expect(note.info).toContain(`You coordinate ${view.project.name} in ClaudeTerm: 1 session (${row.name} — ${row.line}).`)
+    expect(note.info).toContain(`You coordinate ${view.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to. 1 session (${row.name} — ${row.line}).`)
 
     // the note is taken: the next typed turn carries the message alone, with no second note
     await done(pipeName, t0, sids[0])
@@ -94,7 +94,7 @@ test('the role note reaches the coordinator at its next typed turn and wakes not
     await stillWaiting(third, 1000)
     await turnOf(pipeName, t0, next)
     const again = (await within(third, 10_000)) as WaitAnswer
-    expect(again.info).toContain(`You coordinate ${after.project.name} in ClaudeTerm: 1 session (${attached.name} — ${attached.line}).`)
+    expect(again.info).toContain(`You coordinate ${after.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to. 1 session (${attached.name} — ${attached.line}).`)
 
     // the note is no message: the coordinator's Agent messages panel holds none
     await activate(page, t0)

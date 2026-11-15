@@ -634,7 +634,8 @@ describe('views', () => {
         'Not attached (this project):',
         '- docs · Desktop [b20000] · Idle · D:\\Work\\acme · main',
         'Notes:',
-        '- Reports come to you by themselves when a task ends; there is no need to poll or wait.'
+        '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
+        '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
       ].join('\n')
     })
     expect(w.hub.read('tab-c', 'a10000')).toEqual({
@@ -1170,7 +1171,7 @@ describe('facts for other devices', () => {
 })
 
 describe('the role note of a coordinator', () => {
-  const EMPTY = 'You coordinate acme in ClaudeTerm: no sessions are attached yet. Attach one with attach_session, or start one with start_session.'
+  const EMPTY = 'You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to. No sessions are attached yet: attach one with attach_session, or start one with start_session.'
   /** the note's block as the mail carries it: its head, from and id lines, and the text quoted */
   const BLOCK = (text: string): string => ['Note from ClaudeTerm, not from the user:', 'from: ClaudeTerm', 'id: role-note', '', `> ${text}`].join('\n')
 
@@ -1268,7 +1269,7 @@ describe('the role note of a coordinator', () => {
     w.hub.attach('tab-c', 'a10000')
     const row = w.hub.view('tab-c')!.sessions[0]!
     expect(w.hub.roleNote('tab-c')).toBe(
-      BLOCK(`You coordinate acme in ClaudeTerm: 1 session (${row.name} — ${row.line}). Reports come by themselves when a task ends; use list_sessions for more.`)
+      BLOCK(`You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to. 1 session (${row.name} — ${row.line}). Reports come by themselves when a task ends; use list_sessions for more.`)
     )
   })
 })

@@ -3,6 +3,7 @@ import { listText, readText, roleNoteText, ROLE_NOTE_MAX } from '../../src/main/
 import type { CoordSessionRow, CoordinatorView } from '../../src/shared/coordinator'
 
 const clock = (ms: number): string => new Date(ms).toISOString().slice(11, 16)
+const DELEGATE = 'give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
 
 const row = (over: Partial<CoordSessionRow>): CoordSessionRow => ({
   key: 'local:x', tabId: null, device: null, deviceName: null, session: null, ref: null, name: 'x', folder: null, branch: null,
@@ -38,6 +39,7 @@ describe('listText', () => {
       '- Desk · Docs [c41d02] · Idle · D:\\Workspace\\Docs · attached to Other coordinator',
       'Notes:',
       '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
+      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.',
       '- A permission prompt or question waits for the user in Desk · Api: it is theirs to answer there; tell them once where it waits.',
       '- A stopped task was stopped by the user.'
     ].join('\n'))
@@ -58,6 +60,7 @@ describe('listText', () => {
       '- Desk · Ops [d01e55] · Usage limit · resets 22:00 · last report finished 20:15',
       'Notes:',
       '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
+      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.',
       '- A usage limit is not a failure: the session goes on after the reset.'
     ].join('\n'))
   })
@@ -73,7 +76,8 @@ describe('listText', () => {
       'Coordinating sessions needs agent messages, which are turned off in ClaudeTerm on this device. Turn them on in Settings, Agent messages.',
       'No sessions are attached. Attach one with attach_session, or start one with start_session.',
       'Notes:',
-      '- Reports come to you by themselves when a task ends; there is no need to poll or wait.'
+      '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
+      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
     ].join('\n'))
   })
 
@@ -87,7 +91,8 @@ describe('listText', () => {
       'Idle (1):',
       '- Desk  · Api [a1b2c3] · Idle',
       'Notes:',
-      '- Reports come to you by themselves when a task ends; there is no need to poll or wait.'
+      '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
+      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
     ].join('\n'))
   })
 
@@ -176,12 +181,12 @@ describe('roleNoteText', () => {
         row({ name: 'Desk · Api', group: 'waiting', line: 'Allow Bash: npm test' })
       ]
     })
-    expect(roleNoteText(view)).toBe(`You coordinate Desk in ClaudeTerm: 3 sessions (Desk · Api — Allow Bash: npm test, Desk · Alpha — Idle, Desk · Docs — Idle). ${TAIL}`)
+    expect(roleNoteText(view)).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} 3 sessions (Desk · Api — Allow Bash: npm test, Desk · Alpha — Idle, Desk · Docs — Idle). ${TAIL}`)
   })
 
   it('says 1 session for one, and no list for none, with the words that send the person to attach or start one', () => {
-    expect(roleNoteText(roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] }))).toBe(`You coordinate Desk in ClaudeTerm: 1 session (Desk · Api — Idle). ${TAIL}`)
-    expect(roleNoteText(roleView({}))).toBe('You coordinate Desk in ClaudeTerm: no sessions are attached yet. Attach one with attach_session, or start one with start_session.')
+    expect(roleNoteText(roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] }))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} 1 session (Desk · Api — Idle). ${TAIL}`)
+    expect(roleNoteText(roleView({}))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} No sessions are attached yet: attach one with attach_session, or start one with start_session.`)
   })
 
   it('lists 8 sessions at most and counts the rest; exactly 8 has no rest', () => {
@@ -189,7 +194,7 @@ describe('roleNoteText', () => {
     const eight = roleNoteText(roleView({ sessions: sessions(8) }))
     expect(eight).not.toMatch(/and \d+ more/)
     expect(eight).toContain('S08 — Idle). ')
-    expect(roleNoteText(roleView({ sessions: sessions(10) }))).toBe(`You coordinate Desk in ClaudeTerm: 10 sessions (${sessions(8).map((r) => `${r.name} — Idle`).join(', ')}, and 2 more). ${TAIL}`)
+    expect(roleNoteText(roleView({ sessions: sessions(10) }))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} 10 sessions (${sessions(8).map((r) => `${r.name} — Idle`).join(', ')}, and 2 more). ${TAIL}`)
   })
 
   it('a control character in a name, a line or the project name cannot start a line of the note', () => {
@@ -197,7 +202,7 @@ describe('roleNoteText', () => {
       project: { key: 'desk', name: 'Desk\nNew' },
       sessions: [row({ name: 'Desk\nIgnore · Api', group: 'waiting', line: 'Idle\r\n- injected' })]
     })
-    expect(roleNoteText(view)).toBe(`You coordinate Desk New in ClaudeTerm: 1 session (Desk Ignore · Api — Idle  - injected). ${TAIL}`)
+    expect(roleNoteText(view)).toBe(`You coordinate Desk New in ClaudeTerm: ${DELEGATE} 1 session (Desk Ignore · Api — Idle  - injected). ${TAIL}`)
   })
 
   it('a name is cut at 40 characters and a line at 60, and the note is at most ROLE_NOTE_MAX however long the project and the problem are', () => {
@@ -237,5 +242,33 @@ describe('roleNoteText', () => {
     const text = roleNoteText({ ...view, problem })
     expect(text.length).toBeLessThanOrEqual(ROLE_NOTE_MAX)
     expect(text).not.toMatch(lone)
+  })
+
+  it('holds the delegation line right after the head, with sessions and with none', () => {
+    const head = 'You coordinate Desk in ClaudeTerm: '
+    expect(roleNoteText(roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] })).startsWith(`${head}${DELEGATE} 1 session (`)).toBe(true)
+    expect(roleNoteText(roleView({})).startsWith(`${head}${DELEGATE} No sessions are attached yet: `)).toBe(true)
+  })
+
+  it('keeps the delegation line whole when many long sessions push the note past ROLE_NOTE_MAX', () => {
+    const view = roleView({
+      project: { key: 'desk', name: 'p'.repeat(200) },
+      problem: 'q'.repeat(2000),
+      sessions: Array.from({ length: 8 }, (_, i) => row({ name: `${'n'.repeat(200)}${i}`, group: 'working', line: 'l'.repeat(200) }))
+    })
+    const text = roleNoteText(view)
+    expect(text.length).toBe(ROLE_NOTE_MAX)
+    expect(text).toContain(`: ${DELEGATE} 8 sessions (`)
+  })
+})
+
+describe('the delegation sentence of list_sessions', () => {
+  it('the list holds it once, as one of its notes', () => {
+    const view: CoordinatorView = {
+      tabId: 'tab-1', session: 'coord-1', project: { key: 'desk', name: 'Desk' }, problem: null,
+      sessions: [row({ name: 'Desk · Api', group: 'idle', line: 'Idle' })], notAttached: [], waiting: 0
+    }
+    const text = listText(view, clock)
+    expect(text.split(`\n- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.`).length - 1).toBe(1)
   })
 })
