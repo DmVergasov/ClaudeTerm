@@ -253,8 +253,8 @@ describe('the answers the new-tab menu shows', () => {
   it('openTab from B opens the tab on A and answers its id', async () => {
     const p = await pair()
     pairs.push(p)
-    expect(await p.actions.openTab(A_ID, { kind: 'shell', profile: 'Bash', account: null, resume: null })).toBe(T3)
-    expect(p.a.opened).toEqual([{ kind: 'shell', profile: 'Bash', account: null, resume: null }])
+    expect(await p.actions.openTab(A_ID, { kind: 'shell', profile: 'Bash', account: null, resume: null, cwd: null, email: null, title: null })).toBe(T3)
+    expect(p.a.opened).toEqual([{ kind: 'shell', profile: 'Bash', account: null, resume: null, cwd: '/home/demo', title: null }])
     expect(p.toasts).toEqual([])
   })
 
@@ -262,7 +262,7 @@ describe('the answers the new-tab menu shows', () => {
     const p = await pair()
     pairs.push(p)
     p.a.ctx.openTab = () => null
-    expect(await p.actions.openTab(A_ID, { kind: 'claude', profile: null, account: null, resume: null })).toBeNull()
+    expect(await p.actions.openTab(A_ID, { kind: 'claude', profile: null, account: null, resume: null, cwd: null, email: null, title: null })).toBeNull()
     expect(p.toasts).toEqual([REMOTE_COPY.openTabFailed])
   })
 
@@ -271,7 +271,7 @@ describe('the answers the new-tab menu shows', () => {
     pairs.push(p)
     p.linkB.close('test')
     await until(() => !p.viewerB.online(A_ID))
-    expect(await p.actions.openTab(A_ID, { kind: 'shell', profile: 'Bash', account: null, resume: null })).toBeNull()
+    expect(await p.actions.openTab(A_ID, { kind: 'shell', profile: 'Bash', account: null, resume: null, cwd: null, email: null, title: null })).toBeNull()
     expect(p.toasts).toEqual([REMOTE_COPY.deviceOffline('Studio')])
     expect(p.a.opened).toEqual([])
   })
@@ -313,9 +313,9 @@ describe('tab calls between two devices', () => {
 
   it('open-tab from B opens a tab on A and answers its id', async () => {
     const p = await open()
-    const reply = await p.actions.ask(A_ID, 'open-tab', { kind: 'shell', profile: 'Bash', account: null, resume: null })
-    expect(reply).toEqual({ id: T3 })
-    expect(p.a.opened).toEqual([{ kind: 'shell', profile: 'Bash', account: null, resume: null }])
+    const reply = await p.actions.ask(A_ID, 'open-tab', { kind: 'shell', profile: 'Bash', account: null, resume: null, cwd: null, email: null, title: null })
+    expect(reply).toEqual({ id: T3, cwd: '/home/demo', accountName: 'Main account', defaulted: false })
+    expect(p.a.opened).toEqual([{ kind: 'shell', profile: 'Bash', account: null, resume: null, cwd: '/home/demo', title: null }])
   })
 
   it('close, mute and restart from B reach A; switch-account answers ok', async () => {

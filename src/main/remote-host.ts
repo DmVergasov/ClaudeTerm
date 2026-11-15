@@ -7,8 +7,8 @@ import type { DeviceResult } from '../shared/devices'
 import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, REMOTE_COPY, REVIEW_FILE_BYTES, REVIEW_PART_BYTES, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteTab } from '../shared/remote'
 import { MAX_HASH, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { PlanUpdate } from '../shared/ipc'
-import type { RecentSession, TabInfo, TabPlace } from '../shared/types'
-import type { AccountView } from '../shared/accounts'
+import type { RecentSession, TabInfo, TabKind, TabPlace } from '../shared/types'
+import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import { capItems, capSnapshot, itemForMember, MAX_CHAT_PATCHES } from './chat/chat-mirror'
 import type { ImageHub } from './image-hub'
 import { isAbsPath, isHash } from './ipc-guards'
@@ -18,7 +18,7 @@ import type { ReviewHub } from './review-hub'
 import type { StatusHub } from './status-hub'
 import type { TabManager } from './tab-manager'
 import { CallError, type CallEntry } from './sync/calls'
-import { CALL_ARGS, type CallArgs } from './sync/remote-shapes'
+import { CALL_ARGS } from './sync/remote-shapes'
 import { parsePlace } from './sync/remote-wire'
 import { type HostTabs, nextTurn, type TabHost } from './sync/tab-host'
 import { statusSummary, type TabAttention } from './sync/tab-directory'
@@ -96,6 +96,16 @@ export interface HostChat {
   openInTerminal(tabId: string, line: string | null): Promise<boolean>
 }
 
+/** a tab a member asks this device to open, its folder checked here */
+export interface HostOpenTab {
+  kind: TabKind
+  profile: string | null
+  account: string | null
+  resume: string | null
+  cwd: string
+  title: string | null
+}
+
 /** what this device gives a member about its tabs: the directory and the hub updates each tab has */
 export interface HostContext {
   tabs: Pick<TabManager, 'list' | 'get' | 'isTransient' | 'close' | 'rename' | 'setMuted' | 'restart' | 'switchAccount' | 'size' | 'canFork' | 'fork'>
@@ -128,8 +138,14 @@ export interface HostContext {
   profiles(): string[]
   /** the text typed for paths into one of this device's tabs: quoted for the tab's shell, double quotes for a Claude tab */
   typedPaths(tabId: string, paths: string[]): string
-  /** opens a tab in this device's default folder without bringing it to the front of this window */
-  openTab(req: CallArgs['open-tab']): TabInfo | null
+  /** opens a tab in the folder asked for, else in the default folder, without bringing it to the front of this window */
+  openTab(req: HostOpenTab): TabInfo | null
+  /** the folder new tabs open in on this device: the default folder setting, else the home folder */
+  defaultFolder(): string
+  /** whether a folder is an existing directory on this device; async, so a check never blocks main */
+  isDirectory(path: string): Promise<boolean>
+  /** the account a tab opens on for a coordinator with this email: see accountForEmail */
+  accountByEmail(email: string): string | null
   writeInput(tabId: string, data: string, from: string | null): void
   claim(tabId: string, from: string, cols: number, rows: number): void
   /** the tab a member has in front, and whether the member is present (see Presence); focused is a 0.15.0 member's flag, kept for its clearing */
@@ -210,12 +226,20 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
   const sessionsOfMember = members
   return {
     'open-tab': {
-      run: (a) => {
+      run: async (a) => {
         const req = CALL_ARGS['open-tab'](a)
         if (!req) throw new CallError('bad arguments')
-        const tab = ctx.openTab(req)
+        // the folder asked for is used when it is absolute here and an existing directory; else the default folder, and the answer says so
+        const cwd = isAbsPath(req.cwd) && (await ctx.isDirectory(req.cwd)) ? req.cwd : ctx.defaultFolder()
+        const account = req.email !== null ? ctx.accountByEmail(req.email) : req.account
+        const tab = ctx.openTab({ kind: req.kind, profile: req.profile, account, resume: req.resume, cwd, title: req.title })
         if (!tab) throw new CallError(REMOTE_COPY.openTabFailed)
-        return { id: tab.id }
+        return {
+          id: tab.id,
+          cwd: tab.cwd,
+          accountName: tab.account === null ? MAIN_ACCOUNT : (ctx.accounts.nameOf(tab.account) ?? MAIN_ACCOUNT),
+          defaulted: req.cwd !== null && cwd !== req.cwd
+        }
       }
     },
     close: {

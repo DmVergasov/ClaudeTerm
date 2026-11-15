@@ -1,7 +1,6 @@
 import { changeFolderOf, folderListingOf, type TabFolderDeps } from '../../src/main/folder-browse'
-import type { HostContext } from '../../src/main/remote-host'
+import type { HostContext, HostOpenTab } from '../../src/main/remote-host'
 import { typedPaths } from '../../src/main/profiles'
-import type { CallArgs } from '../../src/main/sync/remote-shapes'
 import { TabAttention } from '../../src/main/sync/tab-directory'
 import { TabSizes } from '../../src/main/sync/tab-sizes'
 import type { AccountView } from '../../src/shared/accounts'
@@ -118,7 +117,12 @@ export interface FakeHost {
   restarted: [string, boolean][]
   switched: [string, string | null][]
   closed: string[]
-  opened: CallArgs['open-tab'][]
+  opened: HostOpenTab[]
+  /** the folders that are directories on this device (isDirectory); the default folder answers when none is asked for or the one asked for is not here */
+  dirs: Set<string>
+  defaultFolder: string
+  /** the account a tab opens on for each coordinator email (accountByEmail); no entry: Main account */
+  byEmail: Record<string, string>
   inputs: [string, string, string | null][]
   claims: [string, string, number, number][]
   fronts: [string, string | null, boolean][]
@@ -185,6 +189,9 @@ export function fakeHost(): FakeHost {
     switched: [],
     closed: [],
     opened: [],
+    dirs: new Set(['/work/acme']),
+    defaultFolder: '/home/demo',
+    byEmail: {},
     inputs: [],
     claims: [],
     fronts: [],
@@ -351,8 +358,11 @@ export function fakeHost(): FakeHost {
     },
     openTab: (req) => {
       h.opened.push(req)
-      return tabInfo(T3, { kind: req.kind, profile: req.profile ?? 'Bash' })
+      return tabInfo(T3, { kind: req.kind, profile: req.profile ?? 'Bash', cwd: req.cwd, folder: req.cwd, account: req.account })
     },
+    defaultFolder: () => h.defaultFolder,
+    isDirectory: async (path) => h.dirs.has(path),
+    accountByEmail: (email) => h.byEmail[email] ?? null,
     writeInput: (id, data, from) => {
       h.inputs.push([id, data, from])
     },

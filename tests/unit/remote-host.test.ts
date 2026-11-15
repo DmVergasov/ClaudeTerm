@@ -263,10 +263,29 @@ describe('the calls of this device', () => {
     await expect(run(f, 'fork-tab', { id: T1 })).rejects.toThrow(REMOTE_COPY.forkFailed)
   })
 
-  it('open-tab opens in the default folder without bringing the tab to the front, and answers its id', async () => {
+  it('open-tab with no folder opens in the default folder without bringing the tab to the front, and answers its id, folder and account', async () => {
     const f = fakeHost()
-    expect(await run(f, 'open-tab', { kind: 'shell', profile: 'Bash', account: null, resume: null })).toEqual({ id: T3 })
-    expect(f.opened).toEqual([{ kind: 'shell', profile: 'Bash', account: null, resume: null }])
+    expect(await run(f, 'open-tab', { kind: 'shell', profile: 'Bash', account: null, resume: null })).toEqual({ id: T3, cwd: '/home/demo', accountName: 'Main account', defaulted: false })
+    expect(f.opened).toEqual([{ kind: 'shell', profile: 'Bash', account: null, resume: null, cwd: '/home/demo', title: null }])
+  })
+
+  it('open-tab opens in the folder asked for when it is a directory here, with its title', async () => {
+    const f = fakeHost()
+    expect(await run(f, 'open-tab', { kind: 'claude', profile: null, account: null, resume: null, cwd: '/work/acme', email: null, title: 'Release notes' }))
+      .toEqual({ id: T3, cwd: '/work/acme', accountName: 'Main account', defaulted: false })
+    expect(f.opened[0]).toMatchObject({ cwd: '/work/acme', title: 'Release notes' })
+  })
+
+  it('a folder that is no directory here, or not absolute here, opens in the default folder and says so', async () => {
+    const f = fakeHost()
+    for (const cwd of ['/no/such/folder', 'relative/acme']) expect(await run(f, 'open-tab', { kind: 'claude', profile: null, account: null, resume: null, cwd, email: null, title: null })).toMatchObject({ cwd: '/home/demo', defaulted: true })
+  })
+
+  it('an email opens the tab on the account accountByEmail picks, and the answer names it', async () => {
+    const f = fakeHost()
+    f.byEmail = { 'sam@example.com': ACC_WORK }
+    expect(await run(f, 'open-tab', { kind: 'claude', profile: null, account: null, resume: null, cwd: null, email: 'sam@example.com', title: null })).toMatchObject({ accountName: 'Work' })
+    expect(f.opened[0]).toMatchObject({ account: ACC_WORK })
   })
 
   it('rename, mute, restart and switch-account reach the tab; profiles and accounts answer names and ids, never tokens', async () => {
@@ -290,7 +309,7 @@ describe('the calls of this device', () => {
   it('an open-tab that fails is refused with the window\'s sentence', async () => {
     const f = fakeHost()
     f.ctx.openTab = () => null
-    await expect(run(f, 'open-tab', { kind: 'shell', profile: 'Bash', account: null, resume: null })).rejects.toThrow('The tab could not be opened')
+    await expect(run(f, 'open-tab', { kind: 'shell', profile: 'Bash', account: null, resume: null, cwd: null, email: null, title: null })).rejects.toThrow('The tab could not be opened')
   })
 
   it('accounts leave out the ones this device cannot read, and keep the rest', async () => {

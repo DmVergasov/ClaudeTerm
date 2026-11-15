@@ -1,4 +1,5 @@
 import { isAgentId, isTabView, type AgentSnapshot, type ChatAnswer, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPermissionMode, type ChatSend, type TabView } from '../../shared/chat'
+import { COORD_NAME_MAX } from '../../shared/coordinator'
 import { MAX_IMAGE_BYTES } from '../../shared/image-file'
 import type { ImagesUpdate, StatusUpdate } from '../../shared/ipc'
 import { isUuid } from '../../shared/protocol'
@@ -62,6 +63,7 @@ const MAX_PROFILE = 256
 const MAX_PROFILES = 64
 const MAX_ACCOUNT = 64
 const MAX_ACCOUNT_NAME = 256
+const MAX_EMAIL = 320
 const MAX_ACCOUNTS = 64
 const MAX_DEVICE = 64
 const MAX_REASON = 500
@@ -105,7 +107,7 @@ export type ReviewAction =
 /** the arguments of each call method */
 export interface CallArgs {
   attach: { id: string }
-  'open-tab': { kind: TabKind; profile: string | null; account: string | null; resume: string | null }
+  'open-tab': { kind: TabKind; profile: string | null; account: string | null; resume: string | null; cwd: string | null; email: string | null; title: string | null }
   close: { id: string }
   'images-seen': { id: string }
   'can-send': { id: string }
@@ -150,7 +152,8 @@ export interface CallArgs {
 /** the reply each call method answers with */
 export interface CallReplies {
   attach: RemoteSnapshot
-  'open-tab': { id: string }
+  /** cwd: the folder it opened in; accountName: the account it runs on (MAIN_ACCOUNT for the main one); defaulted: the folder asked for could not be used, and the default folder was. An older device answers the id only */
+  'open-tab': { id: string; cwd?: string; accountName?: string; defaulted?: boolean }
   close: Empty
   'images-seen': Empty
   'can-send': ReviewSendState
@@ -470,7 +473,7 @@ export const CALL_ARGS: { [M in CallMethod]: (a: unknown) => CallArgs[M] | null 
 /** The reply of each call method, or null when it does not fit. Returns a copy of the known fields only. */
 export const CALL_REPLIES: { [M in CallMethod]: (v: unknown) => CallReplies[M] | null } = withoutPrototype({
   attach: snapshotOf,
-  'open-tab': idOf,
+  'open-tab': openTabReplyOf,
   close: emptyOf,
   'images-seen': emptyOf,
   'can-send': sendStateOf,
@@ -649,7 +652,7 @@ function listOf<T>(v: unknown, max: number, item: (x: unknown) => T | null): T[]
 
 // ---- call arguments
 
-/** `{ id }`: a tab's UUID, the arguments of most calls and the reply of a call that opens a tab */
+/** `{ id }`: a tab's UUID, the arguments of most calls and the reply of the calls that answer one tab's id */
 function idOf(v: unknown): { id: string } | null {
   if (!isPlainObject(v)) return null
   const { id } = v
@@ -661,14 +664,46 @@ function emptyOf(v: unknown): Empty | null {
   return isPlainObject(v) ? {} : null
 }
 
+/** the arguments of open-tab: a shell tab takes no conversation; the folder, the email and the title are each optional (absent is null) */
 function openTabArgs(a: unknown): CallArgs['open-tab'] | null {
   if (!isPlainObject(a)) return null
-  const { kind, profile, account, resume } = a
+  const { kind, profile, account, resume, cwd = null, email = null, title = null } = a
   if (kind !== 'claude' && kind !== 'shell') return null
   if (!orNull(profile, isProfileName) || !orNull(account, accountRef) || !orNull(resume, isUuid)) return null
+  if (!orNull(cwd, (s) => isString(s, 1, MAX_PATH_TEXT)) || !orNull(email, isEmailText) || !orNull(title, isTitleText)) return null
   // a conversation to resume is a Claude Code one: a shell tab has none
   if (kind === 'shell' && resume !== null) return null
-  return { kind, profile: profile as string | null, account: account as string | null, resume: resume as string | null }
+  return {
+    kind,
+    profile: profile as string | null,
+    account: account as string | null,
+    resume: resume as string | null,
+    cwd: cwd as string | null,
+    email: email as string | null,
+    title: title as string | null
+  }
+}
+
+/** an email a coordinator is named by: 3 to MAX_EMAIL characters with an @ and no control character */
+function isEmailText(v: unknown): boolean {
+  return isString(v, 3, MAX_EMAIL) && v.includes('@') && !/\p{Cc}/u.test(v)
+}
+
+/** a tab's title: 1 to COORD_NAME_MAX characters with no control character */
+function isTitleText(v: unknown): boolean {
+  return isString(v, 1, COORD_NAME_MAX) && !/\p{Cc}/u.test(v)
+}
+
+/** the open-tab reply: the tab's id, and its folder, account name and defaulted when each fits; a field that does not fit is left out */
+function openTabReplyOf(v: unknown): CallReplies['open-tab'] | null {
+  if (!isPlainObject(v)) return null
+  const { id, cwd, accountName, defaulted } = v
+  if (!isUuid(id)) return null
+  const reply: CallReplies['open-tab'] = { id }
+  if (isString(cwd, 1, MAX_PATH_TEXT) && !/\p{Cc}/u.test(cwd)) reply.cwd = cwd
+  if (isString(accountName, 1, MAX_ACCOUNT_NAME) && !/\p{Cc}/u.test(accountName)) reply.accountName = accountName
+  if (typeof defaulted === 'boolean') reply.defaulted = defaulted
+  return reply
 }
 
 function reviewActionOf(v: unknown): ReviewAction | null {

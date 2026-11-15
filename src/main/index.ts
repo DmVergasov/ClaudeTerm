@@ -32,6 +32,7 @@ import { AutoContinue, CONTINUE_DELAY_MS, LIMIT_ERROR, limitResetOf, type Restor
 import { CoordinatorHub } from './coordinator/coordinator-hub'
 import { CoordinatorStore } from './coordinator/coordinator-store'
 import { PromptDelivery } from './coordinator/prompt-delivery'
+import { accountForEmail } from './coordinator/remote-start'
 import { TabWaits } from './tab-waits'
 import { COORD_REFUSED, coordinatorProblem, type CoordinatorView, type CoordMarks, type CoordResult } from '../shared/coordinator'
 import { PromptQueries } from './prompt-query'
@@ -1625,7 +1626,10 @@ function bootstrap(): void {
       // the note names the command's first word: `/config`, `!npm`
       openInTerminal: (tabId, line) => openInTerminal(tabId, line, commandWord(line ?? ''), handoffDeps),
     },
-    openTab: (r) => openTab({ kind: r.kind, cwd: defaultFolder(), profile: r.profile, account: r.account, resumeSessionId: r.resume }, false),
+    openTab: (r) => openTab({ kind: r.kind, cwd: r.cwd, profile: r.profile, account: r.account, resumeSessionId: r.resume, title: r.title }, false),
+    defaultFolder: () => defaultFolder(),
+    isDirectory: isDirAsync,
+    accountByEmail: (email) => accountForEmail(email, accountsView()),
     writeInput: (tabId, data, from) => writeInput(tabId, data, from),
     folders: (tabId, path) => folderListingOf(tabId, path, folderDeps()),
     changeFolder: (tabId, path) => changeFolderOf(tabId, path, folderDeps()),
@@ -3241,7 +3245,7 @@ function bootstrap(): void {
     if (!isOpenRemoteTabArgs(device, kind, profile, account) || !remote || quitting) return null
     const r = remote
     const mark = remoteFront.mark()
-    const tabId = await r.actions.openTab(device as string, { kind: kind as 'claude' | 'shell', profile: profile as string | null, account: account as string | null, resume: null })
+    const tabId = await r.actions.openTab(device as string, { kind: kind as 'claude' | 'shell', profile: profile as string | null, account: account as string | null, resume: null, cwd: null, email: null, title: null })
     // the tab comes to the front here once it is listed, unless the person picked another tab meanwhile; a holder that went meanwhile takes no request
     if (tabId !== null && remote === r && remoteFront.answered(mark, tabId, r.viewer.has(tabId), Date.now(), device as string) === 'activate') {
       activateRemote(tabId, true)

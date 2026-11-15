@@ -13,8 +13,8 @@ const MIB = 1024 * 1024
 
 const GOOD_ARGS: Array<[CallMethod, unknown]> = [
   ['attach', { id: T1 }],
-  ['open-tab', { kind: 'claude', profile: 'Claude', account: null, resume: S1 }],
-  ['open-tab', { kind: 'shell', profile: null, account: 'acc-1', resume: null }],
+  ['open-tab', { kind: 'claude', profile: 'Claude', account: null, resume: S1, cwd: null, email: null, title: null }],
+  ['open-tab', { kind: 'shell', profile: null, account: 'acc-1', resume: null, cwd: null, email: null, title: null }],
   ['close', { id: T1 }],
   ['images-seen', { id: T1 }],
   ['can-send', { id: T1 }],
@@ -177,6 +177,14 @@ describe('call arguments', () => {
 
   it.each(BAD_ARGS)('the arguments of %s are refused: %j', (m, a) => expect(CALL_ARGS[m](a)).toBeNull())
 
+  it('open-tab takes a folder, an email and a title, each optional', () => {
+    const base = { kind: 'claude', profile: null, account: null, resume: null }
+    expect(CALL_ARGS['open-tab'](base)).toEqual({ ...base, cwd: null, email: null, title: null })
+    const full = { ...base, cwd: '/home/sam/acme', email: 'sam@example.com', title: 'Release notes' }
+    expect(CALL_ARGS['open-tab'](full)).toEqual(full)
+    for (const bad of [{ cwd: 'a\u0000b' }, { email: 'sam' }, { title: 'x'.repeat(101) }, { title: 'a\nb' }]) expect(CALL_ARGS['open-tab']({ ...full, ...bad })).toBeNull()
+  })
+
   it('a review path or folder from another system passes: the tab device reads it', () => {
     expect(CALL_ARGS.review({ id: T1, action: { k: 'show', path: 'C:\\work\\a.ts' } })).not.toBeNull()
     expect(CALL_ARGS.folders({ id: T1, path: '~/src' })).not.toBeNull()
@@ -303,6 +311,14 @@ describe('call replies', () => {
     expect(CALL_REPLIES.tabs({ anything: 1 })).toEqual({})
     expect(CALL_REPLIES.tabs('x')).toBeNull()
     expect(CALL_REPLIES.tabs(null)).toBeNull()
+  })
+
+  it('the open-tab reply keeps its folder, its account and defaulted, and leaves out a field that does not fit', () => {
+    expect(CALL_REPLIES['open-tab']({ id: T1, cwd: '/home/sam', accountName: 'Main account', defaulted: true })).toEqual({ id: T1, cwd: '/home/sam', accountName: 'Main account', defaulted: true })
+    expect(CALL_REPLIES['open-tab']({ id: T1 })).toEqual({ id: T1 })
+    expect(CALL_REPLIES['open-tab']({ id: T1, cwd: 5, defaulted: 'yes' })).toEqual({ id: T1 })
+    expect(CALL_REPLIES['open-tab']({ id: T1, cwd: '/home/sam\nacme' })).toEqual({ id: T1 })
+    expect(CALL_REPLIES['open-tab']({ id: 'x' })).toBeNull()
   })
 
   it('attach, open-tab and the other replies take their shapes', () => {
