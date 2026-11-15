@@ -12,10 +12,10 @@ import { folderName } from './util'
 function signature(item: TabBarItem | null, deviceColor: string | undefined): string {
   if (!item) return ''
   const worktree = item.place?.worktree ? WORKTREE_COLORS[item.place.worktree.color] : null
-  return JSON.stringify([item.id, item.title, item.kind, shownActivity(item), item.folder, item.group, item.deviceName, item.dim, item.place?.branch ?? null, worktree, deviceColor ?? null])
+  return JSON.stringify([item.id, item.title, item.kind, shownActivity(item), item.folder, item.group, item.deviceName, item.dim, item.place?.branch ?? null, worktree, deviceColor ?? null, item.coord])
 }
 
-export type SheetHeaderCallbacks = Pick<TabBarCallbacks, 'rename' | 'toggleImages' | 'toggleChanges' | 'toggleDocs' | 'toggleMessages' | 'toggleNote'> & {
+export type SheetHeaderCallbacks = Pick<TabBarCallbacks, 'rename' | 'toggleImages' | 'toggleChanges' | 'toggleDocs' | 'toggleMessages' | 'toggleSessions' | 'toggleNote' | 'detachTab'> & {
   /** the way back: the tab in front shows the view the settings give Claude tabs (after the user's word when background tasks would stop) */
   switchView(view: TabView): void
   /** files dropped on the header: attached to the chat in front, as a drop on the sheet is */
@@ -36,11 +36,13 @@ const WORKING_SWITCH = 'Claude is working — switch when it finishes, or press 
 
 /**
  * The header of the sheet the active tab sits on: its kind icon, title, device (a remote tab), branch and folder on the
- * left; then the panel toggles (Changes, Media, Agent messages, Docs, Note). The toggles are built once and kept in place, so
- * a redraw of the title never drops a click or a tooltip. While Claude works in the tab, the header's glyph steps.
+ * left, and a coordinator's or an attached session's line about it; then the panel toggles (Changes, Sessions, Media, Agent messages,
+ * Docs, Note). The toggles are built once and kept in place, so a redraw of the title never drops a click or a tooltip. While
+ * Claude works in the tab, the header's glyph steps.
  */
 export class SheetHeader {
   private readonly changes: HTMLButtonElement
+  private readonly sessions: HTMLButtonElement
   private readonly images: HTMLButtonElement
   private readonly messages: HTMLButtonElement
   private readonly docs: HTMLButtonElement
@@ -88,11 +90,12 @@ export class SheetHeader {
     this.modes.hidden = true
     this.modes.append(this.back, this.confirm)
     this.changes = this.toggle('tab-changes-toggle', 'Changes', `Changes (${shortcutLabel('toggleChanges', platform)})`, icon('file-diff', 16), () => cb.toggleChanges(), true)
+    this.sessions = this.toggle('tab-sessions-toggle', 'Sessions', 'Sessions', icon('users', 16), () => cb.toggleSessions(), true)
     this.images = this.toggle('tab-images-toggle', 'Media', `Media (${shortcutLabel('toggleImages', platform)})`, icon('image', 16), () => cb.toggleImages(), true)
     this.messages = this.toggle('tab-messages-toggle', '', 'Agent messages', icon('mail', 16), () => cb.toggleMessages(), true)
     this.docs = this.toggle('tab-docs-toggle', '', `Docs (${shortcutLabel('toggleDocs', platform)})`, icon('file-text', 16), () => cb.toggleDocs(), false)
     this.note = this.toggle('tab-note-toggle', '', `Note (${shortcutLabel('toggleNote', platform)})`, noteIcon(16), () => cb.toggleNote(), false)
-    this.root.replaceChildren(this.spacer, this.modes, this.changes, this.images, this.messages, this.docs, this.note)
+    this.root.replaceChildren(this.spacer, this.modes, this.changes, this.sessions, this.images, this.messages, this.docs, this.note)
     // files dropped on the header are attached to the chat in front, as a drop on the sheet is
     this.root.addEventListener('dragover', (e) => {
       if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
@@ -104,6 +107,7 @@ export class SheetHeader {
     this.setChanges(false, false, 0, null)
     this.setImages(false, 0, null)
     this.setMessages(false, false, 0, null)
+    this.setSessions(false, false, 0, null)
     this.setDocs(false, false)
     this.setNote(false, false)
   }
@@ -245,6 +249,13 @@ export class SheetHeader {
     this.setBadge(this.messages, unread, tab)
   }
 
+  /** the Sessions button exists while the tab is a coordinator; it is lit while the Sessions panel is shown, and counts the sessions of `tab` that wait for the user */
+  setSessions(available: boolean, visible: boolean, waiting: number, tab: string | null): void {
+    this.sessions.hidden = !available
+    this.sessions.classList.toggle('active', visible)
+    this.setBadge(this.sessions, waiting, tab)
+  }
+
   /** the Docs button is hidden while the tab has no document to show; it is lit while the Docs panel is shown */
   setDocs(available: boolean, visible: boolean): void {
     this.docs.hidden = !available
@@ -304,6 +315,15 @@ export class SheetHeader {
         if (item.place.worktree) branch.style.color = WORKTREE_COLORS[item.place.worktree.color]
         parts.push(branch)
       }
+      // a coordinator counts its sessions right after its branch
+      if (item.coord?.role === 'coordinator') {
+        const line = document.createElement('span')
+        line.className = 'sh-coord'
+        const count = document.createElement('b')
+        count.textContent = String(item.coord.sessions)
+        line.append('Coordinator · ', count, item.coord.sessions === 1 ? ' session' : ' sessions')
+        parts.push(line)
+      }
       // the folder is named only when the title is not its name already (as the window's title does)
       if (folderName(item.folder) !== item.title) {
         const folder = document.createElement('span')
@@ -311,6 +331,24 @@ export class SheetHeader {
         folder.textContent = folderName(item.folder)
         folder.title = item.folder
         parts.push(folder)
+      }
+      // an attached session says where it reports, and can be detached from there
+      if (item.coord?.role === 'attached') {
+        const reports = document.createElement('span')
+        reports.className = 'sh-reports'
+        const project = document.createElement('b')
+        project.textContent = item.coord.project
+        reports.append('↳ Reports to ', project, ' coordinator')
+        parts.push(reports)
+        if (item.coord.coordinatorTabId !== null) {
+          const detach = document.createElement('button')
+          detach.className = 'sh-detach'
+          detach.type = 'button'
+          detach.textContent = 'Detach'
+          detach.title = `Detach from the ${item.coord.project} coordinator`
+          detach.addEventListener('click', () => this.cb.detachTab(item.id))
+          parts.push(detach)
+        }
       }
     }
     for (const el of this.left) el.remove()

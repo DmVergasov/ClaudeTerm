@@ -99,6 +99,8 @@ let mailPanel: MailPanel
 let mcpPanel: McpPanel
 /** the MCP · Plugins panel's width when it opens: a fixed size, not a setting */
 const MCP_PANEL_WIDTH = 420
+/** the Sessions panel's width when it opens: a fixed size, not a setting */
+const SESSIONS_PANEL_WIDTH = 340
 /** the unread agent messages per tab, as main last counted them */
 let mailUnread: MailUnread = {}
 const docUpdates = new Map<string, DocsUpdate>()
@@ -212,6 +214,7 @@ const coordMarkOf = (id: string | null): CoordMark | null => (id === null ? null
 
 function applyMarks(m: CoordMarks): void {
   coordMarks = m
+  syncSessions()
   renderTabs()
 }
 
@@ -328,7 +331,7 @@ function renderTitle(): void {
   document.title = [title, ...(folder === title ? [] : [folder]), ...(account === null ? [] : [account]), 'ClaudeTerm'].join(' — ')
 }
 
-/** the Media, Changes, Messages, Docs and Note buttons in the sheet's header: which panel or note is shown, the badges, Changes and Note only for a Claude tab */
+/** the Media, Changes, Sessions, Messages, Docs and Note buttons in the sheet's header: which panel or note is shown, the badges, Changes and Note only for a Claude tab, Sessions only for a coordinator */
 function refreshPanelButtons(): void {
   const unseen = activeId ? imageUpdates.get(activeId)?.unseen ?? 0 : 0
   const claude = !!activeId && tabs.get(activeId)?.info.kind === 'claude'
@@ -341,6 +344,9 @@ function refreshPanelButtons(): void {
   sheetHeader.setChanges(claude, sidePanel.isShowing('changes'), unviewed, activeId)
   sheetHeader.setDocs(docs, sidePanel.isShowing('docs'))
   sheetHeader.setMessages(settings.agentMessages.enabled, sidePanel.isShowing('messages'), unreadMail, activeId)
+  const mark = coordMarkOf(activeId)
+  const coordinator = mark?.role === 'coordinator' ? mark : null
+  sheetHeader.setSessions(coordinator !== null, sidePanel.isShowing('sessions'), coordinator?.waiting ?? 0, activeId)
   sheetHeader.setNote(claude, claude && noteOverlay.isShown())
 }
 
@@ -351,6 +357,11 @@ const mcpAvailable = (t: TabState | undefined): boolean => t !== undefined && t.
 function syncMcpPanel(): void {
   sidePanel.setAvailable('mcp', mcpAvailable(activeId ? tabs.get(activeId) : undefined))
   refreshMcpStatus()
+}
+
+/** the Sessions panel is offered for a coordinator's tab in front */
+function syncSessions(): void {
+  sidePanel.setAvailable('sessions', coordMarkOf(activeId)?.role === 'coordinator')
 }
 
 /** the MCP servers of the tab in front, for their segment of the status bar (null: not known yet) */
@@ -1093,6 +1104,7 @@ function activate(tabId: string): void {
   if (pendingReveal.delete(tabId)) sidePanel.open('changes')
   showDocs(tabId, claude)
   mailPanel.show(tabId)
+  syncSessions()
   mcpPanel.show(tabId)
   renderStatus(tabId)
 }
@@ -1407,6 +1419,11 @@ async function boot(): Promise<void> {
       sidePanel.toggle('messages')
       if (activeId) focusTab(activeId)
     },
+    toggleSessions: () => {
+      sidePanel.toggle('sessions')
+      if (activeId) focusTab(activeId)
+    },
+    detachTab: (id) => void detachFromCoordinator(id),
     toggleNote: () => {
       runAction({ type: 'toggleNote' }, activeId)
       // the keyboard goes back to the terminal, unless an empty note took it to be written in
@@ -1634,7 +1651,7 @@ async function boot(): Promise<void> {
     const text = t?.view ? promptText(t.view.screen().rows) : null
     ct.answerPrompt(queryId, text === null ? 'none' : text === '' ? 'empty' : 'draft')
   })
-  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width, messages: settings.review.width, mcp: MCP_PANEL_WIDTH }, (width, resize) => ct.setPanel(width, resize))
+  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width, messages: settings.review.width, sessions: SESSIONS_PANEL_WIDTH, mcp: MCP_PANEL_WIDTH }, (width, resize) => ct.setPanel(width, resize))
   sidePanel.setAvailable('messages', settings.agentMessages.enabled)
   ct.onPanelMode((mode) => sidePanel.setMode(mode))
   imagePanel = new ImagePanel(
@@ -1868,6 +1885,7 @@ async function boot(): Promise<void> {
       // the Docs panel has no tab's documents to show: it falls back to another panel
       sidePanel.setAvailable('docs', false)
       sidePanel.setAvailable('mcp', false)
+      sidePanel.setAvailable('sessions', false)
     }
     renderTabs()
     // main activates the neighbor of a closed local tab that was in front; in the other cases it activates none, and the

@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 import type { CoordMarks } from '../../src/shared/coordinator'
 import { VERSION_SETTINGS } from './agent-mail'
+import { panelSettled } from './helpers'
 
 /** coordApp's settings with the tabs in the left panel */
 export const LEFT = { ...VERSION_SETTINGS, tabs: { position: 'left' } }
@@ -9,6 +10,13 @@ export const marksOf = (page: Page): Promise<CoordMarks> => page.evaluate(() => 
 export const tabOrder = (page: Page): Promise<string[]> => page.evaluate(() => window.__ct!.tabIds())
 export const pill = (page: Page, id: string): Locator => page.locator(`#tabbar .tab[data-tab-id="${id}"]`)
 export const tpRow = (page: Page, id: string): Locator => page.locator(`#tabpanel .tp-tab[data-tab-id="${id}"]`)
+export const sessionsToggle = (page: Page): Locator => page.locator('#sheet-header .tab-sessions-toggle')
+
+/** opens the Sessions panel with its toggle and waits until it has slid in */
+export async function openSessions(page: Page): Promise<void> {
+  await sessionsToggle(page).click()
+  await panelSettled(page, true)
+}
 
 export interface PanelRowSeen { id: string; attached: boolean; label: string | null; to: string | null }
 

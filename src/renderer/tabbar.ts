@@ -80,6 +80,9 @@ export interface TabBarCallbacks {
   toggleChanges(): void
   toggleDocs(): void
   toggleMessages(): void
+  toggleSessions(): void
+  /** Detach of an attached session, from its header */
+  detachTab(id: string): void
   toggleNote(): void
   switchPosition(): void
 }
