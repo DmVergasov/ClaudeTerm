@@ -278,7 +278,19 @@ describe('the calls of this device', () => {
 
   it('a folder that is no directory here, or not absolute here, opens in the default folder and says so', async () => {
     const f = fakeHost()
+    f.dirs.add('relative/acme')
     for (const cwd of ['/no/such/folder', 'relative/acme']) expect(await run(f, 'open-tab', { kind: 'claude', profile: null, account: null, resume: null, cwd, email: null, title: null })).toMatchObject({ cwd: '/home/demo', defaulted: true })
+    // the relative folder is refused before any check: only the absolute folder that is no directory was asked about
+    expect(f.checkedDirs).toEqual(['/no/such/folder'])
+  })
+
+  it('a folder on the network or a device path is refused without a directory check: it opens in the default folder and says so', async () => {
+    const f = fakeHost()
+    f.dirs.add('\\\\server\\share')
+    f.dirs.add('//server/share')
+    for (const cwd of ['\\\\server\\share', '//server/share', '\\\\?\\C:\\acme']) expect(await run(f, 'open-tab', { kind: 'claude', profile: null, account: null, resume: null, cwd, email: null, title: null })).toMatchObject({ cwd: '/home/demo', defaulted: true })
+    expect(f.checkedDirs).toEqual([])
+    expect(f.opened.map((o) => o.cwd)).toEqual(['/home/demo', '/home/demo', '/home/demo'])
   })
 
   it('an email opens the tab on the account accountByEmail picks, and the answer names it', async () => {

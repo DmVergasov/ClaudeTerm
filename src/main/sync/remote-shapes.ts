@@ -684,14 +684,19 @@ function openTabArgs(a: unknown): CallArgs['open-tab'] | null {
   }
 }
 
+/** whether a text holds a control character (C0, DEL or C1) */
+function hasControl(s: string): boolean {
+  return /\p{Cc}/u.test(s)
+}
+
 /** an email a coordinator is named by: 3 to MAX_EMAIL characters with an @ and no control character */
 function isEmailText(v: unknown): boolean {
-  return isString(v, 3, MAX_EMAIL) && v.includes('@') && !/\p{Cc}/u.test(v)
+  return isString(v, 3, MAX_EMAIL) && v.includes('@') && !hasControl(v)
 }
 
 /** a tab's title: 1 to COORD_NAME_MAX characters with no control character */
 function isTitleText(v: unknown): boolean {
-  return isString(v, 1, COORD_NAME_MAX) && !/\p{Cc}/u.test(v)
+  return isString(v, 1, COORD_NAME_MAX) && !hasControl(v)
 }
 
 /** the open-tab reply: the tab's id, and its folder, account name and defaulted when each fits; a field that does not fit is left out */
@@ -700,8 +705,8 @@ function openTabReplyOf(v: unknown): CallReplies['open-tab'] | null {
   const { id, cwd, accountName, defaulted } = v
   if (!isUuid(id)) return null
   const reply: CallReplies['open-tab'] = { id }
-  if (isString(cwd, 1, MAX_PATH_TEXT) && !/\p{Cc}/u.test(cwd)) reply.cwd = cwd
-  if (isString(accountName, 1, MAX_ACCOUNT_NAME) && !/\p{Cc}/u.test(accountName)) reply.accountName = accountName
+  if (isString(cwd, 1, MAX_PATH_TEXT) && !hasControl(cwd)) reply.cwd = cwd
+  if (isString(accountName, 1, MAX_ACCOUNT_NAME) && !hasControl(accountName)) reply.accountName = accountName
   if (typeof defaulted === 'boolean') reply.defaulted = defaulted
   return reply
 }

@@ -182,7 +182,7 @@ describe('call arguments', () => {
     expect(CALL_ARGS['open-tab'](base)).toEqual({ ...base, cwd: null, email: null, title: null })
     const full = { ...base, cwd: '/home/sam/acme', email: 'sam@example.com', title: 'Release notes' }
     expect(CALL_ARGS['open-tab'](full)).toEqual(full)
-    for (const bad of [{ cwd: 'a\u0000b' }, { email: 'sam' }, { title: 'x'.repeat(101) }, { title: 'a\nb' }]) expect(CALL_ARGS['open-tab']({ ...full, ...bad })).toBeNull()
+    for (const bad of [{ cwd: 'a\u0000b' }, { cwd: '/' + 'x'.repeat(MAX_PATH_TEXT) }, { email: 'sam' }, { email: 'sam\u0001@example.com' }, { email: 'a'.repeat(315) + '@example.com' }, { title: 'x'.repeat(101) }, { title: '' }, { title: 'a\nb' }]) expect(CALL_ARGS['open-tab']({ ...full, ...bad })).toBeNull()
   })
 
   it('a review path or folder from another system passes: the tab device reads it', () => {

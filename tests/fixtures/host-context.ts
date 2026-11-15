@@ -120,6 +120,8 @@ export interface FakeHost {
   opened: HostOpenTab[]
   /** the folders that are directories on this device (isDirectory); the default folder answers when none is asked for or the one asked for is not here */
   dirs: Set<string>
+  /** the folders isDirectory was asked about, in order: a folder refused before the check is not among them */
+  checkedDirs: string[]
   defaultFolder: string
   /** the account a tab opens on for each coordinator email (accountByEmail); no entry: Main account */
   byEmail: Record<string, string>
@@ -190,6 +192,7 @@ export function fakeHost(): FakeHost {
     closed: [],
     opened: [],
     dirs: new Set(['/work/acme']),
+    checkedDirs: [],
     defaultFolder: '/home/demo',
     byEmail: {},
     inputs: [],
@@ -361,7 +364,10 @@ export function fakeHost(): FakeHost {
       return tabInfo(T3, { kind: req.kind, profile: req.profile ?? 'Bash', cwd: req.cwd, folder: req.cwd, account: req.account })
     },
     defaultFolder: () => h.defaultFolder,
-    isDirectory: async (path) => h.dirs.has(path),
+    isDirectory: async (path) => {
+      h.checkedDirs.push(path)
+      return h.dirs.has(path)
+    },
     accountByEmail: (email) => h.byEmail[email] ?? null,
     writeInput: (id, data, from) => {
       h.inputs.push([id, data, from])

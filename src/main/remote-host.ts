@@ -212,6 +212,14 @@ export function pruneListedMembers(ctx: HostContext, members: string[]): void {
 }
 
 /**
+ * A folder a member names that this device may check and open a tab in: absolute here, and not a network or device path
+ * (`\\server\share`, `//server/share`, `\\?\` and `\\.\`). Checking one of those would start a connection to another machine.
+ */
+export function usableFolder(path: string): boolean {
+  return isAbsPath(path) && !/^(\\\\|\/\/)/.test(path)
+}
+
+/**
  * The calls a member makes about this device's tabs, and about its profiles and accounts. A call whose arguments do not
  * fit is refused, and so is one about a tab this device does not have. The answers fit the receiver's checks. `device` is
  * the member these handlers serve: the transfers it begins are its own.
@@ -229,8 +237,8 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
       run: async (a) => {
         const req = CALL_ARGS['open-tab'](a)
         if (!req) throw new CallError('bad arguments')
-        // the folder asked for is used when it is absolute here and an existing directory; else the default folder, and the answer says so
-        const cwd = isAbsPath(req.cwd) && (await ctx.isDirectory(req.cwd)) ? req.cwd : ctx.defaultFolder()
+        // the folder asked for is used when it is usable here and an existing directory; else the default folder, and the answer says so
+        const cwd = req.cwd !== null && usableFolder(req.cwd) && (await ctx.isDirectory(req.cwd)) ? req.cwd : ctx.defaultFolder()
         const account = req.email !== null ? ctx.accountByEmail(req.email) : req.account
         const tab = ctx.openTab({ kind: req.kind, profile: req.profile, account, resume: req.resume, cwd, title: req.title })
         if (!tab) throw new CallError(REMOTE_COPY.openTabFailed)
