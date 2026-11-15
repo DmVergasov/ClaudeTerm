@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import type { CoordMarks } from '../../src/shared/coordinator'
 import { VERSION_SETTINGS } from './agent-mail'
 
@@ -20,4 +20,16 @@ export function panelRows(page: Page): Promise<PanelRowSeen[]> {
     label: row.querySelector('.tab-coord')?.textContent ?? null,
     to: row.querySelector('.tp-coord-to')?.textContent ?? null
   })))
+}
+
+/** right-clicks the tab (a pill on top, a row on the left) until its menu offers the item enabled, then clicks it */
+export async function menuItem(page: Page, tabId: string, label: string): Promise<void> {
+  const tab = page.locator(`#tabbar .tab[data-tab-id="${tabId}"]:visible, #tabpanel .tp-tab[data-tab-id="${tabId}"]:visible`).first()
+  const item = page.locator('.menu .menu-item:not(.disabled)', { hasText: label })
+  // the menu is asked for before it is drawn: a right-click that lands while the answers are on their way is tried again
+  await expect(async () => {
+    await tab.click({ button: 'right' })
+    await expect(item).toBeVisible({ timeout: 1000 })
+  }).toPass({ timeout: 15_000 })
+  await item.click()
 }

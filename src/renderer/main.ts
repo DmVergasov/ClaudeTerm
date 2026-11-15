@@ -4,7 +4,7 @@ import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import type { MailUnread } from '../shared/mail'
-import type { CoordMark, CoordMarks } from '../shared/coordinator'
+import type { CoordMark, CoordMarks, CoordResult, CoordinatorView } from '../shared/coordinator'
 import { noteProjectOf } from '../shared/note'
 import type { TabView } from '../shared/chat'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
@@ -43,6 +43,7 @@ import { promptText } from './claude-screen'
 import { leftUnfinished } from './unread'
 import { FrontFallback } from './front-fallback'
 import { FolderDialog } from './folder-dialog'
+import { confirmDialog } from './coord-dialog'
 import { TitleBar } from './title-bar'
 import { applyTheme } from './app-theme'
 import { limitMeters } from './limit-meters'
@@ -113,6 +114,8 @@ const placeLog = new Map<string, (TabPlace | null)[]>()
 let coordMarks: CoordMarks = {}
 /** whether the marks came in as an event: then the answer to the first request is older and is not applied */
 let coordMarksSeen = false
+/** each coordinator tab's view, as main last published it or answered for it */
+const coordViews = new Map<string, CoordinatorView>()
 let lightbox: Lightbox
 let sessionsWindow: RecentSessionsWindow
 let folderDialog: FolderDialog
@@ -1219,6 +1222,7 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
     if (seq !== tabMenuSeq || !tabs.has(id)) return
     const isStarred = sessionId !== null && starred.includes(sessionId)
     const switches = continueItems(id)
+    const coord = claude && !t.info.remote ? coordMenuItems(id, sessionId) : []
     showMenu(at, [
       { label: claude ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
       ...(claude ? [{ label: 'Fork session', disabled: !canFork, action: () => ct.forkTab(id) }] : []),
@@ -1227,10 +1231,65 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
       { label: 'Mark as unread', action: () => markUnread(id) },
       { label: REMOTE_COPY.changeFolder, action: () => openFolderDialog(id) },
       ...(switches.length > 0 ? [{ label: '', separator: true }, ...switches] : []),
+      ...(coord.length > 0 ? [{ label: '', separator: true }, ...coord] : []),
       { label: '', separator: true },
       { label: 'Close tab', action: () => ct.closeTab(id) }
     ])
   })
+}
+
+/** the coordinator items of a local Claude tab's menu: Detach when it is attached, Stop coordinating when it coordinates, else Make project coordinator when git has given it a project */
+function coordMenuItems(id: string, sessionId: string | null): MenuItem[] {
+  const mark = coordMarkOf(id)
+  if (mark?.role === 'attached' && mark.coordinatorTabId !== null) return [{ label: `Detach from the ${mark.project} coordinator`, action: () => void detachFromCoordinator(id) }]
+  if (mark?.role === 'coordinator') return [{ label: 'Stop coordinating', action: () => void ct.coordStop(id).then(toastFailure) }]
+  if (places.get(id)) return [{ label: 'Make project coordinator', disabled: sessionId === null, action: () => void makeCoordinatorFrom(id) }]
+  return []
+}
+
+/** a coordinator's view: the one held, else asked for and held; null when the tab is no coordinator */
+async function coordViewOf(tabId: string): Promise<CoordinatorView | null> {
+  const held = coordViews.get(tabId)
+  if (held) return held
+  const view = await ct.coordView(tabId)
+  if (view) coordViews.set(tabId, view)
+  return view
+}
+
+/** a failed CoordResult as a toast */
+function toastFailure(r: CoordResult): void {
+  if (!r.ok) showToast(r.error)
+}
+
+/** Detach of an attached tab (its menu, its header, a drag out of its block): the coordinator's view names its row */
+async function detachFromCoordinator(tabId: string): Promise<void> {
+  const mark = coordMarkOf(tabId)
+  if (mark?.role !== 'attached' || mark.coordinatorTabId === null) return
+  const coordinatorTabId = mark.coordinatorTabId
+  const view = await coordViewOf(coordinatorTabId)
+  const row = view?.sessions.find((r) => r.tabId === tabId)
+  if (!row) {
+    showToast('This session is not attached to a coordinator here.')
+    return
+  }
+  ct.coordDetach(coordinatorTabId, row.key).then(toastFailure)
+}
+
+/** Make project coordinator: a replace asks first */
+async function makeCoordinatorFrom(tabId: string): Promise<void> {
+  const r = await ct.coordMake(tabId, false)
+  if (r.ok || r.replaces === undefined) {
+    toastFailure(r)
+    return
+  }
+  const project = places.get(tabId)?.project.name ?? 'this project'
+  const replace = await confirmDialog({
+    id: 'replace',
+    title: `Replace the coordinator of ${project}?`,
+    text: `${r.replaces} coordinates ${project} now. This tab takes over its sessions and their open tasks.`,
+    action: 'Replace'
+  })
+  if (replace) toastFailure(await ct.coordMake(tabId, true))
 }
 
 /** Change folder…: a remote tab's folders are its device's, and the title names the device */
@@ -1409,6 +1468,11 @@ async function boot(): Promise<void> {
   })
   void ct.coordMarks().then((m) => {
     if (!coordMarksSeen) applyMarks(m)
+  })
+  // a coordinator's view comes as an event when it changes; null when the tab stops being a coordinator
+  ct.onCoordView((tabId, view) => {
+    if (view) coordViews.set(tabId, view)
+    else coordViews.delete(tabId)
   })
   searchBar = new SearchBar(
     document.getElementById('search')!,

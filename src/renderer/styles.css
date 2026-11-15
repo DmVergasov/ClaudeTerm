@@ -636,3 +636,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
   .tab-attn::after, .tab-group-attention::after, .tb-group-dot.pulse, .tp-group-dot.pulse, .tab-status, .tab.attention:not(.active)::before, .tp-tab.attention:not(.active)::before { animation: none; }
   .badge.pop { animation: none; }
 }
+
+/* the coordinator's dialogs, in the MCP Add dialog's style */
+.mcp-add.coord-dialog { width: 460px; }
+.coord-dialog-text { color: var(--text-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
