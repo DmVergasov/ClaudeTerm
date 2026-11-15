@@ -73,7 +73,7 @@ describe('parseFinding', () => {
       expect(system).toContain('in the language the person writes in')
       expect(system).not.toMatch(/write in english/i)
     }
-    expect(CHECK_SYSTEM).toContain('Keep the field names topic, tag and title, and the tag itself, in English')
+    expect(CHECK_SYSTEM).toContain('Keep the field names language, topic, tag and title, and the tag itself, in English')
   })
 
   it('none, or an answer that keeps to neither form, is no finding', () => {
@@ -369,5 +369,40 @@ describe('the language of a card in a long English session', () => {
 
   it('the system prompts say the language is binding, whatever the session is in', () => {
     for (const system of [CHECK_SYSTEM, EXPLAIN_SYSTEM]) expect(system).toMatch(/must be written in the language/i)
+  })
+})
+
+describe('the language line of the side agent\'s answer', () => {
+  it('a suggestion that starts with a language line is parsed as the card', () => {
+    expect(parseFinding('language: Russian\n' + FINDING)).toEqual(parseFinding(FINDING))
+    expect(parseFinding('**language:** Russian\n\n' + FINDING)).toMatchObject({ tag: 'heads-up', title: 'The tests run against production' })
+  })
+
+  it('a language line before topic: none is no card', () => {
+    expect(parseFinding('language: Russian\ntopic: none')).toBeNull()
+  })
+
+  it('the explanation of Explain more comes without its language line, and one without the line is kept whole', async () => {
+    const run = async (answer: string): Promise<string | null> => {
+      const { h, asked, shown, settle } = setup()
+      h.message('t', init)
+      h.message('t', toolUse(HEADS_UP_EVERY))
+      asked[0]!.resolve(FINDING)
+      await settle()
+      h.act('t', 'card-1', 'explain')
+      asked[1]!.resolve(answer)
+      await settle()
+      return shown.at(-1)?.more ?? null
+    }
+    expect(await run('language: Russian\n\nThe first part.\n\n- a bullet')).toBe('The first part.\n\n- a bullet')
+    expect(await run('The first part.\n\n- a bullet')).toBe('The first part.\n\n- a bullet')
+  })
+
+  it('both system prompts ask for the language line first, named in English', () => {
+    expect(CHECK_SYSTEM).toMatch(/A suggestion:\nlanguage: <the language the person writes in, named in English/)
+    expect(CHECK_SYSTEM).toMatch(/topic: <in that language/)
+    expect(CHECK_SYSTEM).toMatch(/title: <in that language/)
+    expect(EXPLAIN_SYSTEM).toMatch(/starts with a line "language: <the language the person writes in,\s+named in English/)
+    expect(EXPLAIN_SYSTEM).toMatch(/in that language/)
   })
 })

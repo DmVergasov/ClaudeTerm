@@ -55,16 +55,17 @@ export const CHECK_SYSTEM = [
   'topic: none',
   '',
   'A suggestion:',
-  'topic: <one sentence of about 20 words, ending with a period: what to know>',
+  'language: <the language the person writes in, named in English, as their own messages show it>',
+  'topic: <in that language: one sentence of about 20 words, ending with a period: what to know>',
   'tag: <Heads up | You should know>',
-  'title: <the takeaway in 3 to 7 plain words, no ending punctuation>',
-  '<the explanation, in Markdown, for a busy reader with no context: a couple of plain sentences or 3 to 6 short bullets, at most',
+  'title: <in that language: the takeaway in 3 to 7 plain words, no ending punctuation>',
+  '<the explanation, in that language, in Markdown, for a busy reader with no context: a couple of plain sentences or 3 to 6 short bullets, at most',
   '120 words; say what they can do about it when there is something; explain any technical term the person has not used>',
   '',
   'Heads up is for the work in this session, when missing it costs them soon: a decision Claude made, a result that may be off.',
   'You should know is for how something works that matters to their work.',
   '',
-  `${LANGUAGE} Keep the field names topic, tag and title, and the tag itself, in English exactly as given above.`,
+  `${LANGUAGE} Keep the field names language, topic, tag and title, and the tag itself, in English exactly as given above.`,
   RULES
 ].join('\n')
 
@@ -72,7 +73,8 @@ export const CHECK_SYSTEM = [
 export const EXPLAIN_SYSTEM = [
   "You explain one topic from a person's Claude Code session in more depth than the short card they saw. Write for a busy reader",
   'with no context, in plain words and Markdown, at most 160 words. Ground it in what actually happens in their session, and say',
-  'what they can do about it when there is something. Answer with the explanation only.',
+  'what they can do about it when there is something. Your answer starts with a line "language: <the language the person writes in,',
+  'named in English, as their own messages show it>" and then the explanation only, in that language.',
   LANGUAGE,
   RULES
 ].join('\n')
@@ -84,9 +86,12 @@ export interface HeadsUpFinding {
   text: string
 }
 
+/** an answer without its leading `language:` line, which only makes the side agent name the language before it writes */
+const withoutLanguage = (answer: string): string => answer.replace(/^\s*\W*language\W*:[^\n]*\n?/i, '')
+
 /** the side agent's answer as a finding; null for `topic: none` and for an answer that keeps to neither form */
 export function parseFinding(answer: string): HeadsUpFinding | null {
-  const lines = answer.replace(/\r\n?/g, '\n').trim().split('\n')
+  const lines = withoutLanguage(answer.replace(/\r\n?/g, '\n')).trim().split('\n')
   // the three fields in order, blank lines between them allowed; the explanation is the rest
   let at = 0
   const next = (): string => {
@@ -353,7 +358,7 @@ export class HeadsUp {
     update({ ...card, explaining: true, explainError: null })
     this.d.ask(tabId, EXPLAIN_SYSTEM, explainPrompt(card, s.topic, excerpt(items), personWords(items))).then(
       (answer) => {
-        const more = answer.trim()
+        const more = withoutLanguage(answer.replace(/\r\n?/g, '\n')).trim()
         update(more === ''
           ? { ...card, explaining: false, explainError: 'Claude gave no explanation.' }
           : { ...card, more: more.slice(0, MORE_CAP), explaining: false, explainError: null })
