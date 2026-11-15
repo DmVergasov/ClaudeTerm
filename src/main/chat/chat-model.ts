@@ -10,6 +10,8 @@ export { PAGE, SUBJECT_CAP, cap, toolSubject } from './chat-fold'
 const LIMIT_MS_FROM = 1e11
 /** the leading tag of a message Claude Code sends in the conversation for something other than the person's typing */
 const ENVELOPE = /^\s*<(task-notification|agent-message|cross-session-message|channel)(?=[\s>])/
+/** the line Claude Code puts before an envelope, or before a message of another session, in the text itself: a history line has no origin to tell them by */
+const PREAMBLE = /^\s*(?:\[SYSTEM NOTIFICATION - NOT USER INPUT\]|Another Claude session sent a message:)[ \t]*/
 
 const PERMISSION_MODES: readonly ChatPermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']
 /** the resumed agents kept until their notifications come */
@@ -93,11 +95,14 @@ function envelopeBody(text: string): string {
  * The row a message the person did not type makes; null for a message that is the person's own (a bubble). With the SDK's
  * origin: anything but `human`. Without one, only a message that starts with a known envelope tag makes a row.
  */
-function eventOf(origin: unknown, text: string): EventDraft | null {
+function eventOf(origin: unknown, whole: string): EventDraft | null {
   const kind = isObj(origin) ? str(origin.kind) : null
   if (kind === 'human') return null
+  // a message with Claude Code's own preamble is not the person's, with an origin or without; its envelope follows the preamble
+  const preamble = PREAMBLE.exec(whole)
+  const text = preamble === null ? whole : whole.slice(preamble[0].length)
   const tag = ENVELOPE.exec(text)?.[1] ?? null
-  if (kind === null && tag === null) return null
+  if (kind === null && tag === null && preamble === null) return null
   if (tag === 'task-notification') {
     const status = fieldOf(text, 'status')
     const id = fieldOf(text, 'task-id')

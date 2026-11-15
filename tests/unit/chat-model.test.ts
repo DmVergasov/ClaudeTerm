@@ -1135,6 +1135,19 @@ describe('messages Claude Code puts in the conversation', () => {
     })])
   })
 
+  it('a history line with Claude Code\'s preamble before its envelope is a row, not a bubble', () => {
+    const { m } = model()
+    m.apply(userMessage('[SYSTEM NOTIFICATION - NOT USER INPUT]\n' + TASK_NOTICE))
+    m.apply(userMessage('Another Claude session sent a message: <agent-message from="s-3" name="Explore">\n[Subagent hand-back] Found it\n</agent-message>'))
+    m.apply(userMessage('Another Claude session sent a message: Please check the parser'))
+    expect(m.items().filter(item => item.kind === 'user')).toEqual([])
+    expect(m.items()).toEqual([
+      expect.objectContaining({ kind: 'event', source: 'task', title: 'Agent "Re-review Task 11 fix round" finished', body: 'Two findings, both fixed.' }),
+      expect.objectContaining({ kind: 'event', source: 'peer', title: 'Message from Explore', body: '[Subagent hand-back] Found it' }),
+      expect.objectContaining({ kind: 'event', source: 'message', title: 'Please check the parser' })
+    ])
+  })
+
   it('an origin-less message is a row only when it starts with a known envelope tag', () => {
     const { m } = model()
     m.apply(userMessage('Why did <task-notification> fail?'))
