@@ -1,10 +1,10 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
 import { REMOTE_COPY } from '../shared/remote'
-import { arrangeCoordinators, deviceGroups, groupLabels, moveGroup, moveTab, panelGroups, panelOrder, type PanelGroup, type PanelRow } from './tab-groups'
+import { arrangeCoordinators, deviceGroups, dropAttaches, groupLabels, moveGroup, panelDrop, panelGroups, panelOrder, type DropRow, type PanelGroup, type PanelRow } from './tab-groups'
 import { icon } from './icons'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
-import { dragCarries, TAB_DRAG, type TabBarCallbacks, type TabBarGroup, type TabBarItem } from './tabbar'
+import { dragCarries, draggingTab, dropRowOf, setDragging, TAB_DRAG, type TabBarCallbacks, type TabBarGroup, type TabBarItem } from './tabbar'
 
 /** the drag's data type that names the group dragged by its header */
 const GROUP_DRAG = 'application/x-claudeterm-group'
@@ -284,10 +284,19 @@ export class TabPanel {
     // the row's soft pulse runs on the word's clock, so a redraw carries it on in step with the word
     if (item.attention) el.style.setProperty('--pulse-delay', pulseDelay())
     el.draggable = true
-    el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(TAB_DRAG, item.id) })
-    el.addEventListener('dragover', (e) => { if (dragCarries(e, TAB_DRAG)) e.preventDefault() })
+    el.addEventListener('dragstart', (e) => {
+      e.dataTransfer?.setData(TAB_DRAG, item.id)
+      setDragging(item.id)
+    })
+    el.addEventListener('dragover', (e) => {
+      if (!dragCarries(e, TAB_DRAG)) return
+      e.preventDefault()
+      el.classList.toggle('coord-drop', this.attaches(item, row))
+    })
+    el.addEventListener('dragleave', () => el.classList.remove('coord-drop'))
     el.addEventListener('drop', (e) => {
       e.preventDefault()
+      el.classList.remove('coord-drop')
       this.dropTab(section, item.id, e.dataTransfer?.getData(TAB_DRAG) ?? '')
     })
     const tooltip = remote && item.deviceName !== null ? [REMOTE_COPY.tabTooltip(item.title, item.deviceName, item.folder)] : [item.title, item.folder]
@@ -344,11 +353,43 @@ export class TabPanel {
     return el
   }
 
-  /** a row dropped on another row of its section: the tab order the drop answers, when it is allowed, goes to main for that device; `from` is the drag's own tab id */
+  /** the drop rule's view of a row: its Claude tab, its mark, and the block it stands in (in any section); null for no tab of the panel */
+  private dropRow(id: string): DropRow | null {
+    const item = this.items.find((i) => i.id === id)
+    if (!item) return null
+    const block = this.sections().flatMap((s) => s.groups.flatMap((g) => g.rows)).find((r) => r.id === id)?.block
+    return dropRowOf(item, block ?? null)
+  }
+
+  /** whether the tab dragged now attaches to the row it is dragged over: the light of a coordinator's row */
+  private attaches(target: TabBarItem, row: PanelRow): boolean {
+    const from = draggingTab()
+    const drag = from === null ? null : this.dropRow(from)
+    return drag !== null && dropAttaches(drag, dropRowOf(target, row.block ?? null))
+  }
+
+  /**
+   * a row dropped on another row of its section: panelDrop says what it does. An attach or a detach goes to the coordinator
+   * (a detach then puts the row where it was dropped); a reorder goes to main for the section's device; `from` is the drag's own tab id
+   */
   private dropTab(section: Section, targetId: string, from: string): void {
-    if (!from) return
-    const order = moveTab(section.groups, from, targetId)
-    if (order) this.cb.reorder(order, section.device?.id ?? null)
+    const drag = from ? this.dropRow(from) : null
+    const target = this.dropRow(targetId)
+    if (!drag || !target) return
+    const drop = panelDrop(section.groups, drag, target)
+    if (drop === null) return
+    switch (drop.kind) {
+      case 'attach':
+        this.cb.attachTab(drop.coordinator, drop.tab)
+        break
+      case 'detach':
+        this.cb.detachTab(drop.tab)
+        if (drop.order) this.cb.reorder(drop.order, section.device?.id ?? null)
+        break
+      case 'reorder':
+        this.cb.reorder(drop.order, section.device?.id ?? null)
+        break
+    }
   }
 
   /** a group header dropped on another header of its section: the groups move, the tab order goes to main for that device */

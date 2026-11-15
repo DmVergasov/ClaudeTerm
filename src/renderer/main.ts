@@ -120,6 +120,8 @@ const placeLog = new Map<string, (TabPlace | null)[]>()
 let coordMarks: CoordMarks = {}
 /** whether the marks came in as an event: then the answer to the first request is older and is not applied */
 let coordMarksSeen = false
+/** the tabs being detached: they show as unattached at once, so the block does not pull them back while main answers; a mark without their attachment ends it */
+const detaching = new Set<string>()
 /** each coordinator tab's view, as main last published it or answered for it */
 const coordViews = new Map<string, CoordinatorView>()
 let lightbox: Lightbox
@@ -218,6 +220,7 @@ const coordMarkOf = (id: string | null): CoordMark | null => (id === null ? null
 
 function applyMarks(m: CoordMarks): void {
   coordMarks = m
+  for (const id of detaching) if (m[id]?.role !== 'attached') detaching.delete(id)
   syncSessions()
   renderTabs()
 }
@@ -246,7 +249,7 @@ function tabBarItem(id: string): TabBarItem | null {
     group: remote?.device ?? null,
     deviceName: remote ? remoteDeviceOf(remote.device)?.name ?? null : null,
     dim: remote !== undefined && !isOnline(remote.device),
-    coord: coordMarkOf(id)
+    coord: detaching.has(id) ? null : coordMarkOf(id)
   }
 }
 
@@ -1301,13 +1304,24 @@ async function detachFromCoordinator(tabId: string): Promise<void> {
   const mark = coordMarkOf(tabId)
   if (mark?.role !== 'attached' || mark.coordinatorTabId === null) return
   const coordinatorTabId = mark.coordinatorTabId
+  // the tab shows as unattached from now on: a drop's order reaches main before the new marks, and the old block would pull the tab back
+  detaching.add(tabId)
+  renderTabs()
   const view = await coordViewOf(coordinatorTabId)
   const row = view?.sessions.find((r) => r.tabId === tabId)
   if (!row) {
+    detaching.delete(tabId)
+    renderTabs()
     showToast('This session is not attached to a coordinator here.')
     return
   }
-  ct.coordDetach(coordinatorTabId, row.key).then(toastFailure)
+  ct.coordDetach(coordinatorTabId, row.key).then((r) => {
+    if (!r.ok) {
+      detaching.delete(tabId)
+      renderTabs()
+    }
+    toastFailure(r)
+  })
 }
 
 /** Make project coordinator: a replace asks first */
@@ -1449,6 +1463,7 @@ async function boot(): Promise<void> {
       if (activeId) focusTab(activeId)
     },
     detachTab: (id) => void detachFromCoordinator(id),
+    attachTab: (coordinatorId, id) => void ct.coordAttach(coordinatorId, id).then(toastFailure),
     toggleNote: () => {
       runAction({ type: 'toggleNote' }, activeId)
       // the keyboard goes back to the terminal, unless an empty note took it to be written in
@@ -1771,7 +1786,13 @@ async function boot(): Promise<void> {
     attachOther: (coordinatorTabId) => openAttachDialog({
       choices: attachChoices(attachTabs(), coordinatorTabId, coordMarks),
       attach: (tabId) => ct.coordAttach(coordinatorTabId, tabId)
-    })
+    }),
+    // a local Claude tab dropped on the panel is attached; another tab, or the coordinator itself, does nothing here
+    dropTab: (coordinatorTabId, tabId) => {
+      const t = tabs.get(tabId)
+      if (tabId === coordinatorTabId || !t || t.info.remote || t.info.kind !== 'claude') return
+      void ct.coordAttach(coordinatorTabId, tabId).then(toastFailure)
+    }
   })
   sidePanel.onCover = () => noteOverlay.relayout()
   mcpPanel = new McpPanel(sidePanel.bodies.mcp, sidePanel, {

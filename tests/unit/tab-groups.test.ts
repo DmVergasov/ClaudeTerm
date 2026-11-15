@@ -2,15 +2,18 @@ import { describe, expect, it } from 'vitest'
 import {
   NO_PROJECT,
   arrangeCoordinators,
+  dropAttaches,
   groupLabels,
   moveGroup,
   moveTab,
   orderToWrite,
+  panelDrop,
   panelGroups,
   panelOrder,
   showsGroupLabels,
   moveInGroup,
   storedGroups,
+  type DropRow,
   type GroupInput,
   type PanelGroup
 } from '../../src/renderer/tab-groups'
@@ -259,5 +262,52 @@ describe('coordinator blocks', () => {
   it('a group without a coordinator is the same', () => {
     const groups = panelGroups([tab('A', acme), tab('B', acme)])
     expect(arrangeCoordinators(groups, marks({ B: to('Z') }), true)).toEqual(groups)
+  })
+
+  describe('drops on a coordinator\'s block', () => {
+    const m = marks({ C, A1: to('C'), A2: to('C') })
+    const g = arrangeCoordinators(panelGroups(['C', 'A1', 'A2', 'X', 'S'].map((id) => tab(id, acme))), m, true)
+    const row = (id: string, o: Partial<DropRow> = {}): DropRow => ({ id, claude: true, local: true, coord: m(id), block: g[0].rows.find((r) => r.id === id)?.block ?? null, ...o })
+
+    it('a Claude tab dropped on the coordinator\'s row attaches it', () => {
+      expect(panelDrop(g, row('X'), row('C'))).toEqual({ kind: 'attach', coordinator: 'C', tab: 'X' })
+    })
+    it('the coordinator\'s own attached tab, a shell tab and another device\'s tab dropped on it do nothing', () => {
+      expect(panelDrop(g, row('A1'), row('C'))).toBeNull()
+      expect(panelDrop(g, row('S', { claude: false }), row('C'))).toBeNull()
+      expect(panelDrop(g, row('X', { local: false }), row('C'))).toBeNull()
+    })
+    it('an attached row dropped on a row outside the block is detached and put there', () => {
+      expect(panelDrop(g, row('A1'), row('X'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'A2', 'X', 'A1', 'S'] })
+    })
+    it('an attached row dropped on a row of another group is detached and stays in its group', () => {
+      expect(panelDrop(g, row('A1'), { id: 'B', claude: true, local: true, coord: null, block: null })).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: null })
+    })
+    it('an attached row dropped on another of the block reorders the block', () => {
+      expect(panelDrop(g, row('A2'), row('A1'))).toEqual({ kind: 'reorder', order: ['C', 'A2', 'A1', 'X', 'S'] })
+    })
+    it('an outside row dropped into the block does nothing; outside rows reorder as before', () => {
+      expect(panelDrop(g, row('X'), row('A1'))).toBeNull()
+      expect(panelDrop(g, row('S'), row('X'))).toEqual({ kind: 'reorder', order: ['C', 'A1', 'A2', 'S', 'X'] })
+    })
+    it('the coordinator dropped on a row of its own block does nothing', () => {
+      expect(panelDrop(g, row('C'), row('A1'))).toBeNull()
+    })
+    it('dropAttaches refuses the coordinator itself, another coordinator and a target that is no coordinator', () => {
+      expect(dropAttaches(row('X'), row('A1'))).toBe(false)
+      expect(dropAttaches(row('C'), row('C'))).toBe(false)
+      expect(dropAttaches(row('K', { coord: { role: 'coordinator', project: 'beta', sessions: 0, waiting: 0 } }), row('C'))).toBe(false)
+      expect(dropAttaches(row('X'), row('C'))).toBe(true)
+    })
+    it('an attached row detached out of a block built by hand leaves the block for the row it is dropped on', () => {
+      const hand: PanelGroup[] = [{ key: acme.project.key, project: acme.project, rows: [
+        { id: 'C', fork: false, block: 'C' },
+        { id: 'A1', fork: false, block: 'C', attached: true },
+        { id: 'X', fork: false }
+      ] }]
+      const drag: DropRow = { id: 'A1', claude: true, local: true, coord: to('C'), block: 'C' }
+      const target: DropRow = { id: 'X', claude: true, local: true, coord: null, block: null }
+      expect(panelDrop(hand, drag, target)).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'X', 'A1'] })
+    })
   })
 })

@@ -288,6 +288,37 @@ export function arrangeCoordinators(groups: PanelGroup[], coordOf: (id: string) 
   })
 }
 
+/** what a drop needs to know of a row: Claude or shell, this device's, its mark, the block it stands in (its PanelRow's block) */
+export interface DropRow { id: string; claude: boolean; local: boolean; coord: CoordMark | null; block: string | null }
+export type PanelDrop =
+  | { kind: 'attach'; coordinator: string; tab: string }
+  | { kind: 'detach'; coordinator: string; tab: string; order: string[] | null }
+  | { kind: 'reorder'; order: string[] }
+
+/** a Claude tab of this device, no coordinator itself, dropped on another tab that is a coordinator it is not attached to (one attached to another coordinator is asked for too: main answers with the refusal) */
+export function dropAttaches(drag: DropRow, target: DropRow): boolean {
+  if (!drag.claude || !drag.local || drag.coord?.role === 'coordinator' || target.coord?.role !== 'coordinator') return false
+  return !(drag.coord?.role === 'attached' && drag.coord.coordinatorTabId === target.id)
+}
+
+/**
+ * What a row dropped on another row of the left panel does; null: nothing. `groups`: the target's section, arranged.
+ * In order: the same row → null; the target is a coordinator → attach when dropAttaches, else null; the dragged row is an
+ * attached session standing in its coordinator's block and the target is outside that block → detach, with moveTab's order
+ * (null across groups); the target is in a block the dragged row is not in, or the dragged row is a coordinator and the
+ * target is in its own block → null; else moveTab's order as a reorder (null when it gives none).
+ */
+export function panelDrop(groups: PanelGroup[], drag: DropRow, target: DropRow): PanelDrop | null {
+  if (drag.id === target.id) return null
+  if (target.coord?.role === 'coordinator') return dropAttaches(drag, target) ? { kind: 'attach', coordinator: target.id, tab: drag.id } : null
+  if (drag.block !== null && drag.coord?.role === 'attached' && target.block !== drag.block) {
+    return { kind: 'detach', coordinator: drag.block, tab: drag.id, order: moveTab(groups, drag.id, target.id) }
+  }
+  if (target.block !== null && (target.block !== drag.block || drag.coord?.role === 'coordinator')) return null
+  const order = moveTab(groups, drag.id, target.id)
+  return order ? { kind: 'reorder', order } : null
+}
+
 /** a group's units: a row that is not a fork starts one, and with `families` the fork rows after it join it; each row alone otherwise */
 function unitsOf(rows: PanelRow[], families: boolean): PanelRow[][] {
   const units: PanelRow[][] = []

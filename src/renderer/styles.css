@@ -198,6 +198,9 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .tp-tab.coord-attached { margin-left: 16px; }
 .tp-tab.coord-attached::before { content: ''; position: absolute; left: -9px; top: -3px; bottom: -3px; border-left: 1px solid var(--line-3); }
 .tp-coord-to { flex: none; margin-left: 6px; color: var(--text-3); font-size: 11px; white-space: nowrap; }
+/* a drop target of a tab drag: the coordinator's row or tab, and the Sessions panel */
+.tp-tab.coord-drop, .tab.coord-drop { box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.panel-sessions.coord-drop { box-shadow: inset 0 0 0 2px var(--accent); }
 /* a linked worktree's tab: a 2 px bar at its left edge, and its branch in the same color */
 .tp-wtbar { position: absolute; left: 3px; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; }
 /* another device's section: a 2 px line in its colour along the left edge; offline, faded, with no line and a dashed bar */

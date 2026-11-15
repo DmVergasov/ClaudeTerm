@@ -1,7 +1,7 @@
 import type { CoordMark } from '../shared/coordinator'
 import { REMOTE_COPY } from '../shared/remote'
 import { WORKTREE_COLORS, type TabActivity, type TabKind, type TabPlace } from '../shared/types'
-import { arrangeCoordinators, groupLabels, moveInGroup, panelOrder, showsGroupLabels, storedGroups, type PanelGroup } from './tab-groups'
+import { arrangeCoordinators, dropAttaches, groupLabels, moveInGroup, panelOrder, showsGroupLabels, storedGroups, type DropRow, type PanelGroup } from './tab-groups'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
 
@@ -83,6 +83,8 @@ export interface TabBarCallbacks {
   toggleSessions(): void
   /** Detach of an attached session, from its header */
   detachTab(id: string): void
+  /** a tab dropped on a coordinator's tab or row: the coordinator takes it as an attached session */
+  attachTab(coordinatorId: string, tabId: string): void
   toggleNote(): void
   switchPosition(): void
 }
@@ -92,6 +94,26 @@ export const TAB_DRAG = 'application/x-claudeterm-tab'
 
 /** whether a drag carries the data type: only then does a row take it */
 export const dragCarries = (e: DragEvent, type: string): boolean => e.dataTransfer?.types.includes(type) ?? false
+
+/** the tab a drag of the bar or the panel carries: its data cannot be read during the drag, so dragover reads this to light a drop target */
+let dragging: string | null = null
+export const draggingTab = (): string | null => dragging
+export function setDragging(id: string | null): void {
+  dragging = id
+}
+
+/** a drag is over: it lost its tab, and no drop target keeps its light */
+function endDrag(): void {
+  setDragging(null)
+  for (const el of document.querySelectorAll('.coord-drop')) el.classList.remove('coord-drop')
+}
+// a drag ends with a drop or a dragend anywhere; one that leaves the window (no element entered) ends too
+document.addEventListener('dragend', endDrag, true)
+document.addEventListener('drop', endDrag, true)
+window.addEventListener('dragleave', (e) => { if (e.relatedTarget === null) endDrag() })
+
+/** a tab as the coordinator drop rules read it: this device's Claude tab, its mark, and the block it stands in */
+export const dropRowOf = (item: TabBarItem, block: string | null): DropRow => ({ id: item.id, claude: item.kind === 'claude', local: item.group === null, coord: item.coord, block })
 
 /** the line between two groups of the bar, and before the first device chip */
 const groupSeparator = (): HTMLElement => {
@@ -262,13 +284,29 @@ export class TabBar {
       el.append(line)
     }
     bindTab(el, item, this.cb, () => this.startRename(parts.label, item))
-    el.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(TAB_DRAG, item.id) })
-    el.addEventListener('dragover', (e) => { if (dragCarries(e, TAB_DRAG)) e.preventDefault() })
+    el.addEventListener('dragstart', (e) => {
+      e.dataTransfer?.setData(TAB_DRAG, item.id)
+      setDragging(item.id)
+    })
+    el.addEventListener('dragover', (e) => {
+      if (!dragCarries(e, TAB_DRAG)) return
+      e.preventDefault()
+      el.classList.toggle('coord-drop', this.attaches(item))
+    })
+    el.addEventListener('dragleave', () => el.classList.remove('coord-drop'))
     el.addEventListener('drop', (e) => {
       e.preventDefault()
+      el.classList.remove('coord-drop')
       this.dropOn(item.id, e.dataTransfer?.getData(TAB_DRAG) ?? '')
     })
     return el
+  }
+
+  /** whether the tab dragged over `target` attaches to it as its coordinator */
+  private attaches(target: TabBarItem): boolean {
+    const from = draggingTab()
+    const dragged = this.items.find((i) => i.id === from)
+    return dragged !== undefined && dropAttaches(dropRowOf(dragged, null), dropRowOf(target, null))
   }
 
   private groupColor(id: string): string {
@@ -280,7 +318,13 @@ export class TabBar {
     if (!from || from === targetId) return
     const dragged = this.items.find((i) => i.id === from)
     const target = this.items.find((i) => i.id === targetId)
-    if (!dragged || !target || dragged.group !== target.group) return
+    if (!dragged || !target) return
+    // a coordinator's tab takes the tab dropped on it as an attached session
+    if (dropAttaches(dropRowOf(dragged, null), dropRowOf(target, null))) {
+      this.cb.attachTab(targetId, from)
+      return
+    }
+    if (dragged.group !== target.group) return
     // this device's tabs move within their project group, in the order the bar shows them
     if (target.group === null) {
       const order = moveInGroup(this.ownGroups(this.items), from, targetId)

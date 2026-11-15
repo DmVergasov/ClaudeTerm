@@ -4,6 +4,7 @@ import { icon } from './icons'
 import { ACTION_LABELS, DEFAULT_FOLDED, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, type RowAction, type RowIcon, type SectionKey, type SessionSection } from './sessions-model'
 import type { SidePanel } from './side-panel'
 import { spinner } from './tab-row'
+import { dragCarries, TAB_DRAG } from './tabbar'
 import { labelOf } from './util'
 
 export interface SessionsPanelCallbacks {
@@ -16,6 +17,8 @@ export interface SessionsPanelCallbacks {
   newSession(coordinatorTabId: string): void
   /** the Attach… dialog of a coordinator */
   attachOther(coordinatorTabId: string): void
+  /** a tab dropped on the panel of a coordinator's tab: it is attached to that coordinator */
+  dropTab(coordinatorTabId: string, tabId: string): void
   /** null: the task was given; else why not */
   message(coordinatorTabId: string, key: string, text: string): Promise<string | null>
 }
@@ -63,6 +66,21 @@ export class SessionsPanel {
     this.buildCompose()
     this.buildBar()
     body.replaceChildren(this.notice, this.bar, this.list, this.composeBox)
+    // a tab dragged over the panel of a coordinator's tab lights the panel, and a drop there attaches the tab to it
+    body.addEventListener('dragover', (e) => {
+      if (this.view === null || !dragCarries(e, TAB_DRAG)) return
+      e.preventDefault()
+      body.classList.add('coord-drop')
+    })
+    body.addEventListener('dragleave', (e) => {
+      if (!body.contains(e.relatedTarget as Node | null)) body.classList.remove('coord-drop')
+    })
+    body.addEventListener('drop', (e) => {
+      e.preventDefault()
+      body.classList.remove('coord-drop')
+      const from = e.dataTransfer?.getData(TAB_DRAG) ?? ''
+      if (from && this.view !== null) this.cb.dropTab(this.view.tabId, from)
+    })
   }
 
   /** the tab in front and its view: null for a tab that is no coordinator, or a view not loaded yet */
