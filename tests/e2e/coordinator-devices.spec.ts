@@ -7,7 +7,7 @@ import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { activate, refOf, startSession, waitForMail } from './agent-mail'
 import { claudeTabIn, coord, coordDevices, coordViewOf, done, makeCoordinator, within } from './coordinator-helpers'
 import { dragOnto, LEFT, marksOf, menuItem, openSessions, sessionGroup, sessionRow, tpRow } from './coordinator-window'
-import { closePaired, type Device, relaunch, SLOW } from './device-pair'
+import { closeApp, closePaired, type Device, relaunch, SLOW } from './device-pair'
 
 test.afterEach(closePaired)
 
@@ -128,7 +128,7 @@ test('Laptop offline: its row is Offline, a task waits, and it reaches the sessi
   test.setTimeout(240_000)
   const { a, b, coordTab, sessionTab, sessionSid, repoB } = await coordDevices()
   await attachLaptopSession(a, b, coordTab, sessionTab, sessionSid)
-  await b.app.close()
+  await closeApp(b.name, b.app)
 
   await expect.poll(async () => (await coordViewOf(a, coordTab))?.sessions[0], SLOW).toMatchObject({ marker: 'offline', line: 'Offline' })
   const key = (await coordViewOf(a, coordTab))!.sessions[0]!.key
@@ -247,10 +247,18 @@ test('start_session on Laptop opens a tab there in the folder of its acme tab, a
   const newTab = await startedTabOf(b.page, 'Release notes')
   const sid = randomUUID()
   expect(await startSession(b.pipeName, newTab, sid)).toEqual({ ok: true })
-  expect(await answer).toEqual({
-    ok: true,
-    info: `Started Release notes · Laptop [${refOf(sid)}] on Laptop in ${repoB}, the folder of its acme tab, on Main account; it is attached to you once Laptop confirms. Its task is its first message; its report comes to you by itself when its task ends.`
-  })
+  // the answer says Laptop's session started when it came within START_WAIT_MS, else that the tab is opening: either way the start went on
+  const reply = await answer
+  expect(reply.ok).toBe(true)
+  expect([
+    `Started Release notes · Laptop [${refOf(sid)}] on Laptop in ${repoB}, the folder of its acme tab, on Main account; it is attached to you once Laptop confirms. Its task is its first message; its report comes to you by itself when its task ends.`,
+    `Opening Release notes on Laptop in ${repoB}, the folder of its acme tab, on Main account. It shows as Starting… until its session starts; its task is sent then.`
+  ]).toContain(reply.info)
+  // the row is attached once Laptop confirms it: its marker is then null
+  await expect.poll(async () => {
+    const row = ((await coordViewOf(a, coordTab))?.sessions ?? []).find((r) => r.ref === refOf(sid))
+    return row === undefined ? 'missing' : row.marker
+  }, SLOW).toBeNull()
   expect((await within(waitForMail(b.pipeName, newTab, sid), 30_000)).info).toContain('> Write the release notes.')
 })
 

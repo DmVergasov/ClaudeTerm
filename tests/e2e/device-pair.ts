@@ -1,4 +1,5 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type ElectronApplication, type Page } from '@playwright/test'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -118,7 +119,7 @@ export async function pairedApps(o: { a?: AppOptions; b?: AppOptions } = {}): Pr
 
 /** the same data folder, args and env: the device's app is closed and started again, in place (the same object) */
 export async function relaunch(d: Device): Promise<Device> {
-  await d.app.close()
+  await closeApp(d.name || 'an unpaired app', d.app)
   const launched = await launchApp({ dataDir: d.dataDir, args: d.args, env: d.env })
   Object.assign(d, launched)
   d.firstTab = await firstTabOf(d)
@@ -146,24 +147,49 @@ export async function openShell(d: Device): Promise<TabInfo> {
 const CLOSE_TIMEOUT_MS = 20_000
 
 /**
- * closes every app these helpers started; for test.afterEach. An app that does not quit within CLOSE_TIMEOUT_MS is killed,
- * so a hang does not hold the worker, and the test fails by name: a quit hang is a failure, not a pass
+ * kills an app with its whole process tree: the main process alone leaves its pty and its stand-in claude children running.
+ * Windows takes the tree with taskkill; elsewhere the app's process group, or the main process when it has none
+ */
+function killTree(app: ElectronApplication): void {
+  const child = app.process()
+  const { pid } = child
+  if (pid === undefined) return
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' })
+    return
+  }
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    child.kill('SIGKILL')
+  }
+}
+
+/**
+ * closes an app; one that does not quit within CLOSE_TIMEOUT_MS is killed with its process tree, and the close fails by name:
+ * a quit hang is a failure, not a pass, and it does not hold the worker
+ */
+export async function closeApp(name: string, app: ElectronApplication): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), CLOSE_TIMEOUT_MS) })
+  try {
+    const closed = app.close().then(() => 'closed' as const, () => 'closed' as const)
+    if (await Promise.race([closed, timeout]) === 'timeout') {
+      killTree(app)
+      throw new Error(`${name} did not quit within ${CLOSE_TIMEOUT_MS / 1000} s and was killed`)
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * closes every app these helpers started; for test.afterEach. Each app closes as closeApp does, and the failures of the apps
+ * that did not quit are thrown together
  */
 export async function closePaired(): Promise<void> {
   const devices = running.splice(0)
-  const killed: string[] = []
-  await Promise.allSettled(devices.map(async (d) => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const timeout = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), CLOSE_TIMEOUT_MS) })
-    try {
-      const closed = d.app.close().then(() => 'closed' as const)
-      if (await Promise.race([closed, timeout]) === 'timeout') {
-        d.app.process().kill('SIGKILL')
-        killed.push(d.name || 'an unpaired app')
-      }
-    } finally {
-      clearTimeout(timer)
-    }
-  }))
-  if (killed.length > 0) throw new Error(`${killed.join(', ')} did not quit within ${CLOSE_TIMEOUT_MS / 1000} s and was killed`)
+  const results = await Promise.allSettled(devices.map((d) => closeApp(d.name || 'an unpaired app', d.app)))
+  const failures = results.flatMap((r) => (r.status === 'rejected' ? [r.reason instanceof Error ? r.reason.message : String(r.reason)] : []))
+  if (failures.length > 0) throw new Error(failures.join('; '))
 }
