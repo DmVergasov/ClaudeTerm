@@ -98,6 +98,9 @@ export interface CoordinatorHubDeps {
   accountLabel(account: string | null): string // Task 8
   openTab(req: OpenTabRequest): string | null // Task 8: the new tab's id, opened behind the tab in front
   openRemoteTab(device: string, req: { cwd: string | null; email: string | null; title: string | null }): Promise<RemoteOpened> // open-tab on a paired device (its id)
+  mainFolder(folder: string): Promise<string | null> // the folder of a project's main worktree (mainWorktreeFolder); null: none
+  openCoordinatorTab(cwd: string, projectKey: string): string | null // opens a Claude tab for the chip's coordinator: its id, or null when it does not open
+  activate(tabId: string): void // brings a tab of this device to the front
   accountEmail(account: string | null): string | null // the email of an account of this device (null: Main account); null when not known
   recheckMail(): void // MailHub.tabsChanged
   poke(tabId: string): void // PromptDelivery.poke
@@ -261,6 +264,12 @@ function projectText(name: string): string {
   return text
 }
 
+/** a chip's coordinator start: the tab it opened, and the answer its caller waits for */
+interface PendingMake {
+  tabId: string | null // null while the project's main folder is being looked up
+  answer: ((r: CoordResult | null) => void) | null // null until the promise exists
+}
+
 /**
  * The coordinators of this device: a Claude tab that coordinates its project, the sessions attached to it, the tasks
  * they give those sessions over agent mail, and the coordinator's view of them. Event-driven: no timers of its own.
@@ -284,6 +293,8 @@ export class CoordinatorHub {
   private readonly attachWaits = new Map<string, AttachWait>()
   /** the tabs whose role note is due: made a coordinator, or cleared or compacted as one, and not yet handed to it (in memory) */
   private readonly briefDue = new Set<string>()
+  /** the chip's coordinator starts, by project key: a tab that becomes the project's coordinator once it has a session and a project */
+  private readonly makes = new Map<string, PendingMake>()
   private readonly unsubscribe: () => void
 
   constructor(private readonly d: CoordinatorHubDeps) {
@@ -292,6 +303,66 @@ export class CoordinatorHub {
 
   isCoordinator(tabId: string): boolean {
     return this.own(tabId) !== null
+  }
+
+  /**
+   * The chip's + Coordinator: a project with a coordinator brings that coordinator's tab to the front; a project with a start
+   * brings the starting tab to the front. Otherwise a Claude tab opens in the project's main folder (`folder`'s own when git
+   * cannot tell) and becomes the coordinator once its session and its project are known; the answer waits for that. Null:
+   * nothing to tell (a tab was brought to the front, or the new tab closed, exited or did not open).
+   */
+  async startCoordinator(projectKey: string, folder: string): Promise<CoordResult | null> {
+    const c = this.d.store.coordinatorOf(projectKey)
+    if (c) {
+      const tab = this.tabOfSession(c.session)
+      if (!tab) return fail(HUB_TEXT.taken(c.project.name, this.nameOf(c.session)))
+      this.d.activate(tab.tabId)
+      return null
+    }
+    const making = this.makes.get(projectKey)
+    if (making) {
+      if (making.tabId !== null) this.d.activate(making.tabId)
+      return null
+    }
+    // the start is pending before the first await, so a second click meanwhile finds it
+    const entry: PendingMake = { tabId: null, answer: null }
+    this.makes.set(projectKey, entry)
+    const cwd = (await this.d.mainFolder(folder).catch(() => null)) ?? folder
+    const tabId = this.d.openCoordinatorTab(cwd, projectKey)
+    if (tabId === null) {
+      this.makes.delete(projectKey)
+      return null
+    }
+    entry.tabId = tabId
+    return new Promise<CoordResult | null>((resolve) => {
+      entry.answer = resolve
+      this.settleMake(tabId)
+    })
+  }
+
+  /** the tab of a chip's coordinator start got its project: its session may have come already, so the start is settled now */
+  placeChanged(tabId: string): void {
+    this.settleMake(tabId)
+  }
+
+  /** a chip's start whose tab has its session and its project makes the tab the coordinator; one whose tab exited answers null */
+  private settleMake(tabId: string): void {
+    const found = [...this.makes].find(([, m]) => m.tabId === tabId)
+    const tab = found ? this.d.tabs().find((t) => t.tabId === tabId) : undefined
+    if (!found || !tab) return
+    if (tab.exited) return this.endMake(tabId)
+    if (tab.session === null || tab.project === null) return
+    const [key, entry] = found
+    this.makes.delete(key)
+    entry.answer?.(this.make(tabId, false))
+  }
+
+  /** the tab of a chip's coordinator start is gone or exited before it became a coordinator: the start answers null */
+  private endMake(tabId: string): void {
+    const found = [...this.makes].find(([, m]) => m.tabId === tabId)
+    if (!found) return
+    this.makes.delete(found[0])
+    found[1].answer?.(null)
   }
 
   make(tabId: string, replace: boolean): CoordResult {
@@ -700,6 +771,7 @@ export class CoordinatorHub {
 
   /** the tab's process exited: its turn is over and the task it held fails; the queued tasks stay */
   exited(tabId: string): void {
+    this.endMake(tabId)
     this.inTurn.delete(tabId)
     this.briefDue.delete(tabId)
     this.cancelSettle(tabId)
@@ -713,6 +785,7 @@ export class CoordinatorHub {
     if (before !== null && session !== null && before !== session) this.renamedFrom.set(tabId, before)
     this.sessions.set(tabId, session)
     if (session !== null) this.startArrived(tabId, session)
+    if (session !== null) this.settleMake(tabId)
   }
 
   /** a tab's conversation started under a session id; clear, compact and resume move the coordinator and its sessions to it */
@@ -721,6 +794,7 @@ export class CoordinatorHub {
     this.renamedFrom.delete(tabId)
     this.sessions.set(tabId, after)
     this.startArrived(tabId, after)
+    this.settleMake(tabId)
     // the design names clear and compact; resume is needed too, for a restored tab that resumes under a new id
     if (source !== 'clear' && source !== 'compact' && source !== 'resume') return
     const old = before !== null && before !== after ? before : remembered
@@ -744,6 +818,7 @@ export class CoordinatorHub {
 
   /** the tab was closed on purpose: its tasks fail, oldest first, and a coordinator's tab stops its coordinator */
   tabClosed(tabId: string): void {
+    this.endMake(tabId)
     this.renamedFrom.delete(tabId)
     this.inTurn.delete(tabId)
     this.briefDue.delete(tabId)
@@ -843,6 +918,7 @@ export class CoordinatorHub {
 
   dispose(): void {
     this.unsubscribe()
+    this.makes.clear()
     for (const cancel of this.settle.values()) cancel()
     this.settle.clear()
     for (const s of this.starts.values()) s.cancelWait()

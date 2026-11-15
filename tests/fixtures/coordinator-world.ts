@@ -111,6 +111,14 @@ export function world(o: WorldOptions = {}) {
     resting: {} as Record<string, boolean>,
     /** the hub's calls to the window and the mail, in order */
     order: [] as string[],
+    /** what the hub's mainFolder answers: the project's main folder, or null (a bare repository); mainFolderThrows: the lookup fails */
+    mainFolder: 'D:\\Work\\acme' as string | null,
+    mainFolderThrows: false,
+    /** the hub's openCoordinatorTab calls, in order: each opens `chip-tab-<n>` in w.tabs, with no session and no project yet, unless openFails */
+    openedCoordinators: [] as { cwd: string; projectKey: string }[],
+    openFails: false,
+    /** the tabs the hub brought to the front, in order */
+    activated: [] as string[],
     problem: o.problem ?? null,
     store: new CoordinatorStore(dir, { debounceMs: 100_000 }),
     mail: MailStore.open({ dir, now: () => NOW, debounceMs: 100_000 }),
@@ -158,6 +166,20 @@ export function world(o: WorldOptions = {}) {
       w.openedRemote.push({ device, req })
       w.now += w.remoteDelayMs
       return w.remoteAnswer ?? { ok: true, tabId: 'rt-new', cwd: req.cwd ?? '/home/sam', accountName: 'Main account', defaulted: false }
+    },
+    mainFolder: async () => {
+      if (w.mainFolderThrows) throw new Error('git failed')
+      return w.mainFolder
+    },
+    openCoordinatorTab: (cwd, projectKey) => {
+      w.openedCoordinators.push({ cwd, projectKey })
+      if (w.openFails) return null
+      const id = `chip-tab-${w.openedCoordinators.length}`
+      w.tabs.push(tab(id, null, null, { folder: cwd }))
+      return id
+    },
+    activate: (tabId) => {
+      w.activated.push(tabId)
     },
     accountEmail: (account) => (account === null ? w.mainEmail : (w.emails[account] ?? null)),
     recheckMail: () => {

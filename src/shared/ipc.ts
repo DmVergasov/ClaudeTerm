@@ -179,6 +179,7 @@ export const IPC = {
   coordMessage: 'coord:message',
   coordResolve: 'coord:resolve',
   coordNewSession: 'coord:new-session',
+  coordStartCoordinator: 'coord:start-coordinator',
   /** the chat of a Claude tab in its chat view: its conversation, its patches, and what the user does in it */
   chatSnapshot: 'chat:snapshot',
   chatSend: 'chat:send',
@@ -368,6 +369,8 @@ export interface CtApi {
   coordResolve(tabId: string, key: string): Promise<CoordResult>
   /** starts a new session in the coordinator's folder with its task */
   coordNewSession(tabId: string, req: CoordStartRequest): Promise<CoordResult>
+  /** + Coordinator on a project group's header: tabId is a tab of this device in the group. A Claude tab opens in the project's main folder and becomes its coordinator once its session starts, and the answer waits for that. Null: nothing to tell (the project's coordinator or its starting tab was brought to the front, or the new tab closed, exited or did not open) */
+  coordStartCoordinator(tabId: string): Promise<CoordResult | null>
   listProfiles(): Promise<string[]>
   getSettings(): Promise<Settings>
   openSettingsFile(): void

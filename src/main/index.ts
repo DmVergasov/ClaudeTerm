@@ -132,7 +132,7 @@ import { createSoundPlayer, linuxSoundDeps, macSoundDeps, startPlayer, wavPlayer
 import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager, type ConversationMove } from './tab-manager'
-import { TabPlaces } from './tab-places'
+import { mainWorktreeFolder, TabPlaces } from './tab-places'
 import { chatBatchPush, clampPush, forgetCopiedBy, hostHandlers, hostTabs, planPush, pruneListedMembers, pushAgentBatch, reviewPushes, withoutTabId, type HostContext } from './remote-host'
 import { clearFlag, frontClears, presentViewers, RemoteFront } from './remote-front'
 import { RemoteHolder, type RemoteHolderDeps } from './remote-holder'
@@ -841,6 +841,8 @@ function bootstrap(): void {
       // a Claude tab's project note reaches the window before the window learns the tab's project
       if (tabs.get(id)?.kind === 'claude') projectNotes.place(id, place ? { key: place.project.key, name: place.project.name } : null)
       send(IPC.evTabPlace, id, place)
+      // a tab the chip opened becomes the coordinator once it has its project too
+      projectCoordinators.placeChanged(id)
       // a coordinator's project and branch come from the place
       coordSoon.request()
       // the place is part of the tab's directory entry: the members hear of it as of any other change
@@ -2439,6 +2441,18 @@ function bootstrap(): void {
         return { ok: false, error: e instanceof Error ? e.message : String(e) }
       }
     },
+    // the chip's + Coordinator: its tab opens in the project's main folder, before the project's first tab, and in front
+    mainFolder: (folder) => mainWorktreeFolder(execGit, folder),
+    activate: (id) => tabs.activate(id),
+    openCoordinatorTab: (cwd, projectKey) => {
+      const before = tabs.list().find((t) => tabPlaces.get(t.id)?.project.key === projectKey)?.id
+      try {
+        return tabs.open({ kind: 'claude', cwd }, { before }).id
+      } catch (e) {
+        toast(`Cannot open tab: ${(e as Error).message}`)
+        return null
+      }
+    },
     accountEmail: (account) => (account === null ? accountsView().main.email : accountsView().accounts.find((x) => x.id === account)?.email ?? null),
     recheckMail: () => mailHub.tabsChanged(),
     poke: (id) => promptDelivery.poke(id),
@@ -3079,6 +3093,12 @@ function bootstrap(): void {
   ipcMain.handle(IPC.coordMessage, (_e, tabId: unknown, key: unknown, text: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) && isCoordTaskText(text) ? projectCoordinators.message(tabId, key, text) : coordRefused))
   ipcMain.handle(IPC.coordResolve, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.resolve(tabId, key) : coordRefused))
   ipcMain.handle(IPC.coordNewSession, (_e, tabId: unknown, req: unknown): Promise<CoordResult> => (isLocalClaudeTab(tabId) && isCoordStartRequest(req) ? projectCoordinators.start(tabId, req) : Promise.resolve(coordRefused)))
+  // the chip's + Coordinator: a tab of this device in a git project names the project; its folder is where a bare repository's coordinator opens
+  ipcMain.handle(IPC.coordStartCoordinator, (_e, tabId: unknown): Promise<CoordResult | null> => {
+    const tab = isId(tabId) ? tabs.get(tabId) : null
+    const place = tab ? (tabPlaces.get(tab.id) ?? null) : null
+    return tab && place ? projectCoordinators.startCoordinator(place.project.key, tab.folder) : Promise.resolve(coordRefused)
+  })
   /** a chat call that is not awaited: a failure is logged, never thrown into the main process */
   const chatCall = (call: Promise<void>, what: string): void => {
     call.catch((e: unknown) => log.warn(`${what}: ${String(e)}`))

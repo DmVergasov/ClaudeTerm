@@ -66,6 +66,7 @@ const api: CtApi = {
   coordMessage: (tabId, key, text) => ipcRenderer.invoke(IPC.coordMessage, tabId, key, text),
   coordResolve: (tabId, key) => ipcRenderer.invoke(IPC.coordResolve, tabId, key),
   coordNewSession: (tabId, req) => ipcRenderer.invoke(IPC.coordNewSession, tabId, req),
+  coordStartCoordinator: (tabId) => ipcRenderer.invoke(IPC.coordStartCoordinator, tabId),
   openSession: (id, device) => ipcRenderer.send(IPC.sessionsOpen, id, device),
   openSessionAs: (sessionId, account) => ipcRenderer.send(IPC.sessionsOpenAs, sessionId, account),
   setSessionStarred: (id, starred) => ipcRenderer.invoke(IPC.sessionsStar, id, starred),

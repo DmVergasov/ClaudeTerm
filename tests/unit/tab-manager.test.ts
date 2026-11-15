@@ -718,6 +718,25 @@ describe('TabManager forks', () => {
     return { ...setup({ resolveLaunch, resumable: async () => true, ...over }), resolveLaunch }
   }
 
+  it('a tab opened before another stands right before it, and the window hears the order before the tab starts', () => {
+    let heard: string[] = []
+    const { tm, log } = setup({ onTabStarted: () => { heard = log.filter((l) => l.startsWith('order:')) } })
+    const A = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    const B = tm.open({ kind: 'shell', cwd: 'D:\\y' })
+    const N = tm.open({ kind: 'shell', cwd: 'D:\\x' }, { before: B.id })
+    expect(tm.list().map((t) => t.id)).toEqual([A.id, N.id, B.id])
+    expect(heard).toEqual([`order:${A.id},${N.id},${B.id}`])
+    expect(tm.activeTabId()).toBe(N.id)
+  })
+
+  it('a tab opened before a tab that is not open goes to the end, and no order is announced', () => {
+    const { tm, log } = setup()
+    const A = tm.open({ kind: 'shell', cwd: 'D:\\x' })
+    const N = tm.open({ kind: 'shell', cwd: 'D:\\x' }, { before: 'gone' })
+    expect(tm.list().map((t) => t.id)).toEqual([A.id, N.id])
+    expect(log.filter((l) => l.startsWith('order:'))).toEqual([])
+  })
+
   it('fork opens a Claude tab in the parent folder and account, with no session id, launched to fork the parent conversation', async () => {
     const { tm, resolveLaunch } = forkSetup()
     const parent = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: 'work' })

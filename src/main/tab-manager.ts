@@ -168,7 +168,7 @@ export class TabManager {
 
   constructor(private readonly deps: TabManagerDeps) {}
 
-  open(req: OpenTabRequest, opts: { activate?: boolean; setupToken?: boolean; signIn?: SignInLaunch } = {}): TabInfo {
+  open(req: OpenTabRequest, opts: { activate?: boolean; setupToken?: boolean; signIn?: SignInLaunch; before?: string } = {}): TabInfo {
     const launch = this.deps.resolveLaunch({
       ...req,
       account: this.accountFor(req),
@@ -194,11 +194,14 @@ export class TabManager {
     const rec: TabRecord = { info, launch, pty: null, chat: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), proc: { exited: true }, restarting: false, preparing: false, working: false, agents: false, background: false, transient: opts.signIn !== undefined }
     this.tabs.set(info.id, rec)
     const head = info.fork?.of ?? null
+    // the new tab stands right before the tab named by `before`, when that tab is open; a tab that is not open is ignored
+    const at = head === null && opts.before !== undefined ? this.order.indexOf(opts.before) : -1
     // a fork stands right after its family
-    if (head === null) this.order.push(info.id)
-    else this.order.splice(this.familyEnd(head) + 1, 0, info.id)
+    if (head !== null) this.order.splice(this.familyEnd(head) + 1, 0, info.id)
+    else if (at !== -1) this.order.splice(at, 0, info.id)
+    else this.order.push(info.id)
     this.deps.events.opened({ ...info })
-    if (head !== null) this.deps.events.order([...this.order])
+    if (head !== null || at !== -1) this.deps.events.order([...this.order])
     this.deps.onTabStarted?.({ ...info })
     this.start(rec)
     if (opts.activate ?? true) this.activate(info.id)

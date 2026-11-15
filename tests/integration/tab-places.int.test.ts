@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, normalize } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { execGit } from '../../src/main/git-source'
 import { pathKey } from '../../src/main/path-key'
-import { folderPlace, TabPlaces } from '../../src/main/tab-places'
+import { folderPlace, mainWorktreeFolder, TabPlaces } from '../../src/main/tab-places'
 import type { TabPlace } from '../../src/shared/types'
 
 const git = (dir: string, ...args: string[]): string => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
@@ -153,5 +153,53 @@ describe('TabPlaces', () => {
     places.refresh('t1')
     await vi.waitFor(() => expect(published).toHaveLength(2), { timeout: 10_000 })
     expect(published[1]![1]!.branch).toBe('other')
+  })
+})
+
+describe("the folder a project's new tab opens in", () => {
+  /** the same folder however it is written: its real path as a pathKey */
+  const same = (p: string): string => pathKey(realpathSync.native(p))
+
+  it("is the main worktree, from the main worktree and from a subfolder of a linked worktree, in the platform's separators", async () => {
+    const parent = tempParent()
+    const dir = repo(join(parent, 'shop'))
+    const linked = join(parent, 'shop-x')
+    git(dir, 'worktree', 'add', '-q', '-b', 'feat/x', linked)
+    mkdirSync(join(linked, 'src'), { recursive: true })
+    const fromMain = await mainWorktreeFolder(execGit, dir)
+    const fromLinked = await mainWorktreeFolder(execGit, join(linked, 'src'))
+    expect(same(fromMain!)).toBe(same(dir))
+    expect(same(fromLinked!)).toBe(same(dir))
+    expect(fromLinked).toBe(normalize(fromLinked!))
+  })
+
+  it("is a submodule's own folder", async () => {
+    const parent = tempParent()
+    const lib = repo(join(parent, 'lib-src'))
+    const app = repo(join(parent, 'app'))
+    git(app, '-c', 'protocol.file.allow=always', 'submodule', 'add', lib, 'sub')
+    commitAll(app, 'add the submodule')
+    expect(same((await mainWorktreeFolder(execGit, join(app, 'sub')))!)).toBe(same(join(app, 'sub')))
+  })
+
+  it('is null for a bare repository, a folder outside git and a folder that does not exist', async () => {
+    // the bare repository with a worktree, set up as in 'gives a bare repository with a worktree the name of the repository'
+    const parent = tempParent()
+    const bare = join(parent, 'acme.git')
+    git(parent, 'init', '-q', '--bare', bare)
+    const seed = join(parent, 'seed')
+    git(parent, 'clone', '-q', bare, seed)
+    git(seed, 'config', 'user.email', 't@example.com')
+    git(seed, 'config', 'user.name', 'T')
+    git(seed, 'config', 'core.autocrlf', 'false')
+    git(seed, 'checkout', '-q', '-b', 'main')
+    writeFileSync(join(seed, 'README.md'), 'acme\n')
+    commitAll(seed, 'one')
+    git(seed, 'push', '-q', 'origin', 'main')
+    const folder = join(parent, 'acme-main')
+    git(bare, 'worktree', 'add', '-q', folder, 'main')
+    expect(await mainWorktreeFolder(execGit, folder)).toBeNull()
+    expect(await mainWorktreeFolder(execGit, mkdtempSync(join(tmpdir(), 'ct-nogit-')))).toBeNull()
+    expect(await mainWorktreeFolder(execGit, join(tempParent(), 'missing'))).toBeNull()
   })
 })

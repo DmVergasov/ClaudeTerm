@@ -102,6 +102,29 @@ export async function folderPlace(run: GitRun, folder: string): Promise<TabPlace
   }
 }
 
+/**
+ * the folder a new tab of `folder`'s project opens in: the main worktree's folder (a submodule's own); null for a bare
+ * repository, a folder outside git or gone, or when git cannot tell. Read-only git only, through `run`.
+ */
+export async function mainWorktreeFolder(run: GitRun, folder: string): Promise<string | null> {
+  if (!(await access(folder).then(() => true, () => false))) return null
+  try {
+    const top = await run(['rev-parse', '--show-toplevel', '--show-superproject-working-tree'], folder)
+    const [topLine = '', superLine = ''] = top.stdout.toString('utf8').split(/\r?\n/)
+    const topPath = topLine.trim()
+    if (top.code !== 0 || !topPath) return null
+    if (superLine.trim()) return nativePath.normalize(topPath)
+    const list = await run(['worktree', 'list', '--porcelain'], folder)
+    if (list.code !== 0) return null
+    const main = parseWorktreeList(list.stdout.toString('utf8'))[0]
+    if (!main || main.bare) return null
+    return nativePath.normalize(main.path)
+  } catch (e) {
+    if (e instanceof GitError) return null
+    throw e
+  }
+}
+
 /** a submodule is a project of its own: its folder is its main worktree, named by its own folder */
 async function submodulePlace(run: GitRun, folder: string, top: string): Promise<TabPlace | null> {
   const head = await run(['rev-parse', '--abbrev-ref', 'HEAD'], folder)
