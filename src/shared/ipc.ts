@@ -174,6 +174,7 @@ export const IPC = {
   coordMake: 'coord:make',
   coordStop: 'coord:stop',
   coordAttach: 'coord:attach',
+  coordLeave: 'coord:leave',
   coordDetach: 'coord:detach',
   coordMessage: 'coord:message',
   coordResolve: 'coord:resolve',
@@ -357,6 +358,8 @@ export interface CtApi {
   coordStop(tabId: string): Promise<CoordResult>
   /** attaches the session of another local tab to the coordinator */
   coordAttach(tabId: string, sessionTabId: string): Promise<CoordResult>
+  /** the session of a tab leaves the coordinator it is attached to, on this device or another */
+  coordLeave(tabId: string): Promise<CoordResult>
   /** detaches the session row of the view with this key */
   coordDetach(tabId: string, key: string): Promise<CoordResult>
   /** gives the session row with this key a task, as a message */

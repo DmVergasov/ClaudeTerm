@@ -3048,7 +3048,9 @@ function bootstrap(): void {
   ipcMain.handle(IPC.coordMarks, (): CoordMarks => projectCoordinators.marks())
   ipcMain.handle(IPC.coordMake, (_e, tabId: unknown, replace: unknown): CoordResult => (isLocalClaudeTab(tabId) && typeof replace === 'boolean' ? projectCoordinators.make(tabId, replace) : coordRefused))
   ipcMain.handle(IPC.coordStop, (_e, tabId: unknown): CoordResult => (isLocalClaudeTab(tabId) ? projectCoordinators.stop(tabId) : coordRefused))
-  ipcMain.handle(IPC.coordAttach, (_e, tabId: unknown, sessionTabId: unknown): CoordResult => (isLocalClaudeTab(tabId) && isLocalClaudeTab(sessionTabId) ? projectCoordinators.attachTab(tabId, sessionTabId) : coordRefused))
+  // the session may be a Claude tab of this device, or one the window lists from a paired device
+  ipcMain.handle(IPC.coordAttach, (_e, tabId: unknown, sessionTabId: unknown): CoordResult => (isLocalClaudeTab(tabId) && (isLocalClaudeTab(sessionTabId) || (isId(sessionTabId) && remote?.viewer.tab(sessionTabId)?.kind === 'claude')) ? projectCoordinators.attachTab(tabId, sessionTabId) : coordRefused))
+  ipcMain.handle(IPC.coordLeave, (_e, tabId: unknown): CoordResult => (isLocalClaudeTab(tabId) ? projectCoordinators.leave(tabId) : coordRefused))
   ipcMain.handle(IPC.coordDetach, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.detach(tabId, key) : coordRefused))
   ipcMain.handle(IPC.coordMessage, (_e, tabId: unknown, key: unknown, text: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) && isCoordTaskText(text) ? projectCoordinators.message(tabId, key, text) : coordRefused))
   ipcMain.handle(IPC.coordResolve, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.resolve(tabId, key) : coordRefused))

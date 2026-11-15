@@ -44,6 +44,15 @@ describe('coordTool', () => {
     expect(r).toEqual({ text: 'Started a10000.', isError: false })
   })
 
+  it('attach_session waits 15 s for its answer', async () => {
+    const timeouts: number[] = []
+    await coordTool('attach_session', { op: 'attach', session: 'a10000' }, deps(async (_p, _m, ms) => {
+      timeouts.push(ms)
+      return { ok: true, info: 'Attaching.' }
+    }))
+    expect(timeouts).toEqual([15000])
+  })
+
   it('the other tools wait 3 s for the answer', async () => {
     const timeouts: number[] = []
     await coordTool('list_sessions', { op: 'list' }, deps(async (_p, _m, ms) => {

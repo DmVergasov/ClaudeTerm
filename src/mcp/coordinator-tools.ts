@@ -24,7 +24,7 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
     'With worktree, the session first enters a new git worktree of that name with EnterWorktree; ClaudeTerm itself creates none. ' +
     'It is attached to you at once, and its report comes to you by itself when its task ends.',
   attach_session:
-    'Coordinator only: attach a running Claude session, by a ref or a name from list_sessions or list_agents. ' +
+    'Coordinator only: attach a running Claude session, by a ref or a name from list_sessions or list_agents; a session on a paired device is attached once that device confirms. ' +
     'Attaching sends the session nothing and does not interrupt it; give it work with message_session. A session attached to another coordinator is refused.',
   detach_session:
     'Coordinator only: detach a session from this coordinator. Its open task, if any, is dropped without a report; the session is not told and goes on as it is.',
@@ -39,6 +39,8 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
 
 /** a start waits for Claude Code to open the new session; the other operations answer at once */
 const START_WAIT_MS = 30_000
+/** how long attach_session waits for its answer: a session on a paired device is attached once that device confirms */
+export const COORD_ATTACH_TIMEOUT_MS = 15_000
 const OP_WAIT_MS = 3000
 
 export async function coordTool(name: (typeof COORD_TOOL_NAMES)[number], op: CoordOp, deps: CoordToolDeps): Promise<ToolResult> {
@@ -48,7 +50,7 @@ export async function coordTool(name: (typeof COORD_TOOL_NAMES)[number], op: Coo
     : { v: 1, type: 'coord', tabId: deps.tabId, ...op }
   let res: PipeResponse
   try {
-    res = await deps.send(deps.pipeName, msg, op.op === 'start' ? START_WAIT_MS : OP_WAIT_MS)
+    res = await deps.send(deps.pipeName, msg, op.op === 'start' ? START_WAIT_MS : op.op === 'attach' ? COORD_ATTACH_TIMEOUT_MS : OP_WAIT_MS)
   } catch (e) {
     if (e instanceof PipeUnavailableError) return { text: 'ClaudeTerm is not running.', isError: true }
     return { text: `ClaudeTerm request failed: ${e instanceof Error ? e.message : String(e)}`, isError: true }

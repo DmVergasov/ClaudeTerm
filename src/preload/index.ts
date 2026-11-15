@@ -61,6 +61,7 @@ const api: CtApi = {
   coordMake: (tabId, replace) => ipcRenderer.invoke(IPC.coordMake, tabId, replace),
   coordStop: (tabId) => ipcRenderer.invoke(IPC.coordStop, tabId),
   coordAttach: (tabId, sessionTabId) => ipcRenderer.invoke(IPC.coordAttach, tabId, sessionTabId),
+  coordLeave: (tabId) => ipcRenderer.invoke(IPC.coordLeave, tabId),
   coordDetach: (tabId, key) => ipcRenderer.invoke(IPC.coordDetach, tabId, key),
   coordMessage: (tabId, key, text) => ipcRenderer.invoke(IPC.coordMessage, tabId, key, text),
   coordResolve: (tabId, key) => ipcRenderer.invoke(IPC.coordResolve, tabId, key),

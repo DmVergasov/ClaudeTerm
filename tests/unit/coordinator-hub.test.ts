@@ -211,21 +211,8 @@ describe('attach and detach', () => {
     expect(w.hub.marks()['tab-c']).toEqual({ role: 'coordinator', project: 'acme', sessions: 2, waiting: 0 })
   })
 
-  it("attach refuses the coordinator itself, a coordinator, a session attached elsewhere naming its coordinator, and another device's session", () => {
+  it('attach refuses the coordinator itself, a coordinator, and a session attached elsewhere naming its coordinator', () => {
     const w = world()
-    w.remote.push({
-      device: 'd0000000-0000-4000-8000-0000000000aa',
-      deviceName: 'Laptop',
-      tabId: 'remote-1',
-      session: 'f5000000-0000-4000-8000-000000000006',
-      customTitle: 'crash triage',
-      folder: '/home/sam/acme',
-      branch: 'main',
-      title: null,
-      busy: false,
-      wakes: true,
-      claude: '2.1.300'
-    })
     w.hub.make('tab-c', false)
     w.hub.make('tab-b', false)
     w.hub.attach('tab-c', 'a10000')
@@ -234,10 +221,6 @@ describe('attach and detach', () => {
     expect(w.hub.attach('tab-b', 'parser · Desktop')).toEqual({
       ok: false,
       error: 'parser · Desktop is attached to the acme coordinator (coord · Desktop); it must be detached there first.'
-    })
-    expect(w.hub.attach('tab-c', 'crash triage · Laptop')).toEqual({
-      ok: false,
-      error: 'crash triage · Laptop runs on another device; sessions on other devices cannot be attached yet.'
     })
     expect(w.hub.attach('tab-c', 'a10000')).toEqual({ ok: true, info: 'parser · Desktop is already attached.' })
     expect(w.store.coordinator(S.coord)!.attachments).toHaveLength(1)

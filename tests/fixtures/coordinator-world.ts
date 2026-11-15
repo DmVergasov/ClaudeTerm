@@ -44,6 +44,12 @@ export const remoteTab = (over: Partial<HubRemoteTab> = {}): HubRemoteTab =>
 /** the n-th id of a test, a UUID */
 export const uid = (n: number): string => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`
 
+/** a world's ids for its records, counted up from a base of its own: two devices' records never share an id, as random ids never do */
+export const idsFrom = (base: number): (() => string) => {
+  let n = base
+  return () => uid(++n)
+}
+
 export const tab = (tabId: string, session: string | null, project: { key: string; name: string } | null, over: Partial<HubTab> = {}): HubTab =>
   ({ tabId, session, account: null, folder: 'D:\\Work\\acme', exited: false, working: false, view: 'terminal', project, branch: 'main', ...over })
 
@@ -210,11 +216,12 @@ export function listedTabs(w: World, device: string): HubRemoteTab[] {
 
 /** Studio (c, part 1's four tabs) and Laptop (s: tab-l1 parser, tab-l2 docs, tab-lc lead, in ACME_L, folder /home/sam/acme), linked */
 export function deviceWorlds(): { c: World; s: World } {
-  const c = world({ self: DEV_C, selfName: 'Studio' })
+  const c = world({ self: DEV_C, selfName: 'Studio', newId: idsFrom(0x100000) })
   const laptopFolder = '/home/sam/acme'
   const s = world({
     self: DEV_S,
     selfName: 'Laptop',
+    newId: idsFrom(0x200000),
     tabs: [
       tab('tab-l1', L.one, ACME_L, { folder: laptopFolder }),
       tab('tab-l2', L.two, ACME_L, { folder: laptopFolder }),
