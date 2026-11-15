@@ -170,6 +170,16 @@ describe('pipe server + client', () => {
       .toEqual({ ok: true, info: 'Opened 1 file (+1 −0) in the Changes panel.' })
   })
 
+  it('routes turn and passes its answer through, the coordinator\'s instruction in info included', async () => {
+    const pipe = newPipe()
+    server = await startPipeServer(pipe, {
+      ...okHandlers,
+      turn: (m) => (m.tabId === TAB ? { ok: true, info: 'the coordinator note' } : { ok: true })
+    })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'turn', tabId: TAB, sessionId: SID })).toEqual({ ok: true, info: 'the coordinator note' })
+    expect(await sendPipeMessage(pipe, { v: 1, type: 'turn', tabId: '1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b', sessionId: SID })).toEqual({ ok: true })
+  })
+
   it('routes agent_list, agent_send and mail_wait to their handlers', async () => {
     const pipe = newPipe()
     const got: string[] = []

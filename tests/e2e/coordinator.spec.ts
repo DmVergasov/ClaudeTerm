@@ -4,6 +4,7 @@ import { basename } from 'node:path'
 import { HUB_TEXT, worktreeInstruction } from '../../src/main/coordinator/coordinator-hub'
 import { coordinatorProblem, type CoordMarks } from '../../src/shared/coordinator'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
+import type { PipeResponse } from '../../src/shared/protocol'
 import { gitRepo, launchApp, type Launched } from './helpers'
 import { coordApp, claudeTabIn, coord, done, makeCoordinator, stillWaiting, turnOf, within } from './coordinator-helpers'
 import { refOf, setSetting, startSession, waitForMail } from './agent-mail'
@@ -132,6 +133,21 @@ test('a task waits while its session works, also past the Stop race, and then re
     const got = await within(w2, 10_000)
     expect(got.info).toMatch(/^Task from your coordinator, through ClaudeTerm: the user's instruction, given through their .+ coordinator\./)
     expect(got.info).toContain('> Fix the parser.')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a coordinator tab\'s turn over the pipe answers with ClaudeTerm\'s instruction, and after Stop coordinating it does not', async () => {
+  const { app, page, pipeName, tabs, sids, repo } = await coordApp(2)
+  const turn = (tabId: string, sessionId: string): Promise<PipeResponse> => sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId }) as Promise<PipeResponse>
+  try {
+    expect(await makeCoordinator(page, tabs[0]!)).toMatchObject({ ok: true })
+    expect(await turn(tabs[0]!, sids[0]!)).toEqual({ ok: true, info: expect.stringContaining(`you are the coordinator of ${basename(repo)}: give the work to its sessions`) })
+    expect(await turn(tabs[1]!, sids[1]!)).toEqual({ ok: true })
+
+    expect(await page.evaluate((id) => window.ct.coordStop(id), tabs[0]!)).toMatchObject({ ok: true })
+    expect(await turn(tabs[0]!, sids[0]!)).toEqual({ ok: true })
   } finally {
     await app.close()
   }

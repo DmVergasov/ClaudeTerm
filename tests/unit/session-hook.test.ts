@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WIN } from '../fixtures/platform'
-import { hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine } from '../../src/hook/session-hook'
-import { encodeMessage, type AttentionMessage } from '../../src/shared/protocol'
+import { hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine, turnContextLine } from '../../src/hook/session-hook'
+import { encodeMessage, type AttentionMessage, type PipeResponse } from '../../src/shared/protocol'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -13,7 +13,7 @@ const input = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: WORK, 
 describe('runSessionHook', () => {
   it('sends the session id and transcript path for the tab', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
-    expect(await runSessionHook(input, { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: '\\\\.\\pipe\\x' }, send)).toBe(true)
+    expect(await runSessionHook(input, { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: '\\\\.\\pipe\\x' }, send)).toBe('')
     expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP, cwd: WORK })
   })
 
@@ -30,25 +30,55 @@ describe('runSessionHook', () => {
 
   it('does nothing outside a ClaudeTerm tab', async () => {
     const send = vi.fn()
-    expect(await runSessionHook(input, {}, send)).toBe(false)
+    expect(await runSessionHook(input, {}, send)).toBe('')
     expect(send).not.toHaveBeenCalled()
   })
 
   it('ignores bad stdin and non-UUID session ids', async () => {
     const send = vi.fn()
-    expect(await runSessionHook('not json', { CLAUDETERM_TAB_ID: TAB }, send)).toBe(false)
-    expect(await runSessionHook(JSON.stringify({ session_id: 'x' }), { CLAUDETERM_TAB_ID: TAB }, send)).toBe(false)
+    expect(await runSessionHook('not json', { CLAUDETERM_TAB_ID: TAB }, send)).toBe('')
+    expect(await runSessionHook(JSON.stringify({ session_id: 'x' }), { CLAUDETERM_TAB_ID: TAB }, send)).toBe('')
     expect(send).not.toHaveBeenCalled()
   })
 
   it('swallows send failures', async () => {
     const send = vi.fn(async () => { throw new Error('no pipe') })
-    await expect(runSessionHook(input, { CLAUDETERM_TAB_ID: TAB }, send)).resolves.toBe(false)
+    await expect(runSessionHook(input, { CLAUDETERM_TAB_ID: TAB }, send)).resolves.toBe('')
   })
 })
 
 const ENV = { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: '\\\\.\\pipe\\x' }
 const AGENT = 'a40a10c1d655cf759'
+
+describe('turnContextLine: the line a UserPromptSubmit hook prints for its turn', () => {
+  const line = (info: string): string => `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: info } })}\n`
+  const prompt = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: WORK, hook_event_name: 'UserPromptSubmit', prompt: 'go on' })
+
+  it('a valid instruction is the one JSON line with its additionalContext', () => {
+    expect(turnContextLine({ ok: true, info: 'Note from ClaudeTerm.' })).toBe(line('Note from ClaudeTerm.'))
+  })
+
+  it('an empty instruction prints nothing, and so does a missing answer', () => {
+    expect(turnContextLine({ ok: true, info: '' })).toBe('')
+    expect(turnContextLine({ ok: true })).toBe('')
+    expect(turnContextLine(null)).toBe('')
+  })
+
+  it('an answer that is not ok prints nothing, even with info in it', () => {
+    expect(turnContextLine({ ok: false, error: 'unknown claude tab', info: 'Note from ClaudeTerm.' } as unknown as PipeResponse)).toBe('')
+  })
+
+  it('2000 characters are printed, 2001 are not', () => {
+    expect(turnContextLine({ ok: true, info: 'n'.repeat(2000) })).toBe(line('n'.repeat(2000)))
+    expect(turnContextLine({ ok: true, info: 'n'.repeat(2001) })).toBe('')
+  })
+
+  it('a non-UserPromptSubmit event prints nothing, even when its answer carries info', async () => {
+    const send = vi.fn(async () => ({ ok: true as const, info: 'Note from ClaudeTerm.' }))
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)).toBe('')
+    expect(await runSessionHook(prompt, ENV, send)).toBe(line('Note from ClaudeTerm.'))
+  })
+})
 
 describe('runSessionHook: other hook events', () => {
   it('maps SubagentStart and SubagentStop to subagent messages', async () => {
@@ -61,7 +91,7 @@ describe('runSessionHook: other hook events', () => {
 
   it('maps SessionEnd to session_end', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
-    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'SessionEnd', reason: 'clear' }), ENV, send)).toBe(true)
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'SessionEnd', reason: 'clear' }), ENV, send)).toBe('')
     expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'session_end', tabId: TAB, sessionId: SID })
   })
 
@@ -107,7 +137,7 @@ describe('runSessionHook: other hook events', () => {
   it('a Stop with 80 background tasks of 5000-character commands keeps 50 tasks of at most 300 characters, and its line stays under the pipe limit', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     const tasks = Array.from({ length: 80 }, (_, i) => ({ id: `bg${i}`, type: 'shell', status: 'running', description: 'build', command: 'c'.repeat(5000) }))
-    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', background_tasks: tasks }), ENV, send)).toBe(true)
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', background_tasks: tasks }), ENV, send)).toBe('')
     const msg = (send.mock.calls[0] as unknown as [string, AttentionMessage])[1]
     expect(msg.tasks).toHaveLength(50)
     expect(Math.max(...msg.tasks!.map((t) => t.command!.length))).toBeLessThanOrEqual(300)
@@ -132,15 +162,15 @@ describe('runSessionHook: other hook events', () => {
 
   it('ignores notifications and other tools', async () => {
     const send = vi.fn()
-    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Notification', notification_type: 'permission_prompt' }), ENV, send)).toBe(false)
-    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'Bash' }), ENV, send)).toBe(false)
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Notification', notification_type: 'permission_prompt' }), ENV, send)).toBe('')
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'Bash' }), ENV, send)).toBe('')
     expect(send).not.toHaveBeenCalled()
   })
 
   it('ignores other events and subagent events without agent_id', async () => {
     const send = vi.fn()
-    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse' }), ENV, send)).toBe(false)
-    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'SubagentStart' }), ENV, send)).toBe(false)
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse' }), ENV, send)).toBe('')
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'SubagentStart' }), ENV, send)).toBe('')
     expect(send).not.toHaveBeenCalled()
   })
 })
@@ -174,8 +204,8 @@ describe('runSessionHook: a change of folder', () => {
   it('sends nothing for CwdChanged, from the conversation or a subagent', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     const changed = (extra: object): string => JSON.stringify({ session_id: SID, hook_event_name: 'CwdChanged', cwd: NEW, old_cwd: OLD, new_cwd: NEW, ...extra })
-    await expect(runSessionHook(changed({}), ENV, send)).resolves.toBe(false)
-    await expect(runSessionHook(changed({ agent_id: AGENT }), ENV, send)).resolves.toBe(false)
+    await expect(runSessionHook(changed({}), ENV, send)).resolves.toBe('')
+    await expect(runSessionHook(changed({ agent_id: AGENT }), ENV, send)).resolves.toBe('')
     expect(send).not.toHaveBeenCalled()
   })
 })

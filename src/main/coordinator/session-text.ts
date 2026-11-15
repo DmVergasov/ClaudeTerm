@@ -1,4 +1,4 @@
-import type { CoordGroup, CoordSessionRow, CoordinatorView } from '../../shared/coordinator'
+import { COORD_DELEGATE, type CoordGroup, type CoordSessionRow, type CoordinatorView } from '../../shared/coordinator'
 import { ROLE_NOTE_HEAD } from '../../shared/report-wake'
 import { describeTaskList, type TaskList } from '../../shared/task-list'
 import { cutText } from '../../shared/protocol'
@@ -13,6 +13,14 @@ const GROUPS: CoordGroup[] = ['waiting', 'working', 'idle', 'resolved']
 export const ROLE_NOTE_MAX = 1200
 const NAME_MAX = 40
 const LINE_MAX = 60
+
+/**
+ * The instruction a coordinator's every turn starts with, as Claude Code's additional context for it: the project, the line
+ * that gives the work to the sessions, and what a report and a session's prompt mean. The project name is cut and made one line.
+ */
+export function turnNoteText(projectName: string): string {
+  return `Note from ClaudeTerm, not from the user: you are the coordinator of ${cutText(replaceControls(projectName), NAME_MAX)}: ${COORD_DELEGATE} Reports come by themselves when a task ends. A session's permission prompts and questions are the person's to answer, in that session.`
+}
 
 function rowLine(r: CoordSessionRow, clock: (ms: number) => string): string {
   let line = `- ${replaceControls(r.name)}${r.ref ? ` [${r.ref}]` : ''} · ${r.line}`
@@ -39,7 +47,7 @@ export function listText(v: CoordinatorView, clock: (ms: number) => string): str
   }
   if (v.notAttached.length > 0) lines.push('Not attached (this project):', ...v.notAttached.map((r) => rowLine(r, clock)))
 
-  lines.push('Notes:', '- Reports come to you by themselves when a task ends; there is no need to poll or wait.')
+  lines.push('Notes:', '- Reports come to you by themselves when a task ends; there is no need to poll or wait.', `- As the coordinator, ${COORD_DELEGATE}`)
   const prompted = v.sessions.filter((r) => r.why === 'prompt')
   if (prompted.length > 0) {
     const names = prompted.map((r) => replaceControls(r.name)).join(', ')
@@ -83,10 +91,10 @@ export function readText(
  * when there is one. Names and lines are cut and made one line each, so no session can add a line to the note.
  */
 export function roleNoteText(v: CoordinatorView, maxSessions = 8): string {
-  const head = `You coordinate ${replaceControls(v.project.name)} in ClaudeTerm:`
+  const head = `You coordinate ${replaceControls(v.project.name)} in ClaudeTerm: ${COORD_DELEGATE}`
   let text: string
   if (v.sessions.length === 0) {
-    text = `${head} no sessions are attached yet. Attach one with attach_session, or start one with start_session.`
+    text = `${head} No sessions are attached yet: attach one with attach_session, or start one with start_session.`
   } else {
     const byGroup = [...v.sessions].sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     const shown = byGroup.slice(0, maxSessions).map((r) => `${cutText(replaceControls(r.name), NAME_MAX)} — ${cutText(replaceControls(r.line), LINE_MAX)}`)

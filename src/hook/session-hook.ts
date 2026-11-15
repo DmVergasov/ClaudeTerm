@@ -125,21 +125,37 @@ export function hookPipe(env: NodeJS.ProcessEnv): string {
   return env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username)
 }
 
-async function deliver(msg: PipeMessage, env: NodeJS.ProcessEnv, send: Sender): Promise<boolean> {
+/** the most characters of a coordinator's instruction the hook hands Claude Code as the turn's context */
+export const TURN_CONTEXT_MAX = 2000
+
+/**
+ * The line a UserPromptSubmit hook prints for the answer to its turn: the instruction the answer carries, as Claude Code's
+ * additional context for the turn. Empty when the answer carries none, or one that is empty or longer than TURN_CONTEXT_MAX.
+ */
+export function turnContextLine(answer: PipeResponse | null): string {
+  if (answer === null || !answer.ok || typeof answer.info !== 'string') return ''
+  if (answer.info.length < 1 || answer.info.length > TURN_CONTEXT_MAX) return ''
+  return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: answer.info } })}\n`
+}
+
+/** the answer to the message, or null when it did not get one */
+async function deliver(msg: PipeMessage, env: NodeJS.ProcessEnv, send: Sender): Promise<PipeResponse | null> {
   try {
-    await send(hookPipe(env), msg)
-    return true
+    return await send(hookPipe(env), msg)
   } catch {
-    return false
+    return null
   }
 }
 
-export async function runSessionHook(stdinText: string, env: NodeJS.ProcessEnv, send: Sender): Promise<boolean> {
+/** the text to print on stdout: '' for none, which every event but a coordinator's UserPromptSubmit answer is */
+export async function runSessionHook(stdinText: string, env: NodeJS.ProcessEnv, send: Sender): Promise<string> {
   const tabId = env.CLAUDETERM_TAB_ID
-  if (!isUuid(tabId)) return false
+  if (!isUuid(tabId)) return ''
   const input = parseInput(stdinText)
   const msg = input ? hookMessage(input, tabId) : null
-  return msg ? deliver(msg, env, send) : false
+  if (msg === null) return ''
+  const answer = await deliver(msg, env, send)
+  return msg.type === 'turn' && input?.hook_event_name === 'UserPromptSubmit' ? turnContextLine(answer) : ''
 }
 
 export async function runStatusLine(stdinText: string, env: NodeJS.ProcessEnv, send: Sender): Promise<boolean> {
@@ -147,5 +163,5 @@ export async function runStatusLine(stdinText: string, env: NodeJS.ProcessEnv, s
   if (!isUuid(tabId)) return false
   const input = parseInput(stdinText)
   const msg = input ? statusFromStatusLine(input, tabId, (model, dir) => compactWindow(model, dir, env, readText)) : null
-  return msg ? deliver(msg, env, send) : false
+  return msg ? (await deliver(msg, env, send)) !== null : false
 }

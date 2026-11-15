@@ -8,6 +8,8 @@ export const COORD_NAME_MAX = 100
 export const COORD_KEY_MAX = 200
 /** the answer to a call whose request does not pass main's check; the window words it for the fields it sent */
 export const COORD_REFUSED = 'Invalid request'
+/** the line that tells a coordinator's Claude to give the work to its sessions: in the role note, and in the list_sessions text and description */
+export const COORD_DELEGATE = 'give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
 
 /** where a task given to a session is: queued, delivered as a prompt and not yet started, or open in a turn */
 export type TaskState = 'queued' | 'delivered' | 'open'

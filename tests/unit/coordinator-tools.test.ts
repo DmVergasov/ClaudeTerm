@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { coordTool, type CoordToolDeps } from '../../src/mcp/coordinator-tools'
+import { COORD_TOOL_DESCRIPTIONS, coordTool, type CoordToolDeps } from '../../src/mcp/coordinator-tools'
 import { PipeUnavailableError } from '../../src/shared/pipe-client'
 import type { CoordMessage, PipeResponse } from '../../src/shared/protocol'
 import { WIN } from '../fixtures/platform'
@@ -94,5 +94,13 @@ describe('coordTool', () => {
   it('reports another failure of the request as an error', async () => {
     expect(await coordTool('list_sessions', { op: 'list' }, deps(async () => { throw new Error('boom') })))
       .toEqual({ text: 'ClaudeTerm request failed: boom', isError: true })
+  })
+})
+
+const DELEGATE = 'As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
+
+describe('COORD_TOOL_DESCRIPTIONS', () => {
+  it('the list_sessions description ends with the delegation sentence', () => {
+    expect(COORD_TOOL_DESCRIPTIONS.list_sessions.slice(-DELEGATE.length)).toBe(DELEGATE)
   })
 })
