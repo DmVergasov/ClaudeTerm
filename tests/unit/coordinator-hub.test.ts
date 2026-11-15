@@ -1168,3 +1168,96 @@ describe('facts for other devices', () => {
     expect(w.hub.facts('tab-1')).toMatchObject({ limit: { resetsAt: NOW, since: NOW }, progress: { done: 0, total: 1, finished: false, current: null } })
   })
 })
+
+describe('the role note of a coordinator', () => {
+  const EMPTY = 'You coordinate acme in ClaudeTerm: no sessions are attached yet. Attach one with attach_session, or start one with start_session.'
+  /** the note's block as the mail carries it: its head, from and id lines, and the text quoted */
+  const BLOCK = (text: string): string => ['Note from ClaudeTerm, not from the user:', 'from: ClaudeTerm', 'id: role-note', '', `> ${text}`].join('\n')
+
+  it('make makes the note due: roleNote gives its block until roleNoteTaken clears it', () => {
+    const w = world()
+    expect(w.hub.roleNote('tab-c')).toBeNull()
+    w.hub.make('tab-c', false)
+    expect(w.hub.roleNote('tab-c')).toBe(BLOCK(EMPTY))
+    expect(w.hub.roleNote('tab-c')).toBe(BLOCK(EMPTY))
+    w.hub.roleNoteTaken('tab-c')
+    expect(w.hub.roleNote('tab-c')).toBeNull()
+  })
+
+  it('a make that finds the tab a coordinator already sets nothing', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.roleNoteTaken('tab-c')
+    expect(w.hub.make('tab-c', false)).toEqual({ ok: true, info: 'This tab is already the coordinator of acme.' })
+    expect(w.hub.roleNote('tab-c')).toBeNull()
+  })
+
+  it('a replacing make makes only the new tab due; the replaced tab gets no note', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.roleNoteTaken('tab-c')
+    expect(w.hub.make('tab-2', true)).toEqual({ ok: true, info: 'This tab is now the coordinator of acme; 0 sessions moved from coord · Desktop.' })
+    expect(w.hub.roleNote('tab-2')).toBe(BLOCK(EMPTY))
+    expect(w.hub.roleNote('tab-c')).toBeNull()
+  })
+
+  it('a clear or a compact makes the note due under the new session; a startup does not', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.roleNoteTaken('tab-c')
+    const NEW = uid(0x2001)
+    update(w, 'tab-c', { session: NEW })
+    w.hub.sessionStarted('tab-c', S.coord, NEW, 'clear')
+    expect(w.hub.roleNote('tab-c')).toBe(BLOCK(EMPTY))
+    w.hub.roleNoteTaken('tab-c')
+    const NEXT = uid(0x2002)
+    update(w, 'tab-c', { session: NEXT })
+    w.hub.sessionStarted('tab-c', NEW, NEXT, 'compact')
+    expect(w.hub.roleNote('tab-c')).toBe(BLOCK(EMPTY))
+    w.hub.roleNoteTaken('tab-c')
+    w.hub.sessionStarted('tab-c', NEXT, NEXT, 'startup')
+    expect(w.hub.roleNote('tab-c')).toBeNull()
+  })
+
+  it('two clears before the next turn leave one note, and taking it once clears it', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.roleNoteTaken('tab-c')
+    const NEW = uid(0x2003)
+    const NEXT = uid(0x2004)
+    update(w, 'tab-c', { session: NEW })
+    w.hub.sessionStarted('tab-c', S.coord, NEW, 'clear')
+    update(w, 'tab-c', { session: NEXT })
+    w.hub.sessionStarted('tab-c', NEW, NEXT, 'clear')
+    expect(w.hub.roleNote('tab-c')).toBe(BLOCK(EMPTY))
+    w.hub.roleNoteTaken('tab-c')
+    expect(w.hub.roleNote('tab-c')).toBeNull()
+  })
+
+  it('a stop, a closed tab and an exited tab each drop the note', () => {
+    const stopped = world()
+    stopped.hub.make('tab-c', false)
+    stopped.hub.stop('tab-c')
+    expect(stopped.hub.roleNote('tab-c')).toBeNull()
+
+    const closed = world()
+    closed.hub.make('tab-c', false)
+    closed.hub.tabClosed('tab-c')
+    expect(closed.hub.roleNote('tab-c')).toBeNull()
+
+    const exited = world()
+    exited.hub.make('tab-c', false)
+    exited.hub.exited('tab-c')
+    expect(exited.hub.roleNote('tab-c')).toBeNull()
+  })
+
+  it('the note reads the rows at the time it is built: a session attached after the make is in it', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    const row = w.hub.view('tab-c')!.sessions[0]!
+    expect(w.hub.roleNote('tab-c')).toBe(
+      BLOCK(`You coordinate acme in ClaudeTerm: 1 session (${row.name} — ${row.line}). Reports come by themselves when a task ends; use list_sessions for more.`)
+    )
+  })
+})

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { roleBlock } from '../../src/main/coordinator/session-text'
 import { wakeText } from '../../src/main/mail/wake-text'
 import type { MailRecord } from '../../src/shared/mail'
-import { outcomeText, REPORT_WAKE_HEAD, splitWake } from '../../src/shared/report-wake'
+import { outcomeText, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD, splitWake } from '../../src/shared/report-wake'
 
 const COORD = { device: null, session: 'c0000000-0000-4000-8000-000000000001', name: 'coord · Desktop' }
 const PARSER = { device: null, session: 'a1000000-0000-4000-8000-000000000002', name: 'parser · Desktop' }
@@ -63,6 +64,20 @@ describe('splitWake reads a report of any shape in linear time', () => {
     expect(performance.now() - started).toBeLessThan(2000)
     const plain = 'x'.repeat(1024 * 1024)
     expect(splitWake(plain)).toEqual({ reports: [], rest: plain })
+  })
+})
+
+describe('splitWake reads the role note of the coordinator', () => {
+  it('a role note riding with a report: the report is read, and the note stays the rest', () => {
+    const note = roleBlock('You coordinate acme in ClaudeTerm: no sessions are attached yet.')
+    const text = [note, wakeText([report({})], where)].join('\n\n')
+    expect(splitWake(text)).toEqual({ reports: [{ mailId: report({}).id, name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, text: 'Parser fixed.' }], rest: note })
+  })
+
+  it('a role note alone is no report, and its text is the rest', () => {
+    const note = roleBlock('You coordinate acme in ClaudeTerm: 1 session (parser — Idle).\n> quoted-looking line')
+    expect(splitWake(note)).toEqual({ reports: [], rest: note })
+    expect(note.startsWith(ROLE_NOTE_HEAD)).toBe(true)
   })
 })
 

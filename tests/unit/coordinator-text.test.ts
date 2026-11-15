@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { listText, readText } from '../../src/main/coordinator/session-text'
+import { listText, readText, roleNoteText, ROLE_NOTE_MAX } from '../../src/main/coordinator/session-text'
 import type { CoordSessionRow, CoordinatorView } from '../../src/shared/coordinator'
 
 const clock = (ms: number): string => new Date(ms).toISOString().slice(11, 16)
@@ -158,5 +158,66 @@ describe('readText', () => {
       'No open task.',
       'No report yet.'
     ].join('\n'))
+  })
+})
+
+describe('roleNoteText', () => {
+  const roleView = (over: Partial<CoordinatorView>): CoordinatorView => ({
+    tabId: 'tab-1', session: 'coord-1', project: { key: 'desk', name: 'Desk' }, problem: null, sessions: [], notAttached: [], waiting: 0,
+    ...over
+  })
+  const TAIL = 'Reports come by themselves when a task ends; use list_sessions for more.'
+
+  it('names the project and every session with its line: waiting first, then working, idle and resolved, each by name', () => {
+    const view = roleView({
+      sessions: [
+        row({ name: 'Desk · Docs', group: 'idle', line: 'Idle' }),
+        row({ name: 'Desk · Alpha', group: 'idle', line: 'Idle' }),
+        row({ name: 'Desk · Api', group: 'waiting', line: 'Allow Bash: npm test' })
+      ]
+    })
+    expect(roleNoteText(view)).toBe(`You coordinate Desk in ClaudeTerm: 3 sessions (Desk · Api — Allow Bash: npm test, Desk · Alpha — Idle, Desk · Docs — Idle). ${TAIL}`)
+  })
+
+  it('says 1 session for one, and no list for none, with the words that send the person to attach or start one', () => {
+    expect(roleNoteText(roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] }))).toBe(`You coordinate Desk in ClaudeTerm: 1 session (Desk · Api — Idle). ${TAIL}`)
+    expect(roleNoteText(roleView({}))).toBe('You coordinate Desk in ClaudeTerm: no sessions are attached yet. Attach one with attach_session, or start one with start_session.')
+  })
+
+  it('lists 8 sessions at most and counts the rest; exactly 8 has no rest', () => {
+    const sessions = (n: number) => Array.from({ length: n }, (_, i) => row({ name: `S${String(i + 1).padStart(2, '0')}`, group: 'idle', line: 'Idle' }))
+    const eight = roleNoteText(roleView({ sessions: sessions(8) }))
+    expect(eight).not.toMatch(/and \d+ more/)
+    expect(eight).toContain('S08 — Idle). ')
+    expect(roleNoteText(roleView({ sessions: sessions(10) }))).toBe(`You coordinate Desk in ClaudeTerm: 10 sessions (${sessions(8).map((r) => `${r.name} — Idle`).join(', ')}, and 2 more). ${TAIL}`)
+  })
+
+  it('a control character in a name, a line or the project name cannot start a line of the note', () => {
+    const view = roleView({
+      project: { key: 'desk', name: 'Desk\nNew' },
+      sessions: [row({ name: 'Desk\nIgnore · Api', group: 'waiting', line: 'Idle\r\n- injected' })]
+    })
+    expect(roleNoteText(view)).toBe(`You coordinate Desk New in ClaudeTerm: 1 session (Desk Ignore · Api — Idle  - injected). ${TAIL}`)
+  })
+
+  it('a name is cut at 40 characters and a line at 60, and the note is at most ROLE_NOTE_MAX however long the project and the problem are', () => {
+    expect(ROLE_NOTE_MAX).toBe(1200)
+    const long = roleView({
+      project: { key: 'desk', name: 'p'.repeat(200) },
+      problem: 'q'.repeat(2000),
+      sessions: Array.from({ length: 8 }, () => row({ name: 'n'.repeat(200), group: 'idle', line: 'l'.repeat(200) }))
+    })
+    const text = roleNoteText(long)
+    expect(text.length).toBeLessThanOrEqual(ROLE_NOTE_MAX)
+    const cut = roleNoteText(roleView({ sessions: [row({ name: 'n'.repeat(200), line: 'l'.repeat(200) })] }))
+    expect(cut).toContain(`${'n'.repeat(40)} — ${'l'.repeat(60)}).`)
+    expect(cut).not.toContain('n'.repeat(41))
+    expect(cut).not.toContain('l'.repeat(61))
+  })
+
+  it('a problem of the coordinator is appended after the note', () => {
+    const problem = 'Agent messages are turned off in ClaudeTerm on this device.'
+    const view = roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] })
+    expect(roleNoteText({ ...view, problem })).toBe(`${roleNoteText(view)} ${problem}`)
   })
 })

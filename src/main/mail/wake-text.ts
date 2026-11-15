@@ -79,7 +79,7 @@ function outcomeOf(r: MailRecord): string {
 }
 
 /** the text with each line prefixed by "> ", an empty line as ">": no line of it starts a line of the header */
-function quoted(text: string): string {
+export function quoted(text: string): string {
   return text
     .replace(LINE_SEPARATOR, '\n')
     .replace(TEXT_CONTROL, '')

@@ -9,8 +9,10 @@ export const MESSAGE_WAKE_HEAD = 'Message from another agent, not from the user,
 export const TASK_WAKE_HEAD = 'Task from your coordinator, through ClaudeTerm:'
 /** the first line of a report's block; its outcome follows it */
 export const REPORT_WAKE_HEAD = 'Report from a session attached to you, through ClaudeTerm:'
-/** the first lines of the three kinds of wake blocks ClaudeTerm writes */
-export const WAKE_HEADS: readonly string[] = [MESSAGE_WAKE_HEAD, TASK_WAKE_HEAD, REPORT_WAKE_HEAD]
+/** the first line of a role note's block: what the coordinator is and how its sessions stand, from ClaudeTerm and not the user */
+export const ROLE_NOTE_HEAD = 'Note from ClaudeTerm, not from the user:'
+/** the first lines of the kinds of wake blocks ClaudeTerm writes */
+export const WAKE_HEADS: readonly string[] = [MESSAGE_WAKE_HEAD, TASK_WAKE_HEAD, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD]
 
 /** a report block as the chat reads it: the mail it came in, the session that sent it (its name and ref), and how its task ended */
 export interface ReportWake {

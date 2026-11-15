@@ -14,7 +14,7 @@ import type { MailStore } from '../mail/mail-store'
 import type { TabWaitsState } from '../tab-waits'
 import { LIMIT_ERROR } from '../auto-continue'
 import { findRow, rowState } from './session-state'
-import { listText, readText } from './session-text'
+import { listText, readText, roleBlock, roleNoteText } from './session-text'
 import {
   MAX_ATTACHMENTS,
   MAX_COORDINATORS,
@@ -282,6 +282,8 @@ export class CoordinatorHub {
   private readonly starts = new Map<string, PendingStart>()
   /** the tools waiting for a remote attach to be confirmed, refused or detached, by the id of its attach record */
   private readonly attachWaits = new Map<string, AttachWait>()
+  /** the tabs whose role note is due: made a coordinator, or cleared or compacted as one, and not yet handed to it (in memory) */
+  private readonly briefDue = new Set<string>()
   private readonly unsubscribe: () => void
 
   constructor(private readonly d: CoordinatorHubDeps) {
@@ -330,6 +332,8 @@ export class CoordinatorHub {
       }
     }
     if (other) this.forwardFormer(other.session)
+    this.briefDue.add(tabId)
+    this.d.recheckMail()
     this.d.changed()
     return other ? { ok: true, info: HUB_TEXT.replaced(project.name, otherName, moved.length) } : { ok: true, info: HUB_TEXT.made(project.name) }
   }
@@ -697,6 +701,7 @@ export class CoordinatorHub {
   /** the tab's process exited: its turn is over and the task it held fails; the queued tasks stay */
   exited(tabId: string): void {
     this.inTurn.delete(tabId)
+    this.briefDue.delete(tabId)
     this.cancelSettle(tabId)
     this.onCurrent(tabId, { kind: 'failed', reason: REASONS.exit })
     this.d.changed()
@@ -728,6 +733,8 @@ export class CoordinatorHub {
       this.d.alias(old, after)
       this.d.changed()
     }
+    // a clear or a compaction leaves the coordinator with a new session: its next turn is told its role and its sessions again
+    if ((source === 'clear' || source === 'compact') && this.isCoordinator(tabId)) this.briefDue.add(tabId)
     // a clear ends the task its session held, and the turn the tab was in; the report comes from the new id
     if (source === 'clear') {
       this.inTurn.delete(tabId)
@@ -739,6 +746,7 @@ export class CoordinatorHub {
   tabClosed(tabId: string): void {
     this.renamedFrom.delete(tabId)
     this.inTurn.delete(tabId)
+    this.briefDue.delete(tabId)
     this.cancelSettle(tabId)
     this.cancelStart(tabId, HUB_TEXT.closedEarly)
     const session = this.sessionOfTab(tabId)
@@ -753,6 +761,25 @@ export class CoordinatorHub {
   view(tabId: string): CoordinatorView | null {
     const c = this.own(tabId)
     return c ? this.viewOf(c, tabId) : null
+  }
+
+  /**
+   * The role note a coordinator's tab is due, as a wake block, or null when none is due or the tab is no coordinator now.
+   * It only peeks: roleNoteTaken clears the due once the note is handed over.
+   */
+  roleNote(tabId: string): string | null {
+    if (!this.briefDue.has(tabId)) return null
+    const c = this.own(tabId)
+    if (c === null) {
+      this.briefDue.delete(tabId)
+      return null
+    }
+    return roleBlock(roleNoteText(this.viewOf(c, tabId)))
+  }
+
+  /** the role note of the tab was handed to its coordinator: it is no longer due */
+  roleNoteTaken(tabId: string): void {
+    this.briefDue.delete(tabId)
   }
 
   /** the facts of a Claude tab of this device for the coordinators of other devices; null when the tab has no session */

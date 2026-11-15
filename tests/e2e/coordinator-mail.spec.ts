@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test'
-import { activate, openPanelFocused, refOf, waitForMail } from './agent-mail'
-import { coord, coordApp, done, makeCoordinator, within } from './coordinator-helpers'
+import { randomUUID } from 'node:crypto'
+import type { CoordinatorView } from '../../src/shared/coordinator'
+import { ROLE_NOTE_HEAD } from '../../src/shared/report-wake'
+import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { activate, openPanelFocused, refOf, sendText, waitForMail, type WaitAnswer } from './agent-mail'
+import { coord, coordApp, done, makeCoordinator, stillWaiting, turnOf, within } from './coordinator-helpers'
 
 test('the Agent messages panel shows a task and its report with their kinds, and no attach record', async () => {
   const l = await coordApp(2)
@@ -46,5 +50,52 @@ test('a report of a task that failed names the failure, and its kind is marked f
     const failed = page.locator('#image-panel .mail-message', { hasText: 'Claude Code stopped the turn on an error' }).locator('.mail-kind')
     await expect(failed).toHaveText('Report · failed: Claude Code stopped the turn on an error (invalid_request)')
     await expect(failed).toHaveClass('mail-kind failed')
+  } finally { await l.app.close() }
+})
+
+test('the role note reaches the coordinator at its next typed turn and wakes nothing', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  try {
+    await makeCoordinator(page, t0)
+    await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })
+    // the coordinator's watcher is held while its tab is not working: the note waits, and nothing wakes
+    const idle = waitForMail(pipeName, t0, sids[0])
+    await stillWaiting(idle, 1500)
+    // the turn the person types takes the note into the running turn
+    await turnOf(pipeName, t0, sids[0])
+    const note = (await within(idle, 10_000)) as WaitAnswer
+    const view = (await page.evaluate((id) => window.ct.coordView(id), t0)) as CoordinatorView
+    const row = view.sessions.find((r) => r.session === sids[1])!
+    expect(note.info!.startsWith(`${ROLE_NOTE_HEAD}\n`)).toBe(true)
+    expect(note.info).toContain(`You coordinate ${view.project.name} in ClaudeTerm: 1 session (${row.name} — ${row.line}).`)
+
+    // the note is taken: the next typed turn carries the message alone, with no second note
+    await done(pipeName, t0, sids[0])
+    const second = waitForMail(pipeName, t0, sids[0])
+    await stillWaiting(second, 1000)
+    await turnOf(pipeName, t0, sids[0])
+    expect(await sendText(pipeName, t1, sids[0], 'Second turn.')).toMatchObject({ ok: true })
+    const later = (await within(second, 10_000)) as WaitAnswer
+    expect(later.info).toContain('Second turn.')
+    expect(later.info).not.toContain(ROLE_NOTE_HEAD)
+
+    // /clear gives the coordinator a new session: its next typed turn carries the note again, with the sessions as they are then
+    await coord(pipeName, t0, { op: 'message', session: refOf(sids[1]), text: 'Fix the parser.' })
+    const next = randomUUID()
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: t0, sessionId: next, source: 'clear', transcriptPath: null })).toEqual({ ok: true })
+    const after = (await page.evaluate((id) => window.ct.coordView(id), t0)) as CoordinatorView
+    const attached = after.sessions.find((r) => r.session === sids[1])!
+    const third = waitForMail(pipeName, t0, next)
+    await stillWaiting(third, 1000)
+    await turnOf(pipeName, t0, next)
+    const again = (await within(third, 10_000)) as WaitAnswer
+    expect(again.info).toContain(`You coordinate ${after.project.name} in ClaudeTerm: 1 session (${attached.name} — ${attached.line}).`)
+
+    // the note is no message: the coordinator's Agent messages panel holds none
+    await activate(page, t0)
+    await openPanelFocused(page)
+    await expect(page.locator('#image-panel')).toBeVisible()
+    await expect(page.locator('#image-panel .mail-message', { hasText: 'You coordinate' })).toHaveCount(0)
   } finally { await l.app.close() }
 })

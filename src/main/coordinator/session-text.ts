@@ -1,10 +1,17 @@
 import type { CoordGroup, CoordSessionRow, CoordinatorView } from '../../shared/coordinator'
+import { ROLE_NOTE_HEAD } from '../../shared/report-wake'
 import { describeTaskList, type TaskList } from '../../shared/task-list'
 import { replaceControls } from '../mail/agent-directory'
+import { quoted } from '../mail/wake-text'
 import type { TabPrompt } from '../tab-waits'
 import { GROUP_LABELS } from './session-state'
 
 const GROUPS: CoordGroup[] = ['waiting', 'working', 'idle', 'resolved']
+
+/** the most characters of a role note: the hook's output is cut at 10,000 and the note shares it with the mail */
+export const ROLE_NOTE_MAX = 1200
+const NAME_MAX = 40
+const LINE_MAX = 60
 
 function rowLine(r: CoordSessionRow, clock: (ms: number) => string): string {
   let line = `- ${replaceControls(r.name)}${r.ref ? ` [${r.ref}]` : ''} · ${r.line}`
@@ -68,4 +75,32 @@ export function readText(
     lines.push('No report yet.')
   }
   return lines.join('\n')
+}
+
+const cut = (text: string, max: number): string => (text.length > max ? text.slice(0, max) : text)
+
+/**
+ * The role note's text: the project, the sessions in their groups (at most `maxSessions`, the rest counted), and the problem
+ * when there is one. Names and lines are cut and made one line each, so no session can add a line to the note.
+ */
+export function roleNoteText(v: CoordinatorView, maxSessions = 8): string {
+  const head = `You coordinate ${replaceControls(v.project.name)} in ClaudeTerm:`
+  let text: string
+  if (v.sessions.length === 0) {
+    text = `${head} no sessions are attached yet. Attach one with attach_session, or start one with start_session.`
+  } else {
+    const byGroup = [...v.sessions].sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    const shown = byGroup.slice(0, maxSessions).map((r) => `${cut(replaceControls(r.name), NAME_MAX)} — ${cut(replaceControls(r.line), LINE_MAX)}`)
+    const rest = byGroup.length - shown.length
+    if (rest > 0) shown.push(`and ${rest} more`)
+    const count = byGroup.length === 1 ? '1 session' : `${byGroup.length} sessions`
+    text = `${head} ${count} (${shown.join(', ')}). Reports come by themselves when a task ends; use list_sessions for more.`
+  }
+  if (v.problem) text += ` ${replaceControls(v.problem)}`
+  return text.slice(0, ROLE_NOTE_MAX)
+}
+
+/** the role note as a wake block: its head, the sender ClaudeTerm, an id line that names no record, and the text quoted line by line */
+export function roleBlock(text: string): string {
+  return [ROLE_NOTE_HEAD, 'from: ClaudeTerm', 'id: role-note', '', quoted(text)].join('\n')
 }

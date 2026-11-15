@@ -1154,6 +1154,121 @@ describe('MailHub stopped reports in a prompt', () => {
   })
 })
 
+describe('MailHub role note', () => {
+  const signal = (): AbortSignal => new AbortController().signal
+  const NOTE = 'Note from ClaudeTerm, not from the user: a role note.'
+  /** the tabs whose note is due: the note is the text while a tab is in the set, and it is taken out when handed over */
+  const noteSetup = (note = NOTE, over: Partial<MailHubDeps> = {}) => {
+    const due = new Set<string>(['tab-2'])
+    const s = setup({
+      roleNote: tabId => (due.has(tabId) ? note : null),
+      roleNoteTaken: tabId => {
+        due.delete(tabId)
+      },
+      ...over
+    })
+    return { ...s, due }
+  }
+
+  it('an idle watcher gets no note: it is held, and the note is still due', async () => {
+    const { hub, due } = noteSetup()
+    const held = hub.wait('tab-2', SES_LOCAL, signal())
+    const state = settledOf(held)
+    await tick()
+    expect(state.done).toBe(false)
+    expect(due.has('tab-2')).toBe(true)
+  })
+
+  it('a watcher held before the turn gets the note alone when the turn starts; the note is then no longer due, and no record holds it', async () => {
+    const { hub, due, store } = noteSetup()
+    const held = hub.wait('tab-2', SES_LOCAL, signal())
+    hub.userTurn('tab-2')
+    hub.tabsChanged()
+    expect(await held).toEqual({ ok: true, info: NOTE })
+    expect(due.has('tab-2')).toBe(false)
+    expect(store.all()).toEqual([])
+    expect(store.digest()).toEqual([])
+  })
+
+  it('a stopped report that rides the same running hand-over comes after the note, and is delivered with it', async () => {
+    const { hub, store, due } = noteSetup()
+    const held = hub.wait('tab-2', SES_LOCAL, signal())
+    hub.userTurn('tab-2')
+    const stopped = record({ kind: 'report', outcome: 'stopped', reason: 'Esc', from: MAC, to: LOCAL, text: 'The task was stopped.' })
+    store.add(stopped)
+    const answer = (await held) as { info: string }
+    expect(answer.info.startsWith(`${NOTE}\n\n`)).toBe(true)
+    expect(answer.info).toContain('its task was stopped by the user: Esc.')
+    expect(store.get(stopped.id)?.delivered).toBe(true)
+    expect(due.has('tab-2')).toBe(false)
+  })
+
+  it('the note takes its place in the wake budget: mail that no longer fits waits for the next watcher', async () => {
+    const note = `Note ${'n'.repeat(1195)}`
+    let allow = false
+    const { hub, store, due } = noteSetup(note, { accepts: () => allow })
+    // the note is made while the mail waits: the coordinator's make calls the recheck that comes with it
+    due.delete('tab-2')
+    const held = hub.wait('tab-2', SES_LOCAL, signal())
+    hub.userTurn('tab-2')
+    const first = record({ from: MAC, to: LOCAL, text: 'a'.repeat(6500), sentAt: NOW })
+    const second = record({ from: MAC, to: LOCAL, text: 'b'.repeat(1500), sentAt: NOW + 1 })
+    store.add(first)
+    store.add(second)
+    due.add('tab-2')
+    allow = true
+    hub.tabsChanged()
+    const answer = (await held) as { info: string }
+    expect(answer.info.startsWith(`${note}\n\n`)).toBe(true)
+    expect(answer.info).toContain('a'.repeat(6500))
+    expect(answer.info).not.toContain('b'.repeat(10))
+    expect(answer.info.length).toBeLessThanOrEqual(9500)
+    expect(store.get(first.id)?.delivered).toBe(true)
+    expect(store.get(second.id)?.delivered).toBe(false)
+    expect(due.has('tab-2')).toBe(false)
+  })
+
+  it('the same two messages with no note both fit one wake', async () => {
+    const { hub, store } = setup()
+    const first = record({ from: MAC, to: LOCAL, text: 'a'.repeat(6500), sentAt: NOW })
+    const second = record({ from: MAC, to: LOCAL, text: 'b'.repeat(1500), sentAt: NOW + 1 })
+    store.add(first)
+    store.add(second)
+    const answer = (await hub.wait('tab-2', SES_LOCAL, signal())) as { info: string }
+    expect(answer.info).toBe(wakeText([first, second], () => ({ folder: null, branch: null })))
+    expect(store.get(second.id)?.delivered).toBe(true)
+  })
+
+  it('a watcher that came in the Stop race gets mail but no note, and the note stays due for the next running hand-over', async () => {
+    const { hub, store, due } = noteSetup()
+    hub.userTurn('tab-2')
+    const held = hub.wait('tab-2', SES_LOCAL, signal())
+    store.add(record({ from: MAC, to: LOCAL, text: 'mail in the Stop race' }))
+    const answer = (await held) as { info: string }
+    expect(answer.info).toContain('mail in the Stop race')
+    expect(answer.info).not.toContain(NOTE)
+    expect(due.has('tab-2')).toBe(true)
+  })
+
+  it('a watcher superseded before the running hand-over gets no note, and the note stays due', async () => {
+    const { hub, due } = noteSetup()
+    const first = hub.wait('tab-2', SES_LOCAL, signal())
+    hub.userTurn('tab-2')
+    void hub.wait('tab-2', SES_LOCAL, signal())
+    expect(await first).toEqual({ ok: true })
+    expect(due.has('tab-2')).toBe(true)
+  })
+
+  it('takeForPrompt never carries the note, and the note stays due', () => {
+    const { hub, store, due } = noteSetup()
+    store.add(record({ from: MAC, to: LOCAL, text: 'a message for the prompt' }))
+    const prompt = hub.takeForPrompt('tab-2', SES_LOCAL)
+    expect(prompt?.info).toContain('a message for the prompt')
+    expect(prompt?.info).not.toContain(NOTE)
+    expect(due.has('tab-2')).toBe(true)
+  })
+})
+
 describe('MailHub recent addresses', () => {
   it('an attach record between two tabs does not put the other end in the recent list of send', () => {
     const { hub, store, world } = setup()

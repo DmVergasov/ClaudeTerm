@@ -43,6 +43,8 @@ export interface MailHubDeps {
   working?(tabId: string): boolean | undefined // false when the tab is not working now: an Esc-interrupted turn has no Stop
   accepts?(r: MailRecord, tabId: string, into: HandOver): boolean // absent: true for every record that is not a signal
   handedOver?(tabId: string, taken: MailRecord[], into: HandOver): void
+  roleNote?(tabId: string): string | null // a coordinator's role note while it is due: it rides only with a running hand-over
+  roleNoteTaken?(tabId: string): void // the role note was handed over: it is no longer due
   sender(a: MailAddress): { folder: string | null; branch: string | null }
   self(): string | null // the id of this device
   deviceName(device: string | null): string | null // null when unknown
@@ -396,17 +398,22 @@ export class MailHub {
     // has no UserPromptSubmit, so the flag does not show it. A turn Esc interrupted never gets its Stop: the tab's working
     // flag says it is idle again
     const into: HandOver = !t.busy ? 'idle' : w.seq === t.seq ? 'next' : this.deps.working?.(w.tabId) === false ? 'idle' : 'running'
+    // the role note goes in front of a running hand-over only: it starts no turn, so an idle or a next watcher leaves it due
+    const note = into === 'running' ? (this.deps.roleNote?.(w.tabId) ?? null) : null
     const mail = this.pending(w.tabId, session, into)
-    if (mail.length === 0) return
-    // the oldest messages that fit one wake text; the rest wait for the next watcher
-    const wake = this.wakeOf(session, mail, false)
-    if (!wake) return
-    const { taken, info } = wake
+    if (mail.length === 0 && note === null) return
+    // the oldest messages that fit one wake text after the note; the rest wait for the next watcher
+    const wake = mail.length === 0 ? null : this.wakeOf(session, mail, false, WAKE_MAX - (note === null ? 0 : note.length + 2))
+    if (mail.length > 0 && !wake) return
+    const info = [note, wake?.info].filter(Boolean).join('\n\n')
     this.handOver(w, into)
     // finish() first: marking the mail notifies the watchers, and this one must already be off the hold
     this.finish(w, { ok: true, info })
-    this.deps.store.mark(taken.map(r => r.id), 'delivered')
-    this.deps.handedOver?.(w.tabId, taken, into)
+    if (note !== null) this.deps.roleNoteTaken?.(w.tabId)
+    if (wake) {
+      this.deps.store.mark(wake.taken.map(r => r.id), 'delivered')
+      this.deps.handedOver?.(w.tabId, wake.taken, into)
+    }
   }
 
   /** the undelivered mail of a session (its current id) that this device hands to the tab, and that accepts allows */
@@ -429,9 +436,9 @@ export class MailHub {
    * riders never take the place of the mail, and a rider that does not fit waits for a later hand-over. A prompt takes
    * riders only when its mail holds a report. Null when none of the mail fits.
    */
-  private wakeOf(session: string, mail: MailRecord[], prompt: boolean): { taken: MailRecord[]; info: string } | null {
+  private wakeOf(session: string, mail: MailRecord[], prompt: boolean, max = WAKE_MAX): { taken: MailRecord[]; info: string } | null {
     const senders = (a: MailAddress): { folder: string | null; branch: string | null } => this.deps.sender(a)
-    const real = wakeTextWithin(mail, senders, WAKE_MAX).taken
+    const real = wakeTextWithin(mail, senders, max).taken
     if (real.length === 0) return null
     if (prompt && !real.some(r => kindOf(r) === 'report')) return { taken: real, info: wakeText(real, senders) }
     const ids = new Set(mail.map(r => r.id))
@@ -439,7 +446,7 @@ export class MailHub {
     for (const rider of this.pendingStops(session)) {
       if (ids.has(rider.id)) continue
       const next = [...taken, rider]
-      if (wakeText(next, senders).length > WAKE_MAX) break
+      if (wakeText(next, senders).length > max) break
       taken = next
     }
     return { taken, info: wakeText(taken, senders) }

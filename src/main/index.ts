@@ -2313,6 +2313,9 @@ function bootstrap(): void {
     },
     // the coordinators say which mail a tab takes: a task of its coordinator, a report, or any message when no task is held
     accepts: (r, tabId, into) => projectCoordinators.accepts(r, tabId, into),
+    // a coordinator's role note rides with its next running hand-over, after it is made or cleared (never a record)
+    roleNote: (tabId) => projectCoordinators.roleNote(tabId),
+    roleNoteTaken: (tabId) => projectCoordinators.roleNoteTaken(tabId),
     // a report handed to a tab is also its card in the chat, before the text of a prompt that carries it is sent
     handedOver: (tabId, taken, into) => {
       projectCoordinators.handedOver(tabId, taken, into)
