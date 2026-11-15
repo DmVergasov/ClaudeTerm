@@ -34,7 +34,8 @@ import { UpdateBanner } from './update-banner'
 import { TabBar, type TabBarCallbacks, type TabBarGroup, type TabBarItem, type TabWaiting } from './tabbar'
 import { shownActivity } from './tab-row'
 import { TabPanel } from './tab-panel'
-import { orderToWrite, tabBarOrder } from './tab-groups'
+import { orderToWrite, pulledBy, tabBarOrder } from './tab-groups'
+import { coordMenuEntries, type CoordMenuAction } from './coord-menu'
 import { TerminalView } from './terminal-view'
 import { ChatView } from './chat/chat-view'
 import { ChatFind, type FindView } from './chat/chat-find'
@@ -261,23 +262,23 @@ function renderTabs(): void {
     return item ? [item] : []
   })
   const itemOf = new Map(items.map((item) => [item.id, item]))
-  const groups: TabBarGroup[] = remoteDevices.map((d) => {
-    const tabsOf = groupTabs(d.id)
-    return {
-      id: d.id,
-      name: d.name,
-      color: deviceColor(d.id),
-      online: d.online,
-      folded: folded.has(d.id),
-      count: tabsOf.length,
-      attention: tabsOf.some((id) => pulsing(tabs.get(id))),
-      mail: tabsOf.some((id) => itemOf.get(id)?.mail === true),
-      working: tabsOf.some((id) => { const item = itemOf.get(id); return item !== undefined && shownActivity(item) !== null })
-    }
+  const chipOf = (d: RemoteDeviceView, tabsOf: string[]): TabBarGroup => ({
+    id: d.id,
+    name: d.name,
+    color: deviceColor(d.id),
+    online: d.online,
+    folded: folded.has(d.id),
+    count: tabsOf.length,
+    attention: tabsOf.some((id) => pulsing(tabs.get(id))),
+    mail: tabsOf.some((id) => itemOf.get(id)?.mail === true),
+    working: tabsOf.some((id) => { const item = itemOf.get(id); return item !== undefined && shownActivity(item) !== null })
   })
-  tabBar.render(items, activeId, groups)
-  // the left panel shows this device's groups, then a section per device with tabs: the same items and groups as the tab bar
-  tabPanel.render(items, activeId, groups)
+  tabBar.render(items, activeId, remoteDevices.map((d) => chipOf(d, groupTabs(d.id))))
+  // the left panel's device sections leave out the paired devices' sessions pulled into a coordinator's block of this device: they
+  // are counted in that block, and the tab bar keeps them where they are
+  const localIds = new Set(items.filter((item) => item.group === null).map((item) => item.id))
+  const pulled = (id: string): boolean => pulledBy(itemOf.get(id)?.coord ?? null, localIds) !== null
+  tabPanel.render(items, activeId, remoteDevices.map((d) => chipOf(d, groupTabs(d.id).filter((id) => !pulled(id)))))
   // the sheet's header names the active tab; a remote tab shows its device's color
   const active = items.find((item) => item.id === activeId)
   sheetHeader.render(active ?? null, active?.group ? deviceColor(active.group) : undefined)
@@ -1256,7 +1257,7 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
     if (seq !== tabMenuSeq || !tabs.has(id)) return
     const isStarred = sessionId !== null && starred.includes(sessionId)
     const switches = continueItems(id)
-    const coord = claude && !t.info.remote ? coordMenuItems(id, sessionId) : []
+    const coord = claude ? coordMenuItems(id, sessionId) : []
     showMenu(at, [
       { label: claude ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
       ...(claude ? [{ label: 'Fork session', disabled: !canFork, action: () => ct.forkTab(id) }] : []),
@@ -1272,13 +1273,42 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
   })
 }
 
-/** the coordinator items of a local Claude tab's menu: Detach when it is attached, Stop coordinating when it coordinates, else Make project coordinator when git has given it a project */
+/** the coordinator items of a Claude tab's menu, of this device or a paired one: the rules are coordMenuEntries' */
 function coordMenuItems(id: string, sessionId: string | null): MenuItem[] {
-  const mark = coordMarkOf(id)
-  if (mark?.role === 'attached') return [{ label: `Detach from the ${mark.project} coordinator`, action: () => void detachFromCoordinator(id) }]
-  if (mark?.role === 'coordinator') return [{ label: 'Stop coordinating', action: () => void ct.coordStop(id).then(toastFailure) }]
-  if (places.get(id)) return [{ label: 'Make project coordinator', disabled: sessionId === null, action: () => void makeCoordinatorFrom(id) }]
-  return []
+  const t = tabs.get(id)
+  if (!t) return []
+  const remote = !!t.info.remote
+  // this device's coordinators other than this tab, in tab order: a remote tab's mark is its device's, never one of these
+  const coordinators = order.flatMap((other): { tabId: string; project: string }[] => {
+    const mark = other !== id && !tabs.get(other)?.info.remote ? coordMarkOf(other) : null
+    return mark?.role === 'coordinator' ? [{ tabId: other, project: mark.project }] : []
+  })
+  return coordMenuEntries({
+    remote,
+    hasSession: sessionId !== null,
+    hasProject: !remote && !!places.get(id),
+    project: places.get(id)?.project.name ?? null,
+    mark: coordMarkOf(id),
+    coordinators
+  }).map((entry) => ({ label: entry.label, disabled: entry.disabled, action: () => coordAction(id, entry.action) }))
+}
+
+/** a coordinator menu item's action on the tab it was opened on */
+function coordAction(id: string, action: CoordMenuAction): void {
+  switch (action.kind) {
+    case 'detach':
+      void detachFromCoordinator(id)
+      break
+    case 'stop':
+      void ct.coordStop(id).then(toastFailure)
+      break
+    case 'make':
+      void makeCoordinatorFrom(id)
+      break
+    case 'attach':
+      void ct.coordAttach(action.coordinatorTabId, id).then(toastFailure)
+      break
+  }
 }
 
 /** a coordinator's view: the one held, else asked for and held; null when the tab is no coordinator */

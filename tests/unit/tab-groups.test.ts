@@ -4,6 +4,9 @@ import {
   arrangeCoordinators,
   dropAttaches,
   groupLabels,
+  placePulled,
+  pulledBy,
+  withoutPulled,
   headerDetachShown,
   moveGroup,
   moveTab,
@@ -321,5 +324,67 @@ describe('the header\'s Detach', () => {
     expect(headerDetachShown(null, null)).toBe(true)
     expect(headerDetachShown('dev-laptop', 'tab-c')).toBe(true)
     expect(headerDetachShown('dev-laptop', null)).toBe(false)
+  })
+})
+
+describe('pulled rows: a paired device\'s session attached to a coordinator of this device', () => {
+  const C: CoordMark = { role: 'coordinator', project: 'acme', sessions: 2, waiting: 0 }
+  const to = (coordinatorTabId: string | null): CoordMark => ({ role: 'attached', project: 'acme', coordinator: 'coord · Desktop', coordinatorTabId })
+  const marks = (m: Record<string, CoordMark>) => (id: string): CoordMark | null => m[id] ?? null
+  const shown = (g: PanelGroup): string[] => g.rows.map((r) => `${r.id}${r.fork ? ' (fork)' : ''}${r.block ? ` [${r.block}${r.attached ? ' attached' : ''}]` : ''}`)
+
+  it('pulledBy names the coordinator of an attached tab when that coordinator is a tab of this device, and null otherwise', () => {
+    const local = new Set(['C', 'A1'])
+
+    expect(pulledBy(to('C'), local)).toBe('C')
+    expect(pulledBy(to('Z'), local)).toBeNull()
+    expect(pulledBy(to(null), local)).toBeNull()
+    expect(pulledBy(C, local)).toBeNull()
+    expect(pulledBy(null, local)).toBeNull()
+  })
+
+  it('placePulled puts a remote attached row after the last row of its coordinator\'s block, in the order given, marked attached and pulled', () => {
+    const groups = arrangeCoordinators(panelGroups([tab('C', acme), tab('A1', acme), tab('X', acme)]), marks({ C, A1: to('C') }), true)
+    const placed = placePulled(groups, [{ id: 'R2', coordinatorTabId: 'C' }, { id: 'R1', coordinatorTabId: 'C' }])
+
+    expect(shown(placed[0])).toEqual(['C [C]', 'A1 [C attached]', 'R2 [C attached]', 'R1 [C attached]', 'X'])
+    expect(placed[0].rows.filter((r) => r.pulled).map((r) => r.id)).toEqual(['R2', 'R1'])
+    expect(placed[0].rows.filter((r) => !r.pulled).map((r) => r.id)).toEqual(['C', 'A1', 'X'])
+  })
+
+  it('a pulled row whose coordinator is not in the groups is not placed', () => {
+    const groups = panelGroups([tab('A', acme), tab('X', acme)])
+
+    expect(placePulled(groups, [{ id: 'R1', coordinatorTabId: 'Z' }])).toEqual(groups)
+  })
+
+  it('withoutPulled takes the pulled rows out of an order and keeps the rest in place', () => {
+    const groups = placePulled(arrangeCoordinators(panelGroups([tab('C', acme), tab('A1', acme)]), marks({ C, A1: to('C') }), true), [{ id: 'R1', coordinatorTabId: 'C' }])
+
+    expect(withoutPulled(['C', 'A1', 'R1', 'X'], groups)).toEqual(['C', 'A1', 'X'])
+  })
+
+  describe('drops with a pulled row', () => {
+    const local = marks({ C, A1: to('C'), A2: to('C') })
+    const groups = placePulled(arrangeCoordinators(panelGroups(['C', 'A1', 'A2', 'X'].map((id) => tab(id, acme))), local, true), [{ id: 'R1', coordinatorTabId: 'C' }])
+    const blockOf = (id: string): string | null => groups[0].rows.find((r) => r.id === id)?.block ?? null
+    const row = (id: string, o: Partial<DropRow> = {}): DropRow => ({ id, claude: true, local: true, coord: local(id), block: blockOf(id), ...o })
+    const pulled: DropRow = { id: 'R1', claude: true, local: false, coord: to('C'), block: 'C' }
+
+    it('a pulled row dropped on a row outside its block is detached, with no order: its device keeps its order', () => {
+      expect(panelDrop(groups, pulled, row('X'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'R1', order: null })
+    })
+    it('a pulled row dropped inside its block does nothing, on the coordinator or on a row of the block', () => {
+      expect(panelDrop(groups, pulled, row('A1'))).toBeNull()
+      expect(panelDrop(groups, pulled, row('C'))).toBeNull()
+    })
+    it('a local row dropped on a pulled row inside the block reorders the local rows: the order holds no remote id', () => {
+      const target: DropRow = { id: 'R1', claude: true, local: false, coord: to('C'), block: 'C' }
+
+      expect(panelDrop(groups, row('A1'), target)).toEqual({ kind: 'reorder', order: ['C', 'A2', 'A1', 'X'] })
+    })
+    it('a local attached row detached onto a row outside its block gets an order with no pulled id', () => {
+      expect(panelDrop(groups, row('A1'), row('X'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'A2', 'X', 'A1'] })
+    })
   })
 })

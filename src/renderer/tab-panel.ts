@@ -1,6 +1,6 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
-import { REMOTE_COPY } from '../shared/remote'
-import { arrangeCoordinators, deviceGroups, dropAttaches, groupLabels, moveGroup, panelDrop, panelGroups, panelOrder, type DropRow, type PanelGroup, type PanelRow } from './tab-groups'
+import { REMOTE_COPY, deviceColor } from '../shared/remote'
+import { dropAttaches, groupLabels, moveGroup, panelDrop, panelOrder, panelSections, withoutPulled, type DropRow, type PanelGroup, type PanelRow, type PanelSection } from './tab-groups'
 import { icon } from './icons'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
@@ -13,10 +13,7 @@ const BRANCH_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none"
   '<circle cx="5" cy="3.5" r="1.6"/><circle cx="5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5" r="1.6"/><path d="M5 5.1v5.8M11.5 6.6c0 3-6.5 2.2-6.5 4.3"/></svg>'
 
 /** a part of the panel: this device's own groups (device null), or another device's section with its groups */
-interface Section {
-  device: TabBarGroup | null
-  groups: PanelGroup[]
-}
+type Section = PanelSection<TabBarGroup>
 
 /**
  * The left tab panel: the head (New tab and ▾), then this device's tabs as groups by project, each group with its tabs in rows
@@ -75,14 +72,23 @@ export class TabPanel {
     if (visible) this.revealActive()
   }
 
-  /** this device's tab ids in the order the panel shows them: group by group, folded groups included; no other device's */
+  /** this device's tab ids in the order the panel shows them: group by group, folded groups included; no other device's, and no pulled row */
   get visualOrder(): string[] {
-    return panelOrder(this.sections()[0].groups)
+    const own = this.sections()[0].groups
+    return withoutPulled(panelOrder(own), own)
   }
 
-  /** the tab ids of the device sections not folded, in the order the panel shows them: the keyboard walks them after this device's */
+  /**
+   * the tab ids of the device sections not folded, in the order the panel shows them: the keyboard walks them after this device's.
+   * A device's session pulled into a block of this device comes at the end of its device's ids.
+   */
   deviceOrder(folded: ReadonlySet<string>): string[] {
-    return this.sections().flatMap((s) => (s.device === null || folded.has(s.device.id) ? [] : panelOrder(s.groups)))
+    const parts = this.sections()
+    const pulled = parts[0].groups.flatMap((g) => g.rows.filter((r) => r.pulled).map((r) => r.id))
+    return this.devices.filter((d) => !folded.has(d.id)).flatMap((d) => {
+      const section = parts.find((s) => s.device?.id === d.id)
+      return [...(section ? panelOrder(section.groups) : []), ...pulled.filter((id) => this.items.find((i) => i.id === id)?.group === d.id)]
+    })
   }
 
   render(items: TabBarItem[], activeId: string | null, groups: TabBarGroup[] = []): void {
@@ -137,16 +143,9 @@ export class TabPanel {
    * tabs or is online. An online device with no tab keeps its header, the place to open a tab there from.
    */
   private sections(): Section[] {
-    const own = this.items.filter((item) => item.group === null)
-    // a coordinator's attached tabs of the project come right after it: the groups are arranged before the order is read
-    const arranged = (groups: PanelGroup[]): PanelGroup[] => arrangeCoordinators(groups, (id) => this.items.find((i) => i.id === id)?.coord ?? null, true)
-    return [
-      { device: null, groups: arranged(panelGroups(own)) },
-      ...this.devices.flatMap((device) => {
-        const tabs = this.items.filter((item) => item.group === device.id)
-        return tabs.length === 0 && !device.online ? [] : [{ device, groups: arranged(deviceGroups(device.id, tabs)) }]
-      })
-    ]
+    // a coordinator's attached tabs of the project come right after it, and a paired device's session attached here is pulled into
+    // its coordinator's block: the rules are panelSections'
+    return panelSections(this.items, this.devices)
   }
 
   private renderSection(section: Section, byId: Map<string, TabBarItem>): HTMLElement[] {
@@ -323,9 +322,17 @@ export class TabPanel {
     line.append(parts.icon, parts.label, ...(parts.coord ? [parts.coord] : []), ...parts.marks, parts.close)
     el.append(line)
 
-    // an attached tab outside its coordinator's block says which coordinator it reports to; in the block the block says it
+    // an attached tab outside its coordinator's block says which coordinator it reports to; in the block the block says it, and a
+    // paired device's session shown in the block says which device it runs on
     let to: HTMLElement | null = null
-    if (item.coord?.role === 'attached' && row.block === undefined) {
+    if (row.pulled && item.group !== null) {
+      to = document.createElement('span')
+      to.className = 'tp-coord-device'
+      const bar = document.createElement('span')
+      bar.className = 'tp-coord-device-bar'
+      bar.style.background = deviceColor(item.group)
+      to.append(bar, item.deviceName ?? '')
+    } else if (item.coord?.role === 'attached' && row.block === undefined) {
       to = document.createElement('span')
       to.className = 'tp-coord-to'
       to.textContent = `↳ ${item.coord.project}`

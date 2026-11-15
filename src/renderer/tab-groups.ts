@@ -5,12 +5,16 @@ import type { TabPlace } from '../shared/types'
 export const NO_PROJECT = '~none'
 
 export interface GroupInput { id: string; place: TabPlace | null; forkOf: string | null }
+/** a tab as the left panel reads it: a GroupInput with its device (null: this device's own tab) and its part in a coordinator */
+export interface PanelItem extends GroupInput { group: string | null; coord: CoordMark | null }
 export interface PanelRow {
   id: string; fork: boolean
   /** the row stands in a coordinator's block: the coordinator's tab id; absent outside one */
   block?: string
   /** a row of the block other than the coordinator's family: an attached session (or a fork of one), drawn indented */
   attached?: true
+  /** a paired device's session shown in its coordinator's block: its device owns its order, and it is not in its device's section */
+  pulled?: true
 }
 export interface PanelGroup { key: string; project: TabPlace['project'] | null; rows: PanelRow[] }
 
@@ -310,18 +314,80 @@ export function headerDetachShown(group: string | null, coordinatorTabId: string
  * What a row dropped on another row of the left panel does; null: nothing. `groups`: the target's section, arranged.
  * In order: the same row → null; the target is a coordinator → attach when dropAttaches, else null; the dragged row is an
  * attached session standing in its coordinator's block and the target is outside that block → detach, with moveTab's order
- * (null across groups); the target is in a block the dragged row is not in, or the dragged row is a coordinator and the
- * target is in its own block → null; else moveTab's order as a reorder (null when it gives none).
+ * (null across groups, and null for a paired device's row, whose order is its device's); the target is in a block the dragged
+ * row is not in, or the dragged row is a coordinator and the target is in its own block → null; a paired device's row inside
+ * its block → null; else moveTab's order as a reorder, without the pulled rows (null when it gives none).
  */
 export function panelDrop(groups: PanelGroup[], drag: DropRow, target: DropRow): PanelDrop | null {
   if (drag.id === target.id) return null
   if (target.coord?.role === 'coordinator') return dropAttaches(drag, target) ? { kind: 'attach', coordinator: target.id, tab: drag.id } : null
   if (drag.block !== null && drag.coord?.role === 'attached' && target.block !== drag.block) {
-    return { kind: 'detach', coordinator: drag.block, tab: drag.id, order: moveTab(groups, drag.id, target.id) }
+    const order = drag.local ? moveTab(groups, drag.id, target.id) : null
+    return { kind: 'detach', coordinator: drag.block, tab: drag.id, order: order && withoutPulled(order, groups) }
   }
   if (target.block !== null && (target.block !== drag.block || drag.coord?.role === 'coordinator')) return null
+  if (!drag.local && drag.block !== null) return null
   const order = moveTab(groups, drag.id, target.id)
-  return order ? { kind: 'reorder', order } : null
+  return order ? { kind: 'reorder', order: withoutPulled(order, groups) } : null
+}
+
+/**
+ * The coordinator a tab is pulled into: its mark names a coordinator that is a tab of this device (`localIds`), so the left
+ * panel shows the tab in that coordinator's block. Null when it is not pulled.
+ */
+export function pulledBy(coord: CoordMark | null, localIds: ReadonlySet<string>): string | null {
+  return coord?.role === 'attached' && coord.coordinatorTabId !== null && localIds.has(coord.coordinatorTabId) ? coord.coordinatorTabId : null
+}
+
+/**
+ * Puts the pulled rows into their coordinator's block: after the block's last row, in the order given, each marked `attached`
+ * and `pulled`. A row whose coordinator stands in no group is not placed.
+ */
+export function placePulled(groups: PanelGroup[], pulled: { id: string; coordinatorTabId: string }[]): PanelGroup[] {
+  return groups.map((group) => {
+    const rows = [...group.rows]
+    for (const { id, coordinatorTabId } of pulled) {
+      const coordinator = rows.findIndex((r) => r.id === coordinatorTabId)
+      if (coordinator < 0) continue
+      let last = coordinator
+      rows.forEach((r, i) => { if (r.block === coordinatorTabId) last = i })
+      rows.splice(last + 1, 0, { id, fork: false, block: coordinatorTabId, attached: true, pulled: true })
+    }
+    return rows.length === group.rows.length ? group : { ...group, rows }
+  })
+}
+
+/** an order without the pulled rows of the groups: a paired device's session shown in a block is ordered by its device, not here */
+export function withoutPulled(order: string[], groups: PanelGroup[]): string[] {
+  const pulled = new Set(groups.flatMap((g) => g.rows.filter((r) => r.pulled).map((r) => r.id)))
+  return order.filter((id) => !pulled.has(id))
+}
+
+/** one part of the left panel: this device's groups (device null), or a device's section with its groups */
+export interface PanelSection<D> { device: D | null; groups: PanelGroup[] }
+
+/**
+ * The left panel's parts in the order it shows them: this device's groups, arranged by coordinator, with each paired device's
+ * session attached to a coordinator of this device pulled into that block; then a section for each device that has tabs left
+ * to show or is online. A pulled tab is in no device section, so a device whose tabs are all pulled and that is offline has no
+ * section.
+ */
+export function panelSections<D extends { id: string; online: boolean }>(items: PanelItem[], devices: D[]): PanelSection<D>[] {
+  const localIds = new Set(items.filter((item) => item.group === null).map((item) => item.id))
+  const coordOf = new Map<string, CoordMark | null>(items.map((item): [string, CoordMark | null] => [item.id, item.coord]))
+  const arranged = (groups: PanelGroup[]): PanelGroup[] => arrangeCoordinators(groups, (id) => coordOf.get(id) ?? null, true)
+
+  const pulled = items.flatMap((item) => {
+    const coordinatorTabId = item.group === null ? null : pulledBy(item.coord, localIds)
+    return coordinatorTabId === null ? [] : [{ id: item.id, coordinatorTabId }]
+  })
+  const pulledIds = new Set(pulled.map((p) => p.id))
+  const own = placePulled(arranged(panelGroups(items.filter((item) => item.group === null))), pulled)
+  const sections = devices.flatMap((device): PanelSection<D>[] => {
+    const tabs = items.filter((item) => item.group === device.id && !pulledIds.has(item.id))
+    return tabs.length === 0 && !device.online ? [] : [{ device, groups: arranged(deviceGroups(device.id, tabs)) }]
+  })
+  return [{ device: null, groups: own }, ...sections]
 }
 
 /** a group's units: a row that is not a fork starts one, and with `families` the fork rows after it join it; each row alone otherwise */

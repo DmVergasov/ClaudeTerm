@@ -6,11 +6,16 @@ import {
   groupLabels,
   moveGroup,
   moveTab,
+  panelOrder,
+  panelSections,
   tabBarOrder,
+  withoutPulled,
   type GroupInput,
-  type PanelGroup
+  type PanelGroup,
+  type PanelItem
 } from '../../src/renderer/tab-groups'
 import type { TabPlace } from '../../src/shared/types'
+import type { CoordMark } from '../../src/shared/coordinator'
 
 function place(path: string, parent = 'w'): TabPlace {
   return {
@@ -74,6 +79,60 @@ describe('device sections: the fold keys', () => {
     expect(moveTab(studio, 'B', 'A')).toBeNull()
     expect(moveTab(laptop, 'A', 'B2')).toBeNull()
     expect(moveTab(studio, 'A2', 'A')).toEqual(['A2', 'A'])
+  })
+
+  // the panel's sections are a pure function of its items: a paired device's session attached to a coordinator here is
+  // pulled into that coordinator's block and leaves its device's section (the DOM is not in node's test environment)
+  describe('a pulled row: a paired device\'s session attached to a coordinator of this device', () => {
+    const C: CoordMark = { role: 'coordinator', project: 'acme', sessions: 1, waiting: 0 }
+    const to = (coordinatorTabId: string | null): CoordMark => ({ role: 'attached', project: 'acme', coordinator: 'coord · Studio', coordinatorTabId })
+    const item = (id: string, o: Partial<PanelItem> = {}): PanelItem => ({ id, place: acme, forkOf: null, group: null, coord: null, ...o })
+    const devices = [{ id: 'dev-b', online: true }]
+    /** the rows of the groups as `id [block attached]`, pulled rows marked */
+    const shown = (groups: PanelGroup[]): string[] => groups.flatMap((g) => g.rows.map((r) => `${r.id}${r.block ? ` [${r.block}${r.attached ? ' attached' : ''}]` : ''}`))
+    const items = (r1: CoordMark | null): PanelItem[] => [
+      item('C', { coord: C }),
+      item('A1', { coord: to('C') }),
+      item('R1', { group: 'dev-b', coord: r1 }),
+      item('R2', { group: 'dev-b' })
+    ]
+
+    it('the remote row is in its coordinator\'s block, after the local attached row, marked attached and pulled', () => {
+      const [own] = panelSections(items(to('C')), devices)
+
+      expect(own.device).toBeNull()
+      expect(shown(own.groups)).toEqual(['C [C]', 'A1 [C attached]', 'R1 [C attached]'])
+      expect(own.groups[0].rows.find((r) => r.id === 'R1')?.pulled).toBe(true)
+    })
+
+    it('its device\'s section has no row with its id, and the section\'s count leaves it out', () => {
+      const [, laptop] = panelSections(items(to('C')), devices)
+
+      expect(laptop.device?.id).toBe('dev-b')
+      expect(shown(laptop.groups)).toEqual(['R2'])
+      expect(laptop.groups[0].rows.length).toBe(1)
+    })
+
+    it('the panel\'s visual order has no remote id', () => {
+      const [own] = panelSections(items(to('C')), devices)
+
+      expect(withoutPulled(panelOrder(own.groups), own.groups)).toEqual(['C', 'A1'])
+      expect(panelOrder(own.groups)).toContain('R1')
+    })
+
+    it('with the mark gone, the row is back in its device\'s section', () => {
+      const [own, laptop] = panelSections(items(null), devices)
+
+      expect(shown(own.groups)).toEqual(['C [C]', 'A1 [C attached]'])
+      expect(shown(laptop.groups)).toEqual(['R1', 'R2'])
+    })
+
+    it('a remote tab attached to a coordinator that is not a tab of this device is not pulled and stays in its section', () => {
+      const [own, laptop] = panelSections([...items(null), item('R3', { group: 'dev-b', coord: to('Z') })], devices)
+
+      expect(shown(own.groups)).toEqual(['C [C]', 'A1 [C attached]'])
+      expect(shown(laptop.groups)).toEqual(['R1', 'R2', 'R3'])
+    })
   })
 
   it('the labels of a section name its projects, as on this device', () => {

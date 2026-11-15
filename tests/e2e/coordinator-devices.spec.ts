@@ -1,12 +1,24 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { activate, refOf, startSession, waitForMail } from './agent-mail'
 import { claudeTabIn, coord, coordDevices, coordViewOf, done, makeCoordinator, within } from './coordinator-helpers'
-import { dragOnto, LEFT, marksOf, openSessions, sessionGroup, sessionRow, tpRow } from './coordinator-window'
+import { dragOnto, LEFT, marksOf, menuItem, openSessions, sessionGroup, sessionRow, tpRow } from './coordinator-window'
 import { closePaired, type Device, relaunch, SLOW } from './device-pair'
 
 test.afterEach(closePaired)
+
+/** the left panel's rows in DOM order: the id, whether the row is attached, its device chip, and the device section it stands in (null: this device's own groups) */
+const panelRowsOf = (page: Page): Promise<{ id: string; attached: boolean; chip: string | null; section: string | null }[]> =>
+  page.evaluate(() => [...document.querySelectorAll<HTMLElement>('#tabpanel .tp-tab')].map((row) => ({
+    id: row.dataset.tabId!,
+    attached: row.classList.contains('coord-attached'),
+    chip: row.querySelector('.tp-coord-device')?.textContent ?? null,
+    section: row.closest('.tp-section')?.querySelector('.tp-device-name')?.textContent ?? null
+  })))
+
+/** Laptop's section of Studio's left panel */
+const laptopSection = (page: Page): Locator => page.locator('#tabpanel .tp-section', { has: page.locator('.tp-device-name', { hasText: 'Laptop' }) })
 
 /** Laptop's session attached to Studio's coordinator: the answer is attached once Laptop confirms, or Attaching… when the wait ends first; both windows mark it once it has */
 async function attachLaptopSession(a: Device, b: Device, coordTab: string, sessionTab: string, sessionSid: string): Promise<void> {
@@ -166,4 +178,38 @@ test('a Laptop row dragged onto Studio\'s coordinator row attaches it, and both 
     expect((await marksOf(a.page))[sessionTab]).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: coordTab })
   }).toPass({ timeout: 45_000 })
   await expect.poll(async () => (await marksOf(b.page))[sessionTab], SLOW).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: null })
+})
+
+test('a Laptop session attached to Studio\'s coordinator shows in its block with Laptop\'s chip, and goes back to the Laptop section when detached from its menu', async () => {
+  test.setTimeout(180_000)
+  const { a, b, coordTab, sessionTab, sessionSid } = await coordDevices({ a: { settings: LEFT } })
+  await attachLaptopSession(a, b, coordTab, sessionTab, sessionSid)
+
+  // in Studio's block: the row follows the coordinator's row, with Laptop's chip and no ↳ mark, and Laptop's section has no row of it
+  await expect.poll(async () => {
+    const rows = await panelRowsOf(a.page)
+    return rows.findIndex((r) => r.id === sessionTab) === rows.findIndex((r) => r.id === coordTab) + 1
+  }, SLOW).toBe(true)
+  await expect(tpRow(a.page, sessionTab)).toHaveClass(/coord-attached/)
+  await expect(tpRow(a.page, sessionTab).locator('.tp-coord-device')).toHaveText('Laptop')
+  await expect(tpRow(a.page, sessionTab).locator('.tp-coord-to')).toHaveCount(0)
+  expect((await panelRowsOf(a.page)).find((r) => r.id === sessionTab)).toEqual({ id: sessionTab, attached: true, chip: 'Laptop', section: null })
+  await expect(laptopSection(a.page).locator(`.tp-tab[data-tab-id="${sessionTab}"]`)).toHaveCount(0)
+
+  await menuItem(a.page, sessionTab, 'Detach from the acme coordinator')
+  await expect.poll(async () => (await panelRowsOf(a.page)).find((r) => r.id === sessionTab), SLOW)
+    .toEqual({ id: sessionTab, attached: false, chip: null, section: 'Laptop' })
+  await expect(laptopSection(a.page).locator(`.tp-tab[data-tab-id="${sessionTab}"]`)).toHaveCount(1)
+})
+
+test('a Laptop tab is attached from its menu, and its row joins the coordinator\'s block', async () => {
+  test.setTimeout(180_000)
+  const { a, b, coordTab, sessionTab } = await coordDevices({ a: { settings: LEFT } })
+  await menuItem(a.page, sessionTab, 'Attach to the acme coordinator')
+
+  // the coordinator's view lists the row attached once Laptop confirms; both windows mark it
+  await expect.poll(async () => (await coordViewOf(a, coordTab))?.sessions.find((r) => r.tabId === sessionTab)?.marker, SLOW).toBeNull()
+  await expect.poll(async () => (await marksOf(b.page))[sessionTab], SLOW).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: null })
+  await expect(tpRow(a.page, sessionTab)).toHaveClass(/coord-attached/)
+  await expect(tpRow(a.page, sessionTab).locator('.tp-coord-device')).toHaveText('Laptop')
 })

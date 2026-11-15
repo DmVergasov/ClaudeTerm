@@ -76,6 +76,25 @@ test('an attached tab\'s menu detaches it from its coordinator', async () => {
   } finally { await l.app.close() }
 })
 
+test('a local tab is attached from its menu, and Make project coordinator stays under it', async () => {
+  const l = await coordApp(2)
+  const { page, tabs: [t0, t1], repo } = l
+  try {
+    await makeCoordinator(page, t0)
+    // a right-click that lands while the menu's answers are on their way is tried again
+    await expect(async () => {
+      await pill(page, t1).click({ button: 'right' })
+      await expect(page.locator('.menu .menu-item', { hasText: 'Make project coordinator' })).toBeVisible({ timeout: 1000 })
+    }).toPass({ timeout: 15_000 })
+    const coordinatorItems = (await page.locator('.menu .menu-item').allTextContents()).filter((text) => text.includes('coordinator'))
+    expect(coordinatorItems).toEqual([`Attach to the ${basename(repo)} coordinator`, 'Make project coordinator'])
+
+    await page.locator('.menu .menu-item', { hasText: `Attach to the ${basename(repo)} coordinator` }).click()
+    await expect.poll(async () => (await marksOf(page))[t1], { timeout: 15_000 }).toMatchObject({ role: 'attached', project: basename(repo), coordinatorTabId: t0 })
+    await expect.poll(async () => (await page.evaluate((id) => window.ct.coordView(id), t0))?.sessions.some((r) => r.tabId === t1), { timeout: 15_000 }).toBe(true)
+  } finally { await l.app.close() }
+})
+
 test('a shell tab and a Claude tab outside git have no coordinator item', async () => {
   const l = await coordApp(1)
   const { page, repo } = l
