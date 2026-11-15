@@ -206,6 +206,10 @@ describe('attach, detach and tasks across devices', () => {
   const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
   const REFUSAL = '7b100000-0000-4000-8000-000000000003'
   const TASK_TO_PENDING = '7a100000-0000-4000-8000-000000000004'
+  const TASK_LATE = '7a100000-0000-4000-8000-000000000005'
+  const NO_PROJECT = '7b100000-0000-4000-8000-000000000006'
+  const TO_COORDINATOR = '7b100000-0000-4000-8000-000000000007'
+  const OTHER_DETACH = '7b100000-0000-4000-8000-000000000008'
 
   beforeEach(() => {
     const worlds = deviceWorlds()
@@ -459,5 +463,97 @@ describe('attach, detach and tasks across devices', () => {
     sync(c, s)
     expect(await answer).toEqual({ ok: false, error: HUB_TEXT.fullHosted })
     expect(s.store.hosted(L.one)).toBeNull()
+  })
+
+  it('a tool waiting on a pending attach is answered detachedPending when its session is detached, and when the coordinator stops; detach settles the pending tasks', async () => {
+    const first = c.hub.tool('tab-c', { op: 'attach', session: 'e10000' })
+    await tick()
+    c.mail.add(checkMailRecord({
+      v: 1, id: TASK_LATE, from: { device: DEV_C, session: S.coord, name: 'coord · Studio' }, to: { device: DEV_S, session: L.one, name: 'parser · Laptop' },
+      replyTo: null, text: 'Fix the parser.', sentAt: NOW, delivered: false, read: false, kind: 'task', project: 'acme'
+    })!)
+    c.hub.detach('tab-c', 'e10000')
+    expect(await first).toEqual({ ok: false, error: HUB_TEXT.detachedPending('parser · Laptop') })
+    expect(c.mail.get(TASK_LATE)).toMatchObject({ delivered: true, read: true })
+
+    const second = c.hub.tool('tab-c', { op: 'attach', session: 'e10000' })
+    await tick()
+    c.hub.stop('tab-c')
+    expect(await second).toEqual({ ok: false, error: HUB_TEXT.detachedPending('parser · Laptop') })
+  })
+
+  it("making a Laptop session a coordinator detaches it from Studio's coordinator, which drops the attachment", () => {
+    c.hub.attach('tab-c', 'e10000')
+    sync(c, s)
+    expect(s.hub.make('tab-l1', false)).toMatchObject({ ok: true })
+    sync(c, s)
+    expect(c.hub.view('tab-c')!.sessions).toEqual([])
+  })
+
+  it('attaching a Laptop session that is a coordinator there is refused by name, and nothing is written', () => {
+    s.hub.make('tab-lc', false)
+    sync(c, s)
+    expect(c.hub.attach('tab-c', 'lead · Laptop')).toEqual({ ok: false, error: HUB_TEXT.isCoordinator('lead · Laptop') })
+    expect(records(c, 'attach')).toEqual([])
+  })
+
+  it('attaching a session already attached and pending writes no second record and answers attaching; once confirmed it answers alreadyAttached', () => {
+    c.hub.attach('tab-c', 'e10000')
+    expect(c.hub.attach('tab-c', 'e10000')).toEqual({ ok: true, info: HUB_TEXT.attaching('parser · Laptop', 'e10000', 'Laptop') })
+    expect(records(c, 'attach')).toHaveLength(1)
+    sync(c, s)
+    expect(c.hub.attach('tab-c', 'e10000')).toEqual({ ok: true, info: HUB_TEXT.alreadyAttached('parser · Laptop') })
+    expect(records(c, 'attach')).toHaveLength(1)
+  })
+
+  it('attaching a Laptop session attached to another coordinator of this device is refused with that coordinator', () => {
+    c.hub.make('tab-b', false)
+    const beta = c.store.coordinator(S.beta)!
+    c.store.putCoordinator({ ...beta, attachments: [{ device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null }] })
+    expect(c.hub.attach('tab-c', 'e10000')).toEqual({ ok: false, error: HUB_TEXT.elsewhere('parser · Laptop', 'beta', 'beta · Studio') })
+    expect(records(c, 'attach')).toEqual([])
+  })
+
+  it('Laptop refuses an attach that names no project, and one to its coordinator, each with a detach that says why', () => {
+    s.hub.make('tab-lc', false)
+    const attach = (id: string, to: string, project?: string): MailRecord => ({
+      v: 1,
+      id,
+      from: { device: DEV_C, session: S.coord, name: 'coord · Studio' },
+      to: { device: DEV_S, session: to, name: 'parser · Laptop' },
+      replyTo: null,
+      text: 'Attached.',
+      sentAt: NOW,
+      delivered: false,
+      read: false,
+      kind: 'attach',
+      ...(project === undefined ? {} : { project })
+    })
+    s.mail.add(attach(NO_PROJECT, L.one))
+    s.mail.add(attach(TO_COORDINATOR, L.lead, 'acme'))
+    expect(records(s, 'detach').map((r) => [r.replyTo, r.text])).toEqual([
+      [NO_PROJECT, HUB_TEXT.noProjectGiven],
+      [TO_COORDINATOR, HUB_TEXT.isCoordinator('lead · Laptop')]
+    ])
+    expect(s.store.hosted(L.one)).toBeNull()
+  })
+
+  it('a detach from a device that is not the hosted coordinator leaves the hosted entry as it is', () => {
+    c.hub.attach('tab-c', 'e10000')
+    sync(c, s)
+    s.mail.add({
+      v: 1,
+      id: OTHER_DETACH,
+      from: { device: DEV_C, session: S.one, name: 'parser · Studio' },
+      to: { device: DEV_S, session: L.one, name: 'parser · Laptop' },
+      replyTo: null,
+      text: 'Left.',
+      sentAt: NOW,
+      delivered: false,
+      read: false,
+      kind: 'detach'
+    })
+    expect(s.store.hosted(L.one)).toMatchObject({ coordinator: { device: DEV_C, session: S.coord } })
+    expect(s.mail.get(OTHER_DETACH)).toMatchObject({ delivered: true, read: true })
   })
 })

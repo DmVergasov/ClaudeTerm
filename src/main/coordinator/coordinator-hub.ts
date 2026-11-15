@@ -502,20 +502,26 @@ export class CoordinatorHub {
     }
     if (hosted.tasks.length >= MAX_TASKS_PER_SESSION) return fail(HUB_TEXT.tooMany(row.name))
     // the record goes first: the mail listener takes the task into the hosted entry
+    if (!this.giveTask(c, att, this.address(null, att.session), text)) return fail(HUB_TEXT.notSaved)
+    return { ok: true, info: HUB_TEXT.queued(row.name, refOf(att.session)) }
+  }
+
+  /** writes a task from the coordinator to one of its sessions, and un-resolves the attachment; false when the record cannot be written */
+  private giveTask(c: StoredCoordinator, att: StoredAttachment, to: MailAddress, text: string): boolean {
     const written = this.write({
       kind: 'task',
       from: this.address(null, c.session),
-      to: this.address(null, att.session),
+      to,
       replyTo: null,
       text,
       project: c.project.name,
       delivered: false,
       read: false
     })
-    if (written === null) return fail(HUB_TEXT.notSaved)
+    if (written === null) return false
     this.patchAttachment(c, att.session, { resolved: false, failed: false })
     this.d.changed()
-    return { ok: true, info: HUB_TEXT.queued(row.name, refOf(att.session)) }
+    return true
   }
 
   resolve(tabId: string, target: string): PipeResponse {
@@ -814,19 +820,7 @@ export class CoordinatorHub {
       .filter((r) => kindOf(r) === 'task' && r.from.session === c.session && this.norm(r.from.device) === null && r.to.session === att.session && this.norm(r.to.device) === device && r.sentAt >= att.attachedAt && !replied.has(r.id))
     if (open.length >= MAX_TASKS_PER_SESSION) return fail(HUB_TEXT.tooMany(row.name))
     // the record goes first: the device takes the task into its hosted entry when it has the record
-    const written = this.write({
-      kind: 'task',
-      from: this.address(null, c.session),
-      to: { device, session: att.session, name: row.name },
-      replyTo: null,
-      text,
-      project: c.project.name,
-      delivered: false,
-      read: false
-    })
-    if (written === null) return fail(HUB_TEXT.notSaved)
-    this.patchAttachment(c, att.session, { resolved: false, failed: false })
-    this.d.changed()
+    if (!this.giveTask(c, att, { device, session: att.session, name: row.name }, text)) return fail(HUB_TEXT.notSaved)
     const ref = refOf(att.session)
     return { ok: true, info: row.marker === 'offline' ? HUB_TEXT.queuedOffline(row.name, ref, row.deviceName ?? 'another device') : HUB_TEXT.queued(row.name, ref) }
   }
