@@ -1,10 +1,12 @@
 import { expect as baseExpect, test } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
+import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { TaskList } from '../../src/shared/task-list'
-import { activate, refOf, setSetting } from './agent-mail'
-import { coord, coordApp, done, makeCoordinator, turnOf } from './coordinator-helpers'
-import { openSessions, rowKey, sessionGroup, sessionRow, sessionsToggle } from './coordinator-window'
+import { activate, refOf, setSetting, startSession, waitForMail } from './agent-mail'
+import { coord, coordApp, done, makeCoordinator, stillWaiting, turnOf, within } from './coordinator-helpers'
+import { act, marksOf, openSessions, rowKey, sessionGroup, sessionRow, sessionsToggle } from './coordinator-window'
 
 const expect = baseExpect.configure({ timeout: 15_000 })
 
@@ -172,5 +174,171 @@ test('a redraw that a row showing now left pending is dropped when the panel clo
     await expect.poll(pending).toBe(true)
     await activate(page, t1)
     await expect.poll(pending).toBe(false)
+  } finally { await l.app.close() }
+})
+
+test('Open and a click on a row bring the session\'s tab to the front', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Open')
+    await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(t1)
+    // the panel is shut when another tab is in front: it is opened again for the coordinator
+    await activate(page, t0)
+    await openSessions(page)
+    await expect(sessionRow(page, rowKey(sids[1]))).toBeVisible()
+    await sessionRow(page, rowKey(sids[1])).locator('.coord-name').click()
+    await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(t1)
+  } finally { await l.app.close() }
+})
+
+test('Message gives the session a task from the panel', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    const mail = waitForMail(pipeName, t1, sids[1]!)
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Message')
+    const name = await sessionRow(page, rowKey(sids[1])).locator('.coord-name').textContent()
+    await expect(page.locator('#image-panel .coord-compose-head')).toHaveText(`Task for ${name}`)
+    await page.locator('#image-panel .coord-compose-field').fill('Fix the parser.')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
+    const got = await within(mail, 10_000)
+    expect(got.info).toMatch(/^Task from your coordinator, through ClaudeTerm:/)
+    expect(got.info).toContain('> Fix the parser.')
+    await expect(sessionGroup(page, 'working').locator(`.coord-row[data-key="${rowKey(sids[1])}"]`)).toHaveCount(1)
+  } finally { await l.app.close() }
+})
+
+test('Resolve, Detach and Attach move the row between the groups', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Resolve')
+    await expect(sessionGroup(page, 'resolved').locator('.coord-gh .n')).toHaveText('1')
+    await sessionGroup(page, 'resolved').locator('.coord-gh').click()
+    await act(page, rowKey(sids[1]), 'Detach')
+    await expect(sessionGroup(page, 'not-attached').locator(`.coord-row[data-key="${rowKey(sids[1])}"]`)).toHaveCount(1)
+    await act(page, rowKey(sids[1]), 'Attach')
+    await expect(sessionGroup(page, 'idle').locator(`.coord-row[data-key="${rowKey(sids[1])}"]`)).toHaveCount(1)
+  } finally { await l.app.close() }
+})
+
+test('a task the hub refuses shows why under the Message box', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await setSetting(page, 'agentMessages.enabled', false)
+    await act(page, rowKey(sids[1]), 'Message')
+    await page.locator('#image-panel .coord-compose-field').fill('x')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('#image-panel .coord-compose-error')).toContainText('Coordinating sessions needs agent messages')
+    await expect(page.locator('#image-panel .coord-compose')).toBeVisible()
+  } finally { await l.app.close() }
+})
+
+test('the Message box keeps its draft and its focus while the rows change, and Esc closes it without reaching the tab', async () => {
+  const l = await coordApp(3)
+  const { page, pipeName, tabs: [t0, , t2], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    for (const s of [sids[1], sids[2]]) expect(await coord(pipeName, t0, { op: 'attach', session: refOf(s!) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Message')
+    const field = page.locator('#image-panel .coord-compose-field')
+    await field.pressSequentially('Fix th')
+    const before = await page.evaluate((id) => window.__ct!.ptyInput!(id), t0)
+    // the view changes: the other session's turn starts, and its row moves to Working
+    await turnOf(pipeName, t2, sids[2]!)
+    await expect(sessionGroup(page, 'working').locator(`.coord-row[data-key="${rowKey(sids[2]!)}"]`)).toHaveCount(1)
+    await expect(field).toHaveValue('Fix th')
+    await expect(field).toBeFocused()
+    // a listener on the document hears every Escape that the box does not stop: the app's keys listen there
+    await page.evaluate(() => document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') (window as unknown as { __escapes?: number }).__escapes = ((window as unknown as { __escapes?: number }).__escapes ?? 0) + 1
+    }))
+    await page.keyboard.press('Escape')
+    await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
+    // the Escape stopped at the box: it reached no listener on the document, and the panel stays open
+    expect(await page.evaluate(() => (window as unknown as { __escapes?: number }).__escapes)).toBeUndefined()
+    await expect(sessionRow(page, rowKey(sids[1]!))).toBeVisible()
+    expect(await page.evaluate((id) => window.__ct!.ptyInput!(id), t0)).toBe(before)
+  } finally { await l.app.close() }
+})
+
+test('Shift+Enter in the Message box inserts a new line and does not send', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Message')
+    const field = page.locator('#image-panel .coord-compose-field')
+    await field.fill('Line one')
+    await page.keyboard.press('Shift+Enter')
+    await field.pressSequentially('Line two')
+    await expect(field).toHaveValue('Line one\nLine two')
+    await expect(page.locator('#image-panel .coord-compose')).toBeVisible()
+  } finally { await l.app.close() }
+})
+
+test('Send stays disabled while the Message box is blank or holds only spaces', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Message')
+    const send = page.locator('#image-panel .coord-compose-actions .coord-btn.acc', { hasText: 'Send' })
+    const field = page.locator('#image-panel .coord-compose-field')
+    await expect(send).toBeDisabled()
+    await field.fill('   ')
+    await expect(send).toBeDisabled()
+    await field.fill('Fix the parser.')
+    await expect(send).toBeEnabled()
+  } finally { await l.app.close() }
+})
+
+test('Detach on a starting row cancels the start', async () => {
+  const l = await coordApp(1)
+  const { page, pipeName, tabs: [t0] } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    const answer = coord(pipeName, t0, { op: 'start', task: 'Write the release notes.', name: 'Release notes', folder: null, device: null, worktree: null })
+    await expect.poll(() => page.evaluate(() => window.__ct!.tabIds().length)).toBe(2)
+    const newTab = (await page.evaluate(() => window.__ct!.tabIds())).find((id) => id !== t0)!
+    await activate(page, t0)
+    await openSessions(page)
+    const key = `start:${newTab}`
+    await expect(sessionRow(page, key)).toBeVisible()
+    await act(page, key, 'Detach')
+    await expect(sessionRow(page, key)).toHaveCount(0)
+    expect(await answer).toMatchObject({ ok: false, error: HUB_TEXT.startCancelled })
+    // the session starts after the cancel: its tab is not attached and its task is not given
+    const sid = randomUUID()
+    expect(await startSession(pipeName, newTab, sid)).toEqual({ ok: true })
+    await expect.poll(async () => (await marksOf(page))[newTab], { timeout: 3_000 }).toBeUndefined()
+    await stillWaiting(waitForMail(pipeName, newTab, sid), 3_000)
   } finally { await l.app.close() }
 })

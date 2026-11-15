@@ -674,3 +674,19 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .coord-dev i { width: 3px; height: 11px; border-radius: 2px; }
 .coord-prog { height: 3px; margin: 6px 0 0 19px; overflow: hidden; border-radius: 2px; background: var(--raised-2); }
 .coord-prog i { display: block; height: 100%; background: var(--blue); }
+/* the rows' buttons, shown on hover, and the Message box at the panel's foot */
+.coord-btn { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--raised); color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
+.coord-btn:hover:not(:disabled) { color: var(--text); }
+.coord-btn:disabled { opacity: 0.5; cursor: default; }
+.coord-btn.ghost { border-color: var(--line); background: none; color: var(--text-3); }
+.coord-btn.acc { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: none; color: var(--accent); }
+.coord-acts { display: none; gap: 6px; margin: 8px 0 0 19px; }
+.coord-row:hover .coord-acts, .coord-row:focus-within .coord-acts { display: flex; }
+.coord-compose { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 12px; border-top: 1px solid var(--line); }
+.coord-compose[hidden] { display: none; }
+.coord-compose-head { color: var(--text-2); font-size: 12px; font-weight: 600; }
+.coord-compose-field { box-sizing: border-box; width: 100%; min-height: 64px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; resize: vertical; }
+.coord-compose-field:focus { outline: none; border-color: var(--accent); }
+.coord-compose-error { color: var(--red); font-size: 12px; }
+.coord-compose-error:empty { display: none; }
+.coord-compose-actions { display: flex; justify-content: flex-end; gap: 6px; }

@@ -15,6 +15,15 @@ export const sessionRow = (page: Page, key: string): Locator => page.locator(`#i
 export const sessionGroup = (page: Page, group: string): Locator => page.locator(`#image-panel .panel-sessions .coord-group[data-group="${group}"]`)
 export const rowKey = (sid: string): string => `local:${sid}`
 
+/** clicks a row's action button with that label: the rows are rebuilt on every view, so the hover and the click are tried again */
+export async function act(page: Page, key: string, label: string): Promise<void> {
+  const row = sessionRow(page, key)
+  await expect(async () => {
+    await row.hover()
+    await row.locator('.coord-acts button', { hasText: label }).click({ timeout: 1000 })
+  }).toPass({ timeout: 15_000 })
+}
+
 /** opens the Sessions panel with its toggle and waits until it has slid in */
 export async function openSessions(page: Page): Promise<void> {
   await sessionsToggle(page).click()

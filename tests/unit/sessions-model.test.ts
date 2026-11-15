@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CoordGroup, CoordinatorView, CoordSessionRow } from '../../src/shared/coordinator'
-import { DEFAULT_FOLDED, nextRedrawAt, rowIcon, rowTime, sessionSections } from '../../src/renderer/sessions-model'
+import { DEFAULT_FOLDED, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections } from '../../src/renderer/sessions-model'
 
 const row = (key: string, group: CoordGroup, o: Partial<CoordSessionRow> = {}): CoordSessionRow => ({
   key, tabId: `tab-${key}`, device: null, deviceName: null, session: 'a1000000-0000-4000-8000-000000000002', ref: 'a10000', name: `${key} · Desktop`,
@@ -17,6 +17,16 @@ it('sections come in the order waiting, working, idle, resolved, then the projec
 })
 it('a folded section keeps its rows, for its count', () => {
   expect(sessionSections(view([row('r', 'resolved')]), new Set(DEFAULT_FOLDED))).toEqual([{ key: 'resolved', label: 'Resolved', rows: [expect.objectContaining({ key: 'r' })], folded: true }])
+})
+it('rowActions: Open with a tab, Message and Detach for an attached row; Resolve in Idle and after a failure; Attach for the others; Open and Detach while it starts', () => {
+  expect(rowActions(row('a', 'working'), 'working')).toEqual(['open', 'message', 'detach'])
+  expect(rowActions(row('a', 'idle'), 'idle')).toEqual(['open', 'message', 'detach', 'resolve'])
+  expect(rowActions(row('a', 'waiting', { why: 'failed' }), 'waiting')).toEqual(['open', 'message', 'detach', 'resolve'])
+  expect(rowActions(row('a', 'idle', { tabId: null }), 'idle')).toEqual(['message', 'detach', 'resolve'])
+  expect(rowActions(row('a', 'working', { marker: 'starting' }), 'working')).toEqual(['open', 'detach'])
+  expect(rowActions(row('a', 'working', { marker: 'starting', tabId: null }), 'working')).toEqual(['detach'])
+  expect(rowActions(row('a', 'idle'), 'not-attached')).toEqual(['attach'])
+  expect(rowActions(row('a', 'idle', { tabId: null }), 'not-attached')).toEqual([])
 })
 it('rowIcon: amber for a pending prompt, red for a limit or a failure, the spinner at work or starting, a check when idle or resolved, grey for the others and an offline session', () => {
   expect(rowIcon(row('a', 'waiting', { why: 'prompt' }), 'waiting')).toBe('amber')

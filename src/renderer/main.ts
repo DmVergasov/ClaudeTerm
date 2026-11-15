@@ -1743,7 +1743,14 @@ async function boot(): Promise<void> {
     conversations: (tabId) => ct.getMailConversations(tabId),
     markRead: (ids) => ct.markMailRead(ids)
   })
-  sessionsPanel = new SessionsPanel(sidePanel.bodies.sessions, sidePanel, { openSettings: () => ct.openSettingsWindow('agent-messages') })
+  sessionsPanel = new SessionsPanel(sidePanel.bodies.sessions, sidePanel, {
+    openSettings: () => ct.openSettingsWindow('agent-messages'),
+    open: (id) => ct.activateTab(id),
+    attach: (coordinatorTabId, sessionTabId) => void ct.coordAttach(coordinatorTabId, sessionTabId).then(toastFailure),
+    detach: (coordinatorTabId, key) => void ct.coordDetach(coordinatorTabId, key).then(toastFailure),
+    resolve: (coordinatorTabId, key) => void ct.coordResolve(coordinatorTabId, key).then(toastFailure),
+    message: (coordinatorTabId, key, text) => ct.coordMessage(coordinatorTabId, key, text).then((r) => (r.ok ? null : r.error))
+  })
   sidePanel.onCover = () => noteOverlay.relayout()
   mcpPanel = new McpPanel(sidePanel.bodies.mcp, sidePanel, {
     servers: (tabId) => ct.mcpServers(tabId),

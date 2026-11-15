@@ -36,6 +36,19 @@ export function rowIcon(row: CoordSessionRow, section: SectionKey): RowIcon {
   return 'check'
 }
 
+export type RowAction = 'open' | 'message' | 'detach' | 'attach' | 'resolve'
+
+export const ACTION_LABELS: Record<RowAction, string> = { open: 'Open', message: 'Message', detach: 'Detach', attach: 'Attach', resolve: 'Resolve' }
+
+/** the project's others: attach (with a tab); a row that starts: open (with a tab) and detach, which cancels the start; an attached row: open (with a tab), message, detach, and resolve in Idle or after a failure */
+export function rowActions(row: CoordSessionRow, section: SectionKey): RowAction[] {
+  const open: RowAction[] = row.tabId === null ? [] : ['open']
+  if (section === 'not-attached') return row.tabId === null ? [] : ['attach']
+  if (row.marker === 'starting') return [...open, 'detach']
+  const resolve: RowAction[] = section === 'idle' || (section === 'waiting' && row.why === 'failed') ? ['resolve'] : []
+  return [...open, 'message', 'detach', ...resolve]
+}
+
 /** when a row last changed: "now" within a minute (a time ahead of now too), "HH:MM" earlier the same local day, else "Mon D" (e.g. "Nov 13") */
 export function rowTime(changedAt: number, now: number): string {
   if (Math.abs(now - changedAt) < MINUTE_MS) return 'now'

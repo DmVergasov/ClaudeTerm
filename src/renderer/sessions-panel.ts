@@ -1,13 +1,19 @@
-import type { CoordinatorView, CoordSessionRow } from '../shared/coordinator'
+import { COORD_TASK_MAX, type CoordinatorView, type CoordSessionRow } from '../shared/coordinator'
 import { deviceColor } from '../shared/remote'
 import { icon } from './icons'
-import { DEFAULT_FOLDED, nextRedrawAt, rowIcon, rowTime, sessionSections, type RowIcon, type SectionKey, type SessionSection } from './sessions-model'
+import { ACTION_LABELS, DEFAULT_FOLDED, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, type RowAction, type RowIcon, type SectionKey, type SessionSection } from './sessions-model'
 import type { SidePanel } from './side-panel'
 import { spinner } from './tab-row'
 import { labelOf } from './util'
 
 export interface SessionsPanelCallbacks {
   openSettings(): void
+  open(tabId: string): void
+  attach(coordinatorTabId: string, sessionTabId: string): void
+  detach(coordinatorTabId: string, key: string): void
+  resolve(coordinatorTabId: string, key: string): void
+  /** null: the task was given; else why not */
+  message(coordinatorTabId: string, key: string, text: string): Promise<string | null>
 }
 
 const EMPTY = 'No sessions yet. Start one with New session, attach one with Attach…, or drop a tab here.'
@@ -30,6 +36,13 @@ export class SessionsPanel {
   private readonly problemText = el('span', '')
   private readonly list = el('div', 'coord-list')
   private timer: ReturnType<typeof setTimeout> | null = null
+  // the Message box: the coordinator's tab and the row it is for, while it is open
+  private compose: { tabId: string; key: string } | null = null
+  private readonly composeBox = el('div', 'coord-compose')
+  private readonly composeHead = el('div', 'coord-compose-head')
+  private readonly field = document.createElement('textarea')
+  private readonly composeError = el('div', 'coord-compose-error')
+  private readonly send = el('button', 'coord-btn acc', 'Send')
 
   constructor(body: HTMLElement, private readonly panel: SidePanel, private readonly cb: SessionsPanelCallbacks) {
     const link = el('button', 'coord-link', 'Open Settings')
@@ -37,7 +50,8 @@ export class SessionsPanel {
     link.addEventListener('click', () => this.cb.openSettings())
     this.notice.append(this.problemText, link)
     this.notice.hidden = true
-    body.replaceChildren(this.notice, this.list)
+    this.buildCompose()
+    body.replaceChildren(this.notice, this.list, this.composeBox)
   }
 
   /** the tab in front and its view: null for a tab that is no coordinator, or a view not loaded yet */
@@ -45,6 +59,9 @@ export class SessionsPanel {
     this.view = tabId === null ? null : view
     // no coordinator in front: nothing is to be drawn again
     if (tabId === null) this.clearTimer()
+    // the Message box closes for another tab, and when its row is no longer in the view
+    const c = this.compose
+    if (c !== null && (tabId !== c.tabId || (view !== null && !view.sessions.some((r) => r.key === c.key)))) this.closeCompose()
     this.refresh()
   }
 
@@ -108,6 +125,9 @@ export class SessionsPanel {
     const row = el('div', r.marker === null ? 'coord-row' : `coord-row marker-${r.marker}`)
     row.dataset.key = r.key
     if (r.tabId !== null) row.dataset.tabId = r.tabId
+    // a click on the row opens its session's tab; the row's buttons act on the row and do not reach this
+    const tabId = r.tabId
+    if (tabId !== null) row.addEventListener('click', () => this.cb.open(tabId))
     const l1 = el('div', 'coord-l1')
     const name = el('span', 'coord-name', labelOf(r.name))
     name.title = r.name
@@ -130,7 +150,111 @@ export class SessionsPanel {
       prog.append(bar)
       row.append(prog)
     }
+    const actions = rowActions(r, section)
+    if (actions.length > 0) row.append(this.actions(r, actions))
     return row
+  }
+
+  private actions(r: CoordSessionRow, actions: RowAction[]): HTMLElement {
+    const box = el('div', 'coord-acts')
+    for (const action of actions) {
+      const btn = el('button', action === 'open' ? 'coord-btn acc' : 'coord-btn ghost', ACTION_LABELS[action])
+      btn.type = 'button'
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.act(action, r)
+      })
+      box.append(btn)
+    }
+    return box
+  }
+
+  private act(action: RowAction, r: CoordSessionRow): void {
+    const view = this.view
+    if (view === null) return
+    switch (action) {
+      case 'open':
+        if (r.tabId !== null) this.cb.open(r.tabId)
+        break
+      case 'attach':
+        if (r.tabId !== null) this.cb.attach(view.tabId, r.tabId)
+        break
+      case 'message':
+        this.openCompose(r)
+        break
+      case 'detach':
+        this.cb.detach(view.tabId, r.key)
+        break
+      case 'resolve':
+        this.cb.resolve(view.tabId, r.key)
+        break
+    }
+  }
+
+  /** the Message box is built once, at the foot of the panel: a redraw of the rows never takes its draft or its focus */
+  private buildCompose(): void {
+    this.composeBox.hidden = true
+    this.field.className = 'coord-compose-field'
+    this.field.placeholder = 'What should this session do?'
+    this.field.maxLength = COORD_TASK_MAX
+    this.field.addEventListener('input', () => {
+      this.composeError.textContent = ''
+      this.send.disabled = this.field.value.trim() === ''
+    })
+    this.field.addEventListener('keydown', (e) => {
+      // the box keeps its keys: an Escape here closes the box and does not reach the panel or the tab behind it
+      e.stopPropagation()
+      if (e.key === 'Escape') this.closeCompose()
+      else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault()
+        void this.sendCompose()
+      }
+    })
+    const cancel = el('button', 'coord-btn ghost', 'Cancel')
+    cancel.type = 'button'
+    cancel.addEventListener('click', () => this.closeCompose())
+    this.send.type = 'button'
+    this.send.disabled = true
+    this.send.addEventListener('click', () => void this.sendCompose())
+    const actions = el('div', 'coord-compose-actions')
+    actions.append(cancel, this.send)
+    this.composeBox.append(this.composeHead, this.field, this.composeError, actions)
+  }
+
+  private openCompose(r: CoordSessionRow): void {
+    if (this.view === null) return
+    this.compose = { tabId: this.view.tabId, key: r.key }
+    this.composeHead.textContent = `Task for ${labelOf(r.name)}`
+    this.field.value = ''
+    this.composeError.textContent = ''
+    this.send.disabled = true
+    this.composeBox.hidden = false
+    this.field.focus()
+  }
+
+  private closeCompose(): void {
+    this.compose = null
+    this.field.value = ''
+    this.composeError.textContent = ''
+    this.send.disabled = true
+    this.composeBox.hidden = true
+  }
+
+  private async sendCompose(): Promise<void> {
+    const c = this.compose
+    const text = this.field.value
+    // a task on its way is not sent again by a second Enter
+    if (c === null || this.send.disabled || text.trim() === '') return
+    this.send.disabled = true
+    const why = await this.cb.message(c.tabId, c.key, text)
+    // the box was closed, or opened for another row, while the answer came
+    if (this.compose !== c) return
+    if (why === null) {
+      this.closeCompose()
+      return
+    }
+    this.composeError.textContent = why
+    this.send.disabled = this.field.value.trim() === ''
   }
 
   private icon(kind: RowIcon): HTMLElement {
