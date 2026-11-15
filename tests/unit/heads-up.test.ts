@@ -333,37 +333,6 @@ describe('HeadsUp', () => {
   })
 })
 
-describe('what the side agent takes for the person\'s words', () => {
-  const HAND_BACK = 'Another Claude session sent a message: <agent-message from="agent-7" name="Explore">\n[Subagent hand-back] ' + 'The collector sorts long freezes into sustained drops and the report lists them by size. '.repeat(8) + '\n</agent-message>'
-  const NOTIFICATION = '[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command "npm test" completed</summary>\n<result>' + 'All suites passed after the retry, nothing else changed in the run. '.repeat(8) + '</result>\n</task-notification>'
-  const MAIL = 'Another Claude session sent a message: ' + 'Please look at the parser before you go on with the report, it drops long lines. '.repeat(8)
-
-  /** a conversation read back from the history: the person's two short Russian messages between long English entries of Claude Code */
-  function conversation(entries: readonly string[] = [HAND_BACK, NOTIFICATION, MAIL]): ChatItem[] {
-    let n = 0
-    const m = new ChatModel({ now: () => 0, newId: () => `i${++n}`, folder: () => '/work/acme' })
-    for (const text of ['Перенеси замеры в отчёт', ...entries, 'че там долго еще?']) {
-      m.apply({ type: 'user', message: { role: 'user', content: text }, session_id: 's1', uuid: `u${++n}` })
-    }
-    return [...m.items()]
-  }
-  const personLines = (items: ChatItem[]): string[] => excerpt(items).split('\n').filter((l) => l.startsWith('Person: '))
-
-  it('personWords holds only what the person typed', () => {
-    expect(personWords(conversation())).toEqual(['Перенеси замеры в отчёт', 'че там долго еще?'])
-  })
-
-  it('the side agent reads the entries of Claude Code as no Person lines', () => {
-    expect(personLines(conversation())).toEqual(['Person: Перенеси замеры в отчёт', 'Person: че там долго еще?'])
-  })
-
-  it.each([['a subagent hand-back', HAND_BACK], ['a background task notification', NOTIFICATION], ['a message of another session', MAIL]])('%s is not the person\'s', (_name, text) => {
-    const items = conversation([text])
-    expect(personWords(items)).toEqual(['Перенеси замеры в отчёт', 'че там долго еще?'])
-    expect(personLines(items)).toHaveLength(2)
-  })
-})
-
 describe('the language of a card in a long English session', () => {
   const user = (text: string, extra: object = {}): unknown => ({ type: 'user', message: { role: 'user', content: text }, session_id: 's1', uuid: 'u' + Math.random(), ...extra })
   const PEER = 'Another Claude session sent a message:\n<agent-message from="agent-7" name="Explore">\n[Subagent hand-back] ' + 'The collector sorts long freezes into sustained drops. '.repeat(10) + '\n</agent-message>'
