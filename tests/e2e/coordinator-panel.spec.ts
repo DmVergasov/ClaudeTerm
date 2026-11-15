@@ -29,6 +29,7 @@ test('the Sessions panel groups the attached sessions by state and lists the pro
     await expect(waiting.locator(`.coord-row[data-key="${rowKey(sids[1])}"] .coord-time`)).toHaveText('now')
     await expect(sessionRow(page, rowKey(sids[2])).locator('.coord-l3')).toHaveText('1/3 · Grouping crashes by call stack')
     await expect(sessionRow(page, rowKey(sids[2])).locator('.coord-prog')).toHaveCount(1)
+    await expect(sessionRow(page, rowKey(sids[2])).locator('.coord-prog i')).toHaveAttribute('style', /width: 33%/)
     await expect(sessionGroup(page, 'not-attached').locator(`.coord-row[data-key="${rowKey(sids[3])}"] .coord-l2`)).toContainText(basename(repo))
   } finally { await l.app.close() }
 })
@@ -150,5 +151,26 @@ test('a folded section stays folded when the view changes', async () => {
     await expect(sessionGroup(page, 'working').locator(`.coord-row[data-key="${rowKey(sids[1])}"]`)).toBeVisible()
     await expect(sessionGroup(page, 'idle')).toHaveClass(/folded/)
     await expect(sessionGroup(page, 'idle').locator('.coord-row')).toHaveCount(0)
+  } finally { await l.app.close() }
+})
+
+test('a redraw that a row showing now left pending is dropped when the panel closes or the tab is not a coordinator', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  const pending = (): Promise<boolean | undefined> => page.evaluate(() => window.__ct!.sessionsRedrawPending!())
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    // the attached row changed a moment ago: its "now" turns into a clock time later, so a redraw is pending
+    await expect.poll(pending).toBe(true)
+    await sessionsToggle(page).click()
+    await expect(page.locator('#image-panel')).toHaveClass(/collapsed/)
+    await expect.poll(pending).toBe(false)
+    await openSessions(page)
+    await expect.poll(pending).toBe(true)
+    await activate(page, t1)
+    await expect.poll(pending).toBe(false)
   } finally { await l.app.close() }
 })

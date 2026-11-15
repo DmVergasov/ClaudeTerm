@@ -14,6 +14,8 @@ export interface CtTestHook {
   termSize?(id?: string): { cols: number; rows: number } | null
   images?(id?: string): { name: string; source: string; caption: string | null }[]
   restoreVisible?(): boolean
+  /** whether the Sessions panel has a redraw pending (test runs) */
+  sessionsRedrawPending?(): boolean
   /** the active terminal's theme background */
   themeBackground?(): string | null
   /** the system notifications shown, one per tab (test runs keep them instead of showing them) */

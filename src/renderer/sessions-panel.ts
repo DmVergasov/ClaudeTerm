@@ -43,18 +43,31 @@ export class SessionsPanel {
   /** the tab in front and its view: null for a tab that is no coordinator, or a view not loaded yet */
   show(tabId: string | null, view: CoordinatorView | null): void {
     this.view = tabId === null ? null : view
+    // no coordinator in front: nothing is to be drawn again
+    if (tabId === null) this.clearTimer()
     this.refresh()
   }
 
   /** draws again while the panel shows Sessions */
   refresh(): void {
+    // a redraw left pending by a panel that is no longer shown is dropped: it would draw nothing
+    this.clearTimer()
     if (!this.panel.isShowing('sessions')) return
     this.draw()
   }
 
-  private draw(): void {
+  /** whether a redraw is pending for a row that shows "now" (test runs read it) */
+  redrawPending(): boolean {
+    return this.timer !== null
+  }
+
+  private clearTimer(): void {
     if (this.timer !== null) clearTimeout(this.timer)
     this.timer = null
+  }
+
+  private draw(): void {
+    this.clearTimer()
     const view = this.view
     const problem = view?.problem ?? null
     this.notice.hidden = problem === null
@@ -110,7 +123,7 @@ export class SessionsPanel {
     } else if (r.attachedTo !== null) {
       row.append(el('div', 'coord-l3', `Attached to ${r.attachedTo}`))
     }
-    if (attached && r.progress !== null) {
+    if (attached && r.progress !== null && r.progress.total > 0) {
       const prog = el('div', 'coord-prog')
       const bar = document.createElement('i')
       bar.style.width = `${Math.round((r.progress.done / r.progress.total) * 100)}%`

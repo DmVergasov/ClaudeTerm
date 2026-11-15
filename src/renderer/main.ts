@@ -1981,6 +1981,7 @@ async function boot(): Promise<void> {
     window.__ct = {
       images: (id) => (imageUpdates.get(id ?? activeId ?? '')?.cards ?? []).map((c) => ({ name: c.name, source: c.source, caption: c.caption })),
       restoreVisible: () => !document.getElementById('banner')!.hidden,
+      sessionsRedrawPending: () => sessionsPanel.redrawPending(),
       activeTabId: () => activeId,
       tabIds: () => [...order],
       tabTitle: (id) => {
