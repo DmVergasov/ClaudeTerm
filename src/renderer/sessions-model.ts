@@ -1,4 +1,4 @@
-import { isWorktreeName, type CoordGroup, type CoordinatorView, type CoordMarks, type CoordResult, type CoordSessionRow, type CoordStartRequest } from '../shared/coordinator'
+import { COORD_REFUSED, isWorktreeName, type CoordGroup, type CoordinatorView, type CoordMarks, type CoordResult, type CoordSessionRow, type CoordStartRequest } from '../shared/coordinator'
 import { clockOf } from './util'
 
 export type SectionKey = CoordGroup | 'not-attached'
@@ -74,8 +74,6 @@ export function nextRedrawAt(rows: CoordSessionRow[], now: number): number | nul
 export const FOLDER_ERROR = 'The folder must be a full path.'
 export const WORKTREE_ERROR = 'A worktree name is letters, digits, ".", "_" and "-", starts with a letter or digit, and is at most 64 long.'
 export const NAME_ERROR = 'A name is one line of plain text.'
-/** what main answers for a request whose fields do not pass its check */
-const REFUSED_FIELDS = 'Invalid request'
 
 /** the New session dialog's fields, as typed */
 export interface StartForm { task: string; name: string; folder: string; worktree: string }
@@ -100,7 +98,7 @@ export function checkStartForm(f: StartForm): { req: CoordStartRequest } | { err
 /** the text a start main refused shows: null for a start that was made; the refusal of the fields in words of the dialog; any other error as main said it */
 export function startError(r: CoordResult): string | null {
   if (r.ok) return null
-  return r.error === REFUSED_FIELDS ? 'ClaudeTerm refused these fields.' : r.error
+  return r.error === COORD_REFUSED ? 'ClaudeTerm refused these fields.' : r.error
 }
 
 /** a tab as Attach… reads it: a local Claude tab's session, its folder and its branch */

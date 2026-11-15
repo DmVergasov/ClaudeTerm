@@ -271,3 +271,34 @@ test('Ctrl+Enter in the task and Enter in the name submit, Enter in the task is 
     await expect(dialog).toHaveCount(0)
   } finally { await l.app.close() }
 })
+
+test('Attach… that main refuses shows its error, enables the picks again, and Esc closes the dialog with no key reaching the document', async () => {
+  const l = await coordApp(2)
+  const { page, tabs: [t0, t1] } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await bar(page, 'Attach…').click()
+    const dialog = dialogOf(page, 'attach')
+    const pick = dialog.locator(`.coord-pick[data-tab-id="${t1}"]`)
+    await expect(pick).toBeVisible()
+    // the coordinator stops while the dialog is open: main refuses the attach
+    expect(await page.evaluate((id) => window.ct.coordStop(id), t0)).toMatchObject({ ok: true })
+    await pick.click()
+    await expect(dialog.locator('.mcp-add-error')).toHaveText(HUB_TEXT.notCoordinator)
+    // the picks are enabled again, and the keyboard is in the dialog again
+    await expect(pick).toBeEnabled()
+    expect(await page.evaluate(() => !!document.activeElement?.closest('.coord-dialog[data-dialog="attach"]'))).toBe(true)
+    await page.evaluate(() => {
+      const w = window as unknown as { __keys?: number }
+      w.__keys = 0
+      document.addEventListener('keydown', () => { w.__keys = (w.__keys ?? 0) + 1 })
+    })
+    await page.keyboard.press('x')
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    expect(await page.evaluate(() => (window as unknown as { __keys?: number }).__keys ?? 0)).toBe(0)
+  } finally { await l.app.close() }
+})
+

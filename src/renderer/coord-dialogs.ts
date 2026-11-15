@@ -39,7 +39,13 @@ export function openNewSessionDialog(o: { folder: string; start(req: CoordStartR
       const checked = checkStartForm(form)
       if (!('req' in checked)) return checked.error
       handle.busy(true, 'Starting…')
-      const r = await o.start(checked.req)
+      let r: CoordResult
+      try {
+        r = await o.start(checked.req)
+      } catch (e) {
+        // a call that rejects is a refusal too: the dialog shows it, or late() tells it when the dialog is closed
+        r = { ok: false, error: String(e) }
+      }
       if (r.ok) return null
       if (!open) {
         o.late(r)
@@ -61,16 +67,17 @@ export function openAttachDialog(o: { choices: AttachChoice[]; attach(tabId: str
       el('span', { className: 'coord-pick-where', textContent: c.where }),
       ...(c.note === null ? [] : [el('span', { className: 'coord-pick-note', textContent: c.note })]))
     pick.dataset.tabId = c.tabId
-    pick.addEventListener('click', () => void attachNow(c.tabId))
+    pick.addEventListener('click', () => void attachNow(pick, c.tabId))
     return pick
   })
   const list = picks.length === 0
     ? el('div', { className: 'coord-picks-empty', textContent: 'No other Claude session runs on this device.' })
     : el('div', { className: 'coord-picks' }, ...picks)
   let handle: DialogHandle
-  async function attachNow(tabId: string): Promise<void> {
-    handle.busy(true)
+  async function attachNow(pick: HTMLButtonElement, tabId: string): Promise<void> {
+    // the picks are off before the busy state: the focus leaves the clicked pick, and the dialog keeps the keys (see busy)
     for (const p of picks) p.disabled = true
+    handle.busy(true)
     let r: CoordResult
     try {
       r = await o.attach(tabId)
@@ -84,6 +91,8 @@ export function openAttachDialog(o: { choices: AttachChoice[]; attach(tabId: str
     handle.error(r.error)
     handle.busy(false)
     for (const p of picks) p.disabled = false
+    // after a refusal the keyboard is on the pick that was clicked, which is on again
+    pick.focus()
   }
   handle = openDialog({
     id: 'attach',

@@ -6,6 +6,8 @@ export const COORD_TASK_MAX = 7000
 export const COORD_NAME_MAX = 100
 /** the longest key of a coordinator's project, in characters */
 export const COORD_KEY_MAX = 200
+/** the answer to a call whose request does not pass main's check; the window words it for the fields it sent */
+export const COORD_REFUSED = 'Invalid request'
 
 /** where a task given to a session is: queued, delivered as a prompt and not yet started, or open in a turn */
 export type TaskState = 'queued' | 'delivered' | 'open'

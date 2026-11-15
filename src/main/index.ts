@@ -33,7 +33,7 @@ import { CoordinatorHub } from './coordinator/coordinator-hub'
 import { CoordinatorStore } from './coordinator/coordinator-store'
 import { PromptDelivery } from './coordinator/prompt-delivery'
 import { TabWaits } from './tab-waits'
-import { coordinatorProblem, type CoordinatorView, type CoordMarks, type CoordResult } from '../shared/coordinator'
+import { COORD_REFUSED, coordinatorProblem, type CoordinatorView, type CoordMarks, type CoordResult } from '../shared/coordinator'
 import { PromptQueries } from './prompt-query'
 import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
@@ -2971,7 +2971,7 @@ function bootstrap(): void {
   const isLocalClaudeTab = (tabId: unknown): tabId is string => isId(tabId) && tabs.get(tabId)?.kind === 'claude'
   // ---- project coordinators: the window's calls; each checks its tab (and the session's tab) is a local Claude tab
   /** the answer to a call whose request does not pass its check */
-  const coordRefused: CoordResult = { ok: false, error: 'Invalid request' }
+  const coordRefused: CoordResult = { ok: false, error: COORD_REFUSED }
   ipcMain.handle(IPC.coordView, (_e, tabId: unknown): CoordinatorView | null => (isLocalClaudeTab(tabId) ? projectCoordinators.view(tabId) : null))
   ipcMain.handle(IPC.coordMarks, (): CoordMarks => projectCoordinators.marks())
   ipcMain.handle(IPC.coordMake, (_e, tabId: unknown, replace: unknown): CoordResult => (isLocalClaudeTab(tabId) && typeof replace === 'boolean' ? projectCoordinators.make(tabId, replace) : coordRefused))
