@@ -320,6 +320,8 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .mail-from { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mail-device { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mail-time { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mail-kind { flex: none; padding: 0 6px; border: 1px solid var(--line-2); border-radius: 6px; color: var(--text-2); font-size: 11px; white-space: nowrap; }
+.mail-kind.failed { border-color: color-mix(in srgb, var(--red) 40%, var(--line-2)); color: var(--red); }
 .mail-text { margin-top: 2px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .doc-content { flex: 1; min-height: 0; overflow: auto; }
 .doc-content.framed { display: flex; flex-direction: column; overflow: hidden; }

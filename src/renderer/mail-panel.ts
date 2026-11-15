@@ -1,5 +1,6 @@
 import type { MailConversationView, MailMessageView } from '../shared/mail'
 import { deviceColor } from '../shared/remote'
+import { outcomeText } from '../shared/report-wake'
 import type { SidePanel } from './side-panel'
 import { labelOf } from './util'
 
@@ -37,6 +38,13 @@ function timeOf(sentAt: number, delivered: boolean): string {
     ? sent.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : sent.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   return delivered ? when : `${when} · waiting`
+}
+
+/** what a message is, when it is not a plain message: "Task", or "Report · <outcomeText>" */
+export function kindLabel(m: Pick<MailMessageView, 'kind' | 'outcome' | 'reason'>): string | null {
+  if (m.kind === 'task') return 'Task'
+  if (m.kind !== 'report') return null
+  return m.outcome === null ? 'Report' : `Report · ${outcomeText(m.outcome, m.reason)}`
 }
 
 /**
@@ -107,7 +115,10 @@ export class MailPanel {
     const who = el('span', 'mail-from', m.from.name)
     if (m.from.device !== null) who.style.color = deviceColor(m.from.device)
     const meta = el('div', 'mail-meta')
-    meta.append(who, el('span', 'mail-device', m.from.deviceName), el('span', 'mail-time', timeOf(m.sentAt, m.delivered)))
+    meta.append(who, el('span', 'mail-device', m.from.deviceName))
+    const kind = kindLabel(m)
+    if (kind !== null) meta.append(el('span', m.outcome === 'failed' ? 'mail-kind failed' : 'mail-kind', kind))
+    meta.append(el('span', 'mail-time', timeOf(m.sentAt, m.delivered)))
     row.append(meta, el('div', 'mail-text', m.text))
     return row
   }
