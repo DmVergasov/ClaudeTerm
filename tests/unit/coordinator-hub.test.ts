@@ -1292,6 +1292,8 @@ describe("the chip's coordinator start", () => {
   const S_CHIP = 'd5000000-0000-4000-8000-000000000006'
   /** the folder of the group's tab the chip names: a linked worktree of acme */
   const WT = 'D:\\Work\\acme-wt'
+  /** a second folder of the project: another linked worktree of acme */
+  const WT2 = 'D:\\Work\\acme-wt2'
   /** whether a promise has settled by the next turn of the event loop */
   const settledNow = async (p: Promise<unknown>): Promise<boolean> => {
     let done = false
@@ -1302,7 +1304,7 @@ describe("the chip's coordinator start", () => {
 
   it("opens a Claude tab in the project's main folder and makes it the coordinator once it has a session and then its project; nothing is sent to it", async () => {
     const w = world()
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     expect(w.openedCoordinators).toEqual([{ cwd: 'D:\\Work\\acme', projectKey: ACME.key }])
     update(w, 'chip-tab-1', { session: S_CHIP })
@@ -1320,7 +1322,7 @@ describe("the chip's coordinator start", () => {
 
   it('with its project known first, the session that SessionStart reports makes it', async () => {
     const w = world()
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     update(w, 'chip-tab-1', { project: ACME })
     w.hub.placeChanged('chip-tab-1')
@@ -1330,25 +1332,67 @@ describe("the chip's coordinator start", () => {
     expect(await answer).toEqual({ ok: true, info: 'This tab is now the coordinator of acme.' })
   })
 
-  it("a bare repository, or a lookup that fails, opens the tab in the folder of the group's tab", async () => {
+  it("a bare repository, or a lookup that fails, opens the tab in the folder of the group's tab, which still exists", async () => {
     const bare = world()
     bare.mainFolder = null
-    void bare.hub.startCoordinator(ACME.key, WT)
+    bare.dirs = [WT]
+    void bare.hub.startCoordinator(ACME.key, [WT])
     const failed = world()
     failed.mainFolderThrows = true
-    void failed.hub.startCoordinator(ACME.key, WT)
+    failed.dirs = [WT]
+    void failed.hub.startCoordinator(ACME.key, [WT])
     await tick()
     expect(bare.openedCoordinators).toEqual([{ cwd: WT, projectKey: ACME.key }])
     expect(failed.openedCoordinators).toEqual([{ cwd: WT, projectKey: ACME.key }])
   })
 
+  it("the first folder's main folder is gone but the second folder's is named: the tab opens in that main folder", async () => {
+    const w = world()
+    w.mainFolder = null
+    w.mainFolderOf = { [WT]: null, [WT2]: 'D:\\Work\\acme' }
+    void w.hub.startCoordinator(ACME.key, [WT, WT2])
+    await tick()
+    expect(w.openedCoordinators).toEqual([{ cwd: 'D:\\Work\\acme', projectKey: ACME.key }])
+  })
+
+  it("every folder of the project is gone: the start is refused in words, and no tab opens", async () => {
+    const w = world()
+    w.mainFolder = null
+    const answer = w.hub.startCoordinator(ACME.key, [WT, WT2])
+    await tick()
+    expect(w.openedCoordinators).toEqual([])
+    expect(await answer).toEqual({ ok: false, error: HUB_TEXT.folderGone('acme') })
+    // the refusal frees the project: a start once a folder is back opens its tab
+    w.dirs = [WT2]
+    void w.hub.startCoordinator(ACME.key, [WT, WT2])
+    await tick()
+    expect(w.openedCoordinators).toEqual([{ cwd: WT2, projectKey: ACME.key }])
+  })
+
+  it("a project none of whose open tabs is a Claude tab still names itself in the refusal, from its place", async () => {
+    const w = world()
+    w.tabs = w.tabs.filter((t) => t.project?.key !== ACME.key)
+    w.mainFolder = null
+    expect(await w.hub.startCoordinator(ACME.key, [WT])).toEqual({ ok: false, error: HUB_TEXT.folderGone('acme') })
+    expect(w.openedCoordinators).toEqual([])
+  })
+
+  it("git names no main folder for any of them, and the second folder exists: the tab opens in the second folder", async () => {
+    const w = world()
+    w.mainFolder = null
+    w.dirs = [WT2]
+    void w.hub.startCoordinator(ACME.key, [WT, WT2])
+    await tick()
+    expect(w.openedCoordinators).toEqual([{ cwd: WT2, projectKey: ACME.key }])
+  })
+
   it('a second start while the folder is looked up opens nothing; one while the tab waits for its session brings that tab to the front and opens nothing', async () => {
     const w = world()
-    void w.hub.startCoordinator(ACME.key, WT)
-    expect(await w.hub.startCoordinator(ACME.key, WT)).toBeNull()
+    void w.hub.startCoordinator(ACME.key, [WT])
+    expect(await w.hub.startCoordinator(ACME.key, [WT])).toBeNull()
     expect(w.activated).toEqual([])
     await tick()
-    expect(await w.hub.startCoordinator(ACME.key, WT)).toBeNull()
+    expect(await w.hub.startCoordinator(ACME.key, [WT])).toBeNull()
     expect(w.activated).toEqual(['chip-tab-1'])
     expect(w.openedCoordinators).toHaveLength(1)
   })
@@ -1356,7 +1400,7 @@ describe("the chip's coordinator start", () => {
   it('a project with a coordinator brings its tab to the front and opens nothing', async () => {
     const w = world()
     w.hub.make('tab-c', false)
-    expect(await w.hub.startCoordinator(ACME.key, WT)).toBeNull()
+    expect(await w.hub.startCoordinator(ACME.key, [WT])).toBeNull()
     expect(w.activated).toEqual(['tab-c'])
     expect(w.openedCoordinators).toEqual([])
   })
@@ -1365,27 +1409,27 @@ describe("the chip's coordinator start", () => {
     const w = world()
     w.hub.make('tab-c', false)
     w.tabs = w.tabs.filter((t) => t.tabId !== 'tab-c')
-    expect(await w.hub.startCoordinator(ACME.key, WT)).toEqual({ ok: false, error: HUB_TEXT.taken('acme', `session ${refOf(S.coord)}`) })
+    expect(await w.hub.startCoordinator(ACME.key, [WT])).toEqual({ ok: false, error: HUB_TEXT.taken('acme', `session ${refOf(S.coord)}`) })
     expect(w.openedCoordinators).toEqual([])
     expect(w.activated).toEqual([])
   })
 
   it('the tab closed before its session started: nothing is made, the answer is null, and the next start opens a tab again', async () => {
     const w = world()
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     w.tabs = w.tabs.filter((t) => t.tabId !== 'chip-tab-1')
     w.hub.tabClosed('chip-tab-1')
     expect(await answer).toBeNull()
     expect(w.store.coordinators()).toEqual([])
-    void w.hub.startCoordinator(ACME.key, WT)
+    void w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     expect(w.openedCoordinators).toHaveLength(2)
   })
 
   it('the tab exited before its session started: nothing is made, also when a session comes later', async () => {
     const w = world()
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     update(w, 'chip-tab-1', { exited: true })
     w.hub.exited('chip-tab-1')
@@ -1398,7 +1442,7 @@ describe("the chip's coordinator start", () => {
 
   it('a coordinator of the project made meanwhile: the tab stays an ordinary tab, and the answer is the refusal', async () => {
     const w = world()
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     w.hub.make('tab-c', false)
     update(w, 'chip-tab-1', { session: S_CHIP, project: ACME })
@@ -1412,7 +1456,7 @@ describe("the chip's coordinator start", () => {
     for (let i = 0; i < MAX_COORDINATORS; i++) {
       w.store.putCoordinator({ session: uid(0x20000 + i), project: { key: `/p/${i}`, name: `p${i}` }, since: NOW, attachments: [], former: [] })
     }
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     update(w, 'chip-tab-1', { session: S_CHIP, project: ACME })
     w.hub.tabSession('chip-tab-1', S_CHIP)
@@ -1422,9 +1466,9 @@ describe("the chip's coordinator start", () => {
   it('a tab that does not open answers null, and the next start tries again', async () => {
     const w = world()
     w.openFails = true
-    expect(await w.hub.startCoordinator(ACME.key, WT)).toBeNull()
+    expect(await w.hub.startCoordinator(ACME.key, [WT])).toBeNull()
     w.openFails = false
-    void w.hub.startCoordinator(ACME.key, WT)
+    void w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     expect(w.openedCoordinators).toHaveLength(2)
     expect(w.tabs.map((t) => t.tabId)).toContain('chip-tab-2')
@@ -1432,7 +1476,7 @@ describe("the chip's coordinator start", () => {
 
   it('a start whose folder lookup is still running when the hub is disposed opens no tab and answers null', async () => {
     const w = world()
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     w.hub.dispose()
     expect(await answer).toBeNull()
     await tick()
@@ -1441,7 +1485,7 @@ describe("the chip's coordinator start", () => {
 
   it('a start waiting for its session answers null when the hub is disposed', async () => {
     const w = world()
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     expect(w.openedCoordinators).toHaveLength(1)
     w.hub.dispose()
@@ -1450,7 +1494,7 @@ describe("the chip's coordinator start", () => {
 
   it("a tab whose project is not the started project is not made the coordinator: its start answers null and the tab stays ordinary", async () => {
     const w = world()
-    const answer = w.hub.startCoordinator(ACME.key, WT)
+    const answer = w.hub.startCoordinator(ACME.key, [WT])
     await tick()
     update(w, 'chip-tab-1', { session: S_CHIP, project: BETA })
     w.hub.tabSession('chip-tab-1', S_CHIP)
@@ -1464,7 +1508,7 @@ describe("the chip's coordinator start", () => {
     for (let i = 0; i < MAX_COORDINATORS; i++) {
       w.store.putCoordinator({ session: uid(0x30000 + i), project: { key: `/q/${i}`, name: `q${i}` }, since: NOW, attachments: [], former: [] })
     }
-    expect(await w.hub.startCoordinator(ACME.key, WT)).toEqual({ ok: false, error: HUB_TEXT.fullCoordinators })
+    expect(await w.hub.startCoordinator(ACME.key, [WT])).toEqual({ ok: false, error: HUB_TEXT.fullCoordinators })
     expect(w.openedCoordinators).toEqual([])
   })
 })

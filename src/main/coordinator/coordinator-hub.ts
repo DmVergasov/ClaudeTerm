@@ -99,6 +99,7 @@ export interface CoordinatorHubDeps {
   openTab(req: OpenTabRequest): string | null // Task 8: the new tab's id, opened behind the tab in front
   openRemoteTab(device: string, req: { cwd: string | null; email: string | null; title: string | null }): Promise<RemoteOpened> // open-tab on a paired device (its id)
   mainFolder(folder: string): Promise<string | null> // the folder of a project's main worktree (mainWorktreeFolder); null: none
+  projectName(projectKey: string): string | null // the name a tab's place of this device gives the project, of any kind of tab; null: no tab of it
   openCoordinatorTab(cwd: string, projectKey: string): string | null // opens a Claude tab for the chip's coordinator: its id, or null when it does not open
   activate(tabId: string): void // brings a tab of this device to the front
   accountEmail(account: string | null): string | null // the email of an account of this device (null: Main account); null when not known
@@ -157,6 +158,7 @@ export const HUB_TEXT = {
   attachText: (project: string) => `Attached to the ${project} coordinator.`,
   detachText: (project: string) => `Detached from the ${project} coordinator.`,
   fullCoordinators: `This device has ${MAX_COORDINATORS} coordinators already, the most it keeps; stop one first.`,
+  folderGone: (project: string) => `${project}'s folder is gone, so no coordinator can start there.`,
   fullAttached: `This coordinator has ${MAX_ATTACHMENTS} sessions attached already, the most it keeps; detach one first.`,
   fullHosted: `This device has ${MAX_HOSTED} attached sessions already, the most it keeps; detach one first.`,
   fullHostedThere: (device: string) => `${device} has ${MAX_HOSTED} attached sessions already, the most it keeps; detach one there first.`,
@@ -307,11 +309,13 @@ export class CoordinatorHub {
 
   /**
    * The chip's + Coordinator: a project with a coordinator brings that coordinator's tab to the front; a project with a start
-   * brings the starting tab to the front. Otherwise a Claude tab opens in the project's main folder (`folder`'s own when git
-   * cannot tell) and becomes the coordinator once its session and its project are known; the answer waits for that. Null:
-   * nothing to tell (a tab was brought to the front, or the new tab closed, exited or did not open).
+   * brings the starting tab to the front. Otherwise a Claude tab opens in the project's main folder and becomes the coordinator
+   * once its session and its project are known; the answer waits for that. `folders` are this device's tab folders in the
+   * project, the chip's tab first: the main folder is the first of them git can name, else the first that still exists. When
+   * none exists the start is refused and no tab opens. Null: nothing to tell (a tab was brought to the front, or the new tab
+   * closed, exited or did not open).
    */
-  async startCoordinator(projectKey: string, folder: string): Promise<CoordResult | null> {
+  async startCoordinator(projectKey: string, folders: readonly string[]): Promise<CoordResult | null> {
     const c = this.d.store.coordinatorOf(projectKey)
     if (c) {
       const tab = this.tabOfSession(c.session)
@@ -329,9 +333,14 @@ export class CoordinatorHub {
     // the start is pending before the first await, so a second click meanwhile finds it
     const entry: PendingMake = { tabId: null, answer: null }
     this.makes.set(projectKey, entry)
-    const cwd = (await this.d.mainFolder(folder).catch(() => null)) ?? folder
+    const cwd = await this.startFolder(folders)
     // disposed meanwhile: the start is gone, and no tab opens for it
     if (this.makes.get(projectKey) !== entry) return null
+    // no folder of the project is left to open in: the start is refused, and no tab opens
+    if (cwd === null) {
+      this.makes.delete(projectKey)
+      return fail(HUB_TEXT.folderGone(this.projectName(projectKey)))
+    }
     const tabId = this.d.openCoordinatorTab(cwd, projectKey)
     if (tabId === null) {
       this.makes.delete(projectKey)
@@ -342,6 +351,27 @@ export class CoordinatorHub {
       entry.answer = resolve
       this.settleMake(tabId)
     })
+  }
+
+  /**
+   * The folder a chip's coordinator opens in: the main folder of the first of `folders` that git names one for; else the first
+   * folder that still exists; null when none does. A failed lookup is no answer, so the next folder is asked.
+   */
+  private async startFolder(folders: readonly string[]): Promise<string | null> {
+    for (const folder of folders) {
+      const main = await this.d.mainFolder(folder).catch(() => null)
+      if (main !== null) return main
+    }
+    for (const folder of folders) {
+      if (await this.d.isDirectory(folder).catch(() => false)) return folder
+    }
+    return null
+  }
+
+  /** the name of a project as this device's places give it; a plain word when none of its tabs is left to give one */
+  private projectName(projectKey: string): string {
+    const name = this.d.projectName(projectKey)
+    return name === null ? 'The project' : projectText(name)
   }
 
   /** the tab of a chip's coordinator start got its project: its session may have come already, so the start is settled now */

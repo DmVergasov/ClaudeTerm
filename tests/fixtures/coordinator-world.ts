@@ -113,6 +113,8 @@ export function world(o: WorldOptions = {}) {
     order: [] as string[],
     /** what the hub's mainFolder answers: the project's main folder, or null (a bare repository); mainFolderThrows: the lookup fails */
     mainFolder: 'D:\\Work\\acme' as string | null,
+    /** the answers for particular folders asked about (mainFolderOf[folder]), instead of mainFolder */
+    mainFolderOf: {} as Record<string, string | null>,
     mainFolderThrows: false,
     /** the hub's openCoordinatorTab calls, in order: each opens `chip-tab-<n>` in w.tabs, with no session and no project yet, unless openFails */
     openedCoordinators: [] as { cwd: string; projectKey: string }[],
@@ -167,9 +169,9 @@ export function world(o: WorldOptions = {}) {
       w.now += w.remoteDelayMs
       return w.remoteAnswer ?? { ok: true, tabId: 'rt-new', cwd: req.cwd ?? '/home/sam', accountName: 'Main account', defaulted: false }
     },
-    mainFolder: async () => {
+    mainFolder: async (folder) => {
       if (w.mainFolderThrows) throw new Error('git failed')
-      return w.mainFolder
+      return w.mainFolderOf[folder] !== undefined ? w.mainFolderOf[folder] : w.mainFolder
     },
     openCoordinatorTab: (cwd, projectKey) => {
       w.openedCoordinators.push({ cwd, projectKey })
@@ -178,6 +180,7 @@ export function world(o: WorldOptions = {}) {
       w.tabs.push(tab(id, null, null, { folder: cwd }))
       return id
     },
+    projectName: (projectKey) => (projectKey === ACME.key ? ACME.name : null),
     activate: (tabId) => {
       w.activated.push(tabId)
     },

@@ -2443,6 +2443,10 @@ function bootstrap(): void {
     },
     // the chip's + Coordinator: its tab opens in the project's main folder, before the project's first tab, and in front
     mainFolder: (folder) => mainWorktreeFolder(execGit, folder),
+    projectName: (projectKey) => {
+      for (const place of tabPlaces.values()) if (place?.project.key === projectKey) return place.project.name
+      return null
+    },
     activate: (id) => tabs.activate(id),
     openCoordinatorTab: (cwd, projectKey) => {
       const before = tabs.list().find((t) => tabPlaces.get(t.id)?.project.key === projectKey)?.id
@@ -3093,11 +3097,14 @@ function bootstrap(): void {
   ipcMain.handle(IPC.coordMessage, (_e, tabId: unknown, key: unknown, text: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) && isCoordTaskText(text) ? projectCoordinators.message(tabId, key, text) : coordRefused))
   ipcMain.handle(IPC.coordResolve, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.resolve(tabId, key) : coordRefused))
   ipcMain.handle(IPC.coordNewSession, (_e, tabId: unknown, req: unknown): Promise<CoordResult> => (isLocalClaudeTab(tabId) && isCoordStartRequest(req) ? projectCoordinators.start(tabId, req) : Promise.resolve(coordRefused)))
-  // the chip's + Coordinator: a tab of this device in a git project names the project; its folder is where a bare repository's coordinator opens
+  // the chip's + Coordinator: a tab of this device in a git project names the project; its folder is where the coordinator opens,
+  // and the folders of the project's other tabs of this device are the fallbacks when that folder is gone
   ipcMain.handle(IPC.coordStartCoordinator, (_e, tabId: unknown): Promise<CoordResult | null> => {
     const tab = isId(tabId) ? tabs.get(tabId) : null
     const place = tab ? (tabPlaces.get(tab.id) ?? null) : null
-    return tab && place ? projectCoordinators.startCoordinator(place.project.key, tab.folder) : Promise.resolve(coordRefused)
+    if (!tab || !place) return Promise.resolve(coordRefused)
+    const others = tabs.list().filter((t) => t.id !== tab.id && tabPlaces.get(t.id)?.project.key === place.project.key)
+    return projectCoordinators.startCoordinator(place.project.key, [tab.folder, ...others.map((t) => t.folder)])
   })
   /** a chat call that is not awaited: a failure is logged, never thrown into the main process */
   const chatCall = (call: Promise<void>, what: string): void => {

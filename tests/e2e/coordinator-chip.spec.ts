@@ -1,14 +1,14 @@
 import { expect as baseExpect, test, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { COORD_REFUSED } from '../../src/shared/coordinator'
 import { startSession } from './agent-mail'
 import { claudeTabIn, coordApp, coordDevices, makeCoordinator } from './coordinator-helpers'
-import { dragOnto, LEFT, marksOf, panelRows, tabOrder } from './coordinator-window'
+import { dragOnto, LEFT, marksOf, panelRows, tabOrder, tpRow } from './coordinator-window'
 import { closePaired, SLOW } from './device-pair'
-import { gitRepo, gitWorktree, openTabInFront, panelSettled } from './helpers'
+import { gitRepo, gitWorktree, launchApp, openTabInFront, panelSettled, typeInTerminal } from './helpers'
 
 // The coordinator chip on a project's header in the left panel (docs/superpowers/specs/2026-11-15-coordinator-chip-design.md)
 
@@ -195,7 +195,7 @@ test('a coordinator made meanwhile refuses the new tab: it stays an ordinary tab
 
 test('a project of shell tabs only gets its coordinator the same way', async () => {
   const l = await coordApp(1, { settings: LEFT })
-  const { page, pipeName } = l
+  const { page, pipeName, tabs: [t0] } = l
   try {
     const shellRepo = gitRepo()
     const shell = await openTabInFront(page, 'shell', shellRepo)
@@ -205,11 +205,78 @@ test('a project of shell tabs only gets its coordinator the same way', async () 
     await chip.click()
     const tab = await openedSince(page, before)
     await expect.poll(async () => (await placeOf(page, tab))?.project.key).toBe((await placeOf(page, shell))!.project.key)
+    // the project's first tab is the shell, behind another project's tab: the new tab stands before the shell, not first overall
+    await expect.poll(() => tabOrder(page)).toEqual([t0, tab, shell])
     expect(await startSession(pipeName, tab, randomUUID())).toEqual({ ok: true })
     await expect.poll(async () => (await marksOf(page))[tab]?.role).toBe('coordinator')
     await expect(chip).toHaveClass(/\brunning\b/)
   } finally {
     await l.app.close()
+  }
+})
+
+test('a session that starts before git has named the new tab\'s project still makes the tab the coordinator', async () => {
+  const repo = gitRepo()
+  // the tab is in a linked worktree: the main folder has no tab, so git has yet to answer for the new tab when its session comes
+  const worktree = gitWorktree(repo, 'feat/early')
+  const l = await coordApp(1, { settings: LEFT, repo: worktree })
+  const { page, pipeName } = l
+  try {
+    const before = await tabOrder(page)
+    await chipOf(page, basename(repo)).click()
+    const tab = await openedSince(page, before)
+    expect(await startSession(pipeName, tab, randomUUID())).toEqual({ ok: true })
+    await expect.poll(async () => (await marksOf(page))[tab]?.role).toBe('coordinator')
+    await expect(chipOf(page, basename(repo))).toHaveClass(/\brunning\b/)
+  } finally {
+    await l.app.close()
+  }
+})
+
+test("+ Coordinator from a group whose first tab's folder is gone is refused, and no dead tab opens", async () => {
+  const repo = gitRepo()
+  const worktree = gitWorktree(repo, 'feat/gone')
+  const { app, page } = await launchApp({ settings: LEFT })
+  try {
+    await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+    // the group's first tab: a shell in the linked worktree, which exits so that its folder can be removed
+    const first = await openTabInFront(page, 'shell', worktree)
+    await typeInTerminal(page, 'exit')
+    await expect(tpRow(page, first)).toHaveClass(/\bexited\b/)
+    await expect.poll(() => placeOf(page, first)).not.toBeNull()
+    rmSync(worktree, { recursive: true, force: true })
+    const before = await tabOrder(page)
+    expect(await page.evaluate((id) => window.ct.coordStartCoordinator(id), first)).toEqual({ ok: false, error: `${basename(repo)}'s folder is gone, so no coordinator can start there.` })
+    await page.waitForTimeout(500)
+    expect(await tabOrder(page)).toEqual(before)
+  } finally {
+    await app.close()
+  }
+})
+
+test("+ Coordinator from a group whose first tab's folder is gone opens in the project's main folder, when another of its tabs is open there", async () => {
+  const repo = gitRepo()
+  const worktree = gitWorktree(repo, 'feat/gone-main')
+  const { app, page } = await launchApp({ settings: LEFT })
+  try {
+    await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+    const first = await openTabInFront(page, 'shell', worktree)
+    await typeInTerminal(page, 'exit')
+    await expect(tpRow(page, first)).toHaveClass(/\bexited\b/)
+    const main = await openTabInFront(page, 'shell', repo)
+    // both tabs' places are known before the folder goes: the start looks for the project's folders the places name
+    await expect.poll(() => placeOf(page, main)).not.toBeNull()
+    await expect.poll(() => placeOf(page, first)).not.toBeNull()
+    rmSync(worktree, { recursive: true, force: true })
+    const before = await tabOrder(page)
+    // the start waits for the new tab's session, so its answer is not awaited here
+    void page.evaluate((id) => window.ct.coordStartCoordinator(id), first).catch(() => undefined)
+    const tab = await openedSince(page, before)
+    await expect.poll(async () => (await placeOf(page, tab))?.project.key).toBe((await placeOf(page, main))!.project.key)
+    expect(await placeOf(page, tab)).toMatchObject({ worktree: null })
+    await expect.poll(() => tabOrder(page)).toHaveLength(before.length + 1)
+  } finally {
+    await app.close()
   }
 })
 
