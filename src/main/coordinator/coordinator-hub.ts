@@ -217,7 +217,7 @@ export class CoordinatorHub {
       }
       this.moveStarts(other.session, session)
     }
-    this.d.store.putCoordinator({ session, project, since: this.d.now(), attachments: moved })
+    this.d.store.putCoordinator({ session, project, since: this.d.now(), attachments: moved, former: [] })
     for (const a of moved) {
       this.write({ kind: 'attach', from: this.address(null, session), to: this.address(null, a.session), replyTo: null, text: HUB_TEXT.attachText(project.name), project: project.name, delivered: true, read: true })
     }
@@ -604,9 +604,9 @@ export class CoordinatorHub {
       read: true
     })
     if (written === null) return fail(HUB_TEXT.notSaved)
-    const attachment: StoredAttachment = { device: null, session, name, attachedAt: this.d.now(), resolved: false, failed: false, lastReport: null }
+    const attachment: StoredAttachment = { device: null, session, name, attachedAt: this.d.now(), resolved: false, failed: false, pending: null, lastReport: null }
     this.d.store.putCoordinator({ ...c, attachments: [...c.attachments, attachment] })
-    this.d.store.putHosted({ session, coordinator: this.stored(this.address(null, c.session)), project, tasks: [] })
+    this.d.store.putHosted({ session, coordinator: this.stored(this.address(null, c.session)), project, tasks: [], former: [] })
     this.d.changed()
     return { ok: true, already: false }
   }

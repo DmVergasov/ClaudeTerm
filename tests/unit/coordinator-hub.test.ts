@@ -157,6 +157,7 @@ const attachment = (session: string, name = 'parser · Desktop'): StoredAttachme
   attachedAt: NOW,
   resolved: false,
   failed: false,
+  pending: null,
   lastReport: null
 })
 
@@ -164,7 +165,7 @@ describe('roles', () => {
   it('make: a Claude tab with a session in a git project becomes the coordinator of its project, under its session id', () => {
     const w = world()
     expect(w.hub.make('tab-c', false)).toEqual({ ok: true, info: 'This tab is now the coordinator of acme.' })
-    expect(w.store.coordinator(S.coord)).toEqual({ session: S.coord, project: ACME, since: NOW, attachments: [] })
+    expect(w.store.coordinator(S.coord)).toEqual({ session: S.coord, project: ACME, since: NOW, attachments: [], former: [] })
     expect(w.hub.make('tab-c', false)).toEqual({ ok: true, info: 'This tab is already the coordinator of acme.' })
     expect(w.store.coordinators()).toHaveLength(1)
   })
@@ -204,7 +205,7 @@ describe('roles', () => {
     expect(w.hub.make('tab-b', false)).toEqual({ ok: true, info: 'This tab is now the coordinator of beta.' })
     expect(w.store.hosted(S.beta)).toBeNull()
     expect(w.store.coordinator(S.coord)!.attachments).toEqual([])
-    expect(w.store.coordinator(S.beta)).toEqual({ session: S.beta, project: BETA, since: NOW, attachments: [] })
+    expect(w.store.coordinator(S.beta)).toEqual({ session: S.beta, project: BETA, since: NOW, attachments: [], former: [] })
     expect(records(w, 'detach').map((r) => [r.from.session, r.to.session])).toEqual([[S.coord, S.beta]])
     expect(records(w, 'task')[0]).toMatchObject({ delivered: true, read: true })
   })
@@ -312,6 +313,7 @@ describe('roles', () => {
       session: NEW2,
       coordinator: { device: null, session: NEW1, name: 'coord · Desktop' },
       project: 'acme',
+      former: [S.one],
       tasks: [{ id: task.id, from: { device: null, session: NEW1, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW, deliveredAt: null }]
     })
     expect(w.store.coordinator(NEW1)!.attachments.map((a) => a.session)).toEqual([NEW2])
@@ -331,7 +333,7 @@ describe('attach and detach', () => {
       info: 'Attached beta · Desktop [be0000]. It is not told and goes on as it is; give it a task with message_session.'
     })
     expect(w.store.coordinator(S.coord)!.attachments.map((a) => a.session)).toEqual([S.one, S.beta])
-    expect(w.store.hosted(S.beta)).toEqual({ session: S.beta, coordinator: { device: null, session: S.coord, name: 'coord · Desktop' }, project: 'acme', tasks: [] })
+    expect(w.store.hosted(S.beta)).toEqual({ session: S.beta, coordinator: { device: null, session: S.coord, name: 'coord · Desktop' }, project: 'acme', tasks: [], former: [] })
     expect(w.mail.all().map((r) => [r.kind, r.delivered, r.read])).toEqual([
       ['attach', true, true],
       ['attach', true, true]
@@ -376,7 +378,7 @@ describe('attach and detach', () => {
   it('attach refuses a session when this coordinator has 200 sessions attached, and when the device has 500 attached sessions', () => {
     const w = world()
     w.hub.make('tab-c', false)
-    w.store.putCoordinator({ session: S.coord, project: ACME, since: NOW, attachments: Array.from({ length: MAX_ATTACHMENTS }, (_, i) => attachment(uid(0x10000 + i))) })
+    w.store.putCoordinator({ session: S.coord, project: ACME, since: NOW, attachments: Array.from({ length: MAX_ATTACHMENTS }, (_, i) => attachment(uid(0x10000 + i))), former: [] })
     expect(w.hub.attach('tab-c', 'a10000')).toEqual({
       ok: false,
       error: 'This coordinator has 200 sessions attached already, the most it keeps; detach one first.'
@@ -385,7 +387,7 @@ describe('attach and detach', () => {
     const full = world()
     full.hub.make('tab-c', false)
     for (let i = 0; i < MAX_HOSTED; i++) {
-      full.store.putHosted({ session: uid(0x10000 + i), coordinator: { device: null, session: uid(0x20000), name: 'other' }, project: 'other', tasks: [] })
+      full.store.putHosted({ session: uid(0x10000 + i), coordinator: { device: null, session: uid(0x20000), name: 'other' }, project: 'other', tasks: [], former: [] })
     }
     expect(full.hub.attach('tab-c', 'a10000')).toEqual({
       ok: false,
@@ -437,8 +439,8 @@ describe('attach and detach', () => {
     expect(w.warns).toHaveLength(1)
 
     const seeded = world({ newId: () => 'not-a-uuid' })
-    seeded.store.putCoordinator({ session: S.coord, project: ACME, since: NOW, attachments: [attachment(S.one)] })
-    seeded.store.putHosted({ session: S.one, coordinator: { device: null, session: S.coord, name: 'coord · Desktop' }, project: 'acme', tasks: [] })
+    seeded.store.putCoordinator({ session: S.coord, project: ACME, since: NOW, attachments: [attachment(S.one)], former: [] })
+    seeded.store.putHosted({ session: S.one, coordinator: { device: null, session: S.coord, name: 'coord · Desktop' }, project: 'acme', tasks: [], former: [] })
     expect(seeded.hub.message('tab-c', 'a10000', 'Fix the parser.')).toEqual({ ok: false, error: HUB_TEXT.notSaved })
     expect(seeded.store.hosted(S.one)!.tasks).toEqual([])
     expect(seeded.mail.all()).toEqual([])
@@ -461,7 +463,7 @@ describe('attach and detach', () => {
   it('make answers fullCoordinators when the device keeps its 50 coordinators already', () => {
     const coords = world()
     for (let i = 0; i < MAX_COORDINATORS; i++) {
-      coords.store.putCoordinator({ session: uid(0x10000 + i), project: { key: `/p/${i}`, name: `p${i}` }, since: NOW, attachments: [] })
+      coords.store.putCoordinator({ session: uid(0x10000 + i), project: { key: `/p/${i}`, name: `p${i}` }, since: NOW, attachments: [], former: [] })
     }
     expect(coords.hub.make('tab-c', false)).toEqual({
       ok: false,
@@ -759,7 +761,7 @@ describe('views', () => {
   it('attachedTo names the coordinator a session is attached to as one plain line', () => {
     const w = world()
     w.hub.make('tab-c', false)
-    w.store.putHosted({ session: S.two, coordinator: { device: null, session: uid(0x20000), name: 'other coord' }, project: 'acme', tasks: [] })
+    w.store.putHosted({ session: S.two, coordinator: { device: null, session: uid(0x20000), name: 'other coord' }, project: 'acme', tasks: [], former: [] })
     expect(w.hub.view('tab-c')!.notAttached.map((r) => [r.name, r.attachedTo])).toEqual([
       ['parser · Desktop', null],
       ['docs · Desktop', 'other coord']
@@ -1255,7 +1257,8 @@ describe('CoordinatorHub start', () => {
       session: S.coord,
       project: ACME,
       since: NOW,
-      attachments: Array.from({ length: MAX_ATTACHMENTS - 1 }, (_, i) => attachment(uid(0x10000 + i)))
+      attachments: Array.from({ length: MAX_ATTACHMENTS - 1 }, (_, i) => attachment(uid(0x10000 + i))),
+      former: []
     })
     void w.hub.start('tab-c', START)
     await tick()

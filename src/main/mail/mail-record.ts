@@ -31,7 +31,7 @@ export function checkMailRecord(v: unknown): MailRecord | null {
   }
 }
 
-type KindFields = Partial<Pick<MailRecord, 'kind' | 'project' | 'outcome' | 'reason'>>
+type KindFields = Partial<Pick<MailRecord, 'kind' | 'project' | 'outcome' | 'reason' | 'was' | 'replaces'>>
 
 /** the kind of a record and the fields that kind keeps; null when the kind is unknown or one of its fields is not valid */
 function checkKind(v: Record<string, unknown>): KindFields | null {
@@ -40,7 +40,15 @@ function checkKind(v: Record<string, unknown>): KindFields | null {
   if (v.kind === 'task' || v.kind === 'attach') {
     const project = optionalText(v.project, MAIL_NAME_MAX)
     if (project === null) return null
-    return project === undefined ? { kind: v.kind } : { kind: v.kind, project }
+    const fields: KindFields = project === undefined ? { kind: v.kind } : { kind: v.kind, project }
+    if (v.kind === 'task') return fields
+    // an attach may name the id its sender had before a clear, and the coordinator session it replaces
+    const was = optionalId(v.was)
+    const replaces = optionalId(v.replaces)
+    if (was === null || replaces === null) return null
+    if (was !== undefined) fields.was = was
+    if (replaces !== undefined) fields.replaces = replaces
+    return fields
   }
   if (v.kind === 'report') {
     if (!(REPORT_OUTCOMES as readonly unknown[]).includes(v.outcome) || !isUuid(v.replyTo)) return null
@@ -57,6 +65,12 @@ function checkKind(v: Record<string, unknown>): KindFields | null {
 function optionalText(v: unknown, max: number): string | undefined | null {
   if (v === undefined) return undefined
   return typeof v === 'string' && v.length >= 1 && v.length <= max && !/\p{Cc}/u.test(v) ? v : null
+}
+
+/** an id field that may be absent: undefined when absent, null when present but not a UUID */
+function optionalId(v: unknown): string | undefined | null {
+  if (v === undefined) return undefined
+  return isUuid(v) ? v : null
 }
 
 function checkAddress(v: unknown): MailAddress | null {

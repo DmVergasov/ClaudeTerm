@@ -40,6 +40,10 @@ export interface MailRecord {
   outcome?: ReportOutcome
   /** report, failed or stopped: why */
   reason?: string
+  /** attach: the sender's end took a new session id (a clear, a compaction); was is the id it had. The receiver re-keys what it holds of that end, the tasks it gave included */
+  was?: string
+  /** attach: the coordinator session the sender replaces on its device. The session moves to the sender; its tasks keep their giver */
+  replaces?: string
 }
 
 export const kindOf = (r: Pick<MailRecord, 'kind'>): MailKind => r.kind ?? 'message'

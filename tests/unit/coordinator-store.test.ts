@@ -13,6 +13,7 @@ const S4 = '6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f'
 const DEV = '62738495-0fb0-4b2c-9d4e-5f6071829304'
 const TASK = '73849506-1ac1-4c3d-8e5f-60718293a4b5'
 const REPORT = '84950617-2bd2-4d4e-9f60-718293a4b5c6'
+const ATTACH = '95061728-3ce3-4e5f-8a0b-3c4d5e6f7081'
 
 /** the n-th id of a test, a UUID */
 const uuid = (n: number): string => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`
@@ -29,15 +30,18 @@ const coord: StoredCoordinator = {
       attachedAt: 200,
       resolved: false,
       failed: false,
+      pending: null,
       lastReport: { id: REPORT, outcome: 'finished', reason: null, at: 300 }
     },
-    { device: DEV, session: S, name: 'Search', attachedAt: 210, resolved: true, failed: false, lastReport: null }
-  ]
+    { device: DEV, session: S, name: 'Search', attachedAt: 210, resolved: true, failed: false, pending: null, lastReport: null }
+  ],
+  former: []
 }
 const hosted: StoredHosted = {
   session: S,
   coordinator: { device: null, session: A, name: 'Coordinator' },
   project: 'Shop',
+  former: [],
   tasks: [{ id: TASK, from: { device: null, session: A, name: 'Coordinator' }, state: 'queued', queuedAt: 400, deliveredAt: null }]
 }
 
@@ -207,5 +211,88 @@ describe('coordinator store', () => {
     const kept = readdirSync(dir).filter((f) => f.startsWith('coordinators.json.corrupt-'))
     expect(kept).toHaveLength(1)
     expect(warn).toHaveBeenCalledWith(`Coordinators could not be read; the file was kept as ${kept[0]}`)
+  })
+
+  it('an attachment keeps its pending attach id; a file of part 1 without pending or former loads them as null and []', () => {
+    const dir = newDir()
+    const bare = { device: null, name: 'Checkout', attachedAt: 200, resolved: false, failed: false, lastReport: null }
+    const part1 = {
+      version: 1,
+      coordinators: [
+        {
+          session: A,
+          project: { key: '/work/shop', name: 'Shop' },
+          since: 100,
+          attachments: [
+            { ...bare, session: S },
+            { ...bare, session: S2, pending: ATTACH },
+            { ...bare, session: S3, pending: 'x' }
+          ]
+        }
+      ],
+      hosted: [{ session: S, coordinator: { device: null, session: A, name: 'Coordinator' }, project: 'Shop', tasks: [] }]
+    }
+    writeFileSync(join(dir, 'coordinators.json'), JSON.stringify(part1), 'utf8')
+
+    const store = new CoordinatorStore(dir)
+    expect(store.coordinator(A)!.attachments.map((a) => [a.session, a.pending])).toEqual([
+      [S, null],
+      [S2, ATTACH]
+    ])
+    expect(store.coordinator(A)!.former).toEqual([])
+    expect(store.hosted(S)!.former).toEqual([])
+  })
+
+  it('former loads its UUID entries in file order, at most 8', () => {
+    const dir = newDir()
+    const junk = ['x', ATTACH, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(uuid)]
+    const part = {
+      version: 1,
+      coordinators: [{ session: A, project: { key: '/work/shop', name: 'Shop' }, since: 100, attachments: [], former: junk }],
+      hosted: [{ session: S, coordinator: { device: null, session: A, name: 'Coordinator' }, project: 'Shop', tasks: [], former: junk }]
+    }
+    writeFileSync(join(dir, 'coordinators.json'), JSON.stringify(part), 'utf8')
+
+    const store = new CoordinatorStore(dir)
+    const expected = [ATTACH, ...[1, 2, 3, 4, 5, 6, 7].map(uuid)]
+    expect(store.coordinator(A)!.former).toEqual(expected)
+    expect(store.hosted(S)!.former).toEqual(expected)
+  })
+
+  it('renameSession keeps the old id first in former, at most 8, and never the id it takes', () => {
+    const store = new CoordinatorStore(newDir(), { debounceMs: 60_000 })
+    store.putCoordinator(coord)
+    store.putHosted(hosted)
+
+    expect(store.renameSession(S, S2)).toBe(true)
+    expect(store.hosted(S2)!.former).toEqual([S])
+    expect(store.renameSession(S2, S)).toBe(true)
+    expect(store.hosted(S)!.former).toEqual([S2])
+    expect(store.renameSession(S, S2)).toBe(true)
+    expect(store.hosted(S2)!.former).toEqual([S])
+
+    expect(store.renameSession(A, A2)).toBe(true)
+    expect(store.coordinator(A2)!.former).toEqual([A])
+    let current = A2
+    for (let n = 1; n <= 9; n++) {
+      expect(store.renameSession(current, uuid(n))).toBe(true)
+      current = uuid(n)
+    }
+    expect(store.coordinator(current)!.former).toEqual([8, 7, 6, 5, 4, 3, 2, 1].map(uuid))
+  })
+
+  it('coordinatorBy and hostedBy find an entry by its current id or a former one, and an unknown id gives null', () => {
+    const store = new CoordinatorStore(newDir(), { debounceMs: 60_000 })
+    store.putCoordinator(coord)
+    store.putHosted(hosted)
+    expect(store.renameSession(S, S2)).toBe(true)
+    expect(store.renameSession(A, A2)).toBe(true)
+
+    expect(store.coordinatorBy(A2)!.session).toBe(A2)
+    expect(store.coordinatorBy(A)!.session).toBe(A2)
+    expect(store.hostedBy(S2)!.session).toBe(S2)
+    expect(store.hostedBy(S)!.session).toBe(S2)
+    expect(store.coordinatorBy(uuid(99))).toBeNull()
+    expect(store.hostedBy(uuid(99))).toBeNull()
   })
 })

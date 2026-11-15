@@ -44,7 +44,7 @@ describe('task machine', () => {
 
   it('nextTask is the oldest queued task while none is delivered or open', () => {
     const newer: StoredTask = { ...q, id: ID2, queuedAt: 9 }
-    const h = (tasks: StoredTask[]): StoredHosted => ({ session: COORD.session, coordinator: COORD, project: 'Ship', tasks })
+    const h = (tasks: StoredTask[]): StoredHosted => ({ session: COORD.session, coordinator: COORD, project: 'Ship', tasks, former: [] })
     expect(nextTask(h([newer, q]))).toEqual(q)
     const open: StoredTask = { ...q, id: ID3, state: 'open', deliveredAt: 5 }
     expect(nextTask(h([newer, q, open]))).toBeNull()

@@ -11,6 +11,8 @@ export const MAX_TASKS_PER_SESSION = 20
 export const MAX_COORDINATORS = 50
 export const MAX_ATTACHMENTS = 200
 export const MAX_HOSTED = 500
+/** the most former ids kept for one session or coordinator */
+export const MAX_FORMER = 8
 const NAME_MAX = 200
 const TASK_STATES: readonly TaskState[] = ['queued', 'delivered', 'open']
 
@@ -26,6 +28,8 @@ export interface StoredAttachment {
   resolved: boolean
   failed: boolean
   lastReport: CoordReport | null
+  /** the id of the attach record its device has not confirmed yet; null once confirmed, and always for this device's sessions */
+  pending: string | null
 }
 
 /** A coordinator on this device: the Claude session that coordinates one project. */
@@ -34,6 +38,8 @@ export interface StoredCoordinator {
   project: { key: string; name: string }
   since: number
   attachments: StoredAttachment[]
+  /** the coordinator's earlier session ids and those of the coordinators it replaced, newest first, at most MAX_FORMER */
+  former: string[]
 }
 
 /**
@@ -57,6 +63,8 @@ export interface StoredHosted {
   coordinator: MailAddress
   project: string
   tasks: StoredTask[]
+  /** the session's earlier ids, newest first, at most MAX_FORMER */
+  former: string[]
 }
 
 export interface CoordinatorData {
@@ -98,9 +106,20 @@ function parseReport(v: unknown): CoordReport | null {
   return { id: v.id, outcome: outcome as ReportOutcome, reason: v.reason as string | null, at: v.at }
 }
 
+/** a session's former ids: the UUID entries of the file, at most MAX_FORMER; none when the field is absent or not a list */
+function parseFormer(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter(isUuid).slice(0, MAX_FORMER) : []
+}
+
+/** the former ids once a session takes the id `to`: `from` first, without `to` and without repeats, at most MAX_FORMER */
+function formerAfter(former: string[], from: string, to: string): string[] {
+  return [from, ...former.filter((id) => id !== from && id !== to)].slice(0, MAX_FORMER)
+}
+
 function parseAttachment(v: unknown): StoredAttachment | null {
   if (!isObject(v) || !isDevice(v.device) || !isUuid(v.session) || !isName(v.name) || !isTime(v.attachedAt)) return null
   if (typeof v.resolved !== 'boolean' || typeof v.failed !== 'boolean') return null
+  if (v.pending !== undefined && v.pending !== null && !isUuid(v.pending)) return null
   const lastReport = v.lastReport === null ? null : parseReport(v.lastReport)
   if (v.lastReport !== null && !lastReport) return null
   return {
@@ -110,6 +129,7 @@ function parseAttachment(v: unknown): StoredAttachment | null {
     attachedAt: v.attachedAt,
     resolved: v.resolved,
     failed: v.failed,
+    pending: isUuid(v.pending) ? v.pending : null,
     lastReport
   }
 }
@@ -132,7 +152,7 @@ function parseCoordinator(v: unknown): StoredCoordinator | null {
     const a = parseAttachment(x)
     if (a) attachments.push(a)
   }
-  return { session: v.session, project: { key: project.key, name: project.name }, since: v.since, attachments }
+  return { session: v.session, project: { key: project.key, name: project.name }, since: v.since, attachments, former: parseFormer(v.former) }
 }
 
 function parseHosted(v: unknown): StoredHosted | null {
@@ -145,7 +165,7 @@ function parseHosted(v: unknown): StoredHosted | null {
     const t = parseTask(x)
     if (t) tasks.push(t)
   }
-  return { session: v.session, coordinator, project: v.project, tasks }
+  return { session: v.session, coordinator, project: v.project, tasks, former: parseFormer(v.former) }
 }
 
 /**
@@ -214,8 +234,20 @@ export class CoordinatorStore {
     return null
   }
 
+  /** the coordinator whose session, or one of whose former ids, is this one */
+  coordinatorBy(session: string): StoredCoordinator | null {
+    const c = this.coords.get(session) ?? [...this.coords.values()].find((x) => x.former.includes(session))
+    return c ? structuredClone(c) : null
+  }
+
   hosted(session: string): StoredHosted | null {
     const h = this.hostedBySession.get(session)
+    return h ? structuredClone(h) : null
+  }
+
+  /** the hosted entry whose session, or one of whose former ids, is this one */
+  hostedBy(session: string): StoredHosted | null {
+    const h = this.hostedBySession.get(session) ?? [...this.hostedBySession.values()].find((x) => x.former.includes(session))
     return h ? structuredClone(h) : null
   }
 
@@ -257,6 +289,7 @@ export class CoordinatorStore {
     for (const c of coords) {
       if (c.session === from) {
         c.session = to
+        c.former = formerAfter(c.former, from, to)
         changed = true
       }
       for (const a of c.attachments) {
@@ -272,6 +305,7 @@ export class CoordinatorStore {
     for (const h of hosted) {
       if (h.session === from) {
         h.session = to
+        h.former = formerAfter(h.former, from, to)
         changed = true
       }
       if (h.coordinator.device === null && h.coordinator.session === from) {

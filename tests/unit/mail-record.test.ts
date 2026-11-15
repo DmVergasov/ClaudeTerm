@@ -8,6 +8,8 @@ const DEV_B = '9a1e2f3c-4d5b-4e6f-8a7b-1c2d3e4f5a6b'
 const SES_A = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'
 const SES_B = 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e'
 const TASK_ID = '2c9d0e1f-4a5b-4c6d-8e7f-9a0b1c2d3e4f'
+const OLD = '4b7c6d5e-9f8a-4b3c-8d2e-1f0a9b8c7d6e'
+const PREV = '5c8d7e6f-0a9b-4c4d-9e3f-2a1b0c9d8e7f'
 
 const record = (): MailRecord => ({
   v: 1,
@@ -90,6 +92,14 @@ describe('checkMailRecord kinds', () => {
     expect(checkMailRecord({ ...base, kind: 'task', project: 'x'.repeat(201) })).toBeNull()
     expect(checkMailRecord({ ...base, kind: 'attach', project: 'a\nb' })).toBeNull()
     expect(checkMailRecord({ ...base, kind: 'report', replyTo: TASK_ID, outcome: 'stopped', reason: 'x'.repeat(201) })).toBeNull()
+  })
+
+  it('an attach keeps was and replaces when they are session ids; other kinds drop them', () => {
+    const a = { ...base, kind: 'attach', project: 'acme', was: OLD, replaces: PREV }
+    expect(checkMailRecord(a)).toEqual(a)
+    expect(checkMailRecord({ ...a, was: 'not-an-id' })).toBeNull()
+    expect(checkMailRecord({ ...a, replaces: 'not-an-id' })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'task', project: 'acme', was: OLD })).toEqual({ ...base, kind: 'task', project: 'acme' })
   })
 })
 
