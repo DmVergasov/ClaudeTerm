@@ -17,6 +17,12 @@ describe('rowState', () => {
     expect(rowState({ ...idle, marker: 'starting' }, clock)).toEqual({ group: 'working', why: null, line: 'Starting…', progress: null })
   })
 
+  it('Attaching… and Offline are their own lines; the group stays what the facts give', () => {
+    expect(rowState({ ...idle, marker: 'attaching' }, clock)).toEqual({ group: 'idle', why: null, line: 'Attaching…', progress: null })
+    expect(rowState({ ...idle, marker: 'offline', working: true }, clock)).toMatchObject({ group: 'working', line: 'Offline' })
+    expect(rowState({ ...idle, marker: 'offline', prompt: { kind: 'question', text: null, since: 0 } }, clock)).toMatchObject({ group: 'waiting', why: 'prompt', line: 'Offline' })
+  })
+
   it('a pending prompt waits on you with its line, before a limit or a failure', () => {
     expect(rowState({ ...idle, prompt: { kind: 'permission', text: 'Allow Bash: npm test', since: 0 }, limit: { resetsAt: null, since: 0 }, failed: true }, clock))
       .toEqual({ group: 'waiting', why: 'prompt', line: 'Allow Bash: npm test', progress: null })

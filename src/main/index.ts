@@ -29,7 +29,7 @@ import { parseArgs, resolveLaunchDir, type LaunchCommand } from './args'
 import { Attention } from './attention'
 import { badgeDescription, dotBitmap } from './app-badge'
 import { AutoContinue, CONTINUE_DELAY_MS, LIMIT_ERROR, limitResetOf, type RestoreCut } from './auto-continue'
-import { CoordinatorHub } from './coordinator/coordinator-hub'
+import { CoordinatorHub, type HubPeer, type HubRemoteTab } from './coordinator/coordinator-hub'
 import { CoordinatorStore } from './coordinator/coordinator-store'
 import { PromptDelivery } from './coordinator/prompt-delivery'
 import { accountForEmail } from './coordinator/remote-start'
@@ -1458,6 +1458,7 @@ function bootstrap(): void {
     opened: (device, tab) => {
       devicesSoonIfShown()
       mailTabsChanged()
+      projectCoordinators.remoteChanged()
       send(IPC.evTabOpened, remoteTabInfo(device, tab))
       if (tab.placeKnown) send(IPC.evTabPlace, tab.id, tab.place)
       if (tab.kind === 'claude') noteHub.addTab(tab.id, tab.claudeSessionId, { remote: true })
@@ -1468,6 +1469,7 @@ function bootstrap(): void {
     },
     updated: (device, tab, before) => {
       send(IPC.evTabUpdated, remoteTabInfo(device, tab))
+      projectCoordinators.remoteChanged()
       if (tab.claudeSessionId !== before.claudeSessionId || tab.exited !== before.exited || tab.folder !== before.folder) mailTabsChanged()
       if (tab.placeKnown && (!before.placeKnown || JSON.stringify(tab.place) !== JSON.stringify(before.place))) send(IPC.evTabPlace, tab.id, tab.place)
       if (tab.claudeSessionId !== null && tab.claudeSessionId !== before.claudeSessionId) noteHub.session(tab.id, tab.claudeSessionId)
@@ -1477,6 +1479,7 @@ function bootstrap(): void {
     closed: (tabId) => {
       devicesSoonIfShown()
       mailTabsChanged()
+      projectCoordinators.remoteChanged()
       send(IPC.evTabClosed, tabId)
       noteHub.removeTab(tabId)
       lastImages.delete(tabId)
@@ -1490,6 +1493,7 @@ function bootstrap(): void {
       // a device that went or came back changes the tab counts of the Devices section too
       devicesSoonIfShown()
       mailTabsChanged()
+      projectCoordinators.remoteChanged()
       send(IPC.evRemoteDevices, list)
       // a device that went or came back changes the Recent sessions window's sections: they are drawn again
       send(IPC.evRemoteSessions, remoteSessionsView())
@@ -2207,6 +2211,44 @@ function bootstrap(): void {
     }
     return nameAgents(list)
   }
+  /** the paired devices as the coordinators need them: linked, listed, knowing coordinator records, and whether their mail wakes a session */
+  const peersNow = (): HubPeer[] => (group?.view().devices ?? []).map((d) => {
+    const accept = mailSync.acceptOf(d.id)
+    return {
+      id: d.id,
+      name: d.name,
+      online: remote?.viewer.online(d.id) ?? false,
+      listed: remote?.viewer.listedOf(d.id) ?? false,
+      coord: mailSync.knowsCoordinator(d.id),
+      mail: accept?.on === true && accept.wakes === true
+    }
+  })
+  /** the tabs of the paired devices, an offline device's last list included; a Claude tab's name is the one agentsNow gives it */
+  const remoteTabsNow = (): HubRemoteTab[] => {
+    const r = remote
+    if (!r) return []
+    return r.viewer.devices().flatMap((d) => {
+      const tabs = r.viewer.tabsOf(d.id)
+      const accept = mailSync.acceptOf(d.id)
+      const named = nameAgents(tabs.flatMap((t) => t.kind === 'claude' && !t.exited && t.claudeSessionId !== null
+        ? [{ device: d.id, deviceName: d.name, tabId: t.id, session: t.claudeSessionId, customTitle: t.customTitle, folder: t.folder, branch: t.place?.branch ?? null, title: t.title, busy: t.working, wakes: accept?.wakes ?? false, claude: accept?.claude ?? null }]
+        : []))
+      const names = new Map(named.map((a) => [a.tabId, a.name]))
+      return tabs.map((t): HubRemoteTab => ({
+        device: d.id,
+        tabId: t.id,
+        claude: t.kind === 'claude',
+        session: t.claudeSessionId,
+        name: names.get(t.id) ?? null,
+        folder: t.folder,
+        branch: t.place?.branch ?? null,
+        project: t.place?.project.name ?? null,
+        working: t.working,
+        exited: t.exited,
+        coord: t.coord ?? null
+      }))
+    })
+  }
   /** the tabs of this device and of the connected devices, with their sessions, for the unread counts */
   const mailTabList = (): { tabId: string; device: string | null; session: string | null }[] => {
     const r = remote
@@ -2291,7 +2333,10 @@ function bootstrap(): void {
   const mailSync = new MailSync({
     store: mailStore,
     accept: () => ({ on: settings.agentMessages.enabled, wakes: localWakes(), claude: localVersion() }),
-    onPeers: () => mailTabsChanged()
+    onPeers: () => {
+      mailTabsChanged()
+      projectCoordinators.remoteChanged()
+    }
   })
 
   // ---- project coordinators: a Claude tab coordinates its project, and the tasks it gives reach the sessions as agent mail
@@ -2364,6 +2409,8 @@ function bootstrap(): void {
       }
     }),
     agents: agentsNow,
+    peers: peersNow,
+    remoteTabs: remoteTabsNow,
     waits: (id) => tabWaits.get(id),
     progress: (id) => taskLists.status(id),
     taskList: (id) => taskLists.get(id),

@@ -32,6 +32,8 @@ export function rowState(f: RowFacts, clock: (ms: number) => string): { group: C
 
 function lineOf(f: RowFacts, clock: (ms: number) => string): string {
   if (f.marker === 'starting') return 'Starting…'
+  if (f.marker === 'attaching') return 'Attaching…'
+  if (f.marker === 'offline') return 'Offline'
   if (f.prompt) return f.prompt.text || (f.prompt.kind === 'permission' ? 'Waiting for your permission' : 'Waiting for your answer')
   if (f.limit) return f.limit.resetsAt === null ? 'Usage limit' : `Usage limit · resets ${clock(f.limit.resetsAt)}`
   if (f.failed) return `Failed: ${f.lastReport?.reason ?? 'no reason given'}`

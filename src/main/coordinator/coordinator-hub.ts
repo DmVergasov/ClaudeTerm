@@ -1,4 +1,4 @@
-import type { CoordGroup, CoordMarks, CoordOp, CoordResult, CoordSessionRow, CoordStartRequest, CoordTaskInfo, CoordinatorView } from '../../shared/coordinator'
+import type { CoordGroup, CoordMarker, CoordMarks, CoordOp, CoordResult, CoordSessionRow, CoordStartRequest, CoordTaskInfo, CoordinatorView } from '../../shared/coordinator'
 import { COORD_TASK_MAX } from '../../shared/coordinator'
 import { isSignal, kindOf, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
 import { isUuid, oneLineText, PROMPT_TEXT_MAX, type PipeResponse } from '../../shared/protocol'
@@ -42,6 +42,31 @@ export interface HubTab {
   branch: string | null
 }
 
+/** a paired device as the coordinator needs it */
+export interface HubPeer {
+  id: string
+  name: string
+  online: boolean // linked now
+  listed: boolean // its tab list has come on the current link
+  coord: boolean // its hello says it knows coordinator records
+  mail: boolean // it takes agent mail and its mail watcher wakes a session
+}
+
+/** a tab of a paired device, as this window knows it (an offline device's last list included) */
+export interface HubRemoteTab {
+  device: string
+  tabId: string
+  claude: boolean
+  session: string | null
+  name: string | null // its agent name, as list_agents shows it; null without a session
+  folder: string
+  branch: string | null
+  project: string | null // its place's project name
+  working: boolean
+  exited: boolean
+  coord: RemoteCoordFacts | null
+}
+
 export interface CoordinatorHubDeps {
   store: CoordinatorStore
   mail: MailStore
@@ -49,6 +74,8 @@ export interface CoordinatorHubDeps {
   selfName(): string
   problem(): string | null // coordinatorProblem(...) now
   tabs(): HubTab[] // this device's Claude tabs
+  peers(): HubPeer[] // the paired devices
+  remoteTabs(): HubRemoteTab[] // the tabs of the paired devices
   agents(): Agent[] // agentsNow(): names and refs of every agent
   waits(tabId: string): TabWaitsState
   progress(tabId: string): PlanStatus | null // TaskListHub.status
@@ -146,6 +173,25 @@ type FoundRow = { row: CoordSessionRow; att: StoredAttachment; start: null } | {
 /** a folder's last part, the name of a session started without one */
 function folderName(folder: string): string {
   return folder.split(/[\\/]/).filter((p) => p !== '').pop() ?? folder
+}
+
+/** a row's key for a session of another device */
+const remoteKey = (device: string, session: string): string => `${device}:${session}`
+
+/** two names are the same name: trimmed, without case */
+const sameName = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/** a remote session's task list as a PlanStatus: its counts, and its current task as the one current step */
+function planOf(coord: RemoteCoordFacts | null): PlanStatus | null {
+  const p = coord?.progress
+  if (!p) return null
+  return {
+    title: '',
+    done: p.done,
+    total: p.total,
+    finished: p.finished,
+    tasks: p.current === null ? [] : [{ n: p.done + 1, title: p.current, state: 'current' }]
+  }
 }
 
 /** the project name as records and the store keep it: control characters become spaces, at most 200 UTF-16 units */
@@ -269,6 +315,11 @@ export class CoordinatorHub {
     if ('error' in found) return fail(found.error)
     const row = found.row
     const reportText = row.lastReport ? (this.d.mail.get(row.lastReport.id)?.text ?? null) : null
+    // a session of another device: its prompt is what its device reports, and its task list is not read here
+    if (row.device !== null) {
+      const prompt = row.session === null ? null : (this.remoteTab(row.device, row.session)?.coord?.prompt ?? null)
+      return { ok: true, info: readText(row, { prompt, report: reportText, taskList: null }, (ms) => this.d.clock(ms)) }
+    }
     return {
       ok: true,
       info: readText(
@@ -560,6 +611,11 @@ export class CoordinatorHub {
     }
   }
 
+  /** the paired devices or their tabs changed: the views and the marks are asked again */
+  remoteChanged(): void {
+    this.d.changed()
+  }
+
   marks(): CoordMarks {
     const marks: CoordMarks = {}
     for (const c of this.d.store.coordinators()) {
@@ -573,6 +629,14 @@ export class CoordinatorHub {
       if (!tab) continue
       const coordinator = h.coordinator.device === null ? this.tabOfSession(h.coordinator.session) : null
       marks[tab.tabId] = { role: 'attached', project: h.project, coordinator: h.coordinator.name, coordinatorTabId: coordinator?.tabId ?? null }
+    }
+    // a session of another device, attached and confirmed, is marked in this window: its tab is the one the device lists
+    for (const c of this.d.store.coordinators()) {
+      const coordinatorTab = this.tabOfSession(c.session)
+      for (const a of c.attachments) {
+        const rt = a.device === null || a.pending !== null ? null : this.remoteTab(a.device, a.session)
+        if (rt) marks[rt.tabId] = { role: 'attached', project: c.project.name, coordinator: this.nameOf(c.session), coordinatorTabId: coordinatorTab?.tabId ?? null }
+      }
     }
     return marks
   }
@@ -775,7 +839,142 @@ export class CoordinatorHub {
 
   /** the rows of a coordinator's attachments, in the order it has them */
   private attachedRows(c: StoredCoordinator): CoordSessionRow[] {
-    return c.attachments.map((a) => this.rowOf(a.session, this.agentName(a.session) ?? a.name, this.tabOfSession(a.session), this.d.store.hosted(a.session), a))
+    const queued = c.attachments.some((a) => a.device !== null) ? this.queuedRemoteTasks(c) : new Map<string, CoordTaskInfo>()
+    return c.attachments.map((a) =>
+      a.device === null
+        ? this.rowOf(a.session, this.agentName(a.session) ?? a.name, this.tabOfSession(a.session), this.d.store.hosted(a.session), a)
+        : this.attachedRemoteRow(a, a.device, queued)
+    )
+  }
+
+  /** a row of a session of another device attached here: its tab's facts from the device's list, and the attachment's marks */
+  private attachedRemoteRow(a: StoredAttachment, device: string, queued: Map<string, CoordTaskInfo>): CoordSessionRow {
+    const rt = this.remoteTab(device, a.session)
+    const peer = this.peerOf(device)
+    const coord = rt?.coord ?? null
+    const marker: CoordMarker = a.pending !== null ? 'attaching' : peer?.online === true ? null : 'offline'
+    // the task the device reports is the one it holds; without it, the oldest task this coordinator gave it that it has not taken
+    const task = coord?.task ?? queued.get(remoteKey(device, a.session)) ?? null
+    const state = rowState(
+      {
+        marker,
+        closed: peer?.online === true && peer.listed && rt === null,
+        exited: rt?.exited ?? false,
+        working: rt?.working ?? false,
+        prompt: coord?.prompt ?? null,
+        limit: coord?.limit ?? null,
+        progress: planOf(coord),
+        task,
+        resolved: a.resolved,
+        failed: a.failed,
+        lastReport: a.lastReport
+      },
+      this.d.clock
+    )
+    return {
+      key: remoteKey(device, a.session),
+      tabId: rt?.tabId ?? null,
+      device,
+      deviceName: peer?.name ?? 'another device',
+      session: a.session,
+      ref: refOf(a.session),
+      name: rt?.name ?? a.name,
+      folder: rt?.folder ?? null,
+      branch: rt?.branch ?? null,
+      group: state.group,
+      why: state.why,
+      marker,
+      line: state.line,
+      progress: state.progress,
+      changedAt: this.d.now(),
+      task,
+      lastReport: a.lastReport,
+      attachedTo: null
+    }
+  }
+
+  /** the sessions of online paired devices that are in this coordinator's project, not coordinators, and not attached here: their rows */
+  private notAttachedRemote(c: StoredCoordinator): CoordSessionRow[] {
+    const rows: CoordSessionRow[] = []
+    for (const t of this.d.remoteTabs()) {
+      const peer = this.peerOf(t.device)
+      if (!peer || !peer.online || !t.claude || t.session === null || t.exited) continue
+      if (t.project === null || !sameName(t.project, c.project.name) || t.coord?.coordinator === true) continue
+      if (c.attachments.some((a) => a.device === t.device && a.session === t.session)) continue
+      const state = rowState(
+        {
+          marker: null,
+          closed: false,
+          exited: false,
+          working: t.working,
+          prompt: t.coord?.prompt ?? null,
+          limit: t.coord?.limit ?? null,
+          progress: planOf(t.coord),
+          task: null,
+          resolved: false,
+          failed: false,
+          lastReport: null
+        },
+        this.d.clock
+      )
+      rows.push({
+        key: remoteKey(t.device, t.session),
+        tabId: t.tabId,
+        device: t.device,
+        deviceName: peer.name,
+        session: t.session,
+        ref: refOf(t.session),
+        name: t.name ?? refOf(t.session),
+        folder: t.folder,
+        branch: t.branch,
+        group: state.group,
+        why: state.why,
+        marker: null,
+        line: state.line,
+        progress: state.progress,
+        changedAt: this.d.now(),
+        task: null,
+        lastReport: null,
+        attachedTo: this.attachedToName(t.device, t.session, t.coord)
+      })
+    }
+    return rows
+  }
+
+  /** the coordinator a session of another device is attached to: its device's word, else a coordinator of this device; null: none */
+  private attachedToName(device: string, session: string, facts: RemoteCoordFacts | null): string | null {
+    const local = this.d.store.coordinators().find((c) => c.attachments.some((a) => a.device === device && a.session === session))
+    const name = facts?.attachedTo ?? (local ? this.nameOf(local.session) : null)
+    return name === null ? null : replaceControls(name)
+  }
+
+  /** the oldest task this coordinator gave each session of another device that has not been delivered and has no report: keyed by the device and the session */
+  private queuedRemoteTasks(c: StoredCoordinator): Map<string, CoordTaskInfo> {
+    const replied = new Set<string>()
+    const open: MailRecord[] = []
+    for (const r of this.d.mail.all()) {
+      if (kindOf(r) === 'report' && r.replyTo !== null) replied.add(r.replyTo)
+      else if (kindOf(r) === 'task' && !r.delivered && r.from.session === c.session && this.norm(r.from.device) === null) open.push(r)
+    }
+    const oldest = new Map<string, CoordTaskInfo>()
+    for (const r of open) {
+      const device = this.norm(r.to.device)
+      if (device === null || replied.has(r.id)) continue
+      const key = remoteKey(device, r.to.session)
+      const held = oldest.get(key)
+      if (!held || r.sentAt < held.since) oldest.set(key, { id: r.id, state: 'queued', since: r.sentAt })
+    }
+    return oldest
+  }
+
+  /** the tab of a paired device that runs a session, as this window knows it */
+  private remoteTab(device: string, session: string): HubRemoteTab | null {
+    return this.d.remoteTabs().find((t) => t.device === device && t.session === session) ?? null
+  }
+
+  /** a paired device as the hub knows it, or null */
+  private peerOf(device: string): HubPeer | null {
+    return this.d.peers().find((p) => p.id === device) ?? null
   }
 
   /** the row a target names among a coordinator's attached sessions and its Starting… rows */
@@ -847,6 +1046,7 @@ export class CoordinatorHub {
       row.attachedTo = hosted ? replaceControls(hosted.coordinator.name) : null
       notAttached.push(row)
     }
+    notAttached.push(...this.notAttachedRemote(c))
     this.stamp(c.session, [...sessions, ...notAttached])
     return {
       tabId,

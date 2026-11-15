@@ -1,12 +1,13 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CoordinatorHub, type HubTab } from '../../src/main/coordinator/coordinator-hub'
-import { CoordinatorStore } from '../../src/main/coordinator/coordinator-store'
+import { CoordinatorHub, type HubPeer, type HubRemoteTab, type HubTab } from '../../src/main/coordinator/coordinator-hub'
+import { CoordinatorStore, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
 import { nameAgents, type Agent, type AgentTab } from '../../src/main/mail/agent-directory'
-import { MailStore } from '../../src/main/mail/mail-store'
+import { isShareable, MailStore } from '../../src/main/mail/mail-store'
 import type { TabWaitsState } from '../../src/main/tab-waits'
 import type { MailRecord } from '../../src/shared/mail'
+import type { RemoteCoordFacts } from '../../src/shared/remote'
 import type { OpenTabRequest, PlanStatus } from '../../src/shared/types'
 
 // The coordinator hub's test world: one device's hub on a temp store, with fake tabs, waits, plans and agents.
@@ -20,7 +21,25 @@ export const S = {
   two: 'b2000000-0000-4000-8000-000000000003',
   beta: 'be000000-0000-4000-8000-000000000004'
 }
-export const TITLES: Record<string, string> = { 'tab-c': 'coord', 'tab-1': 'parser', 'tab-2': 'docs', 'tab-b': 'beta' }
+export const TITLES: Record<string, string> = { 'tab-c': 'coord', 'tab-1': 'parser', 'tab-2': 'docs', 'tab-b': 'beta', 'tab-l1': 'parser', 'tab-l2': 'docs', 'tab-lc': 'lead' }
+
+/** the two devices of the tests of rows of other devices: Studio runs the coordinator, Laptop the sessions */
+export const DEV_C = 'c1000000-0000-4000-8000-0000000000c1'
+export const DEV_S = '5a000000-0000-4000-8000-0000000000a1'
+/** Laptop's project of the same name as Studio's, in its own folder */
+export const ACME_L = { key: '/home/sam/acme', name: 'acme' }
+/** Laptop's sessions: one and two are tabs in ACME_L, lead is the coordinator there */
+export const L = { one: 'e1000000-0000-4000-8000-000000000011', two: 'e2000000-0000-4000-8000-000000000012', lead: 'e3000000-0000-4000-8000-000000000013', fresh: 'e4000000-0000-4000-8000-000000000014' }
+/** ids of records and sessions the tests of later tasks make */
+export const NEW = { coord: 'f1000000-0000-4000-8000-000000000021', one: 'f2000000-0000-4000-8000-000000000022' }
+export const NO_FACTS: RemoteCoordFacts = { prompt: null, limit: null, progress: null, task: null, attachedTo: null, coordinator: false }
+
+/** a paired device as the coordinator's hub sees it: linked, listed, knowing coordinator records, its mail watcher waking a session */
+export const peerOf = (id: string, name: string, over: Partial<HubPeer> = {}): HubPeer => ({ id, name, online: true, listed: true, coord: true, mail: true, ...over })
+
+/** a tab of another device as this window lists it: Laptop's parser, in ACME_L's folder on the main account */
+export const remoteTab = (over: Partial<HubRemoteTab> = {}): HubRemoteTab =>
+  ({ device: DEV_S, tabId: 'tab-l1', claude: true, session: L.one, name: 'parser · Laptop', folder: '/home/sam/acme', branch: 'main', project: 'acme', working: false, exited: false, coord: NO_FACTS, ...over })
 
 /** the n-th id of a test, a UUID */
 export const uid = (n: number): string => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`
@@ -59,6 +78,9 @@ export function world(o: WorldOptions = {}) {
     progress: {} as Record<string, PlanStatus | null>,
     /** agents of other devices, listed with this device's */
     remote: [] as AgentTab[],
+    /** the paired devices, and the tabs of them, as the hub's peers and remoteTabs deps give them */
+    peers: [] as HubPeer[],
+    remoteTabs: [] as HubRemoteTab[],
     opened: [] as OpenTabRequest[],
     pokes: [] as string[],
     rechecks: 0,
@@ -96,6 +118,8 @@ export function world(o: WorldOptions = {}) {
     agents: () => w.agentsOf(),
     waits: (tabId) => w.waits[tabId] ?? { prompt: null, limit: null },
     progress: (tabId) => w.progress[tabId] ?? null,
+    peers: () => w.peers,
+    remoteTabs: () => w.remoteTabs,
     taskList: () => null,
     restingNow: (tabId) => w.resting[tabId] ?? true,
     isDirectory: async (p) => p === 'D:\\Work\\acme',
@@ -148,4 +172,62 @@ export const fire = (w: World): void => {
   const due = w.timers
   w.timers = []
   for (const t of due) t.fn()
+}
+
+/** an attachment of Laptop's parser to the coordinator S.coord, written straight into the store: the coordinator's attachments are these only; `pending` is the attach record it waits for */
+export function attachDirect(w: World, pending: string | null = null): void {
+  const c = w.store.coordinator(S.coord)
+  if (!c) throw new Error('tab-c is not a coordinator: make it one first')
+  const attachment: StoredAttachment = { device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending }
+  w.store.putCoordinator({ ...c, attachments: [attachment] })
+}
+
+/** a world's tabs as the other device lists them, with their agent names and their facts: the tabs of `device`, the id this world has for it */
+export function listedTabs(w: World, device: string): HubRemoteTab[] {
+  const names = new Map(w.agentsOf().map((a) => [a.tabId, a.name]))
+  return w.tabs.map((t) => ({
+    device,
+    tabId: t.tabId,
+    claude: true,
+    session: t.session,
+    name: names.get(t.tabId) ?? null,
+    folder: t.folder,
+    branch: t.branch,
+    project: t.project?.name ?? null,
+    working: t.working,
+    exited: t.exited,
+    coord: w.hub.facts(t.tabId)
+  }))
+}
+
+/** Studio (c, part 1's four tabs) and Laptop (s: tab-l1 parser, tab-l2 docs, tab-lc lead, in ACME_L, folder /home/sam/acme), linked */
+export function deviceWorlds(): { c: World; s: World } {
+  const c = world({ self: DEV_C, selfName: 'Studio' })
+  const laptopFolder = '/home/sam/acme'
+  const s = world({
+    self: DEV_S,
+    selfName: 'Laptop',
+    tabs: [
+      tab('tab-l1', L.one, ACME_L, { folder: laptopFolder }),
+      tab('tab-l2', L.two, ACME_L, { folder: laptopFolder }),
+      tab('tab-lc', L.lead, ACME_L, { folder: laptopFolder })
+    ]
+  })
+  c.peers = [peerOf(DEV_S, 'Laptop')]
+  s.peers = [peerOf(DEV_C, 'Studio')]
+  c.remoteTabs = listedTabs(s, DEV_S)
+  s.remoteTabs = listedTabs(c, DEV_C)
+  return { c, s }
+}
+
+/** what MailSync and the tab lists carry between the two: the shareable records each way, three rounds (an answer goes back), then each side's tabs listed to the other, and remoteChanged on both */
+export function sync(c: World, s: World): void {
+  for (let round = 0; round < 3; round++) {
+    s.mail.merge(c.mail.all().filter(isShareable), { link: 'c' })
+    c.mail.merge(s.mail.all().filter(isShareable), { link: 's' })
+  }
+  c.remoteTabs = listedTabs(s, DEV_S)
+  s.remoteTabs = listedTabs(c, DEV_C)
+  c.hub.remoteChanged()
+  s.hub.remoteChanged()
 }

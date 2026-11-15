@@ -131,9 +131,11 @@ export async function launchClaudeTab(settings: object = FAKE_CLAUDE_SETTINGS, w
   return { ...launched, work, tabId }
 }
 
-/** a git repository with one commit: a.ts = "one\ntwo\nthree\n" */
-export function gitRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'ct-repo-'))
+/** a git repository with one commit: a.ts = "one\ntwo\nthree\n". Its own folder is `name` when one is given, in a new temp folder */
+export function gitRepo(name?: string): string {
+  const root = mkdtempSync(join(tmpdir(), 'ct-repo-'))
+  const dir = name === undefined ? root : join(root, name)
+  if (name !== undefined) mkdirSync(dir)
   const git = (...args: string[]): void => { execFileSync('git', args, { cwd: dir, stdio: 'ignore' }) }
   git('init', '-q')
   git('config', 'user.email', 't@example.com')

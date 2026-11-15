@@ -13,7 +13,7 @@ export const COORD_REFUSED = 'Invalid request'
 export type TaskState = 'queued' | 'delivered' | 'open'
 /** the group a row is shown in */
 export type CoordGroup = 'waiting' | 'working' | 'idle' | 'resolved'
-/** shown in a row's group: offline and attaching come with part 3 */
+/** shown on a row: starting while its tab opens, attaching until its device confirms, offline while its device is not connected */
 export type CoordMarker = 'starting' | 'offline' | 'attaching' | null
 /** why a row waits for the person */
 export type CoordWhy = 'prompt' | 'limit' | 'failed' | null
@@ -32,7 +32,7 @@ export interface CoordTaskInfo {
 }
 
 export interface CoordSessionRow {
-  key: string // 'local:<session>', or 'start:<tabId>' while Starting…
+  key: string // 'local:<session>'; '<device>:<session>' for a session of another device; 'start:<tabId>' while Starting…
   tabId: string | null // the tab that runs it; null when none does
   device: string | null // null: this device
   deviceName: string | null // null: this device

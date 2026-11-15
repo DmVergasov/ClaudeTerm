@@ -38,6 +38,10 @@ export function listText(v: CoordinatorView, clock: (ms: number) => string): str
     lines.push(`- A permission prompt or question waits for the user in ${names}: it is theirs to answer there; tell them once where it waits.`)
   }
   if (v.sessions.some((r) => r.why === 'limit')) lines.push('- A usage limit is not a failure: the session goes on after the reset.')
+  if (v.sessions.some((r) => r.marker === 'offline')) {
+    lines.push('- A session marked Offline is on a device that is not connected: a task given to it goes out when the device connects; detach_session works meanwhile.')
+  }
+  if (v.sessions.some((r) => r.marker === 'attaching')) lines.push('- A session marked Attaching… waits for its device to confirm it; it takes tasks once it does.')
   if (v.sessions.some((r) => r.lastReport?.outcome === 'stopped')) lines.push('- A stopped task was stopped by the user.')
   return lines.join('\n')
 }

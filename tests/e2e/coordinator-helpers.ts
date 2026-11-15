@@ -4,11 +4,12 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
-import type { CoordOp, CoordResult } from '../../src/shared/coordinator'
+import type { CoordOp, CoordResult, CoordinatorView } from '../../src/shared/coordinator'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { AttentionMessage } from '../../src/shared/protocol'
 import { gitRepo, launchApp, type Launched } from './helpers'
-import { hasMailWatcher, startSession, VERSION_SETTINGS, type WaitAnswer } from './agent-mail'
+import { hasMailWatcher, listAgents, refOf, startSession, VERSION_SETTINGS, type WaitAnswer } from './agent-mail'
+import { type AppOptions, type Device, pairedApps, SLOW } from './device-pair'
 
 /** the app with `count` Claude tabs in one git repository, each with a session, the mail watcher on */
 export async function coordApp(count: number, o: { settings?: object; env?: Record<string, string>; repo?: string; transcripts?: boolean } = {}): Promise<Launched & { repo: string; tabs: string[]; sids: string[]; transcripts: string[] }> {
@@ -87,3 +88,34 @@ export async function stillWaiting(p: Promise<unknown>, ms: number): Promise<voi
   await new Promise((resolve) => setTimeout(resolve, ms))
   expect(settled).toBe(false)
 }
+
+/** a Claude tab of a device in a folder, with a session the hooks would report */
+async function claudeTabOf(d: Device, cwd: string): Promise<{ tab: string; sid: string }> {
+  const tab = (await d.page.evaluate((c) => window.ct.openTab({ kind: 'claude', cwd: c }), cwd))!.id
+  await d.page.waitForFunction((id) => window.__ct!.tabIds().includes(id), tab)
+  const sid = randomUUID()
+  expect(await startSession(d.pipeName, tab, sid)).toEqual({ ok: true })
+  return { tab, sid }
+}
+
+/**
+ * Studio and Laptop paired, the stand-in Claude Code 2.1.400 and its mail watcher on both; on each a Claude tab with a session in a
+ * repository named acme. Studio's is made the coordinator, and returns once its view lists Laptop's session as not attached.
+ */
+export async function coordDevices(o: { b?: AppOptions } = {}): Promise<{ a: Device; b: Device; coordTab: string; coordSid: string; sessionTab: string; sessionSid: string; repoA: string; repoB: string }> {
+  const { a, b } = await pairedApps({ a: { settings: VERSION_SETTINGS }, b: { settings: VERSION_SETTINGS, ...o.b } })
+  const repoA = gitRepo('acme')
+  const repoB = gitRepo('acme')
+  const own = await claudeTabOf(a, repoA)
+  const other = await claudeTabOf(b, repoB)
+  await expect.poll(() => hasMailWatcher(a.dataDir), SLOW).toBe(true)
+  await expect.poll(() => hasMailWatcher(b.dataDir), SLOW).toBe(true)
+  expect(await makeCoordinator(a.page, own.tab)).toMatchObject({ ok: true })
+  await expect.poll(async () => (await coordViewOf(a, own.tab))?.notAttached.map((r) => r.key) ?? [], SLOW).toContain(`${b.id}:${other.sid}`)
+  // Laptop's session is listed by name: its row is listed only when Laptop's mail-accept says it wakes a session
+  await expect.poll(async () => (await listAgents(a.pipeName, own.tab)).info ?? '', SLOW).toContain(`acme · Laptop [${refOf(other.sid)}]`)
+  return { a, b, coordTab: own.tab, coordSid: own.sid, sessionTab: other.tab, sessionSid: other.sid, repoA, repoB }
+}
+
+/** a Claude tab's coordinator view in a device's window; null when the tab does not coordinate */
+export const coordViewOf = (d: Device, tabId: string): Promise<CoordinatorView | null> => d.page.evaluate((id) => window.ct.coordView(id), tabId)

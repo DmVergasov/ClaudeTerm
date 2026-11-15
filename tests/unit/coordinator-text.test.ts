@@ -90,6 +90,22 @@ describe('listText', () => {
       '- Reports come to you by themselves when a task ends; there is no need to poll or wait.'
     ].join('\n'))
   })
+
+  it('listText notes an Offline row and an Attaching… row', () => {
+    const offline = row({ key: 'd1:x', device: 'd1', deviceName: 'Laptop', session: 'e1000000-0000-4000-8000-000000000011', ref: 'e10000', name: 'parser · Laptop', group: 'idle', marker: 'offline', line: 'Offline' })
+    const attaching = row({ key: 'd1:y', device: 'd1', deviceName: 'Laptop', session: 'e2000000-0000-4000-8000-000000000012', ref: 'e20000', name: 'docs · Laptop', group: 'idle', marker: 'attaching', line: 'Attaching…' })
+    const view: CoordinatorView = {
+      tabId: 'tab-c', session: 'c0000000-0000-4000-8000-000000000001', project: { key: 'd:\\work\\acme', name: 'acme' }, problem: null,
+      sessions: [offline, attaching], notAttached: [], waiting: 0
+    }
+    const text = listText(view, clock)
+    expect(text.split('\n').filter((l) => l.startsWith('- A session marked '))).toEqual([
+      '- A session marked Offline is on a device that is not connected: a task given to it goes out when the device connects; detach_session works meanwhile.',
+      '- A session marked Attaching… waits for its device to confirm it; it takes tasks once it does.'
+    ])
+    expect(text).toContain('- parser · Laptop [e10000] · Offline')
+    expect(text).toContain('- docs · Laptop [e20000] · Attaching…')
+  })
 })
 
 describe('readText', () => {
