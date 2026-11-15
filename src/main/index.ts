@@ -2626,6 +2626,8 @@ function bootstrap(): void {
         port: testDevicePort ?? settings.devices.port,
         platform: devicePlatform,
         appVersion: app.getVersion(),
+        // a test that stands in for a device which predates coordinator records (CLAUDETERM_TEST_NO_COORD)
+        knowsCoordinator: !(isTest && process.env.CLAUDETERM_TEST_NO_COORD === '1'),
         hostName: () => hostname().slice(0, MAX_DEVICE_NAME),
         addresses: testDeviceHost ? () => [testDeviceHost] : localAddresses,
         onData: (updates) => bridge?.applied(updates),

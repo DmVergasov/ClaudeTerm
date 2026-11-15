@@ -1,7 +1,7 @@
 import type { PeerLink } from '../sync/peer-link'
 import { MAX_HAVE_ENTRIES, MAX_MAIL_RECORDS } from '../sync/remote-wire'
 import { BULK_CHUNK_BYTES, type HelloMessage, type Message } from '../sync/wire'
-import type { MailRecord } from '../../shared/mail'
+import { kindOf, type MailRecord } from '../../shared/mail'
 import { isShareable, type MailOrigin, type MailStore } from './mail-store'
 
 /** what a device says of its own mail: whether it takes mail (on), whether its watcher wakes a session (wakes), and its Claude Code version */
@@ -32,10 +32,11 @@ interface HaveBuffer {
   dropped: boolean
 }
 
-/** a link that carries mail, with the device at its far end, the accept that device last sent, the digest being received and the listeners on the link */
+/** a link that carries mail, with the device at its far end, the accept that device last sent, whether that device knows coordinator records, the digest being received and the listeners on the link */
 interface MailLink {
   device: string
   accept: MailAccept | null
+  coord: boolean
   have: HaveBuffer
   onMessage(m: Message): void
   onClose(): void
@@ -61,6 +62,7 @@ export class MailSync {
     const entry: MailLink = {
       device: hello.id,
       accept: null,
+      coord: hello.coord === 1,
       have: { entries: [], chunks: 0, dropped: false },
       onMessage: (m) => this.onMessage(link, m),
       onClose: () => this.detach(link)
@@ -79,6 +81,14 @@ export class MailSync {
       if (entry.device === device) return entry.accept
     }
     return null
+  }
+
+  /** true while the device is linked and its hello says it knows coordinator records */
+  knowsCoordinator(device: string): boolean {
+    for (const entry of this.links.values()) {
+      if (entry.device === device) return entry.coord
+    }
+    return false
   }
 
   /** Sends this device's accept to every mail link, after its settings change. */
@@ -117,7 +127,7 @@ export class MailSync {
         this.onHave(link, entry, m)
         return
       case 'mail-records':
-        this.deps.store.merge(m.records, { link })
+        this.deps.store.merge(this.forLink(entry, m.records), { link })
         return
     }
   }
@@ -144,7 +154,7 @@ export class MailSync {
     have.entries = []
     have.chunks = 0
     have.dropped = false
-    if (digest) this.sendRecords(link, this.deps.store.missingFor(digest))
+    if (digest) this.sendRecords(link, this.forLink(entry, this.deps.store.missingFor(digest)))
   }
 
   /** Sends the changed records that may leave this device to every mail link, but not back to the link they came from. */
@@ -152,10 +162,15 @@ export class MailSync {
     if (this.closed) return
     const out = changed.filter(isShareable)
     if (out.length === 0) return
-    for (const link of this.links.keys()) {
+    for (const [link, entry] of this.links) {
       if (origin !== 'local' && origin.link === link) continue
-      this.sendRecords(link, out)
+      this.sendRecords(link, this.forLink(entry, out))
     }
+  }
+
+  /** The records a link may carry: a peer that does not know coordinator records gets, and gives, only the messages (records with no kind). */
+  private forLink(entry: MailLink, records: MailRecord[]): MailRecord[] {
+    return entry.coord ? records : records.filter((r) => kindOf(r) === 'message')
   }
 
   private sendAccept(link: PeerLink): void {

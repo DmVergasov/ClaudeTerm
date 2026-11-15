@@ -40,6 +40,8 @@ interface OpenOptions {
   /** the options of every link the group makes: a test that sends a lot sets a small buffer limit */
   link?: Partial<PeerLinkOptions>
   onPeer?: DeviceGroupDeps['onPeer']
+  /** false: the group's hello leaves coord out, as a device that predates coordinator records does */
+  knowsCoordinator?: boolean
 }
 
 const groups: DeviceGroup[] = []
@@ -84,7 +86,8 @@ async function openGroup(name: string, platform: DevicePlatform, opts: OpenOptio
     timing: { ...(opts.timing ?? TIMING), link: opts.link },
     saveDebounceMs: opts.saveDebounceMs ?? 10,
     now: opts.now,
-    onPeer: opts.onPeer
+    onPeer: opts.onPeer,
+    knowsCoordinator: opts.knowsCoordinator
   }
   const group = await DeviceGroup.open(deps)
   groups.push(group)
@@ -151,6 +154,26 @@ describe('DeviceGroup: pairing and records', () => {
     const [link, hello] = peers[0]
     expect(hello.name).toBe('Laptop')
     expect(linkTo(a, b.view().self.id)).toBe(link)
+  })
+
+  it('the hello says the device knows coordinator records', async () => {
+    const peers: [PeerLink, HelloMessage][] = []
+    const a = await openGroup('Studio', 'linux', { onPeer: (link, hello) => peers.push([link, hello]) })
+    const b = await openGroup('Laptop', 'windows')
+    await pair(a, b)
+    await until(() => connected(a, 1) && connected(b, 1))
+    await until(() => peers.length > 0)
+    expect(peers[0][1].coord).toBe(1)
+  })
+
+  it('a device opened with knowsCoordinator false leaves coord out of its hello', async () => {
+    const peers: [PeerLink, HelloMessage][] = []
+    const a = await openGroup('Studio', 'linux', { onPeer: (link, hello) => peers.push([link, hello]) })
+    const b = await openGroup('Laptop', 'windows', { knowsCoordinator: false })
+    await pair(a, b)
+    await until(() => connected(a, 1) && connected(b, 1))
+    await until(() => peers.length > 0)
+    expect(peers[0][1]).not.toHaveProperty('coord')
   })
 
   it('an onPeer that throws is logged, not toasted, and the group goes on with the next member', async () => {

@@ -39,6 +39,8 @@ export interface DeviceGroupDeps {
   platform: DevicePlatform
   /** this app's version, sent in the hello: a member that has none is an older device */
   appVersion: string
+  /** false: the hello leaves coord out (a test stands in for an older device); left out: true */
+  knowsCoordinator?: boolean
   hostName(): string
   /** the addresses other devices can reach this one at */
   addresses(): string[]
@@ -343,6 +345,7 @@ export class DeviceGroup {
         port: net.listeningPort() ?? this.deps.port,
         addresses: this.deps.addresses(),
         mail: 1,
+        ...(this.deps.knowsCoordinator === false ? {} : { coord: 1 as const }),
         app: this.deps.appVersion
       }),
       members: () => this.netMembers(),

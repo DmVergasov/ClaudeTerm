@@ -38,8 +38,8 @@ function store(): MailStore {
   return MailStore.open({ dir: tempDir('mail-sync'), now: () => NOW, debounceMs: 100000 })
 }
 
-function helloOf(id: string, mail = true): HelloMessage {
-  return { t: 'hello', v: 1, id, name: 'Device', platform: 'linux', port: 0, addresses: [], reachedYou: null, ...(mail ? { mail: 1 as const } : {}) }
+function helloOf(id: string, mail = true, coord = true): HelloMessage {
+  return { t: 'hello', v: 1, id, name: 'Device', platform: 'linux', port: 0, addresses: [], reachedYou: null, ...(mail ? { mail: 1 as const } : {}), ...(coord ? { coord: 1 as const } : {}) }
 }
 
 const syncs: MailSync[] = []
@@ -250,5 +250,93 @@ describe('mail sync over the device links', () => {
     a.attach(client, helloOf(DEV_B))
     b.attach(server, helloOf(DEV_A))
     await until(() => sb.all().length === 1200, 10000)
+  })
+})
+
+describe('coordinator records between devices', () => {
+  it('a record with a kind goes only to a peer whose hello knows coordinator records; a message goes to every peer', async () => {
+    const sa = store()
+    const sb = store()
+    const sc = store()
+    const a = sync(sa)
+    const b = sync(sb)
+    const c = sync(sc)
+    const ab = await linkPair()
+    const ac = await linkPair()
+    a.attach(ab.client, helloOf(DEV_B))
+    a.attach(ac.client, helloOf(DEV_C, true, false))
+    b.attach(ab.server, helloOf(DEV_A))
+    c.attach(ac.server, helloOf(DEV_A))
+    await until(() => a.acceptOf(DEV_B) !== null && a.acceptOf(DEV_C) !== null && b.acceptOf(DEV_A) !== null && c.acceptOf(DEV_A) !== null)
+    await settle()
+
+    const task = record({ kind: 'task', project: 'acme' })
+    const attach = record({ kind: 'attach', project: 'acme', to: { device: DEV_C, session: SES_C, name: 'Tester' } })
+    const message = record({ to: { device: DEV_C, session: SES_C, name: 'Tester' } })
+    sa.add(task)
+    sa.add(attach)
+    sa.add(message)
+    await until(() => sb.get(task.id) !== undefined && sb.get(attach.id) !== undefined && sc.get(message.id) !== undefined)
+    await settle()
+    expect(sb.get(task.id)).toEqual(task)
+    expect(sb.get(attach.id)).toEqual(attach)
+    expect(sb.get(message.id)).toEqual(message)
+    expect(sc.get(message.id)).toEqual(message)
+    expect(sc.get(attach.id)).toBeUndefined()
+    expect(sc.get(task.id)).toBeUndefined()
+  })
+
+  it('the answer to a digest leaves out the records with a kind for a peer that does not know them', async () => {
+    const sa = store()
+    const sb = store()
+    const task = record({ kind: 'task', project: 'acme' })
+    const message = record()
+    sa.add(task)
+    sa.add(message)
+    const a = sync(sa)
+    const b = sync(sb)
+    const { client, server } = await linkPair()
+    a.attach(client, helloOf(DEV_B, true, false))
+    b.attach(server, helloOf(DEV_A))
+
+    await until(() => sb.get(message.id) !== undefined)
+    await settle()
+    expect(sb.get(message.id)).toEqual(message)
+    expect(sb.get(task.id)).toBeUndefined()
+  })
+
+  it('records with a kind from a peer that does not know them are dropped; its messages are kept', async () => {
+    const sa = store()
+    const sb = store()
+    const a = sync(sa)
+    const b = sync(sb)
+    const { client, server } = await linkPair()
+    a.attach(client, helloOf(DEV_B, true, false))
+    b.attach(server, helloOf(DEV_A))
+    await until(() => a.acceptOf(DEV_B) !== null && b.acceptOf(DEV_A) !== null)
+    await settle()
+
+    const from = { device: DEV_B, session: SES_B, name: 'Reviewer' }
+    const to = { device: DEV_A, session: SES_A, name: 'Parser' }
+    const task = record({ kind: 'task', project: 'acme', from, to })
+    const message = record({ from, to })
+    sb.add(task)
+    sb.add(message)
+    await until(() => sa.get(message.id) !== undefined)
+    await settle()
+    expect(sa.get(message.id)).toEqual(message)
+    expect(sa.get(task.id)).toBeUndefined()
+  })
+
+  it('knowsCoordinator is true for a linked peer with coord, false for one without, and false once the link closes', async () => {
+    const a = sync(store())
+    const knows = await linkPair()
+    const plain = await linkPair()
+    a.attach(knows.client, helloOf(DEV_B))
+    a.attach(plain.client, helloOf(DEV_C, true, false))
+    expect(a.knowsCoordinator(DEV_B)).toBe(true)
+    expect(a.knowsCoordinator(DEV_C)).toBe(false)
+    knows.client.close('test')
+    expect(a.knowsCoordinator(DEV_B)).toBe(false)
   })
 })
