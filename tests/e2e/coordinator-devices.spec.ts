@@ -92,7 +92,7 @@ test('a task of Studio\'s coordinator to Laptop\'s session shows its state chang
   await expect.poll(async () => (await coordViewOf(a, coordTab))?.sessions[0]?.task?.state ?? null, SLOW).toMatch(/^(delivered|open)$/)
 })
 
-test('a session attached to Laptop\'s own coordinator is refused with that coordinator\'s name', async () => {
+test('@alone a session attached to Laptop\'s own coordinator is refused with that coordinator\'s name', async () => {
   test.setTimeout(180_000)
   const { a, b, coordTab, sessionSid, repoB } = await coordDevices()
   const second = await claudeTabIn(b, repoB)
@@ -159,7 +159,11 @@ test('Detach in the header of Laptop\'s attached session ends the attachment on 
 test('a Laptop row dragged onto Studio\'s coordinator row attaches it, and both windows mark it', async () => {
   test.setTimeout(180_000)
   const { a, b, coordTab, sessionTab } = await coordDevices({ a: { settings: LEFT } })
-  await dragOnto(a.page, tpRow(a.page, sessionTab), tpRow(a.page, coordTab))
-  await expect.poll(async () => (await marksOf(a.page))[sessionTab], SLOW).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: coordTab })
+  // the rows are rebuilt on every render, so a drag that lands on a row being rebuilt does nothing: the drop is tried again (a drop on
+  // a row already attached to this coordinator does nothing either)
+  await expect(async () => {
+    await dragOnto(a.page, tpRow(a.page, sessionTab), tpRow(a.page, coordTab))
+    expect((await marksOf(a.page))[sessionTab]).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: coordTab })
+  }).toPass({ timeout: 45_000 })
   await expect.poll(async () => (await marksOf(b.page))[sessionTab], SLOW).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: null })
 })

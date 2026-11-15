@@ -4,6 +4,7 @@ import {
   arrangeCoordinators,
   dropAttaches,
   groupLabels,
+  headerDetachShown,
   moveGroup,
   moveTab,
   orderToWrite,
@@ -311,5 +312,14 @@ describe('coordinator blocks', () => {
       const target: DropRow = { id: 'X', claude: true, local: true, coord: null, block: null }
       expect(panelDrop(hand, drag, target)).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'X', 'A1'] })
     })
+  })
+})
+
+describe('the header\'s Detach', () => {
+  it('a tab of this device shows Detach whichever device its coordinator is on; a paired device\'s tab only when its coordinator has an open tab here', () => {
+    expect(headerDetachShown(null, 'tab-c')).toBe(true)
+    expect(headerDetachShown(null, null)).toBe(true)
+    expect(headerDetachShown('dev-laptop', 'tab-c')).toBe(true)
+    expect(headerDetachShown('dev-laptop', null)).toBe(false)
   })
 })

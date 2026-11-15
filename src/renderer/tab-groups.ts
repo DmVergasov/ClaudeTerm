@@ -301,6 +301,11 @@ export function dropAttaches(drag: DropRow, target: DropRow): boolean {
   return !(drag.coord?.role === 'attached' && drag.coord.coordinatorTabId === target.id)
 }
 
+/** whether an attached tab's header shows Detach: a tab of this device always (it leaves through coordLeave, on any device); a paired device's tab only when its coordinator has an open tab here, the row Detach names */
+export function headerDetachShown(group: string | null, coordinatorTabId: string | null): boolean {
+  return group === null || coordinatorTabId !== null
+}
+
 /**
  * What a row dropped on another row of the left panel does; null: nothing. `groups`: the target's section, arranged.
  * In order: the same row → null; the target is a coordinator → attach when dropAttaches, else null; the dragged row is an

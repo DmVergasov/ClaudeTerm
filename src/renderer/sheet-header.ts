@@ -6,6 +6,7 @@ import { shortcutLabel } from './keymap'
 import { noteIcon } from './note-overlay'
 import { beginRename, shownActivity, tabIcon } from './tab-row'
 import type { TabBarCallbacks, TabBarItem } from './tabbar'
+import { headerDetachShown } from './tab-groups'
 import { folderName } from './util'
 
 /** what the header's left part shows of the active tab: while it is the same, the part is not built again */
@@ -340,13 +341,15 @@ export class SheetHeader {
         project.textContent = item.coord.project
         reports.append('↳ Reports to ', project, ' coordinator')
         parts.push(reports)
-        const detach = document.createElement('button')
-        detach.className = 'sh-detach'
-        detach.type = 'button'
-        detach.textContent = 'Detach'
-        detach.title = `Detach from the ${item.coord.project} coordinator`
-        detach.addEventListener('click', () => this.cb.detachTab(item.id))
-        parts.push(detach)
+        if (headerDetachShown(item.group, item.coord.coordinatorTabId)) {
+          const detach = document.createElement('button')
+          detach.className = 'sh-detach'
+          detach.type = 'button'
+          detach.textContent = 'Detach'
+          detach.title = `Detach from the ${item.coord.project} coordinator`
+          detach.addEventListener('click', () => this.cb.detachTab(item.id))
+          parts.push(detach)
+        }
       }
     }
     for (const el of this.left) el.remove()
