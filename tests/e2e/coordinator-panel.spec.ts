@@ -191,8 +191,11 @@ test('Open and a click on a row bring the session\'s tab to the front', async ()
     await activate(page, t0)
     await openSessions(page)
     await expect(sessionRow(page, rowKey(sids[1]))).toBeVisible()
-    await sessionRow(page, rowKey(sids[1])).locator('.coord-name').click()
-    await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(t1)
+    // the rows are rebuilt on every view: the click is tried again until the session's tab is in front
+    await expect(async () => {
+      if ((await page.evaluate(() => window.__ct!.activeTabId())) !== t1) await sessionRow(page, rowKey(sids[1])).locator('.coord-name').click({ timeout: 1000 })
+      expect(await page.evaluate(() => window.__ct!.activeTabId())).toBe(t1)
+    }).toPass({ timeout: 15_000 })
   } finally { await l.app.close() }
 })
 
@@ -228,11 +231,18 @@ test('Resolve, Detach and Attach move the row between the groups', async () => {
     await openSessions(page)
     await act(page, rowKey(sids[1]), 'Resolve')
     await expect(sessionGroup(page, 'resolved').locator('.coord-gh .n')).toHaveText('1')
-    await sessionGroup(page, 'resolved').locator('.coord-gh').click()
+    // the head toggles, so a retry clicks only while the group is still folded
+    const resolved = sessionGroup(page, 'resolved')
+    await expect(async () => {
+      if (await resolved.evaluate((g) => g.classList.contains('folded'))) await resolved.locator('.coord-gh').click({ timeout: 1000 })
+      await expect(resolved).not.toHaveClass(/folded/, { timeout: 1000 })
+    }).toPass({ timeout: 15_000 })
     await act(page, rowKey(sids[1]), 'Detach')
     await expect(sessionGroup(page, 'not-attached').locator(`.coord-row[data-key="${rowKey(sids[1])}"]`)).toHaveCount(1)
     await act(page, rowKey(sids[1]), 'Attach')
     await expect(sessionGroup(page, 'idle').locator(`.coord-row[data-key="${rowKey(sids[1])}"]`)).toHaveCount(1)
+    // the buttons act on the row and do not reach it: its tab is not brought to the front by them
+    expect(await page.evaluate(() => window.__ct!.activeTabId())).toBe(t0)
   } finally { await l.app.close() }
 })
 
@@ -279,6 +289,20 @@ test('the Message box keeps its draft and its focus while the rows change, and E
     // the Escape stopped at the box: it reached no listener on the document, and the panel stays open
     expect(await page.evaluate(() => (window as unknown as { __escapes?: number }).__escapes)).toBeUndefined()
     await expect(sessionRow(page, rowKey(sids[1]!))).toBeVisible()
+    await expect(sessionRow(page, rowKey(sids[1]!))).toBeVisible()
+    // the same keys from the buttons: Cancel closes the box, and its Escape reaches no listener on the document
+    await act(page, rowKey(sids[1]!), 'Message')
+    await page.locator('#image-panel .coord-compose-actions .coord-btn', { hasText: 'Cancel' }).focus()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
+    expect(await page.evaluate(() => (window as unknown as { __escapes?: number }).__escapes)).toBeUndefined()
+    // and Send, with a task in the box, closes it on Escape too, without sending
+    await act(page, rowKey(sids[1]!), 'Message')
+    await field.fill('Fix the parser.')
+    await page.locator('#image-panel .coord-compose-actions .coord-btn', { hasText: 'Send' }).focus()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
+    expect(await page.evaluate(() => (window as unknown as { __escapes?: number }).__escapes)).toBeUndefined()
     expect(await page.evaluate((id) => window.__ct!.ptyInput!(id), t0)).toBe(before)
   } finally { await l.app.close() }
 })
@@ -340,5 +364,73 @@ test('Detach on a starting row cancels the start', async () => {
     expect(await startSession(pipeName, newTab, sid)).toEqual({ ok: true })
     await expect.poll(async () => (await marksOf(page))[newTab], { timeout: 3_000 }).toBeUndefined()
     await stillWaiting(waitForMail(pipeName, newTab, sid), 3_000)
+  } finally { await l.app.close() }
+})
+
+test('the Message box closes when another tab comes to the front', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Message')
+    await page.locator('#image-panel .coord-compose-field').fill('Fix the parser.')
+    await expect(page.locator('#image-panel .coord-compose')).toBeVisible()
+    await activate(page, t1)
+    await activate(page, t0)
+    await openSessions(page)
+    await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
+    await expect(sessionRow(page, rowKey(sids[1]))).toBeVisible()
+  } finally { await l.app.close() }
+})
+
+test('the Message box closes when its row leaves the coordinator', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Message')
+    await page.locator('#image-panel .coord-compose-field').fill('Fix the parser.')
+    await expect(page.locator('#image-panel .coord-compose')).toBeVisible()
+    expect(await page.evaluate(([t, k]) => window.ct.coordDetach(t, k), [t0, rowKey(sids[1])] as const)).toMatchObject({ ok: true })
+    await expect(sessionGroup(page, 'not-attached').locator(`.coord-row[data-key="${rowKey(sids[1])}"]`)).toHaveCount(1)
+    await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
+  } finally { await l.app.close() }
+})
+
+test('a task is sent once: an Enter while the first one is on its way sends nothing', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    const first = waitForMail(pipeName, t1, sids[1]!)
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Message')
+    const field = page.locator('#image-panel .coord-compose-field')
+    await field.fill('Fix the parser.')
+    // Enter, typing again and Enter, in one turn of the page: no answer can come in between
+    await field.evaluate((el: HTMLTextAreaElement) => {
+      const enter = (): void => { el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) }
+      enter()
+      el.value = 'Fix the parser. Again.'
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      enter()
+    })
+    const got = await within(first, 10_000)
+    expect(got.info).toContain('> Fix the parser.')
+    expect(got.info).not.toContain('Again.')
+    await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
+    // the turn that the first task starts ends: a second task queued behind it would be given now
+    const second = waitForMail(pipeName, t1, sids[1]!)
+    await turnOf(pipeName, t1, sids[1]!)
+    await done(pipeName, t1, sids[1]!)
+    await stillWaiting(second, 3_000)
   } finally { await l.app.close() }
 })

@@ -16,6 +16,8 @@ export interface SessionsPanelCallbacks {
   message(coordinatorTabId: string, key: string, text: string): Promise<string | null>
 }
 
+const SEND_FAILED = 'The task could not be sent.'
+
 const EMPTY = 'No sessions yet. Start one with New session, attach one with Attach…, or drop a tab here.'
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
@@ -43,6 +45,8 @@ export class SessionsPanel {
   private readonly field = document.createElement('textarea')
   private readonly composeError = el('div', 'coord-compose-error')
   private readonly send = el('button', 'coord-btn acc', 'Send')
+  // a task is on its way to the hub: no other is sent until its answer comes
+  private sending = false
 
   constructor(body: HTMLElement, private readonly panel: SidePanel, private readonly cb: SessionsPanelCallbacks) {
     const link = el('button', 'coord-link', 'Open Settings')
@@ -199,16 +203,19 @@ export class SessionsPanel {
     this.field.maxLength = COORD_TASK_MAX
     this.field.addEventListener('input', () => {
       this.composeError.textContent = ''
-      this.send.disabled = this.field.value.trim() === ''
+      this.syncSend()
     })
+    // Enter sends, Shift+Enter is a new line
     this.field.addEventListener('keydown', (e) => {
-      // the box keeps its keys: an Escape here closes the box and does not reach the panel or the tab behind it
-      e.stopPropagation()
-      if (e.key === 'Escape') this.closeCompose()
-      else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault()
         void this.sendCompose()
       }
+    })
+    // the box keeps its keys, whichever of its controls has the focus: an Escape closes the box and does not reach the panel or the tab behind it
+    this.composeBox.addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Escape') this.closeCompose()
     })
     const cancel = el('button', 'coord-btn ghost', 'Cancel')
     cancel.type = 'button'
@@ -221,13 +228,18 @@ export class SessionsPanel {
     this.composeBox.append(this.composeHead, this.field, this.composeError, actions)
   }
 
+  /** Send is off while the text is blank and while a task is on its way */
+  private syncSend(): void {
+    this.send.disabled = this.sending || this.field.value.trim() === ''
+  }
+
   private openCompose(r: CoordSessionRow): void {
     if (this.view === null) return
     this.compose = { tabId: this.view.tabId, key: r.key }
     this.composeHead.textContent = `Task for ${labelOf(r.name)}`
     this.field.value = ''
     this.composeError.textContent = ''
-    this.send.disabled = true
+    this.syncSend()
     this.composeBox.hidden = false
     this.field.focus()
   }
@@ -236,17 +248,25 @@ export class SessionsPanel {
     this.compose = null
     this.field.value = ''
     this.composeError.textContent = ''
-    this.send.disabled = true
+    this.syncSend()
     this.composeBox.hidden = true
   }
 
   private async sendCompose(): Promise<void> {
     const c = this.compose
     const text = this.field.value
-    // a task on its way is not sent again by a second Enter
-    if (c === null || this.send.disabled || text.trim() === '') return
-    this.send.disabled = true
-    const why = await this.cb.message(c.tabId, c.key, text)
+    // a second Enter while the task is on its way sends nothing
+    if (c === null || this.sending || text.trim() === '') return
+    this.sending = true
+    this.syncSend()
+    let why: string | null
+    try {
+      why = await this.cb.message(c.tabId, c.key, text)
+    } catch {
+      why = SEND_FAILED
+    }
+    this.sending = false
+    this.syncSend()
     // the box was closed, or opened for another row, while the answer came
     if (this.compose !== c) return
     if (why === null) {
@@ -254,7 +274,6 @@ export class SessionsPanel {
       return
     }
     this.composeError.textContent = why
-    this.send.disabled = this.field.value.trim() === ''
   }
 
   private icon(kind: RowIcon): HTMLElement {
