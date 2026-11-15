@@ -46,6 +46,7 @@ test('a project group shows + Coordinator between its name and its count, ● Co
       before: h.querySelector('.tp-coord-chip')!.previousElementSibling!.className,
       last: h.lastElementChild!.className
     }))).toEqual({ before: 'tp-group-name', last: 'tp-group-count' })
+    await expect(groupNamed(page, 'No project')).toHaveCount(1)
     await expect(groupNamed(page, 'No project').locator('.tp-coord-chip')).toHaveCount(0)
     expect(await page.evaluate(() => window.ct.coordStartCoordinator('no-such-tab'))).toEqual({ ok: false, error: COORD_REFUSED })
     expect(await page.evaluate((id) => window.ct.coordStartCoordinator(id), plain)).toEqual({ ok: false, error: COORD_REFUSED })
@@ -158,7 +159,6 @@ test('a tab closed before its session starts leaves no coordinator and no toast,
     const first = await openedSince(page, before)
     await page.evaluate((id) => window.ct.closeTab(id), first)
     await expect.poll(() => tabOrder(page)).toEqual(before)
-    await page.waitForTimeout(500)
     expect(Object.values(await marksOf(page)).filter((m) => m.role === 'coordinator')).toEqual([])
     await expect(chip).toHaveClass(/\bstart\b/)
     await expect(refusal(page)).toHaveCount(0)
