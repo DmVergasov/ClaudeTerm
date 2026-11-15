@@ -356,7 +356,7 @@ export interface CtApi {
   /** makes the tab the coordinator of its project; replace moves the project's coordinator to this tab */
   coordMake(tabId: string, replace: boolean): Promise<CoordResult>
   coordStop(tabId: string): Promise<CoordResult>
-  /** attaches the session of another local tab to the coordinator */
+  /** attaches the session of another local tab, or of a paired device's tab, to the coordinator */
   coordAttach(tabId: string, sessionTabId: string): Promise<CoordResult>
   /** the session of a tab leaves the coordinator it is attached to, on this device or another */
   coordLeave(tabId: string): Promise<CoordResult>

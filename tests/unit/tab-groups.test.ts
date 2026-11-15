@@ -305,6 +305,11 @@ describe('coordinator blocks', () => {
       expect(dropAttaches(row('K', { coord: { role: 'coordinator', project: 'beta', sessions: 0, waiting: 0 } }), row('C'))).toBe(false)
       expect(dropAttaches(row('X'), row('C'))).toBe(true)
     })
+    it('a tab dropped on the coordinator it is already attached to does nothing; one attached to another coordinator is asked for', () => {
+      const attachedTo = (coordinatorTabId: string): CoordMark => ({ role: 'attached', project: 'acme', coordinator: 'coord · Desktop', coordinatorTabId })
+      expect(dropAttaches(row('R1', { local: false, coord: attachedTo('C') }), row('C'))).toBe(false)
+      expect(dropAttaches(row('R1', { local: false, coord: attachedTo('K') }), row('C'))).toBe(true)
+    })
     it('an attached row detached out of a block built by hand leaves the block for the row it is dropped on', () => {
       const hand: PanelGroup[] = [{ key: acme.project.key, project: acme.project, rows: [
         { id: 'C', fork: false, block: 'C' },

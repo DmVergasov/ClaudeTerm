@@ -17,13 +17,13 @@ export interface CoordMenuInput {
 export type CoordMenuAction = { kind: 'detach' } | { kind: 'stop' } | { kind: 'make' } | { kind: 'attach'; coordinatorTabId: string }
 
 /**
- * The coordinator items of a Claude tab's context menu, the first rule that applies: an attached tab detaches; a local
+ * The coordinator items of a Claude tab's context menu, the first rule that applies: an attached tab detaches (a paired device's tab only when its coordinator has a tab here); a local
  * coordinator stops; otherwise each coordinator of this device is offered (its project's first, names compared without case),
  * and a local tab with a project offers Make project coordinator after them. A paired device's tab never makes or stops a
  * coordinator: a coordinator is used from its own device's window.
  */
 export function coordMenuEntries(i: CoordMenuInput): { label: string; disabled: boolean; action: CoordMenuAction }[] {
-  if (i.mark?.role === 'attached') return [{ label: `Detach from the ${i.mark.project} coordinator`, disabled: false, action: { kind: 'detach' } }]
+  if (i.mark?.role === 'attached') return i.remote && i.mark.coordinatorTabId === null ? [] : [{ label: `Detach from the ${i.mark.project} coordinator`, disabled: false, action: { kind: 'detach' } }]
   if (i.mark?.role === 'coordinator') return i.remote ? [] : [{ label: 'Stop coordinating', disabled: false, action: { kind: 'stop' } }]
 
   const sameProject = (project: string): boolean => i.project !== null && project.toLowerCase() === i.project.toLowerCase()

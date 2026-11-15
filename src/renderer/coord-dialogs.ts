@@ -27,7 +27,6 @@ export function openNewSessionDialog(o: { folder: string; project: string; paire
   const chosenDevice = (): string | null => (device === null ? null : (devices[Number(device.value)]?.device ?? null))
   // the folder's placeholder follows the device chosen: this device's folder, or what an empty folder means on that device
   device?.addEventListener('change', () => {
-
     folder.placeholder = folderPlaceholder({ project: o.project, device: chosenDevice(), folder: o.folder })
   })
   // once the dialog is closed, a refusal main answers later is told as a toast

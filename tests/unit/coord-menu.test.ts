@@ -9,12 +9,12 @@ const attachedTo = (coordinatorTabId: string | null): CoordMark => ({ role: 'att
 const local = (o: Partial<CoordMenuInput> = {}): CoordMenuInput => ({ remote: false, hasSession: true, hasProject: true, project: 'acme', mark: null, coordinators: [], ...o })
 
 describe('the tab menu\'s coordinator items', () => {
-  it('an attached tab, local or remote, with its coordinator or without one, gets only Detach from the coordinator\'s project', () => {
+  it('an attached tab with its coordinator here gets only Detach from the coordinator\'s project; a paired device\'s tab whose coordinator has no tab here gets no Detach', () => {
     const detach = [{ label: 'Detach from the acme coordinator', disabled: false, action: { kind: 'detach' } }]
 
     expect(coordMenuEntries(local({ mark: attachedTo('C') }))).toEqual(detach)
     expect(coordMenuEntries(local({ remote: true, hasProject: false, project: null, mark: attachedTo('C') }))).toEqual(detach)
-    expect(coordMenuEntries(local({ remote: true, hasProject: false, project: null, mark: attachedTo(null) }))).toEqual(detach)
+    expect(coordMenuEntries(local({ remote: true, hasProject: false, project: null, mark: attachedTo(null) }))).toEqual([])
   })
 
   it('a local coordinator gets only Stop coordinating, and a remote coordinator gets nothing', () => {

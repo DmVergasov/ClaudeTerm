@@ -48,6 +48,7 @@ import { FolderDialog } from './folder-dialog'
 import { confirmDialog } from './coord-dialog'
 import { openAttachDialog, openNewSessionDialog } from './coord-dialogs'
 import { attachChoices, cardRow, type AttachTab } from './sessions-model'
+import { attachTabsOf, type AttachableTab, canAttachTo } from './attach-tabs'
 import { TitleBar } from './title-bar'
 import { applyTheme } from './app-theme'
 import { limitMeters } from './limit-meters'
@@ -1330,11 +1331,6 @@ function toastFailure(r: CoordResult): void {
   if (!r.ok) showToast(r.error)
 }
 
-/** a tab dropped on a coordinator's Sessions panel attaches when it is a Claude tab other than the coordinator, of this device or a paired one: the hub decides */
-function canAttachTo(coordinatorTabId: string, tabId: string): boolean {
-  const t = tabs.get(tabId)
-  return tabId !== coordinatorTabId && !!t && t.info.kind === 'claude'
-}
 
 /** the row a report card names, in this coordinator's view (cardRow says which); a toast says so when there is none */
 async function reportRow(coordinatorTabId: string, ref: string, name: string, forOpen: boolean): Promise<CoordSessionRow | null> {
@@ -1358,15 +1354,23 @@ async function resolveReportSession(coordinatorTabId: string, ref: string, name:
   if (row !== null) void ct.coordResolve(coordinatorTabId, row.key).then(toastFailure)
 }
 
-/** every tab as Attach… reads it: a Claude tab's session, its folder and its branch */
+/** every tab as Attach… reads it: see attachTabsOf */
 function attachTabs(): AttachTab[] {
-  return order.flatMap((id): AttachTab[] => {
+  return attachTabsOf(order.flatMap((id): AttachableTab[] => {
     const t = tabs.get(id)
-    // a paired device's tab is offered while its device is online: an offline device's tabs take no input, and nothing can attach there
-    if (!t || !writable(t)) return []
-    const device = t.info.remote ? (remoteDeviceOf(t.info.remote.device)?.name ?? t.info.remote.device) : null
-    return [{ id, title: titleOf(t), claude: t.info.kind === 'claude', device, session: t.info.claudeSessionId, exited: t.info.exited, folder: t.info.folder, branch: places.get(id)?.branch ?? null }]
-  })
+    if (!t) return []
+    const remote = t.info.remote
+    return [{
+      id,
+      title: titleOf(t),
+      kind: t.info.kind,
+      claudeSessionId: t.info.claudeSessionId,
+      exited: t.info.exited,
+      folder: t.info.folder,
+      branch: places.get(id)?.branch ?? null,
+      device: remote ? { name: remoteDeviceOf(remote.device)?.name ?? remote.device, online: isOnline(remote.device) } : null
+    }]
+  }))
 }
 
 /** Detach of an attached tab (its menu, its header, a drag out of its block): a tab of this device leaves through coordLeave; a paired device's session is the coordinator's row, which the view names */
@@ -1875,10 +1879,10 @@ async function boot(): Promise<void> {
       choices: attachChoices(attachTabs(), coordinatorTabId, coordMarks),
       attach: (tabId) => ct.coordAttach(coordinatorTabId, tabId)
     }),
-    // a local Claude tab dropped on the panel is attached; another tab, or the coordinator itself, does nothing here
-    canAttach: canAttachTo,
+    // a Claude tab dropped on the panel is attached, of this device or a paired one; another tab, or the coordinator itself, does nothing here
+    canAttach: (coordinatorTabId, tabId) => canAttachTo(coordinatorTabId, tabId, tabs.get(tabId)?.info),
     dropTab: (coordinatorTabId, tabId) => {
-      if (canAttachTo(coordinatorTabId, tabId)) void ct.coordAttach(coordinatorTabId, tabId).then(toastFailure)
+      if (canAttachTo(coordinatorTabId, tabId, tabs.get(tabId)?.info)) void ct.coordAttach(coordinatorTabId, tabId).then(toastFailure)
     },
     focus: () => { if (activeId) focusTab(activeId) }
   })
