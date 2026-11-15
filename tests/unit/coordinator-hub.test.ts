@@ -1429,4 +1429,42 @@ describe("the chip's coordinator start", () => {
     expect(w.openedCoordinators).toHaveLength(2)
     expect(w.tabs.map((t) => t.tabId)).toContain('chip-tab-2')
   })
+
+  it('a start whose folder lookup is still running when the hub is disposed opens no tab and answers null', async () => {
+    const w = world()
+    const answer = w.hub.startCoordinator(ACME.key, WT)
+    w.hub.dispose()
+    expect(await answer).toBeNull()
+    await tick()
+    expect(w.openedCoordinators).toEqual([])
+  })
+
+  it('a start waiting for its session answers null when the hub is disposed', async () => {
+    const w = world()
+    const answer = w.hub.startCoordinator(ACME.key, WT)
+    await tick()
+    expect(w.openedCoordinators).toHaveLength(1)
+    w.hub.dispose()
+    expect(await answer).toBeNull()
+  })
+
+  it("a tab whose project is not the started project is not made the coordinator: its start answers null and the tab stays ordinary", async () => {
+    const w = world()
+    const answer = w.hub.startCoordinator(ACME.key, WT)
+    await tick()
+    update(w, 'chip-tab-1', { session: S_CHIP, project: BETA })
+    w.hub.tabSession('chip-tab-1', S_CHIP)
+    expect(await answer).toBeNull()
+    expect(w.store.coordinators()).toEqual([])
+    expect(w.hub.isCoordinator('chip-tab-1')).toBe(false)
+  })
+
+  it('at the coordinator limit a start is refused before it opens a tab', async () => {
+    const w = world()
+    for (let i = 0; i < MAX_COORDINATORS; i++) {
+      w.store.putCoordinator({ session: uid(0x30000 + i), project: { key: `/q/${i}`, name: `q${i}` }, since: NOW, attachments: [], former: [] })
+    }
+    expect(await w.hub.startCoordinator(ACME.key, WT)).toEqual({ ok: false, error: HUB_TEXT.fullCoordinators })
+    expect(w.openedCoordinators).toEqual([])
+  })
 })

@@ -324,10 +324,14 @@ export class CoordinatorHub {
       if (making.tabId !== null) this.d.activate(making.tabId)
       return null
     }
+    // at the limit the coordinator could not be made: no tab opens for it
+    if (this.d.store.coordinators().length >= MAX_COORDINATORS) return fail(HUB_TEXT.fullCoordinators)
     // the start is pending before the first await, so a second click meanwhile finds it
     const entry: PendingMake = { tabId: null, answer: null }
     this.makes.set(projectKey, entry)
     const cwd = (await this.d.mainFolder(folder).catch(() => null)) ?? folder
+    // disposed meanwhile: the start is gone, and no tab opens for it
+    if (this.makes.get(projectKey) !== entry) return null
     const tabId = this.d.openCoordinatorTab(cwd, projectKey)
     if (tabId === null) {
       this.makes.delete(projectKey)
@@ -353,6 +357,8 @@ export class CoordinatorHub {
     if (tab.exited) return this.endMake(tabId)
     if (tab.session === null || tab.project === null) return
     const [key, entry] = found
+    // the tab's place names another project: it stays an ordinary tab, and the start answers null
+    if (tab.project.key !== key) return this.endMake(tabId)
     this.makes.delete(key)
     entry.answer?.(this.make(tabId, false))
   }
@@ -918,6 +924,8 @@ export class CoordinatorHub {
 
   dispose(): void {
     this.unsubscribe()
+    // every pending start answers now: no caller is left waiting on a tab that will not be settled
+    for (const m of this.makes.values()) m.answer?.(null)
     this.makes.clear()
     for (const cancel of this.settle.values()) cancel()
     this.settle.clear()

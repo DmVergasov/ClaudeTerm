@@ -737,6 +737,16 @@ describe('TabManager forks', () => {
     expect(log.filter((l) => l.startsWith('order:'))).toEqual([])
   })
 
+  it('a fork given a tab to stand before still stands right after its family', () => {
+    const { tm, log } = forkSetup()
+    const A = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A })
+    const B = tm.open({ kind: 'claude', cwd: 'D:\\y' })
+    const C = tm.open({ kind: 'claude', cwd: 'D:\\z' })
+    const F = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, fork: { of: A.id, from: SID_A } }, { before: C.id, activate: false })
+    expect(tm.list().map((t) => t.id)).toEqual([A.id, F.id, B.id, C.id])
+    expect(log).toContain(`order:${A.id},${F.id},${B.id},${C.id}`)
+  })
+
   it('fork opens a Claude tab in the parent folder and account, with no session id, launched to fork the parent conversation', async () => {
     const { tm, resolveLaunch } = forkSetup()
     const parent = tm.open({ kind: 'claude', cwd: 'D:\\x', resumeSessionId: SID_A, account: 'work' })
