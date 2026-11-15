@@ -2261,9 +2261,14 @@ function bootstrap(): void {
     // a report handed to a tab is also its card in the chat, before the text of a prompt that carries it is sent
     handedOver: (tabId, taken, into) => {
       projectCoordinators.handedOver(tabId, taken, into)
-      for (const r of taken) {
-        const item = reportItemOf(r)
-        if (item) chatHub.reportCard(tabId, item)
+      // the cards are best effort: a failure here is logged, and the prompt or the wake goes on without them
+      try {
+        for (const r of taken) {
+          const item = reportItemOf(r)
+          if (item) chatHub.reportCard(tabId, item)
+        }
+      } catch (e) {
+        log.warn(`Cannot show the report cards of a tab: ${e instanceof Error ? e.message : String(e)}`)
       }
     },
     onUnread: () => {

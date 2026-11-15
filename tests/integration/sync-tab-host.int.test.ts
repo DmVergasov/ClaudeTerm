@@ -583,6 +583,43 @@ describe('tab host: members of two app versions', () => {
     await closeLinkPairs()
   })
 
+  it('a member before 0.22.0 gets a report as a notice, a member from 0.22.0 gets the report item', async () => {
+    const BEFORE = 'b0000000-0000-4000-8000-000000000004'
+    const FROM_22 = 'b0000000-0000-4000-8000-000000000005'
+    const fake = fakeTabs()
+    fake.entries = [tab(T1)]
+    const report: ChatItem = { kind: 'report', id: 'report:m1', mailId: 'm1', name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, at: 5, text: 'Parser fixed.' }
+    const notice1: ChatItem = { kind: 'notice', id: 'report:m1', tone: 'info', text: 'Report from parser · Desktop: finished\n\nParser fixed.', action: null }
+    const state = { turn: 'idle', turnStartedAt: null, mode: 'default', model: null, effort: null, sessionId: null, exited: false }
+    fake.pushList = [{ k: 'chat', v: { tabId: T1, rev: 0, items: [report], hasOlder: false, state } }]
+    const host = new TabHost({ tabs: fake, mirrors: noopMirrors(), forOlder: olderChatPush })
+    const before = await linkPair()
+    const from22 = await linkPair()
+    const gotBefore: Message[] = []
+    const got22: Message[] = []
+    before.client.on('message', (m: Message) => gotBefore.push(m))
+    from22.client.on('message', (m: Message) => got22.push(m))
+    new Calls(before.server, host.handlers(BEFORE))
+    new Calls(from22.server, host.handlers(FROM_22))
+    host.addPeer(before.server, BEFORE, '0.21.0')
+    host.addPeer(from22.server, FROM_22, '0.22.0')
+    host.opened(T1, 40, 10, 1000)
+    await new Calls(before.client, {}).call('attach', { id: T1 })
+    await new Calls(from22.client, {}).call('attach', { id: T1 })
+    host.push(T1, 'chat-patch', { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: report }] })
+    const pushes = (got: Message[]): Message[] => got.filter((m) => m.t === 'push')
+    await until(() => pushes(gotBefore).length === 2 && pushes(got22).length === 2)
+    expect(pushes(gotBefore)).toEqual([
+      { t: 'push', id: T1, k: 'chat', v: { tabId: T1, rev: 0, items: [notice1], hasOlder: false, state } },
+      { t: 'push', id: T1, k: 'chat-patch', v: { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: notice1 }] } }
+    ])
+    expect(pushes(got22)).toEqual([
+      { t: 'push', id: T1, k: 'chat', v: { tabId: T1, rev: 0, items: [report], hasOlder: false, state } },
+      { t: 'push', id: T1, k: 'chat-patch', v: { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: report }] } }
+    ])
+    host.dispose()
+  })
+
   it('an older member gets forwards as notices, a newer one as forwards', async () => {
     const OLDER = 'b0000000-0000-4000-8000-000000000002'
     const NEWER = 'b0000000-0000-4000-8000-000000000003'

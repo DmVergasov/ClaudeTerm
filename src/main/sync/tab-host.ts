@@ -34,8 +34,8 @@ export interface TabHostDeps {
   onWatchers?(): void
   /** a push the member's link refused (send returned false): the tab and the kind of the push */
   onPushRefused?(tabId: string, k: PushKind): void
-  /** the value a member of an older app gets for a push of this kind (the attach pushes and the live ones alike); left out, a push goes as it is */
-  forOlder?(k: PushKind, v: unknown): unknown
+  /** the value a member gets for a push of this kind, by its app (null for an older device): the attach pushes and the live ones alike; left out, a push goes as it is */
+  forOlder?(k: PushKind, v: unknown, app: string | null): unknown
 }
 
 /** a member of the group, linked on one link; `watching`: the tabs it is attached to; `app`: its app version, null for an older device */
@@ -320,8 +320,8 @@ export class TabHost {
    * parts of a newer review take the place of an older review's unsent parts; the other kinds are sent at once.
    */
   private pushTo(member: Member, id: string, k: PushKind, value: unknown): void {
-    // an older member has no kind of its own for some pushes: its value is the one the older app shows
-    const v = member.app === null && this.deps.forOlder ? this.deps.forOlder(k, value) : value
+    // an older app has no kind of its own for some pushes: its value is the one that app shows
+    const v = this.deps.forOlder ? this.deps.forOlder(k, value, member.app) : value
     const m: Message = { t: 'push', id, k, v }
     let sent: boolean
     if (k === 'review') sent = member.link.sendBulk(m, `push:review:${id}`)

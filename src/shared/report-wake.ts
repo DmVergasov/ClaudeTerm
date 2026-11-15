@@ -33,10 +33,8 @@ interface Block {
 
 /** the outcome of a report's head line, after REPORT_WAKE_HEAD: " its task finished." and so on */
 const REPORT_HEAD = /^ its task (finished|failed|was stopped by the user)(?:: (.+))?\.$/
-/** the from line: the name, then the ref in brackets, then the folder and branch in brackets when known */
-const FROM = /^from: (.*) \[([^[\]]+)\](?: \(.*\))?$/
-/** the id line of a report: the mail id, then the task it reports on and the session it names */
-const REPORT_ID = /^id: (\S+)  \(the report on task \S+; read_session "[^"]*" shows the session\)$/
+/** the id line of a report: the mail id, the task it reports on, and the ref of the session it names */
+const REPORT_ID = /^id: (\S+)  \(the report on task \S+; read_session "([^"]*)" shows the session\)$/
 
 /**
  * A wake text's report blocks, and its other blocks as the rest (joined by a blank line). A text that is not wholly wake blocks
@@ -91,21 +89,35 @@ function blocksOf(text: string): Block[] | null {
 
 /** a report block read: its head's outcome and reason, its from and id lines, and its quoted text; null when any of them is out of shape */
 function reportOf(b: Block): ReportWake | null {
+  // the head is read first: a block whose head is no report's does no more work on its other lines
   const head = REPORT_HEAD.exec(b.head.slice(REPORT_WAKE_HEAD.length))
-  const from = FROM.exec(b.from)
-  const id = REPORT_ID.exec(b.id)
-  if (head === null || from === null || id === null) return null
+  if (head === null) return null
   const outcome: ReportOutcome = head[1] === 'finished' ? 'finished' : head[1] === 'failed' ? 'failed' : 'stopped'
   // only a failed or a stopped report has a reason
   if (outcome === 'finished' && head[2] !== undefined) return null
+  const id = REPORT_ID.exec(b.id)
+  if (id === null) return null
+  const ref = id[2]!
   return {
     mailId: id[1]!,
-    name: from[1]!,
-    ref: from[2]!,
+    name: nameOf(b.from, ref),
+    ref,
     outcome,
     reason: head[2] ?? null,
     text: b.quoted.join('\n')
   }
+}
+
+/**
+ * The name of a from line (`from: <name> [<ref>]`, then the folder and branch in brackets when known): the text up to the ref in
+ * brackets, else up to the first parenthesis, else the rest. Plain string searches, so no line can make this slow.
+ */
+function nameOf(from: string, ref: string): string {
+  const body = from.slice('from: '.length)
+  const byRef = body.indexOf(` [${ref}]`)
+  if (byRef >= 0) return body.slice(0, byRef)
+  const paren = body.indexOf(' (')
+  return paren >= 0 ? body.slice(0, paren) : body
 }
 
 /** how a task ended, as a card says it: 'finished', 'failed: <reason>' ('failed' without one), 'stopped' */

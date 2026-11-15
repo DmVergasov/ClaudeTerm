@@ -3,6 +3,7 @@ import { MAIL_REASON_MAX, REPORT_OUTCOMES } from '../../shared/mail'
 import { outcomeText } from '../../shared/report-wake'
 import type { PushKind } from '../../shared/remote'
 import { isChatOrigin, isPermissionMode } from './chat-guards'
+import { versionAtLeast } from '../claude-version'
 import { cap, PAGE, SUBJECT_CAP } from './chat-model'
 
 // A chat as a member holds it, from the host's pushes. The host's pushes are checked here, the way the host's own
@@ -408,26 +409,39 @@ export function itemForOlder(item: ChatItem): ChatItem {
   }
 }
 
-/** a chat push as a member of an older app takes it: a snapshot's items and the items of its add, set and reset patches mapped by itemForOlder; any other push as it is */
-export function olderChatPush(k: PushKind, v: unknown): unknown {
+/** the first app with a report card: an app before it gets a report as a notice (its isItem refuses a report item) */
+export const REPORT_CARD_MIN_APP = '0.22.0'
+
+/**
+ * An item as a member of the app shows it: a member with no app (null) gets itemForOlder; a member of an app before REPORT_CARD_MIN_APP
+ * gets a report as its notice; any other item, for any other app, is returned as it is.
+ */
+export function itemForMember(item: ChatItem, app: string | null): ChatItem {
+  if (app === null) return itemForOlder(item)
+  if (item.kind === 'report' && !versionAtLeast(app, REPORT_CARD_MIN_APP)) return itemForOlder(item)
+  return item
+}
+
+/** a chat push as a member of the app takes it (itemForMember): a snapshot's items and the items of its add, set and reset patches; any other push as it is */
+export function olderChatPush(k: PushKind, v: unknown, app: string | null): unknown {
   if (k === 'chat') {
     const s = v as ChatSnapshot
-    return { ...s, items: s.items.map(itemForOlder) }
+    return { ...s, items: s.items.map((item) => itemForMember(item, app)) }
   }
   if (k === 'chat-patch') {
     const b = v as { fromRev: number; toRev: number; patches: ChatPatch[] }
-    return { ...b, patches: b.patches.map(olderPatch) }
+    return { ...b, patches: b.patches.map((p) => olderPatch(p, app)) }
   }
   return v
 }
 
-function olderPatch(p: ChatPatch): ChatPatch {
+function olderPatch(p: ChatPatch, app: string | null): ChatPatch {
   switch (p.op) {
     case 'add':
     case 'set':
-      return { ...p, item: itemForOlder(p.item) }
+      return { ...p, item: itemForMember(p.item, app) }
     case 'reset':
-      return { ...p, items: p.items.map(itemForOlder) }
+      return { ...p, items: p.items.map((item) => itemForMember(item, app)) }
     default:
       return p
   }

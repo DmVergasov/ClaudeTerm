@@ -8,5 +8,6 @@ import { refOf } from '../mail/agent-directory'
  */
 export function reportItemOf(r: MailRecord): Extract<ChatItem, { kind: 'report' }> | null {
   if (r.kind !== 'report' || r.outcome === undefined) return null
-  return { kind: 'report', id: `report:${r.id}`, mailId: r.id, name: r.from.name, ref: refOf(r.from.session), outcome: r.outcome, reason: r.reason ?? null, at: r.sentAt, text: r.text }
+  // the mirror takes a time as a whole number of milliseconds only: any other one is no time, not a chat it cannot mirror
+  return { kind: 'report', id: `report:${r.id}`, mailId: r.id, name: r.from.name, ref: refOf(r.from.session), outcome: r.outcome, reason: r.reason ?? null, at: Number.isSafeInteger(r.sentAt) ? r.sentAt : null, text: r.text }
 }

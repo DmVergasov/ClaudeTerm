@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { labelOf } from '../../src/renderer/util'
 import { REPORT_WAKE_HEAD } from '../../src/shared/report-wake'
 import type { CoordinatorView } from '../../src/shared/coordinator'
 import { gitRepo, KEYS, openTabInFront } from './helpers'
@@ -12,10 +13,29 @@ import { coord, done, makeCoordinator, turnOf, within } from './coordinator-help
 const CARD = '.chat-host:visible .coord-report'
 const chatOf = (page: Page, tabId: string) => page.evaluate((id) => window.ct.chatSnapshot(id), tabId)
 const viewOf = (page: Page, tabId: string): Promise<CoordinatorView | null> => page.evaluate((id) => window.ct.coordView(id), tabId)
-/** a session's label as the card names it: its name without the device after the last ' · ' */
-const labelOf = (name: string): string => (name.lastIndexOf(' · ') >= 0 ? name.slice(0, name.lastIndexOf(' · ')) : name)
 /** the number of ranges a CSS highlight of the page holds: 0 when the highlight is not set */
 const highlightCount = (page: Page, name: string): Promise<number> => page.evaluate((n) => CSS.highlights.get(n)?.size ?? 0, name)
+
+/**
+ * Installs in the page a promise on window[key] that resolves at the next push of coordinator tabId's view with no session (ref null), or
+ * with the session `ref` in it that has no tab. It is installed before the change it waits for: the page runs its calls in order. The
+ * window holds the view the card's buttons read, and main pushes it a moment after a change.
+ */
+async function watchView(page: Page, key: string, tabId: string, ref: string | null): Promise<void> {
+  await page.evaluate(([k, id, r]) => {
+    const w = window as unknown as Record<string, Promise<void>>
+    w[k] = new Promise<void>((resolve) => {
+      window.ct.onCoordView((tab, view) => {
+        if (tab !== id || view === null) return
+        const reached = r === null ? view.sessions.length === 0 : view.sessions.some((row) => row.ref === r && row.tabId === null)
+        if (reached) resolve()
+      })
+    })
+  }, [key, tabId, ref] as const)
+}
+
+/** the promise watchView installed on window[key] */
+const windowPush = (page: Page, key: string): Promise<void> => page.evaluate((k) => (window as unknown as Record<string, Promise<void>>)[k]!, key)
 
 /** a chat tab that has said hello: its session id, once its turn is idle */
 async function readyChat(page: Page, tabId: string): Promise<string> {
@@ -102,6 +122,9 @@ test('a report written as a prompt shows as its card, not as a message bubble', 
     await expect(card.locator('.coord-report-body')).toHaveText('Parser fixed.')
     await expect(card.locator('.coord-report-title')).toHaveText(/ · finished · \d\d:\d\d$/)
     await expect(page.locator('.chat-host:visible .chat-user', { hasText: REPORT_WAKE_HEAD })).toHaveCount(0)
+    // the wake's own row has no report left to draw: it is hidden, so the column has no gap under the card
+    await expect(page.locator('.chat-host:visible .coord-wake')).toHaveCount(1)
+    await expect(page.locator('.chat-host:visible .coord-wake')).toBeHidden()
   } finally {
     await l.app.close()
   }
@@ -145,11 +168,9 @@ test('a card whose session was detached since says it is no longer attached, and
   try {
     const label = labelOf((await viewOf(l.page, a))!.sessions[0]!.name)
     // the card's buttons read the view the window holds, which main pushes after the change: the click waits for that push
-    const pushed = l.page.evaluate((id) => new Promise<void>((resolve) => {
-      window.ct.onCoordView((tab, view) => { if (tab === id && view !== null && view.sessions.length === 0) resolve() })
-    }), a)
+    await watchView(l.page, 'viewPushed', a, null)
     expect(await coord(l.pipeName, a, { op: 'detach', session: refOf(sidB) })).toMatchObject({ ok: true })
-    await pushed
+    await within(windowPush(l.page, 'viewPushed'), 10_000)
 
     await l.page.locator(CARD).locator('button', { hasText: 'Open session' }).click()
     await expect(l.page.locator('.toast', { hasText: `${label} is no longer attached to this coordinator.` })).toBeVisible()
@@ -164,11 +185,9 @@ test('a card whose session has no open tab says so', async () => {
   try {
     const label = labelOf((await viewOf(l.page, a))!.sessions[0]!.name)
     // the closed tab's row stays in the view, with no tab: the window takes that view before the card's button reads it
-    const pushed = l.page.evaluate(([id, ref]) => new Promise<void>((resolve) => {
-      window.ct.onCoordView((tab, view) => { if (tab === id && view !== null && view.sessions.some((r) => r.ref === ref && r.tabId === null)) resolve() })
-    }), [a, refOf(sidB)] as const)
+    await watchView(l.page, 'viewPushed', a, refOf(sidB))
     await l.page.evaluate((id) => window.ct.closeTab(id), b)
-    await pushed
+    await within(windowPush(l.page, 'viewPushed'), 10_000)
 
     await activate(l.page, a)
     await l.page.locator(CARD).locator('button', { hasText: 'Open session' }).click()

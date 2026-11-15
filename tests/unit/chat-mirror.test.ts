@@ -547,21 +547,21 @@ describe('an older member gets a forward as a notice', () => {
   })
 
   it('olderChatPush maps the items of a snapshot and of the add, set and reset patches; other pushes pass as they are', () => {
-    expect(olderChatPush('chat', snapshot([forward()]))).toEqual(snapshot([notice1]))
+    expect(olderChatPush('chat', snapshot([forward()]), null)).toEqual(snapshot([notice1]))
     const batch = { fromRev: 0, toRev: 4, patches: [{ op: 'add', item: forward() }, { op: 'set', item: forward() }, { op: 'reset', items: [forward()], hasOlder: false }, { op: 'remove', id: 'f1' }] }
-    expect(olderChatPush('chat-patch', batch)).toEqual({
+    expect(olderChatPush('chat-patch', batch, null)).toEqual({
       fromRev: 0,
       toRev: 4,
       patches: [{ op: 'add', item: notice1 }, { op: 'set', item: notice1 }, { op: 'reset', items: [notice1], hasOlder: false }, { op: 'remove', id: 'f1' }]
     })
     const other = { tabId: TAB, agentId: 'agent-1' }
-    expect(olderChatPush('chat-agent', other)).toBe(other)
+    expect(olderChatPush('chat-agent', other, null)).toBe(other)
   })
 
   it("a forward whose first line is over the notice's cap still gives a notice the older member accepts", () => {
     const long: ChatItem = { kind: 'forward', id: 'f2', agentId: 'agent-1', label: 'Reviewer', text: 'x'.repeat(70 * 1024), state: 'delivered', reason: null }
     const prompt: ChatItem = { kind: 'prompt', id: 'p2', text: 'y'.repeat(70 * 1024), first: true }
-    expect(parseChatPush(olderChatPush('chat', snapshot([long, prompt])))).not.toBeNull()
+    expect(parseChatPush(olderChatPush('chat', snapshot([long, prompt]), null))).not.toBeNull()
   })
 })
 
@@ -586,7 +586,41 @@ describe("a report's card: the mirror checks its item, a member draws it as it i
   })
 })
 
+describe('a report reaches an app before 0.22.0 as a notice, and from 0.22.0 as the item', () => {
+  const report: ChatItem = { kind: 'report', id: 'report:m1', mailId: 'm1', name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, at: 5, text: 'Parser fixed.' }
+  const reportNotice: ChatItem = { kind: 'notice', id: 'report:m1', tone: 'info', text: 'Report from parser · Desktop: finished\n\nParser fixed.', action: null }
+
+  it('a snapshot and a patch of an app before 0.22.0 carry the notice; 0.22.0 and later carry the item', () => {
+    expect(olderChatPush('chat', snapshot([report]), '0.21.0')).toEqual(snapshot([reportNotice]))
+    expect(olderChatPush('chat', snapshot([report]), '0.22.0')).toEqual(snapshot([report]))
+    const batch = { fromRev: 0, toRev: 1, patches: [{ op: 'add', item: report }] }
+    expect(olderChatPush('chat-patch', batch, '0.21.0')).toEqual({ fromRev: 0, toRev: 1, patches: [{ op: 'add', item: reportNotice }] })
+    expect(olderChatPush('chat-patch', batch, '0.22.0')).toEqual(batch)
+  })
+
+  it('an app with no version is an older app: a report is a notice, and a forward or prompt too', () => {
+    const forward: ChatItem = { kind: 'forward', id: 'f1', agentId: 'agent-1', label: 'Reviewer', text: 'Check the parser', state: 'delivered', reason: null }
+    expect(olderChatPush('chat', snapshot([report, forward]), null)).toEqual(snapshot([reportNotice, { kind: 'notice', id: 'f1', tone: 'info', text: '↗ To Reviewer: Check the parser', action: null }]))
+    // a forward of an app before 0.22.0 is as it was: only a report changes for the older apps that have forwards
+    expect(olderChatPush('chat', snapshot([forward]), '0.21.0')).toEqual(snapshot([forward]))
+  })
+})
+
 describe('chat-older to an older member', () => {
+  it('chat-older gives a report to an app before 0.22.0 as a notice, and to 0.22.0 as the item', () => {
+    const f = fakeHost()
+    f.infos.set(T1, tabInfo(T1, { view: 'chat' }))
+    const report: ChatItem = { kind: 'report', id: 'report:m1', mailId: 'm1', name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, at: 5, text: 'Parser fixed.' }
+    f.ctx.chat = { older: () => ({ items: [report], hasOlder: false }) } as unknown as HostChat
+    const reportNotice: ChatItem = { kind: 'notice', id: 'report:m1', tone: 'info', text: 'Report from parser · Desktop: finished\n\nParser fixed.', action: null }
+    f.ctx.memberApp = () => '0.21.0'
+    expect(hostHandlers(f.ctx, B_ID)['chat-older']!.run({ id: T1, beforeId: 'x' })).toEqual({ items: [reportNotice], hasOlder: false })
+    f.ctx.memberApp = () => '0.22.0'
+    expect(hostHandlers(f.ctx, B_ID)['chat-older']!.run({ id: T1, beforeId: 'x' })).toEqual({ items: [report], hasOlder: false })
+    f.ctx.memberApp = () => null
+    expect(hostHandlers(f.ctx, B_ID)['chat-older']!.run({ id: T1, beforeId: 'x' })).toEqual({ items: [reportNotice], hasOlder: false })
+  })
+
   it('chat-older answers an older member with notices, and a newer one with forwards', () => {
     const f = fakeHost()
     f.infos.set(T1, tabInfo(T1, { view: 'chat' }))

@@ -16,4 +16,9 @@ describe('reportItemOf', () => {
     expect(reportItemOf(report({ kind: 'task', outcome: undefined }))).toBeNull()
     expect(reportItemOf(report({ kind: undefined, outcome: undefined }))).toBeNull()
   })
+
+  it('a time that is not a whole number of milliseconds is no time: the mirror would refuse the whole chat', () => {
+    expect(reportItemOf(report({ sentAt: 5.5 }))).toMatchObject({ at: null })
+    expect(reportItemOf(report({ sentAt: 7 }))).toMatchObject({ at: 7 })
+  })
 })

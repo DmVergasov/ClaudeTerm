@@ -9,7 +9,7 @@ import { MAX_HASH, type ReviewCounter, type ReviewUpdate } from '../shared/revie
 import type { PlanUpdate } from '../shared/ipc'
 import type { RecentSession, TabInfo, TabPlace } from '../shared/types'
 import type { AccountView } from '../shared/accounts'
-import { capItems, capSnapshot, itemForOlder, MAX_CHAT_PATCHES } from './chat/chat-mirror'
+import { capItems, capSnapshot, itemForMember, MAX_CHAT_PATCHES } from './chat/chat-mirror'
 import type { ImageHub } from './image-hub'
 import { isAbsPath, isHash } from './ipc-guards'
 import { pathKey } from './path-key'
@@ -466,9 +466,9 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
         const { args, chat } = chatCall(ctx, CALL_ARGS['chat-older'](a), true)
         const page = chat.older(args.id, args.beforeId)
         if (!page) throw new CallError(NOT_CHAT)
-        // an older member has no forward or prompt: its page carries them as notices
-        const older = ctx.memberApp?.(device) === null
-        return cutPage(older ? { ...page, items: page.items.map(itemForOlder) } : page)
+        // a member's page carries what its app does not show as notices: a forward or prompt for an app with none, a report for an app before the report card
+        const app = ctx.memberApp?.(device)
+        return cutPage(app === undefined ? page : { ...page, items: page.items.map((item) => itemForMember(item, app)) })
       }
     },
     // an agent's page: the newest items of it, as the window of a member gets it; a page is read-only here

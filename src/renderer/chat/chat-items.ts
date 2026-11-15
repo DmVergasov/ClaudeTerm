@@ -156,6 +156,8 @@ function userItem(item: Extract<ChatItem, { kind: 'user' }>, cb: ItemCallbacks):
     wake.append(reportCard({ mailId: r.mailId, name: r.name, ref: r.ref, outcome: r.outcome, reason: r.reason, at: null, text: r.text }, cb))
   }
   if (rest !== '' || item.attachments.length > 0 || item.queued) wake.append(row)
+  // a wake whose reports the column holds, and whose rest is empty, is no row: it is hidden, so it leaves no gap in the column
+  wake.hidden = wake.childElementCount === 0
   return wake
 }
 

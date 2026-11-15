@@ -2519,3 +2519,5 @@ button.chat-event-head:hover .chat-event-title {
 .coord-report .chat-step-state.stopped { color: var(--text-3); }
 .coord-report[data-outcome="failed"] { border-color: color-mix(in srgb, var(--red) 40%, var(--line)); }
 .coord-report-body { padding: 8px 12px 10px; border-top: 1px solid var(--line); color: var(--text-2); font-size: 13px; line-height: 1.5; }
+/* a wake with no card left to draw is hidden: .chat-item's own display would show it */
+.chat-item.coord-wake[hidden] { display: none; }

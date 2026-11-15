@@ -39,6 +39,33 @@ describe('splitWake reads the report blocks of a wake text', () => {
   })
 })
 
+describe('splitWake reads a report of any shape in linear time', () => {
+  const ID = `id: 0b9a7c1e-2d3f-4a5b-8c6d-7e8f9a0b1c2d  (the report on task 1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f; read_session "a10000" shows the session)`
+
+  it('a from line of a million characters is read in time, with no backtracking over its brackets', () => {
+    const text = [`${REPORT_WAKE_HEAD} its task finished.`, `from: parser${' [a] ('.repeat(200_000)}`, ID, '', '> Parser fixed.'].join('\n')
+    const started = performance.now()
+    const split = splitWake(text)
+    expect(performance.now() - started).toBeLessThan(200)
+    expect(split.reports).toHaveLength(1)
+    expect(split.reports[0]).toMatchObject({ ref: 'a10000', outcome: 'finished', text: 'Parser fixed.' })
+  })
+
+  it('a folder that holds a bracket and a parenthesis is not read as the ref', () => {
+    const text = wakeText([report({})], () => ({ folder: 'D:\\Work\\acme [v2] (copy)', branch: 'main' }))
+    expect(splitWake(text).reports[0]).toMatchObject({ name: 'parser · Desktop', ref: 'a10000', text: 'Parser fixed.' })
+  })
+
+  it('a long text that is no wake is read in time, and stays the rest', () => {
+    const long = `Report from a session attached to you, through ClaudeTerm: its task finished.\nfrom: x${' [a] ('.repeat(200_000)}`
+    const started = performance.now()
+    expect(splitWake(long)).toEqual({ reports: [], rest: long })
+    expect(performance.now() - started).toBeLessThan(200)
+    const plain = 'x'.repeat(1024 * 1024)
+    expect(splitWake(plain)).toEqual({ reports: [], rest: plain })
+  })
+})
+
 describe('outcomeText', () => {
   it('says how a task ended, with its reason when it failed', () => {
     expect([outcomeText('finished', null), outcomeText('failed', 'Claude Code exited'), outcomeText('failed', null), outcomeText('stopped', 'its turn was interrupted')]).toEqual(['finished', 'failed: Claude Code exited', 'failed', 'stopped'])
