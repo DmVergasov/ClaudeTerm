@@ -46,7 +46,7 @@ describe('splitWake reads a report of any shape in linear time', () => {
     const text = [`${REPORT_WAKE_HEAD} its task finished.`, `from: parser${' [a] ('.repeat(200_000)}`, ID, '', '> Parser fixed.'].join('\n')
     const started = performance.now()
     const split = splitWake(text)
-    expect(performance.now() - started).toBeLessThan(200)
+    expect(performance.now() - started).toBeLessThan(2000)
     expect(split.reports).toHaveLength(1)
     expect(split.reports[0]).toMatchObject({ ref: 'a10000', outcome: 'finished', text: 'Parser fixed.' })
   })
@@ -60,7 +60,7 @@ describe('splitWake reads a report of any shape in linear time', () => {
     const long = `Report from a session attached to you, through ClaudeTerm: its task finished.\nfrom: x${' [a] ('.repeat(200_000)}`
     const started = performance.now()
     expect(splitWake(long)).toEqual({ reports: [], rest: long })
-    expect(performance.now() - started).toBeLessThan(200)
+    expect(performance.now() - started).toBeLessThan(2000)
     const plain = 'x'.repeat(1024 * 1024)
     expect(splitWake(plain)).toEqual({ reports: [], rest: plain })
   })

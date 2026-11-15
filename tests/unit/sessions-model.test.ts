@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CoordGroup, CoordinatorView, CoordMarks, CoordSessionRow } from '../../src/shared/coordinator'
-import { attachChoices, checkStartForm, DEFAULT_FOLDED, FOLDER_ERROR, NAME_ERROR, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, startError, WORKTREE_ERROR, type AttachTab } from '../../src/renderer/sessions-model'
+import { attachChoices, cardRow, checkStartForm, DEFAULT_FOLDED, FOLDER_ERROR, NAME_ERROR, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, startError, WORKTREE_ERROR, type AttachTab } from '../../src/renderer/sessions-model'
 
 const row = (key: string, group: CoordGroup, o: Partial<CoordSessionRow> = {}): CoordSessionRow => ({
   key, tabId: `tab-${key}`, device: null, deviceName: null, session: 'a1000000-0000-4000-8000-000000000002', ref: 'a10000', name: `${key} · Desktop`,
@@ -8,6 +8,27 @@ const row = (key: string, group: CoordGroup, o: Partial<CoordSessionRow> = {}): 
 })
 const view = (sessions: CoordSessionRow[], notAttached: CoordSessionRow[] = []): CoordinatorView =>
   ({ tabId: 'tab-c', session: 'c0000000-0000-4000-8000-000000000001', project: { key: 'd:\\work\\acme', name: 'acme' }, problem: null, sessions, notAttached, waiting: 0 })
+
+describe('cardRow finds the row a report card names', () => {
+  it('its ref names the row among the attached rows, and for Open among the project\'s others; Resolve acts on attached rows only', () => {
+    const mine = row('mine', 'idle', { ref: 'a10000' })
+    const other = row('other', 'idle', { ref: 'b20000', name: 'docs · Desktop' })
+    const v = view([mine], [other])
+    expect(cardRow(v, 'a10000', 'parser · Desktop', false)).toBe(mine)
+    expect(cardRow(v, 'b20000', 'docs · Desktop', true)).toBe(other)
+    expect(cardRow(v, 'b20000', 'docs · Desktop', false)).toBeNull()
+  })
+
+  it('a card whose ref is stale (a /clear gave the session a new id) finds the row of the same name', () => {
+    const renamed = row('new', 'idle', { ref: 'c30000', name: 'parser · Desktop' })
+    expect(cardRow(view([renamed]), 'a10000', 'parser · Desktop', false)).toBe(renamed)
+    expect(cardRow(view([], [renamed]), 'a10000', 'parser · Desktop', true)).toBe(renamed)
+  })
+
+  it('a card that names no row of the ref or the name finds none', () => {
+    expect(cardRow(view([row('x', 'idle')]), 'z90000', 'other · Desktop', true)).toBeNull()
+  })
+})
 
 it('sections come in the order waiting, working, idle, resolved, then the project\'s others; an empty one is left out', () => {
   const s = sessionSections(view([row('a', 'idle'), row('b', 'waiting'), row('c', 'idle')], [row('d', 'idle')]), new Set(DEFAULT_FOLDED))

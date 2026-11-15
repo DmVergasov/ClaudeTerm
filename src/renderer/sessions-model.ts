@@ -49,6 +49,15 @@ export function rowActions(row: CoordSessionRow, section: SectionKey): RowAction
   return [...open, 'message', 'detach', ...resolve]
 }
 
+/**
+ * The row a report card names in a coordinator's view: the row of its ref, else the row of its name (a /clear gives the session a new id,
+ * so the card's ref is stale). Open looks among the project's others too; Resolve acts on the attached rows only.
+ */
+export function cardRow(view: CoordinatorView, ref: string, name: string, forOpen: boolean): CoordSessionRow | null {
+  const rows = forOpen ? [...view.sessions, ...view.notAttached] : view.sessions
+  return rows.find((r) => r.ref === ref) ?? rows.find((r) => r.name === name) ?? null
+}
+
 /** when a row last changed: "now" within a minute (a time ahead of now too), "HH:MM" earlier the same local day, else "Mon D" (e.g. "Nov 13") */
 export function rowTime(changedAt: number, now: number): string {
   if (Math.abs(now - changedAt) < MINUTE_MS) return 'now'

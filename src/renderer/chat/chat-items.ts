@@ -9,7 +9,7 @@ import { renderImages, renderSteps, type StepKeep } from './chat-steps'
 import { splitQuotes } from './chat-quote'
 import { forwardMark } from './agent-text'
 import { reportCard } from './report-card'
-import { splitWake } from '../../shared/report-wake'
+import { splitWake, WAKE_HEADS } from '../../shared/report-wake'
 
 export interface ItemCallbacks {
   answer(cardId: string, a: ChatAnswer): void | Promise<boolean>
@@ -147,7 +147,8 @@ export function streamText(node: HTMLElement, markdown: string): void {
  * holds already (one handed to the tab) is not drawn again. The rest of the text, and the files, are the message as it was.
  */
 function userItem(item: Extract<ChatItem, { kind: 'user' }>, cb: ItemCallbacks): HTMLElement {
-  const { reports, rest } = splitWake(item.text)
+  // a wake text starts with one of its heads: a text that does not is no wake, and is not read
+  const { reports, rest } = WAKE_HEADS.some((h) => item.text.startsWith(h)) ? splitWake(item.text) : { reports: [], rest: item.text }
   const row = userRow(item, rest, cb)
   if (reports.length === 0) return row
   const wake = el('div', 'chat-item coord-wake')

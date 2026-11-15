@@ -32,7 +32,10 @@ test('the Sessions panel groups the attached sessions by state and lists the pro
     await expect(sessionRow(page, rowKey(sids[2])).locator('.coord-l3')).toHaveText('1/3 · Grouping crashes by call stack')
     await expect(sessionRow(page, rowKey(sids[2])).locator('.coord-prog')).toHaveCount(1)
     await expect(sessionRow(page, rowKey(sids[2])).locator('.coord-prog i')).toHaveAttribute('style', /width: 33%/)
-    await expect(sessionGroup(page, 'not-attached').locator(`.coord-row[data-key="${rowKey(sids[3])}"] .coord-l2`)).toContainText(basename(repo))
+    // a folder path is cut at its end on screen: the row's line says its full text on hover
+    const place = sessionGroup(page, 'not-attached').locator(`.coord-row[data-key="${rowKey(sids[3])}"] .coord-l2`)
+    await expect(place).toContainText(basename(repo))
+    await expect(place).toHaveAttribute('title', (await place.textContent()) ?? '')
   } finally { await l.app.close() }
 })
 
@@ -187,15 +190,69 @@ test('Open and a click on a row bring the session\'s tab to the front', async ()
     await openSessions(page)
     await act(page, rowKey(sids[1]), 'Open')
     await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(t1)
-    // the panel is shut when another tab is in front: it is opened again for the coordinator
+    // the Sessions panel the person chose comes back with the coordinator's tab, without a toggle
     await activate(page, t0)
-    await openSessions(page)
+    await expect(page.locator('#image-panel .panel-title')).toHaveText('Sessions')
     await expect(sessionRow(page, rowKey(sids[1]))).toBeVisible()
     // the rows are rebuilt on every view: the click is tried again until the session's tab is in front
     await expect(async () => {
       if ((await page.evaluate(() => window.__ct!.activeTabId())) !== t1) await sessionRow(page, rowKey(sids[1])).locator('.coord-name').click({ timeout: 1000 })
       expect(await page.evaluate(() => window.__ct!.activeTabId())).toBe(t1)
     }).toPass({ timeout: 15_000 })
+  } finally { await l.app.close() }
+})
+
+test('the Sessions panel the person chose comes back when the coordinator\'s tab is in front again', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await act(page, rowKey(sids[1]), 'Open')
+    await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(t1)
+    await activate(page, t0)
+    await expect(page.locator('#image-panel .panel-title')).toHaveText('Sessions')
+    await expect(page.locator('#image-panel .panel-sessions')).toBeVisible()
+    await expect(sessionsToggle(page)).toHaveClass(/active/)
+  } finally { await l.app.close() }
+})
+
+test('a Sessions panel the person closed stays closed when the coordinator\'s tab comes back', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    await sessionsToggle(page).click()
+    await expect(page.locator('#image-panel')).toHaveClass(/collapsed/)
+    await activate(page, t1)
+    await activate(page, t0)
+    await expect(page.locator('#image-panel')).toHaveClass(/collapsed/)
+    await expect(sessionsToggle(page)).not.toHaveClass(/active/)
+  } finally { await l.app.close() }
+})
+
+test('a row takes the keyboard: focused, its buttons show, and Enter opens its session\'s tab', async () => {
+  const l = await coordApp(2)
+  const { page, pipeName, tabs: [t0, t1], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await activate(page, t0)
+    await openSessions(page)
+    const row = sessionRow(page, rowKey(sids[1]))
+    // the rows are rebuilt on every view: the focus is asked for again until the row holds it
+    await expect(async () => {
+      await row.focus({ timeout: 1000 })
+      await expect(row).toBeFocused({ timeout: 1000 })
+    }).toPass({ timeout: 15_000 })
+    await expect(row.locator('.coord-acts button', { hasText: 'Open' })).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(t1)
   } finally { await l.app.close() }
 })
 
@@ -286,6 +343,8 @@ test('the Message box keeps its draft and its focus while the rows change, and E
     }))
     await page.keyboard.press('Escape')
     await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
+    // the box closed: the terminal of the tab in front has the focus again
+    await expect(page.locator('.terminal-host:visible .xterm-helper-textarea')).toBeFocused()
     // the Escape stopped at the box: it reached no listener on the document, and the panel stays open
     expect(await page.evaluate(() => (window as unknown as { __escapes?: number }).__escapes)).toBeUndefined()
     await expect(sessionRow(page, rowKey(sids[1]!))).toBeVisible()
@@ -303,7 +362,9 @@ test('the Message box keeps its draft and its focus while the rows change, and E
     await page.keyboard.press('Escape')
     await expect(page.locator('#image-panel .coord-compose')).toBeHidden()
     expect(await page.evaluate(() => (window as unknown as { __escapes?: number }).__escapes)).toBeUndefined()
-    expect(await page.evaluate((id) => window.__ct!.ptyInput!(id), t0)).toBe(before)
+    // the terminal has the focus again, so its focus reports (ESC [ I, ESC [ O) reach the tab: they are no typing, and nothing else may come
+    const typed = (await page.evaluate((id) => window.__ct!.ptyInput!(id), t0)).replace(/\x1b\[[IO]/g, '')
+    expect(typed).toBe(before.replace(/\x1b\[[IO]/g, ''))
   } finally { await l.app.close() }
 })
 

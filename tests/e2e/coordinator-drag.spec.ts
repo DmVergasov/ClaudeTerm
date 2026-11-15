@@ -141,9 +141,12 @@ test('tabs at the top: a Claude tab held over the coordinator\'s tab lights that
 
 test('a tab held over the Sessions panel lights the panel, and no light is left after the release', async () => {
   const l = await coordApp(3, { settings: LEFT })
-  const { page, tabs: [t0, , t2] } = l
+  const { page, repo, tabs: [t0, , t2] } = l
   try {
     expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    // a shell tab: its drop on the panel does nothing, so it must not light the panel
+    const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), repo))!.id
+    await expect.poll(() => tabOrder(page)).toContain(shell)
     await activate(page, t0)
     await openSessions(page)
     const body = page.locator('#image-panel .panel-sessions')
@@ -154,6 +157,19 @@ test('a tab held over the Sessions panel lights the panel, and no light is left 
     await page.mouse.up()
     await expect(page.locator('.coord-drop')).toHaveCount(0)
     await expect.poll(async () => (await marksOf(page))[t2]).toMatchObject({ role: 'attached', coordinatorTabId: t0 })
+    // the shell tab held over the panel: the drag's events reach the page (counted), and no light comes
+    await page.evaluate(() => {
+      const w = window as unknown as { __over: number }
+      w.__over = 0
+      document.addEventListener('dragover', () => { w.__over++ })
+    })
+    await holdOver(page, tpRow(page, shell), body)
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __over: number }).__over)).toBeGreaterThan(0)
+    await restOver(page, body)
+    await expect(body).not.toHaveClass(/coord-drop/)
+    await page.mouse.up()
+    await expect(page.locator('.coord-drop')).toHaveCount(0)
+    expect((await marksOf(page))[shell]).toBeUndefined()
   } finally {
     await l.app.close()
   }

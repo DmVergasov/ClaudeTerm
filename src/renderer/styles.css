@@ -647,7 +647,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .coord-dialog-text { color: var(--text-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 
 /* the coordinator's line in its header, and an attached session's line with its Detach */
-.sh-coord, .sh-reports { flex: none; color: var(--text-3); font-size: 12px; white-space: nowrap; }
+.sh-coord, .sh-reports { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-size: 12px; white-space: nowrap; }
 .sh-coord b, .sh-reports b { color: var(--text-2); font-weight: 600; }
 .sh-detach { flex: none; padding: 2px 8px; border: 1px solid var(--line-2); border-radius: 6px; background: none; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
 .sh-detach:hover { color: var(--text); }

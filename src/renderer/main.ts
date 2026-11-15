@@ -46,7 +46,7 @@ import { FrontFallback } from './front-fallback'
 import { FolderDialog } from './folder-dialog'
 import { confirmDialog } from './coord-dialog'
 import { openAttachDialog, openNewSessionDialog } from './coord-dialogs'
-import { attachChoices, type AttachTab } from './sessions-model'
+import { attachChoices, cardRow, type AttachTab } from './sessions-model'
 import { TitleBar } from './title-bar'
 import { applyTheme } from './app-theme'
 import { limitMeters } from './limit-meters'
@@ -1295,16 +1295,23 @@ function toastFailure(r: CoordResult): void {
   if (!r.ok) showToast(r.error)
 }
 
-/** the row of the session a report card names, in this coordinator's view; a toast says so when it is no longer attached */
-async function reportRow(coordinatorTabId: string, ref: string, name: string): Promise<CoordSessionRow | null> {
-  const row = (await coordViewOf(coordinatorTabId))?.sessions.find((r) => r.ref === ref) ?? null
+/** a tab dropped on a coordinator's Sessions panel attaches when it is a local Claude tab other than the coordinator */
+function canAttachTo(coordinatorTabId: string, tabId: string): boolean {
+  const t = tabs.get(tabId)
+  return tabId !== coordinatorTabId && !!t && !t.info.remote && t.info.kind === 'claude'
+}
+
+/** the row a report card names, in this coordinator's view (cardRow says which); a toast says so when there is none */
+async function reportRow(coordinatorTabId: string, ref: string, name: string, forOpen: boolean): Promise<CoordSessionRow | null> {
+  const view = await coordViewOf(coordinatorTabId)
+  const row = view === null ? null : cardRow(view, ref, name, forOpen)
   if (row === null) showToast(`${labelOf(name)} is no longer attached to this coordinator.`)
   return row
 }
 
 /** Open session on a report card: the session's tab comes to the front; a session with no open tab says so */
 async function openReportSession(coordinatorTabId: string, ref: string, name: string): Promise<void> {
-  const row = await reportRow(coordinatorTabId, ref, name)
+  const row = await reportRow(coordinatorTabId, ref, name, true)
   if (row === null) return
   if (row.tabId === null) showToast(`${labelOf(name)} has no open tab.`)
   else ct.activateTab(row.tabId)
@@ -1312,7 +1319,7 @@ async function openReportSession(coordinatorTabId: string, ref: string, name: st
 
 /** Resolve on a report card: the session is resolved in this coordinator's view */
 async function resolveReportSession(coordinatorTabId: string, ref: string, name: string): Promise<void> {
-  const row = await reportRow(coordinatorTabId, ref, name)
+  const row = await reportRow(coordinatorTabId, ref, name, false)
   if (row !== null) void ct.coordResolve(coordinatorTabId, row.key).then(toastFailure)
 }
 
@@ -1814,11 +1821,11 @@ async function boot(): Promise<void> {
       attach: (tabId) => ct.coordAttach(coordinatorTabId, tabId)
     }),
     // a local Claude tab dropped on the panel is attached; another tab, or the coordinator itself, does nothing here
+    canAttach: canAttachTo,
     dropTab: (coordinatorTabId, tabId) => {
-      const t = tabs.get(tabId)
-      if (tabId === coordinatorTabId || !t || t.info.remote || t.info.kind !== 'claude') return
-      void ct.coordAttach(coordinatorTabId, tabId).then(toastFailure)
-    }
+      if (canAttachTo(coordinatorTabId, tabId)) void ct.coordAttach(coordinatorTabId, tabId).then(toastFailure)
+    },
+    focus: () => { if (activeId) focusTab(activeId) }
   })
   sidePanel.onCover = () => noteOverlay.relayout()
   mcpPanel = new McpPanel(sidePanel.bodies.mcp, sidePanel, {

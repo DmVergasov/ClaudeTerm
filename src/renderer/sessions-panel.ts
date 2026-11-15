@@ -4,7 +4,7 @@ import { icon } from './icons'
 import { ACTION_LABELS, DEFAULT_FOLDED, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, type RowAction, type RowIcon, type SectionKey, type SessionSection } from './sessions-model'
 import type { SidePanel } from './side-panel'
 import { spinner } from './tab-row'
-import { dragCarries, TAB_DRAG } from './tabbar'
+import { dragCarries, draggingTab, TAB_DRAG } from './tabbar'
 import { labelOf } from './util'
 
 export interface SessionsPanelCallbacks {
@@ -19,6 +19,10 @@ export interface SessionsPanelCallbacks {
   attachOther(coordinatorTabId: string): void
   /** a tab dropped on the panel of a coordinator's tab: it is attached to that coordinator */
   dropTab(coordinatorTabId: string, tabId: string): void
+  /** whether a tab dragged over the panel attaches to that coordinator: only then does the panel light and take the drop */
+  canAttach(coordinatorTabId: string, tabId: string): boolean
+  /** the tab in front takes the keyboard back: the Message box gave it up when the person closed it */
+  focus(): void
   /** null: the task was given; else why not */
   message(coordinatorTabId: string, key: string, text: string): Promise<string | null>
 }
@@ -66,9 +70,10 @@ export class SessionsPanel {
     this.buildCompose()
     this.buildBar()
     body.replaceChildren(this.notice, this.bar, this.list, this.composeBox)
-    // a tab dragged over the panel of a coordinator's tab lights the panel, and a drop there attaches the tab to it
+    // a tab that a drop attaches, dragged over the panel of a coordinator's tab, lights the panel; a drop there attaches it to the coordinator
     body.addEventListener('dragover', (e) => {
-      if (this.view === null || !dragCarries(e, TAB_DRAG)) return
+      const from = draggingTab()
+      if (this.view === null || !dragCarries(e, TAB_DRAG) || from === null || !this.cb.canAttach(this.view.tabId, from)) return
       e.preventDefault()
       body.classList.add('coord-drop')
     })
@@ -156,7 +161,13 @@ export class SessionsPanel {
     if (r.tabId !== null) row.dataset.tabId = r.tabId
     // a click on the row opens its session's tab; the row's buttons act on the row and do not reach this
     const tabId = r.tabId
-    if (tabId !== null) row.addEventListener('click', () => this.cb.open(tabId))
+    if (tabId !== null) {
+      row.addEventListener('click', () => this.cb.open(tabId))
+      // a focused row opens its tab on Enter, as a click does; a button in the row keeps its own Enter
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === row) this.cb.open(tabId) })
+    }
+    // a row takes the keyboard: its buttons show while it has the focus
+    row.tabIndex = 0
     const l1 = el('div', 'coord-l1')
     const name = el('span', 'coord-name', labelOf(r.name))
     name.title = r.name
@@ -165,7 +176,12 @@ export class SessionsPanel {
     l1.append(el('span', 'coord-time', attached ? rowTime(r.changedAt, now) : ''))
     row.append(l1)
     const place = r.folder !== null && r.branch !== null ? `${r.folder} · ${r.branch}` : (r.folder ?? r.branch)
-    if (place !== null) row.append(el('div', 'coord-l2', place))
+    if (place !== null) {
+      const line = el('div', 'coord-l2', place)
+      // a long folder path is cut at its end on screen: the line's title is its full text
+      line.title = place
+      row.append(line)
+    }
     if (attached) {
       const tone = r.why === 'prompt' ? ' warn' : r.why === 'limit' || r.why === 'failed' ? ' err' : ''
       row.append(el('div', `coord-l3${tone}`, r.line))
@@ -258,11 +274,11 @@ export class SessionsPanel {
     // the box keeps its keys, whichever of its controls has the focus: an Escape closes the box and does not reach the panel or the tab behind it
     this.composeBox.addEventListener('keydown', (e) => {
       e.stopPropagation()
-      if (e.key === 'Escape') this.closeCompose()
+      if (e.key === 'Escape') this.dismissCompose()
     })
     const cancel = el('button', 'coord-btn ghost', 'Cancel')
     cancel.type = 'button'
-    cancel.addEventListener('click', () => this.closeCompose())
+    cancel.addEventListener('click', () => this.dismissCompose())
     this.send.type = 'button'
     this.send.disabled = true
     this.send.addEventListener('click', () => void this.sendCompose())
@@ -295,6 +311,12 @@ export class SessionsPanel {
     this.composeBox.hidden = true
   }
 
+  /** the person closed the box (Send, Cancel or Esc): the tab in front takes the keyboard back, as a closed dialog gives it back */
+  private dismissCompose(): void {
+    this.closeCompose()
+    this.cb.focus()
+  }
+
   private async sendCompose(): Promise<void> {
     const c = this.compose
     const text = this.field.value
@@ -313,7 +335,7 @@ export class SessionsPanel {
     // the box was closed, or opened for another row, while the answer came
     if (this.compose !== c) return
     if (why === null) {
-      this.closeCompose()
+      this.dismissCompose()
       return
     }
     this.composeError.textContent = why

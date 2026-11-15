@@ -4,6 +4,8 @@ import { icon } from './icons'
 export type PanelTab = 'images' | 'changes' | 'docs' | 'messages' | 'sessions' | 'mcp'
 
 const TABS: readonly PanelTab[] = ['images', 'changes', 'sessions', 'docs', 'messages', 'mcp']
+/** the tabs shown again when they come back, while the panel is shown and the person had chosen them: the Sessions panel of a coordinator; the others fall back as before */
+const RETURNS: readonly PanelTab[] = ['sessions']
 const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs', messages: 'Agent messages', sessions: 'Sessions', mcp: 'MCP · Plugins' }
 /** how wide a drag may make each tab, as a share of the workspace (the window less the left tab panel) */
 const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85, messages: 0.85, sessions: 0.7, mcp: 0.7 }
@@ -29,6 +31,8 @@ export class SidePanel {
   /** the part of the terminal the panel covers may have changed: the note sits left of it */
   onCover: () => void = () => {}
   private shownTab: PanelTab | null = null
+  /** the tab the person chose last: a RETURNS tab that becomes available again while the panel is shown comes back */
+  private chosen: PanelTab | null = null
   private currentTab: PanelTab = 'images'
   private isExpanded = false
   private readonly title: HTMLElement
@@ -100,7 +104,9 @@ export class SidePanel {
   }
 
   open(tab: PanelTab): void {
-    if (!this.available[tab] || this.shownTab === tab) return
+    if (!this.available[tab]) return
+    this.chosen = tab
+    if (this.shownTab === tab) return
     const switching = this.shownTab !== null
     this.currentTab = tab
     this.shownTab = tab
@@ -122,11 +128,16 @@ export class SidePanel {
     else this.open(tab)
   }
 
-  /** Changes exists only for Claude tabs: a shell tab shows Images in its place; a tab that becomes unavailable falls back to the first available one */
+  /** Changes exists only for Claude tabs: a shell tab shows Images in its place; a tab that becomes unavailable falls back to the first available one, and a RETURNS tab the person chose comes back with its tab */
   setAvailable(tab: PanelTab, available: boolean): void {
     if (this.available[tab] === available) return
     this.available[tab] = available
-    if (available || this.currentTab !== tab) return
+    if (available) {
+      // a closed panel stays closed: only a shown one returns to the tab the person chose
+      if (RETURNS.includes(tab) && this.chosen === tab && this.shownTab !== null) this.open(tab)
+      return
+    }
+    if (this.currentTab !== tab) return
     this.currentTab = TABS.find((t) => t !== tab && this.available[t])!
     if (this.shownTab !== null) this.shownTab = this.currentTab
     this.isExpanded = false

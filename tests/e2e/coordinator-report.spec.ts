@@ -37,6 +37,22 @@ async function watchView(page: Page, key: string, tabId: string, ref: string | n
 /** the promise watchView installed on window[key] */
 const windowPush = (page: Page, key: string): Promise<void> => page.evaluate((k) => (window as unknown as Record<string, Promise<void>>)[k]!, key)
 
+/**
+ * Installs in the page a promise on window[key] that resolves at the next push of coordinator tabId's view in which the session `ref` is
+ * one of the project's others, with its tab open. Installed before the detach it waits for, as watchView is.
+ */
+async function watchNotAttached(page: Page, key: string, tabId: string, ref: string): Promise<void> {
+  await page.evaluate(([k, id, r]) => {
+    const w = window as unknown as Record<string, Promise<void>>
+    w[k] = new Promise<void>((resolve) => {
+      window.ct.onCoordView((tab, view) => {
+        if (tab !== id || view === null) return
+        if (view.notAttached.some((row) => row.ref === r && row.tabId !== null)) resolve()
+      })
+    })
+  }, [key, tabId, ref] as const)
+}
+
 /** a chat tab that has said hello: its session id, once its turn is idle */
 async function readyChat(page: Page, tabId: string): Promise<string> {
   await activate(page, tabId)
@@ -53,11 +69,17 @@ async function readyChat(page: Page, tabId: string): Promise<string> {
 /** two Claude tabs of one folder with their sessions: a is the coordinator's chat, b is the session attached to it later */
 async function chatPair(env: Record<string, string> = {}) {
   const l = await launchChatTab({ turns: { hello: [{ text: 'Hi there' }] }, fallback: [{ text: 'Noted.' }] }, { work: gitRepo(), env })
-  const a = l.tabId
-  const sidA = await readyChat(l.page, a)
-  const b = await openTabInFront(l.page, 'claude', l.work)
-  const sidB = await readyChat(l.page, b)
-  return { l, a, b, sidA, sidB }
+  try {
+    const a = l.tabId
+    const sidA = await readyChat(l.page, a)
+    const b = await openTabInFront(l.page, 'claude', l.work)
+    const sidB = await readyChat(l.page, b)
+    return { l, a, b, sidA, sidB }
+  } catch (e) {
+    // a setup that fails closes the app it launched: no test is left with it running
+    await l.app.close()
+    throw e
+  }
 }
 
 /**
@@ -66,6 +88,16 @@ async function chatPair(env: Record<string, string> = {}) {
  */
 async function reportedToWatcher() {
   const p = await chatPair()
+  try {
+    return await reportWatched(p)
+  } catch (e) {
+    // a setup that fails closes the app it launched: no test is left with it running
+    await p.l.app.close()
+    throw e
+  }
+}
+
+async function reportWatched(p: Awaited<ReturnType<typeof chatPair>>) {
   const { l, a, b, sidA, sidB } = p
   const { page, pipeName } = l
   mkdirSync(join(l.work, 'notes'), { recursive: true })
@@ -163,10 +195,13 @@ test('a report wake that came only as text is drawn as a card from it, without a
   }
 })
 
-test('a card whose session was detached since says it is no longer attached, and switches to nothing', async () => {
-  const { l, a, sidB } = await reportedToWatcher()
+test('a card whose session has left the project says it is no longer attached, and switches to nothing', async () => {
+  const { l, a, b, sidB } = await reportedToWatcher()
   try {
     const label = labelOf((await viewOf(l.page, a))!.sessions[0]!.name)
+    // its tab is closed, then it is detached: no row of it is left in the view
+    await l.page.evaluate((id) => window.ct.closeTab(id), b)
+    await expect.poll(async () => (await viewOf(l.page, a))?.sessions[0]?.tabId).toBeNull()
     // the card's buttons read the view the window holds, which main pushes after the change: the click waits for that push
     await watchView(l.page, 'viewPushed', a, null)
     expect(await coord(l.pipeName, a, { op: 'detach', session: refOf(sidB) })).toMatchObject({ ok: true })
@@ -175,6 +210,21 @@ test('a card whose session was detached since says it is no longer attached, and
     await l.page.locator(CARD).locator('button', { hasText: 'Open session' }).click()
     await expect(l.page.locator('.toast', { hasText: `${label} is no longer attached to this coordinator.` })).toBeVisible()
     expect(await l.page.evaluate(() => window.__ct!.activeTabId())).toBe(a)
+  } finally {
+    await l.app.close()
+  }
+})
+
+test('a card of a session detached since still opens the session\'s tab', async () => {
+  const { l, a, b, sidB } = await reportedToWatcher()
+  try {
+    // the card's button reads the view the window holds: the detach is waited for in it, as main pushes it
+    await watchNotAttached(l.page, 'viewPushed', a, refOf(sidB))
+    expect(await coord(l.pipeName, a, { op: 'detach', session: refOf(sidB) })).toMatchObject({ ok: true })
+    await within(windowPush(l.page, 'viewPushed'), 10_000)
+
+    await l.page.locator(CARD).locator('button', { hasText: 'Open session' }).click()
+    await expect.poll(() => l.page.evaluate(() => window.__ct!.activeTabId())).toBe(b)
   } finally {
     await l.app.close()
   }
