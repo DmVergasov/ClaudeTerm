@@ -93,6 +93,7 @@ export interface CoordinatorHubDeps {
   taskList(tabId: string): TaskList | null // TaskListHub.get
   restingNow(tabId: string): boolean // Task 7
   isDirectory(path: string): Promise<boolean> // Task 8
+  isAbsolute(path: string): boolean // node's isAbsolute on this device: a folder asked for here is a path here
   accountLabel(account: string | null): string // Task 8
   openTab(req: OpenTabRequest): string | null // Task 8: the new tab's id, opened behind the tab in front
   openRemoteTab(device: string, req: { cwd: string | null; email: string | null; title: string | null }): Promise<RemoteOpened> // open-tab on a paired device (its id)
@@ -228,9 +229,6 @@ type FoundRow = { row: CoordSessionRow; att: StoredAttachment; start: null } | {
 function folderName(folder: string): string {
   return folder.split(/[\\/]/).filter((p) => p !== '').pop() ?? folder
 }
-
-/** a folder that is a full path on either system (from a root or a drive): the same on every platform, so a test on any of them sees the same answer */
-const isFullPath = (folder: string): boolean => /^(?:[A-Za-z]:)?[\\/]/.test(folder)
 
 /** a row's key for a session of another device */
 const remoteKey = (device: string, session: string): string => `${device}:${session}`
@@ -402,8 +400,8 @@ export class CoordinatorHub {
     const tab = this.d.tabs().find((t) => t.tabId === tabId)
     if (!tab) return fail(HUB_TEXT.notCoordinator)
     const folder = req.folder ?? tab.folder
-    // a folder named for this device is a path here: one that is not a full path is no folder
-    const isFolder = isFullPath(folder) && (await this.d.isDirectory(folder))
+    // a folder named for this device is a path here: one that is not absolute here is no folder
+    const isFolder = this.d.isAbsolute(folder) && (await this.d.isDirectory(folder))
     // the coordinator may have stopped while the folder was checked
     const c = this.own(tabId)
     if (!c) return fail(HUB_TEXT.notCoordinator)
@@ -868,22 +866,20 @@ export class CoordinatorHub {
     if (elsewhere) return refused(HUB_TEXT.elsewhere(name, elsewhere.project.name, this.nameOf(elsewhere.session)))
     if (c.attachments.length >= MAX_ATTACHMENTS) return refused(HUB_TEXT.fullAttached)
 
-    const project = c.project.name
-    const id = this.write({
-      kind: 'attach',
-      from: this.address(null, c.session),
-      to: { device, session: to.session, name },
-      replyTo: null,
-      text: HUB_TEXT.attachText(project),
-      project,
-      delivered: false,
-      read: false
-    })
+    const id = this.pendRemoteAttach(c, { device, session: to.session, name })
     if (id === null) return refused(HUB_TEXT.notSaved)
-    const attachment: StoredAttachment = { device, session: to.session, name, attachedAt: this.d.now(), resolved: false, failed: false, lastReport: null, pending: id }
-    this.d.store.putCoordinator({ ...c, attachments: [...c.attachments, attachment] })
     this.d.changed()
     return { response: { ok: true, info: HUB_TEXT.attaching(name, ref, peer.name) }, pending: id }
+  }
+
+  /** a session of another device is attached to the coordinator, pending its device's confirmation: its attach record goes out, and the attachment waits for it; null when the record cannot be written */
+  private pendRemoteAttach(c: StoredCoordinator, to: { device: string; session: string; name: string }): string | null {
+    const project = c.project.name
+    const id = this.write({ kind: 'attach', from: this.address(null, c.session), to, replyTo: null, text: HUB_TEXT.attachText(project), project, delivered: false, read: false })
+    if (id === null) return null
+    const attachment: StoredAttachment = { device: to.device, session: to.session, name: to.name, attachedAt: this.d.now(), resolved: false, failed: false, lastReport: null, pending: id }
+    this.d.store.putCoordinator({ ...c, attachments: [...c.attachments, attachment] })
+    return id
   }
 
   /** a task to a session of another device: the task record goes to its device, which holds it as queued; a session not confirmed yet takes none */
@@ -990,16 +986,14 @@ export class CoordinatorHub {
   private attachRemoteStart(s: PendingStart, r: RemoteStart, session: string, name: string): void {
     const c = this.d.store.coordinator(s.coordinator)
     if (!c) return this.cancelStart(s.tabId, HUB_TEXT.startCancelled)
-    const to: MailAddress = { device: r.device, session, name }
-    const project = c.project.name
-    // the task record is checked first, so a record the mail check refuses changes nothing
-    const task = this.record({ kind: 'task', from: this.address(null, c.session), to, replyTo: null, text: s.text, project, delivered: false, read: false })
+    const to = { device: r.device, session, name }
+    const taskInput: RecordInput = { kind: 'task', from: this.address(null, c.session), to, replyTo: null, text: s.text, project: c.project.name, delivered: false, read: false }
+    // the task's record is checked before anything is written, so a record the mail check refuses changes nothing
+    if (this.record(taskInput) === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
+    // the attach goes first: Laptop takes it before the task, and the task is stamped after the attach and the attachment
+    if (this.pendRemoteAttach(c, to) === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
+    const task = this.record(taskInput)
     if (task === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
-    // the attach record goes before the task: Laptop takes the attach first, in store order
-    const attachId = this.write({ kind: 'attach', from: this.address(null, c.session), to, replyTo: null, text: HUB_TEXT.attachText(project), project, delivered: false, read: false })
-    if (attachId === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
-    const attachment: StoredAttachment = { device: r.device, session, name, attachedAt: this.d.now(), resolved: false, failed: false, lastReport: null, pending: attachId }
-    this.d.store.putCoordinator({ ...c, attachments: [...c.attachments, attachment] })
     this.d.mail.add(task)
     this.dropStart(s.tabId)
     this.d.changed()
@@ -1047,8 +1041,7 @@ export class CoordinatorHub {
   private startRow(s: PendingStart): CoordSessionRow {
     return {
       key: `start:${s.tabId}`,
-      // a tab of another device is not this device's tab
-      tabId: s.remote === null ? s.tabId : null,
+      tabId: s.tabId,
       device: s.remote?.device ?? null,
       deviceName: s.remote?.deviceName ?? null,
       session: null,

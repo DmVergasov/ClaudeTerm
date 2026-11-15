@@ -1049,7 +1049,8 @@ describe('CoordinatorHub start', () => {
     w.hub.make('tab-c', false)
     expect(await w.hub.start('tab-c', { ...START, device: 'Laptop' })).toEqual({ ok: false, error: 'No paired device named "Laptop".' })
     expect(await w.hub.start('tab-c', { ...START, folder: 'D:\\Nowhere' })).toEqual({ ok: false, error: 'No folder D:\\Nowhere on this device.' })
-    // a folder named for this device is a path here: a relative one is no folder, even when the device's name is given
+    // a folder named for this device is a path here: a relative one is no folder, even when this device's isDirectory says it is one
+    w.dirs.push('relative/acme')
     expect(await w.hub.start('tab-c', { ...START, device: 'desktop', folder: 'relative/acme' })).toEqual({ ok: false, error: 'No folder relative/acme on this device.' })
     expect(w.opened).toEqual([])
     void w.hub.start('tab-c', { ...START, device: 'desktop' })

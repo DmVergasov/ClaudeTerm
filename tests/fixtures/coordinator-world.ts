@@ -90,6 +90,8 @@ export function world(o: WorldOptions = {}) {
     /** how often the hub asked for the paired devices and their tabs */
     calls: { peers: 0, remoteTabs: 0 },
     opened: [] as OpenTabRequest[],
+    /** the folders besides ACME's that this device's isDirectory says are folders */
+    dirs: [] as string[],
     /** the hub's openRemoteTab calls, in order: each gets remoteAnswer, or the default answer for its request */
     openedRemote: [] as { device: string; req: { cwd: string | null; email: string | null; title: string | null } }[],
     remoteAnswer: null as RemoteOpened | null,
@@ -144,7 +146,9 @@ export function world(o: WorldOptions = {}) {
     },
     taskList: () => null,
     restingNow: (tabId) => w.resting[tabId] ?? true,
-    isDirectory: async (p) => p === 'D:\\Work\\acme',
+    isDirectory: async (p) => p === 'D:\\Work\\acme' || w.dirs.includes(p),
+    // a full path on either system, the same on every platform: the world's answer, not the app's (index.ts passes node's)
+    isAbsolute: (p) => /^(?:[A-Za-z]:)?[\\/]/.test(p),
     accountLabel: (a) => (a === null ? 'Main account' : `Account ${a}`),
     openTab: (req) => {
       w.opened.push(req)

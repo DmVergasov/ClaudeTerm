@@ -577,7 +577,8 @@ describe('start on another device', () => {
     const answer = c.hub.start('tab-c', START_LAPTOP)
     await tick()
     expect(c.openedRemote).toEqual([{ device: DEV_S, req: { cwd: '/home/sam/acme', email: 'sam@example.com', title: 'Release notes' } }])
-    expect(c.hub.view('tab-c')!.sessions).toEqual([expect.objectContaining({ key: 'start:rt-new', marker: 'starting', line: 'Starting…', device: DEV_S, deviceName: 'Laptop' })])
+    // the Starting… row names the tab it opened on Laptop, the tab a row of another device carries
+    expect(c.hub.view('tab-c')!.sessions).toEqual([expect.objectContaining({ key: 'start:rt-new', tabId: 'rt-new', marker: 'starting', line: 'Starting…', device: DEV_S, deviceName: 'Laptop' })])
     c.remoteTabs.push(remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop' }))
     c.hub.remoteChanged()
     expect(await answer).toEqual({
@@ -729,5 +730,34 @@ describe('start on another device', () => {
     expect(c.store.coordinator(S.coord)!.attachments).toEqual([])
     expect(c.mail.get(taskId)).toMatchObject({ delivered: true, read: true })
     await answer
+  })
+
+  it('a pending remote start does not take this device\'s hosted slot from a local start: with 499 hosted and one remote start pending, a local start opens', async () => {
+    for (let i = 0; i < MAX_HOSTED - 1; i++) {
+      c.store.putHosted({ session: uid(0x20000 + i), coordinator: { device: null, session: uid(0x30000), name: 'other' }, project: 'other', tasks: [], former: [] })
+    }
+    void c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    void c.hub.start('tab-c', { ...START_LAPTOP, device: null })
+    await tick()
+    expect(c.opened).toHaveLength(1)
+  })
+
+  it('the task of a remote start is stamped no earlier than its attach, and than the attachment, when the clock moves between the two writes', async () => {
+    // the clock moves on each record the mail takes: the attach is written, then the task
+    const add = c.mail.add.bind(c.mail)
+    c.mail.add = (r: MailRecord) => {
+      c.now += 5000
+      add(r)
+    }
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    c.remoteTabs = [remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop' })]
+    c.hub.remoteChanged()
+    await answer
+    const attach = records(c, 'attach')[0]
+    const task = records(c, 'task')[0]
+    expect(task.sentAt).toBeGreaterThanOrEqual(attach.sentAt)
+    expect(task.sentAt).toBeGreaterThanOrEqual(c.store.coordinator(S.coord)!.attachments[0].attachedAt)
   })
 })

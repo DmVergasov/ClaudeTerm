@@ -476,15 +476,25 @@ describe('MCP guards', () => {
     expect(isCoordStartRequest({ task: 'Write the notes.', name: null, folder: null, worktree: null, device: null })).toBe(true)
     expect(isCoordStartRequest({ task: 'Write the notes.', name: 'Notes', folder: '/work/notes', worktree: 'notes', device: null })).toBe(true)
     for (const v of [
-      { task: '   ', name: null, folder: null, worktree: null },
-      { task: 'x'.repeat(COORD_TASK_MAX + 1), name: null, folder: null, worktree: null },
-      { task: 'Write.', name: null, folder: 'relative/folder', worktree: null },
-      { task: 'Write.', name: null, folder: null, worktree: '../escape' },
-      { task: 'Write.', name: 'two\nlines', folder: null, worktree: null },
-      { task: 'Write.', name: 'x'.repeat(COORD_NAME_MAX + 1), folder: null, worktree: null },
-      { task: 'Write.', name: null, folder: null },
+      { task: '   ', name: null, folder: null, worktree: null, device: null },
+      { task: 'x'.repeat(COORD_TASK_MAX + 1), name: null, folder: null, worktree: null, device: null },
+      { task: 'Write.', name: null, folder: 'relative/folder', worktree: null, device: null },
+      { task: 'Write.', name: null, folder: null, worktree: '../escape', device: null },
+      { task: 'Write.', name: 'two\nlines', folder: null, worktree: null, device: null },
+      { task: 'Write.', name: 'x'.repeat(COORD_NAME_MAX + 1), folder: null, worktree: null, device: null },
+      // no worktree field at all: refused for the missing field alone
+      { task: 'Write.', name: null, folder: null, device: null },
       null
     ]) expect(isCoordStartRequest(v)).toBe(false)
+  })
+
+  it('isCoordStartRequest takes a folder of another device as that device\'s path: 1 to MAX_PATH_TEXT characters, no control character; a folder here stays a full path here', () => {
+    const request = { task: 'Write the notes.', name: null, worktree: null, device: 'Laptop' }
+    for (const folder of ['C:\\work\\acme', '/home/sam/acme', 'relative/acme']) expect(isCoordStartRequest({ ...request, folder })).toBe(true)
+    expect(isCoordStartRequest({ ...request, folder: 'x'.repeat(MAX_PATH_TEXT) })).toBe(true)
+    for (const folder of ['', 'x'.repeat(MAX_PATH_TEXT + 1), 'a\0b', 'a\u0007b', 'a\nb']) expect(isCoordStartRequest({ ...request, folder })).toBe(false)
+    // this device's folder is still a full path here
+    expect(isCoordStartRequest({ ...request, device: null, folder: 'relative/acme' })).toBe(false)
   })
 
   it('isCoordStartRequest takes the device a session starts on: null for this device, or a paired device\'s name of 1 to 64 characters with no control character', () => {

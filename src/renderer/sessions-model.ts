@@ -1,4 +1,5 @@
 import { COORD_REFUSED, isWorktreeName, type CoordGroup, type CoordinatorView, type CoordMarks, type CoordResult, type CoordSessionRow, type CoordStartRequest } from '../shared/coordinator'
+import { MAX_PATH_TEXT } from '../shared/remote'
 import { clockOf } from './util'
 
 export type SectionKey = CoordGroup | 'not-attached'
@@ -81,6 +82,7 @@ export function nextRedrawAt(rows: CoordSessionRow[], now: number): number | nul
 }
 
 export const FOLDER_ERROR = 'The folder must be a full path.'
+export const REMOTE_FOLDER_ERROR = 'The folder is a path on that device: at most 4096 characters, with no control character.'
 export const WORKTREE_ERROR = 'A worktree name is letters, digits, ".", "_" and "-", starts with a letter or digit, and is at most 64 long.'
 export const NAME_ERROR = 'A name is one line of plain text.'
 
@@ -91,15 +93,21 @@ const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
 // a full path of either system: from the root (/x, \x) or from a drive (C:\x, C:/x)
 const FULL_PATH = /^(?:\/|\\|[A-Za-z]:[\\/])/
 
-/** the fields trimmed, an empty optional field null; a blank task: 'A task needs a text.'; a name with a control character: NAME_ERROR; a folder that is not a full path of either system: FOLDER_ERROR; a worktree isWorktreeName refuses: WORKTREE_ERROR */
-export function checkStartForm(f: StartForm): { req: Omit<CoordStartRequest, 'device'> } | { error: string } {
+/** the placeholder of the folder field: this device's coordinator folder, or for a paired device what an empty folder means there */
+export function folderPlaceholder(o: { project: string; device: string | null; folder: string }): string {
+  return o.device === null ? o.folder : `Empty: the folder of a ${o.project} tab on ${o.device}, else its default folder`
+}
+
+/** the fields trimmed, an empty optional field null; a blank task: 'A task needs a text.'; a name with a control character: NAME_ERROR; a folder that is not a full path of either system: FOLDER_ERROR, or on another device (otherDevice) a folder of at most 4096 characters with no control character: REMOTE_FOLDER_ERROR; a worktree isWorktreeName refuses: WORKTREE_ERROR */
+export function checkStartForm(f: StartForm, otherDevice = false): { req: Omit<CoordStartRequest, 'device'> } | { error: string } {
   const task = f.task.trim()
   const name = f.name.trim()
   const folder = f.folder.trim()
   const worktree = f.worktree.trim()
   if (task === '') return { error: 'A task needs a text.' }
   if (CONTROL_CHARACTER.test(name)) return { error: NAME_ERROR }
-  if (folder !== '' && !FULL_PATH.test(folder)) return { error: FOLDER_ERROR }
+  if (otherDevice && folder !== '' && (folder.length > MAX_PATH_TEXT || CONTROL_CHARACTER.test(folder))) return { error: REMOTE_FOLDER_ERROR }
+  if (!otherDevice && folder !== '' && !FULL_PATH.test(folder)) return { error: FOLDER_ERROR }
   if (worktree !== '' && !isWorktreeName(worktree)) return { error: WORKTREE_ERROR }
   return { req: { task, name: name === '' ? null : name, folder: folder === '' ? null : folder, worktree: worktree === '' ? null : worktree } }
 }

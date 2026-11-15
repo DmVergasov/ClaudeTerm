@@ -218,6 +218,11 @@ function mailMarks(): string {
 
 /** a tab's part in a coordinator of this device; null: none */
 const coordMarkOf = (id: string | null): CoordMark | null => (id === null ? null : coordMarks[id] ?? null)
+/** the project a coordinator tab coordinates, '' when the tab is no coordinator */
+const coordProjectOf = (id: string): string => {
+  const mark = coordMarkOf(id)
+  return mark?.role === 'coordinator' ? mark.project : ''
+}
 
 function applyMarks(m: CoordMarks): void {
   coordMarks = m
@@ -1861,6 +1866,7 @@ async function boot(): Promise<void> {
     message: (coordinatorTabId, key, text) => ct.coordMessage(coordinatorTabId, key, text).then((r) => (r.ok ? null : r.error)),
     newSession: (coordinatorTabId) => openNewSessionDialog({
       folder: tabs.get(coordinatorTabId)?.info.folder ?? '',
+      project: coordProjectOf(coordinatorTabId),
       paired: remoteDevices,
       start: (req) => ct.coordNewSession(coordinatorTabId, req),
       late: toastFailure

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CoordGroup, CoordinatorView, CoordMarks, CoordSessionRow } from '../../src/shared/coordinator'
-import { attachChoices, cardRow, checkStartForm, DEFAULT_FOLDED, FOLDER_ERROR, NAME_ERROR, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, startDevices, startError, WORKTREE_ERROR, type AttachTab } from '../../src/renderer/sessions-model'
+import { attachChoices, cardRow, checkStartForm, DEFAULT_FOLDED, FOLDER_ERROR, folderPlaceholder, NAME_ERROR, nextRedrawAt, REMOTE_FOLDER_ERROR, rowActions, rowIcon, rowTime, sessionSections, startDevices, startError, WORKTREE_ERROR, type AttachTab } from '../../src/renderer/sessions-model'
 
 const row = (key: string, group: CoordGroup, o: Partial<CoordSessionRow> = {}): CoordSessionRow => ({
   key, tabId: `tab-${key}`, device: null, deviceName: null, session: 'a1000000-0000-4000-8000-000000000002', ref: 'a10000', name: `${key} · Desktop`,
@@ -95,6 +95,18 @@ it('checkStartForm accepts a full path of either system and refuses a name with 
   for (const folder of ['C:\\Work\\acme', 'C:/Work/acme', '\\\\server\\share', '/x']) expect(checkStartForm({ task: 'x', name: '', folder, worktree: '' })).toMatchObject({ req: { folder } })
   expect(checkStartForm({ task: 'x', name: 'Notes\u0007', folder: '', worktree: '' })).toEqual({ error: NAME_ERROR })
   expect(checkStartForm({ task: 'x', name: 'No\tte', folder: '', worktree: '' })).toEqual({ error: NAME_ERROR })
+})
+it('checkStartForm takes a folder of another device as that device\'s path: up to 4096 characters with no control character, any shape', () => {
+  expect(checkStartForm({ task: 'x', name: '', folder: 'acme/sub', worktree: '' }, true)).toEqual({ req: { task: 'x', name: null, folder: 'acme/sub', worktree: null } })
+  expect(checkStartForm({ task: 'x', name: '', folder: 'C:\\work\\acme', worktree: '' }, true)).toMatchObject({ req: { folder: 'C:\\work\\acme' } })
+  expect(checkStartForm({ task: 'x', name: '', folder: 'a\u0007b', worktree: '' }, true)).toEqual({ error: REMOTE_FOLDER_ERROR })
+  expect(checkStartForm({ task: 'x', name: '', folder: 'x'.repeat(4097), worktree: '' }, true)).toEqual({ error: REMOTE_FOLDER_ERROR })
+  // this device's folder is still a full path here
+  expect(checkStartForm({ task: 'x', name: '', folder: 'acme/sub', worktree: '' })).toEqual({ error: FOLDER_ERROR })
+})
+it('folderPlaceholder shows this device\'s coordinator folder, and for a paired device the rule the dialog states', () => {
+  expect(folderPlaceholder({ project: 'acme', device: null, folder: 'D:\\Work\\acme' })).toBe('D:\\Work\\acme')
+  expect(folderPlaceholder({ project: 'acme', device: 'Laptop', folder: 'D:\\Work\\acme' })).toBe('Empty: the folder of a acme tab on Laptop, else its default folder')
 })
 it('startDevices lists this device first, then each online paired device by its name in the order given; with none online, no choice', () => {
   expect(startDevices([{ name: 'Laptop', online: true }, { name: 'Tablet', online: false }, { name: 'Desk', online: true }])).toEqual([

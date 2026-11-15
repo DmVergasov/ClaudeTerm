@@ -3,7 +3,7 @@
 import { COORD_NAME_MAX, COORD_TASK_MAX, type CoordResult, type CoordStartRequest } from '../shared/coordinator'
 import { el } from './dom'
 import { openDialog, type DialogHandle } from './coord-dialog'
-import { checkStartForm, startDevices, startError, type AttachChoice, type StartForm } from './sessions-model'
+import { checkStartForm, folderPlaceholder, startDevices, startError, type AttachChoice, type StartForm } from './sessions-model'
 
 /** a labelled field of the form: its label over its control, then the hint of the field, if any */
 function field(id: string, label: string, control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, hint?: string): HTMLElement {
@@ -15,7 +15,7 @@ function field(id: string, label: string, control: HTMLInputElement | HTMLTextAr
 }
 
 /** the New session dialog: Task, Device (only when a paired device is online), Name, Folder (empty: the coordinator's), Worktree; Start asks main and closes on its yes */
-export function openNewSessionDialog(o: { folder: string; paired: { name: string; online: boolean }[]; start(req: CoordStartRequest): Promise<CoordResult>; late(r: CoordResult): void }): void {
+export function openNewSessionDialog(o: { folder: string; project: string; paired: { name: string; online: boolean }[]; start(req: CoordStartRequest): Promise<CoordResult>; late(r: CoordResult): void }): void {
   const task = el('textarea', { className: 'mcp-add-field', name: 'task', placeholder: 'What should the new session do?', maxLength: COORD_TASK_MAX })
   const name = el('input', { className: 'mcp-add-name', name: 'name', type: 'text', placeholder: 'Optional', maxLength: COORD_NAME_MAX, spellcheck: false })
   const folder = el('input', { className: 'mcp-add-name', name: 'folder', type: 'text', placeholder: o.folder, spellcheck: false })
@@ -23,6 +23,13 @@ export function openNewSessionDialog(o: { folder: string; paired: { name: string
   // the devices offered: this device first, and no choice at all when no paired device is online
   const devices = startDevices(o.paired)
   const device = devices.length === 0 ? null : el('select', { className: 'mcp-add-name', name: 'device' }, ...devices.map((d, i) => el('option', { value: String(i), textContent: d.label })))
+  // the device chosen is the device of the option picked; this device when no choice is shown
+  const chosenDevice = (): string | null => (device === null ? null : (devices[Number(device.value)]?.device ?? null))
+  // the folder's placeholder follows the device chosen: this device's folder, or what an empty folder means on that device
+  device?.addEventListener('change', () => {
+
+    folder.placeholder = folderPlaceholder({ project: o.project, device: chosenDevice(), folder: o.folder })
+  })
   // once the dialog is closed, a refusal main answers later is told as a toast
   let open = true
   let handle: DialogHandle
@@ -40,10 +47,10 @@ export function openNewSessionDialog(o: { folder: string; paired: { name: string
     ready: () => task.value.trim() !== '',
     submit: async () => {
       const form: StartForm = { task: task.value, name: name.value, folder: folder.value, worktree: worktree.value }
-      const checked = checkStartForm(form)
+      const chosen = chosenDevice()
+      // a folder for another device is that device's path: the form does not check it as a full path of this device
+      const checked = checkStartForm(form, chosen !== null)
       if (!('req' in checked)) return checked.error
-      // the device chosen is the device of the option picked; this device when no choice is shown
-      const chosen = device === null ? null : (devices[Number(device.value)]?.device ?? null)
       handle.busy(true, 'Starting…')
       let r: CoordResult
       try {

@@ -260,7 +260,10 @@ test('New session on Laptop: Studio\'s dialog offers Laptop, the row shows Lapto
   await expect(dialog.locator('select[name="device"] option')).toHaveText(['This device', 'Laptop'])
   await dialog.locator('textarea[name="task"]').fill('Write the release notes.')
   await dialog.locator('input[name="name"]').fill('Release notes')
+  // the folder's placeholder is this device's folder until Laptop is chosen, then what an empty folder means on Laptop
+  await expect(dialog.locator('input[name="folder"]')).not.toHaveAttribute('placeholder', 'Empty: the folder of a acme tab on Laptop, else its default folder')
   await dialog.locator('select[name="device"]').selectOption({ label: 'Laptop' })
+  await expect(dialog.locator('input[name="folder"]')).toHaveAttribute('placeholder', 'Empty: the folder of a acme tab on Laptop, else its default folder')
   await dialog.getByRole('button', { name: 'Start', exact: true }).click()
 
   // Laptop opens the tab; Studio's view lists it on Laptop as Starting… until the session comes

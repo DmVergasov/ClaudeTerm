@@ -314,13 +314,13 @@ export const isCoordKey = (v: unknown): v is string => oneLine(v, COORD_KEY_MAX)
 /** a task's text: not blank, at most COORD_TASK_MAX characters */
 export const isCoordTaskText = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= COORD_TASK_MAX
 
-/** the window's request to start a session in a coordinator's tab: a task, and a name, folder, device and worktree each null or valid; a device is null for this device, else a paired device's name */
+/** the window's request to start a session in a coordinator's tab: a task, and a name, folder, device and worktree each null or valid; a device is null for this device, else a paired device's name, and a folder for a paired device is that device's path (text up to MAX_PATH_TEXT, no control character) */
 export const isCoordStartRequest = (v: unknown): v is CoordStartRequest => {
   if (typeof v !== 'object' || v === null) return false
   const r = v as Record<string, unknown>
   return isCoordTaskText(r.task) &&
     (r.name === null || oneLine(r.name, COORD_NAME_MAX)) &&
-    (r.folder === null || (isAbsPath(r.folder) && r.folder.length <= MAX_PATH_TEXT)) &&
+    (r.folder === null || (r.device === null ? isAbsPath(r.folder) && r.folder.length <= MAX_PATH_TEXT : oneLine(r.folder, MAX_PATH_TEXT))) &&
     (r.device === null || oneLine(r.device, MAX_DEVICE_NAME)) &&
     (r.worktree === null || isWorktreeName(r.worktree))
 }
