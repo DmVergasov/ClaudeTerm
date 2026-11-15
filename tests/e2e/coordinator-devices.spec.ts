@@ -1,13 +1,16 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
+import { realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { activate, refOf, startSession, waitForMail } from './agent-mail'
+import { chatStandIn } from './chat-helpers'
 import { claudeTabIn, coord, coordDevices, coordViewOf, done, makeCoordinator, within } from './coordinator-helpers'
 import { dragOnto, LEFT, marksOf, menuItem, openSessions, sessionGroup, sessionRow, tpRow } from './coordinator-window'
 import { closeApp, closePaired, type Device, relaunch, SLOW } from './device-pair'
+import { gitRepo } from './helpers'
 
 test.afterEach(closePaired)
 
@@ -302,4 +305,40 @@ test('New session on Laptop: Studio\'s dialog offers Laptop, the row shows Lapto
   await expect.poll(async () => { const r = await laptopRow(); return r === null ? 'missing' : r.marker }, SLOW).toBeNull()
   await expect(dialog).toHaveCount(0, { timeout: 45_000 })
   expect((await within(waitForMail(b.pipeName, newTab, sid), 30_000)).info).toContain('> Write the release notes.')
+})
+
+test('a paired device draws the coordinator\'s report card: the session\'s device after its label, and no buttons on the member', async () => {
+  test.setTimeout(240_000)
+  // Studio's coordinator tab opens in its chat, so the chat stand-in runs it; its folders are trusted, the repository as well
+  const stand = chatStandIn({ turns: {}, fallback: [{ text: 'Noted.' }] })
+  const repoA = gitRepo('acme')
+  writeFileSync(join(stand.config, '.claude.json'), JSON.stringify({
+    projects: { [realpathSync.native(stand.work)]: { hasTrustDialogAccepted: true }, [realpathSync.native(repoA)]: { hasTrustDialogAccepted: true } }
+  }))
+  const { a, b, coordTab, coordSid, sessionTab, sessionSid } = await coordDevices({ a: { settings: stand.settings, args: stand.args, env: stand.env }, repoA })
+  await activate(a.page, coordTab)
+  await expect(a.page.locator('.chat-host:visible')).toHaveCount(1, SLOW)
+  await attachLaptopSession(a, b, coordTab, sessionTab, sessionSid)
+
+  const task = waitForMail(b.pipeName, sessionTab, sessionSid)
+  expect(await coord(a.pipeName, coordTab, { op: 'message', session: refOf(sessionSid), text: 'Fix the parser.' })).toMatchObject({ ok: true })
+  await within(task, 30_000)
+  const report = waitForMail(a.pipeName, coordTab, coordSid)
+  await done(b.pipeName, sessionTab, sessionSid, { lastMessage: 'Parser fixed.' })
+  await within(report, 30_000)
+
+  // Studio's own card: the session's label, then Laptop's name, with Open session and Resolve
+  const own = a.page.locator('.chat-host:visible .coord-report')
+  await expect(own).toHaveCount(1, SLOW)
+  await expect(own.locator('.coord-report-title b')).toHaveText('acme · Laptop')
+  await expect(own.locator('.coord-report-acts button')).toHaveText(['Open session', 'Resolve'])
+
+  // Laptop's window: Studio's coordinator tab is a remote tab whose chat is the mirror; the same card, with no buttons
+  await expect.poll(async () => (await b.page.evaluate(() => window.__ct!.tabIds())).includes(coordTab), SLOW).toBe(true)
+  await activate(b.page, coordTab)
+  const member = b.page.locator('.chat-host:visible .coord-report')
+  await expect(member).toHaveCount(1, SLOW)
+  await expect(member.locator('.coord-report-title b')).toHaveText('acme · Laptop')
+  await expect(member.locator('.coord-report-acts')).toHaveCount(1)
+  await expect(member.locator('.coord-report-acts button')).toHaveCount(0)
 })
