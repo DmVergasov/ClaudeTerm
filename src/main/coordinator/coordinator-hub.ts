@@ -67,6 +67,13 @@ export interface HubRemoteTab {
   coord: RemoteCoordFacts | null
 }
 
+/** the paired devices and their tabs as one view or the marks reads them: peers by id, and each session's tab (a live one before an exited one) */
+interface RemoteSnapshot {
+  peers: Map<string, HubPeer>
+  tabs: HubRemoteTab[]
+  tabByKey: Map<string, HubRemoteTab>
+}
+
 export interface CoordinatorHubDeps {
   store: CoordinatorStore
   mail: MailStore
@@ -310,14 +317,15 @@ export class CoordinatorHub {
   read(tabId: string, target: string): PipeResponse {
     const c = this.own(tabId)
     if (!c) return fail(HUB_TEXT.notCoordinator)
-    const v = this.viewOf(c, tabId)
+    const snap = this.remoteSnapshot()
+    const v = this.viewOf(c, tabId, snap)
     const found = findRow([...v.sessions, ...v.notAttached], target)
     if ('error' in found) return fail(found.error)
     const row = found.row
     const reportText = row.lastReport ? (this.d.mail.get(row.lastReport.id)?.text ?? null) : null
     // a session of another device: its prompt is what its device reports, and its task list is not read here
     if (row.device !== null) {
-      const prompt = row.session === null ? null : (this.remoteTab(row.device, row.session)?.coord?.prompt ?? null)
+      const prompt = row.session === null ? null : (snap.tabByKey.get(remoteKey(row.device, row.session))?.coord?.prompt ?? null)
       return { ok: true, info: readText(row, { prompt, report: reportText, taskList: null }, (ms) => this.d.clock(ms)) }
     }
     return {
@@ -618,10 +626,11 @@ export class CoordinatorHub {
 
   marks(): CoordMarks {
     const marks: CoordMarks = {}
+    const snap = this.remoteSnapshot()
     for (const c of this.d.store.coordinators()) {
       const tab = this.tabOfSession(c.session)
       if (!tab) continue
-      const v = this.viewOf(c, tab.tabId)
+      const v = this.viewOf(c, tab.tabId, snap)
       marks[tab.tabId] = { role: 'coordinator', project: c.project.name, sessions: v.sessions.length, waiting: v.waiting }
     }
     for (const h of this.d.store.allHosted()) {
@@ -634,7 +643,7 @@ export class CoordinatorHub {
     for (const c of this.d.store.coordinators()) {
       const coordinatorTab = this.tabOfSession(c.session)
       for (const a of c.attachments) {
-        const rt = a.device === null || a.pending !== null ? null : this.remoteTab(a.device, a.session)
+        const rt = a.device === null || a.pending !== null ? null : (snap.tabByKey.get(remoteKey(a.device, a.session)) ?? null)
         if (rt) marks[rt.tabId] = { role: 'attached', project: c.project.name, coordinator: this.nameOf(c.session), coordinatorTabId: coordinatorTab?.tabId ?? null }
       }
     }
@@ -837,20 +846,34 @@ export class CoordinatorHub {
     }
   }
 
+  /** the paired devices and their tabs, read once: a view or the marks takes one of these, not a read per lookup */
+  private remoteSnapshot(): RemoteSnapshot {
+    const tabs = this.d.remoteTabs()
+    const tabByKey = new Map<string, HubRemoteTab>()
+    for (const t of tabs) {
+      if (t.session === null) continue
+      const key = remoteKey(t.device, t.session)
+      const held = tabByKey.get(key)
+      // a session's live tab before an exited one that still lists it
+      if (!held || (held.exited && !t.exited)) tabByKey.set(key, t)
+    }
+    return { peers: new Map(this.d.peers().map((p) => [p.id, p])), tabs, tabByKey }
+  }
+
   /** the rows of a coordinator's attachments, in the order it has them */
-  private attachedRows(c: StoredCoordinator): CoordSessionRow[] {
+  private attachedRows(c: StoredCoordinator, snap: RemoteSnapshot): CoordSessionRow[] {
     const queued = c.attachments.some((a) => a.device !== null) ? this.queuedRemoteTasks(c) : new Map<string, CoordTaskInfo>()
     return c.attachments.map((a) =>
       a.device === null
         ? this.rowOf(a.session, this.agentName(a.session) ?? a.name, this.tabOfSession(a.session), this.d.store.hosted(a.session), a)
-        : this.attachedRemoteRow(a, a.device, queued)
+        : this.attachedRemoteRow(a, a.device, queued, snap)
     )
   }
 
   /** a row of a session of another device attached here: its tab's facts from the device's list, and the attachment's marks */
-  private attachedRemoteRow(a: StoredAttachment, device: string, queued: Map<string, CoordTaskInfo>): CoordSessionRow {
-    const rt = this.remoteTab(device, a.session)
-    const peer = this.peerOf(device)
+  private attachedRemoteRow(a: StoredAttachment, device: string, queued: Map<string, CoordTaskInfo>, snap: RemoteSnapshot): CoordSessionRow {
+    const rt = snap.tabByKey.get(remoteKey(device, a.session)) ?? null
+    const peer = snap.peers.get(device) ?? null
     const coord = rt?.coord ?? null
     const marker: CoordMarker = a.pending !== null ? 'attaching' : peer?.online === true ? null : 'offline'
     // the task the device reports is the one it holds; without it, the oldest task this coordinator gave it that it has not taken
@@ -894,11 +917,12 @@ export class CoordinatorHub {
   }
 
   /** the sessions of online paired devices that are in this coordinator's project, not coordinators, and not attached here: their rows */
-  private notAttachedRemote(c: StoredCoordinator): CoordSessionRow[] {
+  private notAttachedRemote(c: StoredCoordinator, snap: RemoteSnapshot): CoordSessionRow[] {
     const rows: CoordSessionRow[] = []
-    for (const t of this.d.remoteTabs()) {
-      const peer = this.peerOf(t.device)
-      if (!peer || !peer.online || !t.claude || t.session === null || t.exited) continue
+    for (const t of snap.tabs) {
+      if (!t.claude || t.session === null || t.exited) continue
+      const peer = snap.peers.get(t.device)
+      if (!peer || !peer.online) continue
       if (t.project === null || !sameName(t.project, c.project.name) || t.coord?.coordinator === true) continue
       if (c.attachments.some((a) => a.device === t.device && a.session === t.session)) continue
       const state = rowState(
@@ -967,19 +991,9 @@ export class CoordinatorHub {
     return oldest
   }
 
-  /** the tab of a paired device that runs a session, as this window knows it */
-  private remoteTab(device: string, session: string): HubRemoteTab | null {
-    return this.d.remoteTabs().find((t) => t.device === device && t.session === session) ?? null
-  }
-
-  /** a paired device as the hub knows it, or null */
-  private peerOf(device: string): HubPeer | null {
-    return this.d.peers().find((p) => p.id === device) ?? null
-  }
-
   /** the row a target names among a coordinator's attached sessions and its Starting… rows */
   private attachedFind(c: StoredCoordinator, target: string): FoundRow | { error: string } {
-    const attached = this.attachedRows(c)
+    const attached = this.attachedRows(c, this.remoteSnapshot())
     const starts = this.startsOf(c)
     const rows = [...attached, ...starts.map((s) => this.startRow(s))]
     const found = findRow(rows, target)
@@ -1032,8 +1046,8 @@ export class CoordinatorHub {
     }
   }
 
-  private viewOf(c: StoredCoordinator, tabId: string): CoordinatorView {
-    const sessions = [...this.attachedRows(c), ...this.startsOf(c).map((s) => this.startRow(s))]
+  private viewOf(c: StoredCoordinator, tabId: string, snap: RemoteSnapshot = this.remoteSnapshot()): CoordinatorView {
+    const sessions = [...this.attachedRows(c, snap), ...this.startsOf(c).map((s) => this.startRow(s))]
     const attached = new Set(c.attachments.map((a) => a.session))
     const tabs = this.d.tabs()
     const notAttached: CoordSessionRow[] = []
@@ -1046,7 +1060,7 @@ export class CoordinatorHub {
       row.attachedTo = hosted ? replaceControls(hosted.coordinator.name) : null
       notAttached.push(row)
     }
-    notAttached.push(...this.notAttachedRemote(c))
+    notAttached.push(...this.notAttachedRemote(c, snap))
     this.stamp(c.session, [...sessions, ...notAttached])
     return {
       tabId,

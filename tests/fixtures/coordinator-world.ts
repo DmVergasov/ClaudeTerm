@@ -81,6 +81,8 @@ export function world(o: WorldOptions = {}) {
     /** the paired devices, and the tabs of them, as the hub's peers and remoteTabs deps give them */
     peers: [] as HubPeer[],
     remoteTabs: [] as HubRemoteTab[],
+    /** how often the hub asked for the paired devices and their tabs */
+    calls: { peers: 0, remoteTabs: 0 },
     opened: [] as OpenTabRequest[],
     pokes: [] as string[],
     rechecks: 0,
@@ -118,8 +120,14 @@ export function world(o: WorldOptions = {}) {
     agents: () => w.agentsOf(),
     waits: (tabId) => w.waits[tabId] ?? { prompt: null, limit: null },
     progress: (tabId) => w.progress[tabId] ?? null,
-    peers: () => w.peers,
-    remoteTabs: () => w.remoteTabs,
+    peers: () => {
+      w.calls.peers++
+      return w.peers
+    },
+    remoteTabs: () => {
+      w.calls.remoteTabs++
+      return w.remoteTabs
+    },
     taskList: () => null,
     restingNow: (tabId) => w.resting[tabId] ?? true,
     isDirectory: async (p) => p === 'D:\\Work\\acme',
