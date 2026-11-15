@@ -23,9 +23,13 @@ export interface DialogHandle {
   busy(on: boolean, label?: string): void
 }
 
+// each dialog's title has an id of its own: the one the dialog names as its label
+let titleCount = 0
+
 /** a modal in the MCP Add dialog's style, on document.body; its keys stay in it, Escape and a click on the scrim close it */
 export function openDialog(o: DialogOptions): DialogHandle {
   const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  const titleId = `coord-dialog-title-${++titleCount}`
   let closed = false
   let busyNow = false
   let busyLabel: string | undefined
@@ -35,7 +39,7 @@ export function openDialog(o: DialogOptions): DialogHandle {
   const action = o.action === null ? null : el('button', { className: 'mcp-btn primary', type: 'button', textContent: o.action })
   const errorBox = el('div', { className: 'mcp-add-error' })
 
-  const title = el('h2', { className: 'mcp-add-title', id: 'coord-dialog-title', textContent: o.title })
+  const title = el('h2', { className: 'mcp-add-title', id: titleId, textContent: o.title })
   const dialog = el('div', { className: 'mcp-add coord-dialog' },
     el('div', { className: 'mcp-add-head' }, title, closeButton),
     el('div', { className: 'mcp-add-body' }, ...o.body),
@@ -43,7 +47,9 @@ export function openDialog(o: DialogOptions): DialogHandle {
   dialog.dataset.dialog = o.id
   dialog.setAttribute('role', 'dialog')
   dialog.setAttribute('aria-modal', 'true')
-  dialog.setAttribute('aria-labelledby', 'coord-dialog-title')
+  // the dialog takes the focus itself when its buttons are off (see busy)
+  dialog.tabIndex = -1
+  dialog.setAttribute('aria-labelledby', titleId)
   const scrim = el('div', { className: 'mcp-add-scrim' }, dialog)
 
   function close(): void {
@@ -54,9 +60,8 @@ export function openDialog(o: DialogOptions): DialogHandle {
     o.closed?.()
   }
 
-  // while an answer is on its way both buttons are off; the primary one is also off until the form is ready
+  // while an answer is on its way the primary button reads its busy label and is off; Cancel stays on, and a start already asked for goes on; the primary one is also off until the form is ready
   function paint(): void {
-    cancel.disabled = busyNow
     if (!action) return
     action.disabled = busyNow || (o.ready !== undefined && !o.ready())
     action.textContent = busyNow && busyLabel !== undefined ? busyLabel : (o.action ?? '')
@@ -67,6 +72,9 @@ export function openDialog(o: DialogOptions): DialogHandle {
     busyNow = on
     busyLabel = on ? label : undefined
     paint()
+    // the button that had the focus is off now: the focus goes to the dialog, so that its keys, Escape included, still reach it
+    const active = document.activeElement
+    if (on && (active === document.body || (active instanceof HTMLButtonElement && active.disabled))) dialog.focus()
   }
 
   function error(text: string): void {

@@ -45,6 +45,8 @@ import { leftUnfinished } from './unread'
 import { FrontFallback } from './front-fallback'
 import { FolderDialog } from './folder-dialog'
 import { confirmDialog } from './coord-dialog'
+import { openAttachDialog, openNewSessionDialog } from './coord-dialogs'
+import { attachChoices, type AttachTab } from './sessions-model'
 import { TitleBar } from './title-bar'
 import { applyTheme } from './app-theme'
 import { limitMeters } from './limit-meters'
@@ -1285,6 +1287,15 @@ function toastFailure(r: CoordResult): void {
   if (!r.ok) showToast(r.error)
 }
 
+/** every tab as Attach… reads it: a Claude tab's session, its folder and its branch */
+function attachTabs(): AttachTab[] {
+  return order.flatMap((id): AttachTab[] => {
+    const t = tabs.get(id)
+    if (!t) return []
+    return [{ id, title: titleOf(t), claude: t.info.kind === 'claude', local: !t.info.remote, session: t.info.claudeSessionId, exited: t.info.exited, folder: t.info.folder, branch: places.get(id)?.branch ?? null }]
+  })
+}
+
 /** Detach of an attached tab (its menu, its header, a drag out of its block): the coordinator's view names its row */
 async function detachFromCoordinator(tabId: string): Promise<void> {
   const mark = coordMarkOf(tabId)
@@ -1313,6 +1324,8 @@ async function makeCoordinatorFrom(tabId: string): Promise<void> {
     text: `${r.replaces} coordinates ${project} now. This tab takes over its sessions and their open tasks.`,
     action: 'Replace'
   })
+  // the menu that asked is gone: the keyboard goes back to the tab in front, as after the other panels' toggles
+  if (activeId) focusTab(activeId)
   if (replace) toastFailure(await ct.coordMake(tabId, true))
 }
 
@@ -1749,7 +1762,16 @@ async function boot(): Promise<void> {
     attach: (coordinatorTabId, sessionTabId) => void ct.coordAttach(coordinatorTabId, sessionTabId).then(toastFailure),
     detach: (coordinatorTabId, key) => void ct.coordDetach(coordinatorTabId, key).then(toastFailure),
     resolve: (coordinatorTabId, key) => void ct.coordResolve(coordinatorTabId, key).then(toastFailure),
-    message: (coordinatorTabId, key, text) => ct.coordMessage(coordinatorTabId, key, text).then((r) => (r.ok ? null : r.error))
+    message: (coordinatorTabId, key, text) => ct.coordMessage(coordinatorTabId, key, text).then((r) => (r.ok ? null : r.error)),
+    newSession: (coordinatorTabId) => openNewSessionDialog({
+      folder: tabs.get(coordinatorTabId)?.info.folder ?? '',
+      start: (req) => ct.coordNewSession(coordinatorTabId, req),
+      late: toastFailure
+    }),
+    attachOther: (coordinatorTabId) => openAttachDialog({
+      choices: attachChoices(attachTabs(), coordinatorTabId, coordMarks),
+      attach: (tabId) => ct.coordAttach(coordinatorTabId, tabId)
+    })
   })
   sidePanel.onCover = () => noteOverlay.relayout()
   mcpPanel = new McpPanel(sidePanel.bodies.mcp, sidePanel, {

@@ -35,6 +35,8 @@ test('a second tab of the project asks before it replaces the coordinator: Cance
     expect(Math.abs(box!.width - 460)).toBeLessThan(2)
     await dialog.locator('button', { hasText: 'Cancel' }).click()
     await expect(dialog).toHaveCount(0)
+    // the menu that asked is gone: the terminal of the tab in front has the focus again
+    await expect(page.locator('.terminal-host:visible .xterm-helper-textarea')).toBeFocused()
     expect((await marksOf(page))[t0]).toMatchObject({ role: 'coordinator' })
     await menuItem(page, t1, 'Make project coordinator')
     await dialog.locator('button', { hasText: 'Replace' }).click()

@@ -690,3 +690,12 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .coord-compose-error { color: var(--red); font-size: 12px; }
 .coord-compose-error:empty { display: none; }
 .coord-compose-actions { display: flex; justify-content: flex-end; gap: 6px; }
+/* the Sessions panel's toolbar, and the dialogs' fields and choices */
+.coord-bar { display: flex; flex: none; gap: 6px; padding: 10px 14px 4px; }
+.coord-field-hint { color: var(--text-3); font-size: 11.5px; }
+.coord-dialog:focus { outline: none; }
+.coord-picks { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+.coord-pick { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--raised); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.coord-pick:hover:not(:disabled) { border-color: var(--accent); }
+.coord-pick-title { color: var(--text); font-size: 12.5px; }
+.coord-pick-where, .coord-pick-note, .coord-picks-empty { color: var(--text-3); font-size: 11.5px; overflow-wrap: anywhere; }

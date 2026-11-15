@@ -1,4 +1,4 @@
-import type { CoordGroup, CoordinatorView, CoordSessionRow } from '../shared/coordinator'
+import { isWorktreeName, type CoordGroup, type CoordinatorView, type CoordMarks, type CoordResult, type CoordSessionRow, type CoordStartRequest } from '../shared/coordinator'
 import { clockOf } from './util'
 
 export type SectionKey = CoordGroup | 'not-attached'
@@ -69,4 +69,55 @@ export function nextRedrawAt(rows: CoordSessionRow[], now: number): number | nul
     if (next === null || at < next) next = at
   }
   return next
+}
+
+export const FOLDER_ERROR = 'The folder must be a full path.'
+export const WORKTREE_ERROR = 'A worktree name is letters, digits, ".", "_" and "-", starts with a letter or digit, and is at most 64 long.'
+export const NAME_ERROR = 'A name is one line of plain text.'
+/** what main answers for a request whose fields do not pass its check */
+const REFUSED_FIELDS = 'Invalid request'
+
+/** the New session dialog's fields, as typed */
+export interface StartForm { task: string; name: string; folder: string; worktree: string }
+
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
+// a full path of either system: from the root (/x, \x) or from a drive (C:\x, C:/x)
+const FULL_PATH = /^(?:\/|\\|[A-Za-z]:[\\/])/
+
+/** the fields trimmed, an empty optional field null; a blank task: 'A task needs a text.'; a name with a control character: NAME_ERROR; a folder that is not a full path of either system: FOLDER_ERROR; a worktree isWorktreeName refuses: WORKTREE_ERROR */
+export function checkStartForm(f: StartForm): { req: CoordStartRequest } | { error: string } {
+  const task = f.task.trim()
+  const name = f.name.trim()
+  const folder = f.folder.trim()
+  const worktree = f.worktree.trim()
+  if (task === '') return { error: 'A task needs a text.' }
+  if (CONTROL_CHARACTER.test(name)) return { error: NAME_ERROR }
+  if (folder !== '' && !FULL_PATH.test(folder)) return { error: FOLDER_ERROR }
+  if (worktree !== '' && !isWorktreeName(worktree)) return { error: WORKTREE_ERROR }
+  return { req: { task, name: name === '' ? null : name, folder: folder === '' ? null : folder, worktree: worktree === '' ? null : worktree } }
+}
+
+/** the text a start main refused shows: null for a start that was made; the refusal of the fields in words of the dialog; any other error as main said it */
+export function startError(r: CoordResult): string | null {
+  if (r.ok) return null
+  return r.error === REFUSED_FIELDS ? 'ClaudeTerm refused these fields.' : r.error
+}
+
+/** a tab as Attach… reads it: a local Claude tab's session, its folder and its branch */
+export interface AttachTab { id: string; title: string; claude: boolean; local: boolean; session: string | null; exited: boolean; folder: string; branch: string | null }
+export interface AttachChoice { tabId: string; title: string; where: string; note: string | null }
+
+/** the tabs Attach… offers, in their order: this device's Claude tabs with a session that run, other than the coordinator, a tab attached to it, and any coordinator; where is "folder · branch"; note: `Attached to the ${project} coordinator` for a tab attached elsewhere */
+export function attachChoices(tabs: AttachTab[], coordinator: string, marks: CoordMarks): AttachChoice[] {
+  const choices: AttachChoice[] = []
+  for (const t of tabs) {
+    if (!t.claude || !t.local || t.session === null || t.exited || t.id === coordinator) continue
+    const mark = marks[t.id]
+    if (mark?.role === 'coordinator') continue
+    if (mark?.role === 'attached' && mark.coordinatorTabId === coordinator) continue
+    const where = t.branch === null ? t.folder : `${t.folder} · ${t.branch}`
+    const note = mark?.role === 'attached' ? `Attached to the ${mark.project} coordinator` : null
+    choices.push({ tabId: t.id, title: t.title, where, note })
+  }
+  return choices
 }

@@ -12,6 +12,10 @@ export interface SessionsPanelCallbacks {
   attach(coordinatorTabId: string, sessionTabId: string): void
   detach(coordinatorTabId: string, key: string): void
   resolve(coordinatorTabId: string, key: string): void
+  /** the New session dialog of a coordinator */
+  newSession(coordinatorTabId: string): void
+  /** the Attach… dialog of a coordinator */
+  attachOther(coordinatorTabId: string): void
   /** null: the task was given; else why not */
   message(coordinatorTabId: string, key: string, text: string): Promise<string | null>
 }
@@ -35,6 +39,8 @@ export class SessionsPanel {
   private view: CoordinatorView | null = null
   private readonly folded = new Set<SectionKey>(DEFAULT_FOLDED)
   private readonly notice = el('div', 'panel-notice coord-problem')
+  // the toolbar: New session and Attach…, built once above the rows
+  private readonly bar = el('div', 'coord-bar')
   private readonly problemText = el('span', '')
   private readonly list = el('div', 'coord-list')
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -55,7 +61,8 @@ export class SessionsPanel {
     this.notice.append(this.problemText, link)
     this.notice.hidden = true
     this.buildCompose()
-    body.replaceChildren(this.notice, this.list, this.composeBox)
+    this.buildBar()
+    body.replaceChildren(this.notice, this.bar, this.list, this.composeBox)
   }
 
   /** the tab in front and its view: null for a tab that is no coordinator, or a view not loaded yet */
@@ -193,6 +200,24 @@ export class SessionsPanel {
         this.cb.resolve(view.tabId, r.key)
         break
     }
+  }
+
+  /** the toolbar's buttons are built once: a redraw of the rows never takes them; each acts for the coordinator in front */
+  private buildBar(): void {
+    const start = el('button', 'coord-btn acc')
+    start.type = 'button'
+    const plus = el('span', '')
+    plus.innerHTML = icon('plus', 13)
+    start.append(plus, 'New session')
+    start.addEventListener('click', () => this.toolbar((id) => this.cb.newSession(id)))
+    const attach = el('button', 'coord-btn ghost', 'Attach…')
+    attach.type = 'button'
+    attach.addEventListener('click', () => this.toolbar((id) => this.cb.attachOther(id)))
+    this.bar.append(start, attach)
+  }
+
+  private toolbar(act: (tabId: string) => void): void {
+    if (this.view !== null) act(this.view.tabId)
   }
 
   /** the Message box is built once, at the foot of the panel: a redraw of the rows never takes its draft or its focus */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { CoordGroup, CoordinatorView, CoordSessionRow } from '../../src/shared/coordinator'
-import { DEFAULT_FOLDED, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections } from '../../src/renderer/sessions-model'
+import type { CoordGroup, CoordinatorView, CoordMarks, CoordSessionRow } from '../../src/shared/coordinator'
+import { attachChoices, checkStartForm, DEFAULT_FOLDED, FOLDER_ERROR, NAME_ERROR, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, startError, WORKTREE_ERROR, type AttachTab } from '../../src/renderer/sessions-model'
 
 const row = (key: string, group: CoordGroup, o: Partial<CoordSessionRow> = {}): CoordSessionRow => ({
   key, tabId: `tab-${key}`, device: null, deviceName: null, session: 'a1000000-0000-4000-8000-000000000002', ref: 'a10000', name: `${key} · Desktop`,
@@ -58,4 +58,35 @@ describe('nextRedrawAt', () => {
   it('a row changed ahead of now counts from its own change', () => {
     expect(nextRedrawAt([row('a', 'idle', { changedAt: now + 5_000 })], now)).toBe(now + 65_000)
   })
+})
+it('checkStartForm trims the fields and makes an empty optional field null', () => {
+  expect(checkStartForm({ task: ' Write the notes. ', name: '', folder: '  ', worktree: '' })).toEqual({ req: { task: 'Write the notes.', name: null, folder: null, worktree: null } })
+  expect(checkStartForm({ task: 'x', name: ' Notes ', folder: 'D:\\Work\\acme', worktree: 'notes-1' })).toEqual({ req: { task: 'x', name: 'Notes', folder: 'D:\\Work\\acme', worktree: 'notes-1' } })
+  expect(checkStartForm({ task: 'x', name: '', folder: '/home/sam/acme', worktree: '' })).toMatchObject({ req: { folder: '/home/sam/acme' } })
+})
+it('checkStartForm refuses a blank task, a relative folder and a worktree name with a space or a slash', () => {
+  expect(checkStartForm({ task: '  ', name: '', folder: '', worktree: '' })).toEqual({ error: 'A task needs a text.' })
+  expect(checkStartForm({ task: 'x', name: '', folder: 'acme/sub', worktree: '' })).toEqual({ error: FOLDER_ERROR })
+  expect(checkStartForm({ task: 'x', name: '', folder: '', worktree: 'a b' })).toEqual({ error: WORKTREE_ERROR })
+  expect(checkStartForm({ task: 'x', name: '', folder: '', worktree: 'a/b' })).toEqual({ error: WORKTREE_ERROR })
+})
+it('checkStartForm accepts a full path of either system and refuses a name with a control character', () => {
+  for (const folder of ['C:\\Work\\acme', 'C:/Work/acme', '\\\\server\\share', '/x']) expect(checkStartForm({ task: 'x', name: '', folder, worktree: '' })).toMatchObject({ req: { folder } })
+  expect(checkStartForm({ task: 'x', name: 'Notes\u0007', folder: '', worktree: '' })).toEqual({ error: NAME_ERROR })
+  expect(checkStartForm({ task: 'x', name: 'No\tte', folder: '', worktree: '' })).toEqual({ error: NAME_ERROR })
+})
+it('startError is null for a start that was made, says the fields are refused for an invalid request, and shows any other error', () => {
+  expect(startError({ ok: true })).toBeNull()
+  expect(startError({ ok: false, error: 'Invalid request' })).toBe('ClaudeTerm refused these fields.')
+  expect(startError({ ok: false, error: 'No folder D:\\gone on this device.' })).toBe('No folder D:\\gone on this device.')
+})
+it('attachChoices offers the other running Claude sessions of this device and says where one is attached', () => {
+  const t = (id: string, o: Partial<AttachTab> = {}): AttachTab => ({ id, title: id, claude: true, local: true, session: `s-${id}`, exited: false, folder: `D:\\Work\\${id}`, branch: 'main', ...o })
+  const marks: CoordMarks = { c: { role: 'coordinator', project: 'acme', sessions: 1, waiting: 0 }, a: { role: 'attached', project: 'acme', coordinator: 'c · Desktop', coordinatorTabId: 'c' },
+    b: { role: 'attached', project: 'beta', coordinator: 'k · Desktop', coordinatorTabId: 'k' }, k: { role: 'coordinator', project: 'beta', sessions: 1, waiting: 0 } }
+  const tabs = [t('c'), t('a'), t('b'), t('k'), t('x', { branch: null }), t('sh', { claude: false }), t('r', { local: false }), t('n', { session: null }), t('e', { exited: true })]
+  expect(attachChoices(tabs, 'c', marks)).toEqual([
+    { tabId: 'b', title: 'b', where: 'D:\\Work\\b · main', note: 'Attached to the beta coordinator' },
+    { tabId: 'x', title: 'x', where: 'D:\\Work\\x', note: null }
+  ])
 })
