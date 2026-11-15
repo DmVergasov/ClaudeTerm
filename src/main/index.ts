@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, promises as fsPromises, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, hostname, release, tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { MAIN_ACCOUNT, type AccountFlowView, type AccountResult, type AccountView, type AccountsView, type CarryLine, type CarryPreview, type PickedFolder, type RemoveInfo, type RemoveResult } from '../shared/accounts'
 import { commandWord, isAgentId, isTabView, type AgentSnapshot, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSnapshot } from '../shared/chat'
 import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
@@ -2418,8 +2418,21 @@ function bootstrap(): void {
     taskList: (id) => taskLists.get(id),
     restingNow: claudeIdle,
     isDirectory: isDirAsync,
+    isAbsolute: (folder) => isAbsolute(folder),
     accountLabel,
     openTab: (req) => openTab(req, false)?.id ?? null,
+    // open-tab on a paired device: its answer, or its refusal in words (an offline device has no link to ask)
+    openRemoteTab: async (device, req) => {
+      const holder = remote
+      if (!holder) return { ok: false, error: REMOTE_COPY.deviceOffline(peersNow().find((p) => p.id === device)?.name ?? device) }
+      try {
+        const r = await holder.actions.ask(device, 'open-tab', { kind: 'claude', profile: null, account: null, resume: null, ...req })
+        return { ok: true, tabId: r.id, cwd: r.cwd ?? '', accountName: r.accountName ?? MAIN_ACCOUNT, defaulted: r.defaulted ?? false }
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) }
+      }
+    },
+    accountEmail: (account) => (account === null ? accountsView().main.email : accountsView().accounts.find((x) => x.id === account)?.email ?? null),
     recheckMail: () => mailHub.tabsChanged(),
     poke: (id) => promptDelivery.poke(id),
     alias: (oldSession, newSession) => mailHub.alias(oldSession, newSession),
@@ -3056,7 +3069,7 @@ function bootstrap(): void {
   ipcMain.handle(IPC.coordDetach, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.detach(tabId, key) : coordRefused))
   ipcMain.handle(IPC.coordMessage, (_e, tabId: unknown, key: unknown, text: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) && isCoordTaskText(text) ? projectCoordinators.message(tabId, key, text) : coordRefused))
   ipcMain.handle(IPC.coordResolve, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.resolve(tabId, key) : coordRefused))
-  ipcMain.handle(IPC.coordNewSession, (_e, tabId: unknown, req: unknown): Promise<CoordResult> => (isLocalClaudeTab(tabId) && isCoordStartRequest(req) ? projectCoordinators.start(tabId, { ...req, device: null }) : Promise.resolve(coordRefused)))
+  ipcMain.handle(IPC.coordNewSession, (_e, tabId: unknown, req: unknown): Promise<CoordResult> => (isLocalClaudeTab(tabId) && isCoordStartRequest(req) ? projectCoordinators.start(tabId, req) : Promise.resolve(coordRefused)))
   /** a chat call that is not awaited: a failure is logged, never thrown into the main process */
   const chatCall = (call: Promise<void>, what: string): void => {
     call.catch((e: unknown) => log.warn(`${what}: ${String(e)}`))

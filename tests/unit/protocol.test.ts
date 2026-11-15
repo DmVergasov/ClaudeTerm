@@ -385,6 +385,13 @@ describe('parsePipeMessage: the coordinator messages', () => {
     expect(coord({ op: 'start', task: 'x', worktree: 'parser/fix' })).toEqual({ ok: false, error: 'worktree must be a plain name, not a path' })
     expect(coord({ op: 'fly' })).toEqual({ ok: false, error: 'unknown coord op: fly' })
   })
+
+  it('coord start with a device keeps a folder that is not absolute here, but no NUL; without a device it is refused', () => {
+    expect(coord({ op: 'start', task: 'x', device: 'Laptop', folder: 'relative/acme' }))
+      .toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'start', task: 'x', name: null, folder: 'relative/acme', device: 'Laptop', worktree: null } })
+    expect(coord({ op: 'start', task: 'x', device: 'Laptop', folder: 'a\0b' }).ok).toBe(false)
+    expect(coord({ op: 'start', task: 'x', folder: 'relative/acme' }).ok).toBe(false)
+  })
 })
 
 describe('parsePipeMessage: the note messages', () => {

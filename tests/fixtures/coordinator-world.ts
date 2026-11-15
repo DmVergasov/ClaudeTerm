@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CoordinatorHub, type HubPeer, type HubRemoteTab, type HubTab } from '../../src/main/coordinator/coordinator-hub'
+import { CoordinatorHub, type HubPeer, type HubRemoteTab, type HubTab, type RemoteOpened } from '../../src/main/coordinator/coordinator-hub'
 import { CoordinatorStore, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
 import { nameAgents, type Agent, type AgentTab } from '../../src/main/mail/agent-directory'
 import { isShareable, MailStore } from '../../src/main/mail/mail-store'
@@ -90,6 +90,16 @@ export function world(o: WorldOptions = {}) {
     /** how often the hub asked for the paired devices and their tabs */
     calls: { peers: 0, remoteTabs: 0 },
     opened: [] as OpenTabRequest[],
+    /** the folders besides ACME's that this device's isDirectory says are folders */
+    dirs: [] as string[],
+    /** the hub's openRemoteTab calls, in order: each gets remoteAnswer, or the default answer for its request */
+    openedRemote: [] as { device: string; req: { cwd: string | null; email: string | null; title: string | null } }[],
+    remoteAnswer: null as RemoteOpened | null,
+    /** how far the clock moves while a paired device answers an open-tab */
+    remoteDelayMs: 0,
+    /** the email of this device's main account, and of the other accounts by id: what accountEmail gives */
+    mainEmail: null as string | null,
+    emails: {} as Record<string, string>,
     pokes: [] as string[],
     rechecks: 0,
     aliases: [] as [string, string][],
@@ -136,12 +146,20 @@ export function world(o: WorldOptions = {}) {
     },
     taskList: () => null,
     restingNow: (tabId) => w.resting[tabId] ?? true,
-    isDirectory: async (p) => p === 'D:\\Work\\acme',
+    isDirectory: async (p) => p === 'D:\\Work\\acme' || w.dirs.includes(p),
+    // a full path on either system, the same on every platform: the world's answer, not the app's (index.ts passes node's)
+    isAbsolute: (p) => /^(?:[A-Za-z]:)?[\\/]/.test(p),
     accountLabel: (a) => (a === null ? 'Main account' : `Account ${a}`),
     openTab: (req) => {
       w.opened.push(req)
       return `new-tab-${w.opened.length}`
     },
+    openRemoteTab: async (device, req) => {
+      w.openedRemote.push({ device, req })
+      w.now += w.remoteDelayMs
+      return w.remoteAnswer ?? { ok: true, tabId: 'rt-new', cwd: req.cwd ?? '/home/sam', accountName: 'Main account', defaulted: false }
+    },
+    accountEmail: (account) => (account === null ? w.mainEmail : (w.emails[account] ?? null)),
     recheckMail: () => {
       w.rechecks++
       w.order.push('recheck')

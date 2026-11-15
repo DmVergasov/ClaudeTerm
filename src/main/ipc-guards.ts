@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path'
 import { CARRY_ITEMS, FLOW_MODES, type AccountBegin, type CarryItem, type CarryLineItem, type FlowAction, type RemoveOptions } from '../shared/accounts'
 import { DOC_ACTIONS, type DocAction } from '../shared/docs'
 import type { ImageAction } from '../shared/ipc'
-import { MAX_ADDRESS_LENGTH } from '../shared/devices'
+import { MAX_ADDRESS_LENGTH, MAX_DEVICE_NAME } from '../shared/devices'
 import { MAX_NOTE_LENGTH, NOTE_FORMS, NOTE_SIDES, isNoteSize, isProjectKey, type NoteForm, type NoteSide, type NoteSize } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 import { MAX_FILE_LINKS } from '../shared/chat-paths'
@@ -314,12 +314,13 @@ export const isCoordKey = (v: unknown): v is string => oneLine(v, COORD_KEY_MAX)
 /** a task's text: not blank, at most COORD_TASK_MAX characters */
 export const isCoordTaskText = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= COORD_TASK_MAX
 
-/** the window's request to start a session in a coordinator's tab: a task, and a name, folder and worktree each null or valid */
+/** the window's request to start a session in a coordinator's tab: a task, and a name, folder, device and worktree each null or valid; a device is null for this device, else a paired device's name, and a folder for a paired device is that device's path (text up to MAX_PATH_TEXT, no control character) */
 export const isCoordStartRequest = (v: unknown): v is CoordStartRequest => {
   if (typeof v !== 'object' || v === null) return false
   const r = v as Record<string, unknown>
   return isCoordTaskText(r.task) &&
     (r.name === null || oneLine(r.name, COORD_NAME_MAX)) &&
-    (r.folder === null || (isAbsPath(r.folder) && r.folder.length <= MAX_PATH_TEXT)) &&
+    (r.folder === null || (r.device === null ? isAbsPath(r.folder) && r.folder.length <= MAX_PATH_TEXT : oneLine(r.folder, MAX_PATH_TEXT))) &&
+    (r.device === null || oneLine(r.device, MAX_DEVICE_NAME)) &&
     (r.worktree === null || isWorktreeName(r.worktree))
 }

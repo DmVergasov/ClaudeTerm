@@ -306,10 +306,11 @@ function parseCoordOp(m: Obj): { ok: true; op: CoordOp } | { ok: false; error: s
     if (!sized(m.task, COORD_TASK_MAX)) return { ok: false, error: `task must be 1 to ${COORD_TASK_MAX} characters` }
     const name = optionalField(m.name, (s) => sized(s, COORD_NAME_MAX))
     if (name === undefined) return { ok: false, error: `name must be 1 to ${COORD_NAME_MAX} characters` }
-    const folder = optionalField(m.folder, (s) => s.length <= MAX_FOLDER && !s.includes('\0') && isAbsolute(s))
-    if (folder === undefined) return { ok: false, error: `folder must be an absolute path of at most ${MAX_FOLDER} characters` }
     const device = optionalField(m.device, (s) => sized(s, COORD_DEVICE_MAX))
     if (device === undefined) return { ok: false, error: `device must be 1 to ${COORD_DEVICE_MAX} characters` }
+    // a folder with a device is a path on that device, which checks it; without one it is a path here
+    const folder = optionalField(m.folder, (s) => (device === null ? s.length <= MAX_FOLDER && !s.includes('\0') && isAbsolute(s) : sized(s, MAX_FOLDER) && !s.includes('\0')))
+    if (folder === undefined) return { ok: false, error: device === null ? `folder must be an absolute path of at most ${MAX_FOLDER} characters` : `folder must be 1 to ${MAX_FOLDER} characters without a NUL` }
     const worktree = optionalField(m.worktree, isWorktreeName)
     if (worktree === undefined) return { ok: false, error: 'worktree must be a plain name, not a path' }
     return { ok: true, op: { op: 'start', task: m.task, name, folder, device, worktree } }

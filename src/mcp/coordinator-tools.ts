@@ -20,7 +20,10 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
     'A usage limit is not a failure. A stopped task was stopped by the user.',
   start_session:
     'Coordinator only: open a new Claude session in ClaudeTerm and give it a task as its first message. ' +
-    'It opens in this coordinator\'s folder unless folder is given, on this coordinator\'s account, in Claude Code\'s default permission mode. ' +
+    'It opens on this device unless device names a paired device. ' +
+    'On this device: in this coordinator\'s folder unless folder is given, on this coordinator\'s account. ' +
+    'On a paired device: in folder (a path on that device) when given, else in the folder of a tab of the same project there, else that device\'s default folder; on its account with this coordinator\'s email, else its main account. ' +
+    'Always in Claude Code\'s default permission mode. ' +
     'With worktree, the session first enters a new git worktree of that name with EnterWorktree; ClaudeTerm itself creates none. ' +
     'It is attached to you at once, and its report comes to you by itself when its task ends.',
   attach_session:
@@ -46,7 +49,7 @@ const OP_WAIT_MS = 3000
 export async function coordTool(name: (typeof COORD_TOOL_NAMES)[number], op: CoordOp, deps: CoordToolDeps): Promise<ToolResult> {
   if (!deps.tabId) return { text: `${name} works only in a ClaudeTerm Claude tab`, isError: true }
   const msg: CoordMessage = op.op === 'start'
-    ? { v: 1, type: 'coord', tabId: deps.tabId, ...op, folder: op.folder === null ? null : resolve(deps.cwd, op.folder) }
+    ? { v: 1, type: 'coord', tabId: deps.tabId, ...op, folder: op.folder === null || op.device !== null ? op.folder : resolve(deps.cwd, op.folder) }
     : { v: 1, type: 'coord', tabId: deps.tabId, ...op }
   let res: PipeResponse
   try {

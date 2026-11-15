@@ -74,6 +74,7 @@ export interface CoordStartRequest {
   task: string
   name: string | null
   folder: string | null
+  device: string | null // null: this device; else a paired device's name
   worktree: string | null
 }
 
