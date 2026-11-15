@@ -288,9 +288,11 @@ describe('the calls of this device', () => {
     const f = fakeHost()
     f.dirs.add('\\\\server\\share')
     f.dirs.add('//server/share')
-    for (const cwd of ['\\\\server\\share', '//server/share', '\\\\?\\C:\\acme']) expect(await run(f, 'open-tab', { kind: 'claude', profile: null, account: null, resume: null, cwd, email: null, title: null })).toMatchObject({ cwd: '/home/demo', defaulted: true })
+    f.dirs.add('\\/server\\share')
+    f.dirs.add('/\\server\\share')
+    for (const cwd of ['\\\\server\\share', '//server/share', '\\\\?\\C:\\acme', '\\/server\\share', '/\\server\\share']) expect(await run(f, 'open-tab', { kind: 'claude', profile: null, account: null, resume: null, cwd, email: null, title: null })).toMatchObject({ cwd: '/home/demo', defaulted: true })
     expect(f.checkedDirs).toEqual([])
-    expect(f.opened.map((o) => o.cwd)).toEqual(['/home/demo', '/home/demo', '/home/demo'])
+    expect(f.opened.map((o) => o.cwd)).toEqual(['/home/demo', '/home/demo', '/home/demo', '/home/demo', '/home/demo'])
   })
 
   it('an email opens the tab on the account accountByEmail picks, and the answer names it', async () => {

@@ -213,10 +213,11 @@ export function pruneListedMembers(ctx: HostContext, members: string[]): void {
 
 /**
  * A folder a member names that this device may check and open a tab in: absolute here, and not a network or device path
- * (`\\server\share`, `//server/share`, `\\?\` and `\\.\`). Checking one of those would start a connection to another machine.
+ * (two separators of either kind at the start: `\\server\share`, `//server/share`, `\/server\share`, `/\server\share`, and the
+ * `\\?\` and `\\.\` forms). Checking one of those would start a connection to another machine.
  */
 export function usableFolder(path: string): boolean {
-  return isAbsPath(path) && !/^(\\\\|\/\/)/.test(path)
+  return isAbsPath(path) && !/^[\\/]{2}/.test(path)
 }
 
 /**
