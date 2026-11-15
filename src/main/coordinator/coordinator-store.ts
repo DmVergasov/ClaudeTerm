@@ -106,9 +106,9 @@ function parseReport(v: unknown): CoordReport | null {
   return { id: v.id, outcome: outcome as ReportOutcome, reason: v.reason as string | null, at: v.at }
 }
 
-/** a session's former ids: the UUID entries of the file, at most MAX_FORMER; none when the field is absent or not a list */
-function parseFormer(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter(isUuid).slice(0, MAX_FORMER) : []
+/** a session's former ids: the UUID entries of the file without repeats and without the entry's own id, at most MAX_FORMER; none when the field is absent or not a list */
+function parseFormer(v: unknown, own: string): string[] {
+  return Array.isArray(v) ? [...new Set(v.filter(isUuid).filter((id) => id !== own))].slice(0, MAX_FORMER) : []
 }
 
 /** the former ids once a session takes the id `to`: `from` first, without `to` and without repeats, at most MAX_FORMER */
@@ -152,7 +152,7 @@ function parseCoordinator(v: unknown): StoredCoordinator | null {
     const a = parseAttachment(x)
     if (a) attachments.push(a)
   }
-  return { session: v.session, project: { key: project.key, name: project.name }, since: v.since, attachments, former: parseFormer(v.former) }
+  return { session: v.session, project: { key: project.key, name: project.name }, since: v.since, attachments, former: parseFormer(v.former, v.session) }
 }
 
 function parseHosted(v: unknown): StoredHosted | null {
@@ -165,7 +165,7 @@ function parseHosted(v: unknown): StoredHosted | null {
     const t = parseTask(x)
     if (t) tasks.push(t)
   }
-  return { session: v.session, coordinator, project: v.project, tasks, former: parseFormer(v.former) }
+  return { session: v.session, coordinator, project: v.project, tasks, former: parseFormer(v.former, v.session) }
 }
 
 /**

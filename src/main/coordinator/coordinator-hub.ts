@@ -18,6 +18,7 @@ import { listText, readText } from './session-text'
 import {
   MAX_ATTACHMENTS,
   MAX_COORDINATORS,
+  MAX_FORMER,
   MAX_HOSTED,
   MAX_TASKS_PER_SESSION,
   type CoordinatorStore,
@@ -295,10 +296,16 @@ export class CoordinatorHub {
       }
       this.moveStarts(other.session, session)
     }
-    this.d.store.putCoordinator({ session, project, since: this.d.now(), attachments: moved, former: [] })
+    this.d.store.putCoordinator({ session, project, since: this.d.now(), attachments: moved, former: other ? [other.session, ...other.former].filter((id) => id !== session).slice(0, MAX_FORMER) : [] })
     for (const a of moved) {
-      this.write({ kind: 'attach', from: this.address(null, session), to: this.address(null, a.session), replyTo: null, text: HUB_TEXT.attachText(project.name), project: project.name, delivered: true, read: true })
+      if (a.device === null) {
+        this.write({ kind: 'attach', from: this.address(null, session), to: this.address(null, a.session), replyTo: null, text: HUB_TEXT.attachText(project.name), project: project.name, delivered: true, read: true })
+      } else if (other) {
+        // a session on another device is told that this coordinator replaces the old one; the attachment keeps its pending attach
+        this.write({ kind: 'attach', from: this.address(null, session), to: { device: a.device, session: a.session, name: a.name }, replyTo: null, text: HUB_TEXT.attachText(project.name), project: project.name, replaces: other.session, delivered: false, read: false })
+      }
     }
+    if (other) this.forwardFormer(other.session)
     this.d.changed()
     return other ? { ok: true, info: HUB_TEXT.replaced(project.name, otherName, moved.length) } : { ok: true, info: HUB_TEXT.made(project.name) }
   }
@@ -637,7 +644,10 @@ export class CoordinatorHub {
     const old = before !== null && before !== after ? before : remembered
     if (old !== null && old !== after) {
       // a rename onto an id that already names a coordinator or a hosted session of this device changes nothing: its starts stay too
-      if (this.d.store.renameSession(old, after)) this.moveStarts(old, after)
+      if (this.d.store.renameSession(old, after)) {
+        this.moveStarts(old, after)
+        this.tellRenamed(old, after)
+      }
       this.d.alias(old, after)
       this.d.changed()
     }
@@ -1046,7 +1056,7 @@ export class CoordinatorHub {
   /** an attach from another device to a session of this device, not yet delivered: the session takes it for its coordinator, or refuses it with a detach that says why */
   private acceptAttach(r: MailRecord): boolean {
     if (r.delivered || r.read || this.norm(r.from.device) === null || this.norm(r.to.device) !== null) return false
-    if (r.was !== undefined || r.replaces !== undefined) return false
+    if (r.was !== undefined) return false
     const session = r.to.session
     const name = this.agentName(session) ?? r.to.name
     const refuse = (reason: string): boolean => {
@@ -1091,6 +1101,82 @@ export class CoordinatorHub {
     this.dropPending(c, att, fail(r.replyTo === null ? HUB_TEXT.detachedPending(att.name) : r.text))
     this.unattach(c.session, att.session)
     this.d.changed()
+  }
+
+  /** an attach from another device that names the id the sender had (was) or the coordinator it replaces (replaces): the attachment or hosted entry here takes the new one, and the record is delivered and read; a replaces that matches no hosted entry here is a plain attach */
+  private followAttach(r: MailRecord): boolean {
+    if (r.delivered || r.read || this.norm(r.from.device) === null || this.norm(r.to.device) !== null) return false
+    if (r.was !== undefined) {
+      this.followRename(r, r.was)
+    } else if (r.replaces !== undefined) {
+      const hosted = this.d.store.hostedBy(r.to.session)
+      if (!hosted || this.norm(hosted.coordinator.device) !== this.norm(r.from.device) || hosted.coordinator.session !== r.replaces) return false
+      this.d.store.putHosted({ ...hosted, coordinator: this.stored(r.from), project: r.project ?? hosted.project })
+    } else {
+      return false
+    }
+    this.d.mail.mark([r.id], 'delivered')
+    this.d.mail.mark([r.id], 'read')
+    return true
+  }
+
+  /** a session of another device took a new id: its attachment here, or its hosted entry's coordinator, and the tasks it gave take the new id */
+  private followRename(r: MailRecord, was: string): void {
+    const device = this.norm(r.from.device)
+    const c = this.d.store.coordinatorBy(r.to.session)
+    const att = c?.attachments.find((a) => a.device === device && a.session === was)
+    if (c && att) this.patchAttachment(c, att.session, { session: r.from.session, name: r.from.name })
+    const hosted = this.d.store.hostedBy(r.to.session)
+    if (hosted && this.norm(hosted.coordinator.device) === device && hosted.coordinator.session === was) {
+      const from = this.stored(r.from)
+      this.d.store.putHosted({ ...hosted, coordinator: from, tasks: hosted.tasks.map((t) => (this.norm(t.from.device) === device && t.from.session === was ? { ...t, from } : t)) })
+    }
+  }
+
+  /** a session of this device took a new id: each remote attachment of it, and its hosted entry's coordinator when that is on another device, is told with was; what is in flight to the old id follows */
+  private tellRenamed(old: string, session: string): void {
+    const c = this.d.store.coordinator(session)
+    if (c) {
+      for (const a of c.attachments) {
+        if (a.device === null) continue
+        this.write({ kind: 'attach', from: this.address(null, session), to: { device: a.device, session: a.session, name: a.name }, replyTo: null, text: HUB_TEXT.attachText(c.project.name), project: c.project.name, was: old, delivered: false, read: false })
+      }
+    }
+    const hosted = this.d.store.hosted(session)
+    if (hosted && hosted.coordinator.device !== null) {
+      this.write({ kind: 'attach', from: this.address(null, session), to: hosted.coordinator, replyTo: null, text: HUB_TEXT.attachText(hosted.project), project: hosted.project, was: old, delivered: false, read: false })
+    }
+    this.forwardFormer(old)
+  }
+
+  /** what is in flight to a former id here is written again to the current one */
+  private forwardFormer(old: string): void {
+    for (const r of this.d.mail.all()) if (r.to.session === old) this.forwardArrived(r)
+  }
+
+  /** a report or a task from another device, not delivered or read, addressed to a former id of a coordinator or hosted session here, is written again to the current id, and the original is delivered and read */
+  private forwardArrived(r: MailRecord): boolean {
+    if (r.delivered || r.read || this.norm(r.to.device) !== null || this.norm(r.from.device) === null) return false
+    const kind = kindOf(r)
+    if (kind !== 'report' && kind !== 'task') return false
+    const holder = kind === 'report' ? this.d.store.coordinatorBy(r.to.session) : this.d.store.hostedBy(r.to.session)
+    if (!holder || holder.session === r.to.session) return false
+    const copy = this.write({
+      kind,
+      from: r.from,
+      to: { device: r.to.device, session: holder.session, name: this.nameOf(holder.session) },
+      replyTo: r.replyTo,
+      text: r.text,
+      ...(r.project === undefined ? {} : { project: r.project }),
+      ...(r.outcome === undefined ? {} : { outcome: r.outcome }),
+      ...(r.reason === undefined ? {} : { reason: r.reason }),
+      delivered: false,
+      read: false
+    })
+    if (copy === null) return false
+    this.d.mail.mark([r.id], 'delivered')
+    this.d.mail.mark([r.id], 'read')
+    return true
   }
 
   /** whether a coordinator takes a report from another device: its session is attached to it */
@@ -1357,13 +1443,15 @@ export class CoordinatorHub {
     const pokes: string[] = []
     for (const r of changed) {
       if (kindOf(r) === 'attach') {
-        if (this.confirmAttach(r) || this.acceptAttach(r)) signalled = true
+        if (this.confirmAttach(r) || this.followAttach(r) || this.acceptAttach(r)) signalled = true
         continue
       }
       if (kindOf(r) === 'detach') {
         if (this.detachArrived(r)) signalled = true
         continue
       }
+      // a report or task still addressed to a former id is written again to the current one, before any rule that would drop it
+      if (this.forwardArrived(r)) continue
       if (kindOf(r) === 'report') {
         if (this.holdReport(r)) {
           held = true

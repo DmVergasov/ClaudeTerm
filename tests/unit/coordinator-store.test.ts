@@ -259,6 +259,20 @@ describe('coordinator store', () => {
     expect(store.hosted(S)!.former).toEqual(expected)
   })
 
+  it('former loads without repeats and without the entry\'s own id', () => {
+    const dir = newDir()
+    const part = {
+      version: 1,
+      coordinators: [{ session: A, project: { key: '/work/shop', name: 'Shop' }, since: 100, attachments: [], former: [S, S, A, S2] }],
+      hosted: [{ session: S, coordinator: { device: null, session: A, name: 'Coordinator' }, project: 'Shop', tasks: [], former: [S3, S3, S, S4] }]
+    }
+    writeFileSync(join(dir, 'coordinators.json'), JSON.stringify(part), 'utf8')
+
+    const store = new CoordinatorStore(dir)
+    expect(store.coordinator(A)!.former).toEqual([S, S2])
+    expect(store.hosted(S)!.former).toEqual([S3, S4])
+  })
+
   it('renameSession keeps the old id first in former, at most 8, and never the id it takes', () => {
     const store = new CoordinatorStore(newDir(), { debounceMs: 60_000 })
     store.putCoordinator(coord)

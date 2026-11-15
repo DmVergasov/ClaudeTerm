@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
@@ -212,4 +213,20 @@ test('a Laptop tab is attached from its menu, and its row joins the coordinator\
   await expect.poll(async () => (await marksOf(b.page))[sessionTab], SLOW).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: null })
   await expect(tpRow(a.page, sessionTab)).toHaveClass(/coord-attached/)
   await expect(tpRow(a.page, sessionTab).locator('.tp-coord-device')).toHaveText('Laptop')
+})
+
+test('a clear in Laptop\'s session keeps it attached: Studio lists the new id, and its next task reaches it', async () => {
+  test.setTimeout(180_000)
+  const { a, b, coordTab, sessionTab, sessionSid } = await coordDevices()
+  await attachLaptopSession(a, b, coordTab, sessionTab, sessionSid)
+
+  const newSid = randomUUID()
+  expect(await sendPipeMessage(b.pipeName, { v: 1, type: 'session', tabId: sessionTab, sessionId: newSid, source: 'clear', transcriptPath: null })).toMatchObject({ ok: true })
+  await expect.poll(async () => (await coord(a.pipeName, coordTab, { op: 'list' })).info, SLOW).toContain(`- acme · Laptop [${refOf(newSid)}]`)
+  await expect.poll(async () => (await marksOf(b.page))[sessionTab], SLOW).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: null })
+  await expect.poll(async () => (await marksOf(a.page))[sessionTab], SLOW).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: coordTab })
+
+  const w = waitForMail(b.pipeName, sessionTab, newSid)
+  expect(await coord(a.pipeName, coordTab, { op: 'message', session: refOf(newSid), text: 'Fix the parser.' })).toMatchObject({ ok: true })
+  expect((await within(w, 30_000)).info).toContain('> Fix the parser.')
 })

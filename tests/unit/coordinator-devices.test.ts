@@ -4,7 +4,7 @@ import { MAX_ATTACHMENTS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachme
 import { checkMailRecord } from '../../src/main/mail/mail-record'
 import { coordinatorProblem, type CoordSessionRow, type CoordinatorView } from '../../src/shared/coordinator'
 import type { MailRecord } from '../../src/shared/mail'
-import { attachDirect, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NO_FACTS, NOW, peerOf, records, remoteTab, S, sync, uid, world, type World } from '../fixtures/coordinator-world'
+import { attachDirect, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NEW, NO_FACTS, NOW, peerOf, records, remoteTab, S, sync, uid, world, type World } from '../fixtures/coordinator-world'
 
 const TASK = '7a000000-0000-4000-8000-000000000001'
 const ATTACH_ID = '7b000000-0000-4000-8000-000000000002'
@@ -555,5 +555,120 @@ describe('attach, detach and tasks across devices', () => {
     })
     expect(s.store.hosted(L.one)).toMatchObject({ coordinator: { device: DEV_C, session: S.coord } })
     expect(s.mail.get(OTHER_DETACH)).toMatchObject({ delivered: true, read: true })
+  })
+})
+
+describe('new ids across devices', () => {
+  let c: World
+  let s: World
+  const clear = (w: World, tabId: string, from: string, to: string): void => {
+    w.hub.tabSession(tabId, to)
+    w.hub.sessionStarted(tabId, from, to, 'clear')
+  }
+
+  beforeEach(() => {
+    const worlds = deviceWorlds()
+    c = worlds.c
+    s = worlds.s
+    c.hub.make('tab-c', false)
+    c.hub.attach('tab-c', 'e10000')
+    sync(c, s)
+  })
+
+  it('a clear in the coordinator tells Laptop: the session\'s tasks then come from the new id and are taken', () => {
+    clear(c, 'tab-c', S.coord, NEW.coord)
+    expect(records(c, 'attach').at(-1)).toMatchObject({ was: S.coord, from: { device: DEV_C, session: NEW.coord }, to: { device: DEV_S, session: L.one } })
+    sync(c, s)
+    expect(s.store.hosted(L.one)!.coordinator.session).toBe(NEW.coord)
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    expect(s.store.hosted(L.one)!.tasks).toEqual([expect.objectContaining({ from: expect.objectContaining({ session: NEW.coord }) })])
+  })
+
+  it('a clear in Laptop\'s session tells Studio: the attachment follows it, and the clear\'s stopped report reaches the coordinator', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    clear(s, 'tab-l1', L.one, NEW.one)
+    expect(s.mail.all().filter((r) => r.from.device === DEV_S && (r.kind === 'attach' || r.kind === 'report')).map((r) => r.kind)).toEqual(['attach', 'report'])
+    sync(c, s)
+    expect(c.store.coordinator(S.coord)!.attachments[0]).toMatchObject({ session: NEW.one, lastReport: { outcome: 'stopped' } })
+  })
+
+  it('a task Studio sent to Laptop\'s old id is forwarded to the new one and taken there', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.') // Laptop clears before it hears of the task
+    clear(s, 'tab-l1', L.one, NEW.one)
+    sync(c, s)
+    expect(s.store.hosted(NEW.one)!.tasks).toHaveLength(1)
+    expect(records(s, 'task').find((r) => r.to.session === L.one)).toMatchObject({ delivered: true, read: true })
+  })
+
+  it('a report Laptop sent to the coordinator\'s old id is forwarded to its new one, which takes it', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    clear(c, 'tab-c', S.coord, NEW.coord) // Laptop finishes before it hears of the clear
+    s.hub.turnEnded('tab-l1', { background: false, lastMessage: 'Parser fixed.' })
+    fire(s)
+    sync(c, s)
+    const reports = records(c, 'report')
+    expect(reports.find((r) => r.to.session === S.coord)).toMatchObject({ delivered: true, read: true })
+    const copy = reports.find((r) => r.to.session === NEW.coord)!
+    expect(copy).toMatchObject({ delivered: false, text: 'Parser fixed.', from: expect.objectContaining({ session: L.one }) })
+    expect(c.store.coordinator(NEW.coord)!.attachments[0].lastReport!.id).toBe(copy.id)
+  })
+
+  it('a replacing coordinator takes Laptop\'s session with its task; the report goes to it with the previous coordinator\'s note', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    c.hub.make('tab-2', true)
+    expect(records(c, 'attach').at(-1)).toMatchObject({ replaces: S.coord, from: { session: S.two }, to: { session: L.one } })
+    sync(c, s)
+    expect(s.store.hosted(L.one)).toMatchObject({ coordinator: { session: S.two }, tasks: [{ from: { session: S.coord } }] })
+    s.hub.turnEnded('tab-l1', { background: false, lastMessage: 'Parser fixed.' })
+    fire(s)
+    sync(c, s)
+    expect(records(c, 'report').at(-1)).toMatchObject({ to: { session: S.two }, text: expect.stringMatching(/^\(This task was given by the previous coordinator, coord · Studio\.\)/) })
+  })
+
+  it('a report that waited in Studio before its coordinator cleared is forwarded to the new id at the clear, and the new coordinator takes it', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    s.hub.turnEnded('tab-l1', { background: false, lastMessage: 'Parser fixed.' })
+    fire(s)
+    sync(c, s)
+    const waiting = records(c, 'report')[0]
+    expect(waiting).toMatchObject({ to: { session: S.coord }, delivered: false, read: false })
+    clear(c, 'tab-c', S.coord, NEW.coord)
+    const copy = records(c, 'report').find((r) => r.to.session === NEW.coord)!
+    expect(copy).toMatchObject({ delivered: false, read: false, text: 'Parser fixed.', from: expect.objectContaining({ session: L.one }) })
+    expect(c.mail.get(waiting.id)).toMatchObject({ delivered: true, read: true })
+    expect(c.hub.accepts(copy, 'tab-c', 'prompt')).toBe(true)
+    expect(c.store.coordinator(NEW.coord)!.attachments[0].lastReport!.id).toBe(copy.id)
+  })
+
+  it('a report that waited in Studio for the coordinator a replacing one takes over is forwarded to the replacing coordinator', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    s.hub.turnEnded('tab-l1', { background: false, lastMessage: 'Parser fixed.' })
+    fire(s)
+    sync(c, s)
+    c.hub.make('tab-2', true)
+    const copy = records(c, 'report').find((r) => r.to.session === S.two)!
+    expect(copy).toMatchObject({ delivered: false, read: false, text: 'Parser fixed.' })
+    expect(c.store.coordinator(S.two)!.attachments[0].lastReport!.id).toBe(copy.id)
+  })
+
+  it('a clear whose new id is already in use renames nothing, and writes no attach that carries the old id', () => {
+    // beta's coordinator takes the id the clear would move to, and it holds a session of Laptop: a rename onto it must tell no one
+    c.hub.make('tab-b', false)
+    const beta = c.store.coordinator(S.beta)!
+    c.store.putCoordinator({ ...beta, attachments: [{ device: DEV_S, session: L.two, name: 'docs · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null }] })
+    clear(c, 'tab-c', S.coord, S.beta)
+    expect(c.store.coordinator(S.coord)).not.toBeNull()
+    expect(records(c, 'attach').filter((r) => r.was !== undefined)).toEqual([])
   })
 })
