@@ -12,7 +12,7 @@ import { MAX_FRAME_BYTES } from '../../src/main/sync/wire'
 import { MAX_IMAGE_BYTES } from '../../src/shared/image-file'
 import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_REVIEW_PARTS, REVIEW_PART_BYTES, type PushKind } from '../../src/shared/remote'
 import type { ChatPatch, ChatSnapshot } from '../../src/shared/chat'
-import { REMOTE_COPY } from '../../src/shared/remote'
+import { REMOTE_COPY, type RemoteCoordFacts } from '../../src/shared/remote'
 import type { PlanStatus, PlanTask, RecentSession, TabPlace } from '../../src/shared/types'
 import { ACC_WORK, B_ID, T1, T2, T3, T9, T_LONG_CWD, fakeHost, imageCard, mainStatus, reviewUpdate, tabId, tabInfo } from '../fixtures/host-context'
 import { until } from '../fixtures/sync'
@@ -147,6 +147,33 @@ describe('the directory of this device', () => {
 
 /** a tab's place as this device's place hub publishes it */
 const PLACE: TabPlace = { project: { key: 'd:/work/demo', name: 'demo', parent: 'work' }, worktree: null, branch: 'main' }
+
+describe('the coordinator facts of a tab in the directory', () => {
+  const FACTS: RemoteCoordFacts = {
+    prompt: { kind: 'permission', text: 'Allow Bash: npm test', since: 5 }, limit: null,
+    progress: null, task: null, attachedTo: 'coord · Studio', coordinator: false
+  }
+
+  it('a Claude tab carries the facts coordFacts gives; a shell tab and a host without coordFacts carry none', () => {
+    const f = fakeHost()
+    f.ctx.coordFacts = (id) => (id === T1 ? FACTS : null)
+    const entries = hostTabs(f.ctx).list()
+    expect(entries.find((t) => t.id === T1)).toMatchObject({ coord: FACTS })
+    expect(entries.find((t) => t.id === T2)).toBeDefined()
+    expect(entries.find((t) => t.id === T2)).not.toHaveProperty('coord')
+    expectReceived(f)
+    f.ctx.coordFacts = undefined
+    expect(hostTabs(f.ctx).list().find((t) => t.id === T1)).not.toHaveProperty('coord')
+  })
+
+  it('a Claude tab with no session has coord null, and the entry stays', () => {
+    const f = fakeHost()
+    f.ctx.coordFacts = () => null
+    const entry = hostTabs(f.ctx).list().find((t) => t.id === T1)
+    expect(entry).toBeDefined()
+    expect(entry).toHaveProperty('coord', null)
+  })
+})
 
 describe('the place and the fork of a tab in the directory', () => {
   it('a tab carries the place its device published, and its fork: the head while it is open, and the fork after the head closed', () => {

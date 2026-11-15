@@ -4,7 +4,7 @@ import { hasText } from '../shared/note'
 import { isUuid } from '../shared/protocol'
 import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, TabView } from '../shared/chat'
 import type { DeviceResult } from '../shared/devices'
-import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, REMOTE_COPY, REVIEW_FILE_BYTES, REVIEW_PART_BYTES, type FolderResult, type PushKind, type RemoteTab } from '../shared/remote'
+import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, REMOTE_COPY, REVIEW_FILE_BYTES, REVIEW_PART_BYTES, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteTab } from '../shared/remote'
 import { MAX_HASH, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { PlanUpdate } from '../shared/ipc'
 import type { RecentSession, TabInfo, TabPlace } from '../shared/types'
@@ -148,6 +148,8 @@ export interface HostContext {
   openSession(id: string): Promise<string>
   /** the files a member sends for a tab of this device: a transfer is kept for the device that began it */
   receiver: Pick<FileReceiver, 'begin' | 'part' | 'end'>
+  /** the coordinator facts of a Claude tab of this device for the coordinators of other devices; left out, a tab has none */
+  coordFacts?(tabId: string): RemoteCoordFacts | null
 }
 
 /** This device's tabs as the host serves them: the directory, and the pushes of one tab. */
@@ -746,7 +748,9 @@ function remoteTabOf(ctx: HostContext, info: TabInfo): RemoteTab | null {
     forkOf: head !== null && isUuid(head) ? head : null,
     fork: info.fork !== null,
     // the view of a Claude tab; a shell tab has none, and the wire leaves it out
-    ...(info.kind === 'claude' && info.view !== null ? { view: info.view } : {})
+    ...(info.kind === 'claude' && info.view !== null ? { view: info.view } : {}),
+    // the coordinator facts of a Claude tab, when this device gives them
+    ...(info.kind === 'claude' && ctx.coordFacts ? { coord: ctx.coordFacts(id) } : {})
   }
 }
 

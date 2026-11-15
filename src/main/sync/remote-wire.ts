@@ -1,7 +1,7 @@
 import { isTabView } from '../../shared/chat'
 import { type MailRecord } from '../../shared/mail'
-import { isUuid } from '../../shared/protocol'
-import { MAX_INPUT_CHARS, MAX_OUT_CHARS, MAX_PATH_TEXT, MAX_REMOTE_TABS, PUSH_KINDS, type PushKind, type RemoteTab } from '../../shared/remote'
+import { isUuid, PROMPT_TEXT_MAX } from '../../shared/protocol'
+import { COORD_FACT_TEXT_MAX, MAX_INPUT_CHARS, MAX_OUT_CHARS, MAX_PATH_TEXT, MAX_REMOTE_TABS, PUSH_KINDS, type PushKind, type RemoteCoordFacts, type RemoteTab } from '../../shared/remote'
 import type { ReviewCounter } from '../../shared/review'
 import { NOTIFICATION_CASES } from '../../shared/settings-keys'
 import { WORKTREE_COLORS, type NotificationCase, type TabKind, type TabPlace } from '../../shared/types'
@@ -175,7 +175,7 @@ export function parseRemoteTab(v: unknown): RemoteTab | null {
   if (!isPlainObject(v)) return null
   const {
     id, kind, profile, cwd, customTitle, title, claudeSessionId, account, accountName, muted, exited, working,
-    attention, attentionSeq, images, note, counter, status, size, place, placeKnown, folder, forkOf, fork, view
+    attention, attentionSeq, images, note, counter, status, size, place, placeKnown, folder, forkOf, fork, view, coord
   } = v
   if (!isUuid(id) || (kind !== 'claude' && kind !== 'shell')) return null
   if (!isString(profile, 1, MAX_PROFILE_LENGTH) || !isString(cwd, 1, MAX_PATH_TEXT)) return null
@@ -191,6 +191,7 @@ export function parseRemoteTab(v: unknown): RemoteTab | null {
     if (!counterOf) return null
   }
   if (!isPlainObject(size) || !isPtySize(size.cols, size.rows) || !orNull(size.by, isUuid)) return null
+  const coordFacts = parseCoordFacts(coord)
   // a device of an older build sends no place, head or fork: none of them is a tab's; a head that does not fit is no head
   return {
     id,
@@ -221,8 +222,68 @@ export function parseRemoteTab(v: unknown): RemoteTab | null {
     forkOf: fork === true && isUuid(forkOf) ? forkOf : null,
     fork: fork === true,
     // the view of a Claude tab: an older device sends none, and a view that is not one of the views is left out
-    ...(isTabView(view) ? { view } : {})
+    ...(isTabView(view) ? { view } : {}),
+    // the coordinator facts: null is kept; facts that do not fit are left out, and the tab is kept
+    ...(coord === null || coordFacts ? { coord: coordFacts } : {})
   }
+}
+
+/**
+ * A Claude tab's coordinator facts as another device sends them: every field present and of its shape. Texts are counted in
+ * code points and hold no control character, line or paragraph separator. Anything else is null.
+ */
+export function parseCoordFacts(v: unknown): RemoteCoordFacts | null {
+  if (!isPlainObject(v)) return null
+  const prompt = promptFact(v.prompt)
+  const limit = limitFact(v.limit)
+  const progress = progressFact(v.progress)
+  const task = taskFact(v.task)
+  const { attachedTo, coordinator } = v
+  if (prompt === undefined || limit === undefined || progress === undefined || task === undefined) return null
+  if (!orNull(attachedTo, (s) => isFactText(s, COORD_FACT_TEXT_MAX)) || typeof coordinator !== 'boolean') return null
+  return { prompt, limit, progress, task, attachedTo: attachedTo as string | null, coordinator }
+}
+
+/** a text of 1 to max code points with no control character, line or paragraph separator; a code point is at most two units */
+function isFactText(v: unknown, max: number): v is string {
+  if (typeof v !== 'string' || v.length > max * 2) return false
+  const points = [...v].length
+  return points >= 1 && points <= max && !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(v)
+}
+
+// each part of the facts is its value, or undefined when it does not fit
+function promptFact(v: unknown): RemoteCoordFacts['prompt'] | undefined {
+  if (v === null) return null
+  if (!isPlainObject(v)) return undefined
+  const { kind, text, since } = v
+  if (kind !== 'permission' && kind !== 'question') return undefined
+  if (!orNull(text, (s) => isFactText(s, PROMPT_TEXT_MAX)) || !isNonNegativeSafeInteger(since)) return undefined
+  return { kind, text: text as string | null, since }
+}
+
+function limitFact(v: unknown): RemoteCoordFacts['limit'] | undefined {
+  if (v === null) return null
+  if (!isPlainObject(v)) return undefined
+  const { resetsAt, since } = v
+  if (!orNull(resetsAt, isNonNegativeSafeInteger) || !isNonNegativeSafeInteger(since)) return undefined
+  return { resetsAt: resetsAt as number | null, since }
+}
+
+function progressFact(v: unknown): RemoteCoordFacts['progress'] | undefined {
+  if (v === null) return null
+  if (!isPlainObject(v)) return undefined
+  const { done, total, finished, current } = v
+  if (!isNonNegativeSafeInteger(done) || !isNonNegativeSafeInteger(total) || done > total || typeof finished !== 'boolean') return undefined
+  if (!orNull(current, (s) => isFactText(s, COORD_FACT_TEXT_MAX))) return undefined
+  return { done, total, finished, current: current as string | null }
+}
+
+function taskFact(v: unknown): RemoteCoordFacts['task'] | undefined {
+  if (v === null) return null
+  if (!isPlainObject(v)) return undefined
+  const { id, state, since } = v
+  if (!isUuid(id) || (state !== 'queued' && state !== 'delivered' && state !== 'open') || !isNonNegativeSafeInteger(since)) return undefined
+  return { id, state, since }
 }
 
 /**

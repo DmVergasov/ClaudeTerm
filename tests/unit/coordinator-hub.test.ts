@@ -1,153 +1,21 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LIMIT_ERROR } from '../../src/main/auto-continue'
-import { CoordinatorHub, HUB_TEXT, START_WAIT_MS, worktreeInstruction, type HubTab } from '../../src/main/coordinator/coordinator-hub'
-import {
-  CoordinatorStore,
-  MAX_ATTACHMENTS,
-  MAX_COORDINATORS,
-  MAX_HOSTED,
-  MAX_TASKS_PER_SESSION,
-  type StoredAttachment
-} from '../../src/main/coordinator/coordinator-store'
-import { nameAgents, refOf, type AgentTab } from '../../src/main/mail/agent-directory'
-import { MailStore } from '../../src/main/mail/mail-store'
-import type { TabWaitsState } from '../../src/main/tab-waits'
+import { HUB_TEXT, START_WAIT_MS, worktreeInstruction, type HubTab } from '../../src/main/coordinator/coordinator-hub'
+import { CoordinatorStore, MAX_ATTACHMENTS, MAX_COORDINATORS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
+import { refOf } from '../../src/main/mail/agent-directory'
 import type { CoordOp } from '../../src/shared/coordinator'
 import type { MailRecord } from '../../src/shared/mail'
-import type { OpenTabRequest, PlanStatus } from '../../src/shared/types'
+import { ACME, BETA, NOW, S, TITLES, cleanWorlds, fire, records, tab, uid, world, type World } from '../fixtures/coordinator-world'
 
-const NOW = 1_700_000_000_000
 const SELF = 'd0000000-0000-4000-8000-0000000000dd'
-const ACME = { key: 'd:\\work\\acme', name: 'acme' }
-const BETA = { key: 'd:\\work\\beta', name: 'beta' }
-const S = {
-  coord: 'c0000000-0000-4000-8000-000000000001',
-  one: 'a1000000-0000-4000-8000-000000000002',
-  two: 'b2000000-0000-4000-8000-000000000003',
-  beta: 'be000000-0000-4000-8000-000000000004'
-}
-const TITLES: Record<string, string> = { 'tab-c': 'coord', 'tab-1': 'parser', 'tab-2': 'docs', 'tab-b': 'beta' }
 const PROBLEM =
   'Coordinating sessions needs agent messages, which are turned off in ClaudeTerm on this device. Turn them on in Settings, Agent messages.'
 
-/** the n-th id of a test, a UUID */
-const uid = (n: number): string => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`
-
-const tab = (tabId: string, session: string | null, project: { key: string; name: string } | null, over: Partial<HubTab> = {}): HubTab =>
-  ({ tabId, session, account: null, folder: 'D:\\Work\\acme', exited: false, working: false, view: 'terminal', project, branch: 'main', ...over })
-
-const tempDirs: string[] = []
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
-})
-
-function world(o: { problem?: string | null; self?: string | null; newId?: () => string } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'ct-coord-'))
-  tempDirs.push(dir)
-  let ids = 0
-  const warns: string[] = []
-  const w = {
-    now: NOW,
-    tabs: [tab('tab-c', S.coord, ACME), tab('tab-1', S.one, ACME), tab('tab-2', S.two, ACME), tab('tab-b', S.beta, BETA, { folder: 'D:\\Work\\beta' })],
-    waits: {} as Record<string, TabWaitsState>,
-    progress: {} as Record<string, PlanStatus | null>,
-    /** agents of other devices, listed with this device's */
-    remote: [] as AgentTab[],
-    opened: [] as OpenTabRequest[],
-    pokes: [] as string[],
-    rechecks: 0,
-    aliases: [] as [string, string][],
-    warns,
-    dir,
-    /** the settle timers still waiting, as the hub asked for them */
-    timers: [] as { ms: number; fn: () => void }[],
-    /** the tabs that are not at rest now (every tab is, unless a test says otherwise) */
-    resting: {} as Record<string, boolean>,
-    /** the hub's calls to the window and the mail, in order */
-    order: [] as string[],
-    problem: o.problem ?? null,
-    store: new CoordinatorStore(dir, { debounceMs: 100_000 }),
-    mail: MailStore.open({ dir, now: () => NOW, debounceMs: 100_000 }),
-    hub: null as unknown as CoordinatorHub
-  }
-  w.hub = new CoordinatorHub({
-    store: w.store,
-    mail: w.mail,
-    self: () => o.self ?? null,
-    selfName: () => 'Desktop',
-    problem: () => w.problem,
-    tabs: () => w.tabs,
-    agents: () =>
-      nameAgents([
-        ...w.tabs.flatMap((t): AgentTab[] =>
-          t.session === null || t.exited
-            ? []
-            : [{ device: null, deviceName: 'Desktop', tabId: t.tabId, session: t.session, customTitle: TITLES[t.tabId] ?? null, folder: t.folder, branch: t.branch, title: null, busy: t.working, wakes: true, claude: '2.1.300' }]
-        ),
-        ...w.remote
-      ]),
-    waits: (tabId) => w.waits[tabId] ?? { prompt: null, limit: null },
-    progress: (tabId) => w.progress[tabId] ?? null,
-    taskList: () => null,
-    restingNow: (tabId) => w.resting[tabId] ?? true,
-    isDirectory: async (p) => p === 'D:\\Work\\acme',
-    accountLabel: (a) => (a === null ? 'Main account' : `Account ${a}`),
-    openTab: (req) => {
-      w.opened.push(req)
-      return `new-tab-${w.opened.length}`
-    },
-    recheckMail: () => {
-      w.rechecks++
-      w.order.push('recheck')
-    },
-    poke: (tabId) => {
-      w.pokes.push(tabId)
-      w.order.push(`poke:${tabId}`)
-    },
-    changed: () => {
-      w.order.push('changed')
-    },
-    alias: (a, b) => {
-      w.aliases.push([a, b])
-    },
-    clock: (ms) => new Date(ms).toISOString().slice(11, 16),
-    now: () => w.now,
-    later: (ms, fn) => {
-      const timer = { ms, fn }
-      w.timers.push(timer)
-      return () => {
-        w.timers = w.timers.filter((t) => t !== timer)
-      }
-    },
-    newId: o.newId ?? (() => uid(++ids)),
-    log: {
-      info: () => {},
-      warn: (m) => {
-        warns.push(m)
-      }
-    }
-  })
-  for (const t of w.tabs) w.hub.tabSession(t.tabId, t.session)
-  return w
-}
-
-type World = ReturnType<typeof world>
+afterEach(cleanWorlds)
 
 /** changes a tab of the world (its session, its state) the way the window would show it */
 const update = (w: World, tabId: string, over: Partial<HubTab>): void => {
   w.tabs = w.tabs.map((t) => (t.tabId === tabId ? { ...t, ...over } : t))
-}
-
-const records = (w: World, kind: MailRecord['kind']): MailRecord[] => w.mail.all().filter((r) => r.kind === kind)
-
-/** runs the settle timers that wait now */
-const fire = (w: World): void => {
-  const due = w.timers
-  w.timers = []
-  for (const t of due) t.fn()
 }
 
 const attachment = (session: string, name = 'parser · Desktop'): StoredAttachment => ({
@@ -1289,5 +1157,28 @@ describe('CoordinatorHub start', () => {
     void w.hub.tool('tab-c', { op: 'start', task: 'Write it.', name: null, folder: null, device: null, worktree: null })
     await tick()
     expect(w.opened).toHaveLength(1)
+  })
+})
+
+describe('facts for other devices', () => {
+  it('facts give a tab\'s open dialog, its limit, its task list, the task it holds and its coordinator', () => {
+    const w = world(); w.hub.make('tab-c', false); w.hub.attach('tab-c', 'a10000'); w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    const [t] = records(w, 'task')
+    w.waits['tab-1'] = { prompt: { kind: 'permission', text: 'Allow Bash: npm test', since: NOW }, limit: { resetsAt: null, since: NOW } }
+    w.progress['tab-1'] = { title: 'Triage', done: 3, total: 7, finished: false, tasks: [{ n: 3, title: 'Read the logs', state: 'done' }, { n: 4, title: 'Grouping crashes by call stack', state: 'current' }] }
+    expect(w.hub.facts('tab-1')).toEqual({
+      prompt: { kind: 'permission', text: 'Allow Bash: npm test', since: NOW }, limit: { resetsAt: null, since: NOW },
+      progress: { done: 3, total: 7, finished: false, current: 'Grouping crashes by call stack' },
+      task: { id: t.id, state: 'queued', since: NOW }, attachedTo: 'coord · Desktop', coordinator: false
+    })
+    expect(w.hub.facts('tab-c')).toMatchObject({ coordinator: true, task: null, attachedTo: null })
+    expect(w.hub.facts('no-such-tab')).toBeNull()
+  })
+
+  it('a time of a fact is floored, and a current task with a blank title gives no current title', () => {
+    const w = world()
+    w.waits['tab-1'] = { prompt: null, limit: { resetsAt: NOW + 0.5, since: NOW + 0.75 } }
+    w.progress['tab-1'] = { title: 'Triage', done: 0, total: 1, finished: false, tasks: [{ n: 1, title: '   ', state: 'current' }] }
+    expect(w.hub.facts('tab-1')).toMatchObject({ limit: { resetsAt: NOW, since: NOW }, progress: { done: 0, total: 1, finished: false, current: null } })
   })
 })

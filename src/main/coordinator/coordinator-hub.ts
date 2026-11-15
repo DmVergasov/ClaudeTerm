@@ -1,7 +1,8 @@
 import type { CoordGroup, CoordMarks, CoordOp, CoordResult, CoordSessionRow, CoordStartRequest, CoordTaskInfo, CoordinatorView } from '../../shared/coordinator'
 import { COORD_TASK_MAX } from '../../shared/coordinator'
 import { isSignal, kindOf, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
-import { isUuid, type PipeResponse } from '../../shared/protocol'
+import { isUuid, oneLineText, PROMPT_TEXT_MAX, type PipeResponse } from '../../shared/protocol'
+import { COORD_FACT_TEXT_MAX, type RemoteCoordFacts } from '../../shared/remote'
 import type { TabView } from '../../shared/chat'
 import type { TaskList } from '../../shared/task-list'
 import type { OpenTabRequest, PlanStatus } from '../../shared/types'
@@ -536,6 +537,27 @@ export class CoordinatorHub {
   view(tabId: string): CoordinatorView | null {
     const c = this.own(tabId)
     return c ? this.viewOf(c, tabId) : null
+  }
+
+  /** the facts of a Claude tab of this device for the coordinators of other devices; null when the tab has no session */
+  facts(tabId: string): RemoteCoordFacts | null {
+    const tab = this.d.tabs().find((t) => t.tabId === tabId)
+    if (!tab || tab.session === null) return null
+    const { prompt, limit } = this.d.waits(tabId)
+    const plan = this.d.progress(tabId)
+    const current = plan?.tasks.find((t) => t.state === 'current') ?? plan?.tasks.find((t) => t.state === 'left')
+    const hosted = this.d.store.hosted(tab.session)
+    const task = hosted ? this.taskInfo(hosted) : null
+    return {
+      prompt: prompt ? { kind: prompt.kind, text: prompt.text === null ? null : oneLineText(prompt.text, PROMPT_TEXT_MAX) || null, since: Math.floor(prompt.since) } : null,
+      limit: limit ? { resetsAt: limit.resetsAt === null ? null : Math.floor(limit.resetsAt), since: Math.floor(limit.since) } : null,
+      progress: plan
+        ? { done: plan.done, total: plan.total, finished: plan.finished, current: current ? oneLineText(current.title, COORD_FACT_TEXT_MAX) || null : null }
+        : null,
+      task: task ? { id: task.id, state: task.state, since: Math.floor(task.since) } : null,
+      attachedTo: hosted ? oneLineText(hosted.coordinator.name, COORD_FACT_TEXT_MAX) || null : null,
+      coordinator: this.d.store.coordinator(tab.session) !== null
+    }
   }
 
   marks(): CoordMarks {

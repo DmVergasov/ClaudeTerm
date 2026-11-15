@@ -1,9 +1,29 @@
 import type { TabView } from './chat'
+import type { TaskState } from './coordinator'
 import type { DevicePlatform } from './devices'
 import type { ReviewCounter } from './review'
 import type { NotificationCase, TabKind, TabPlace } from './types'
 
 // The shapes of remote tabs: one device's tabs as another device shows them, and the calls and messages that carry them.
+
+/** the longest task title and coordinator name RemoteCoordFacts carries, in characters */
+export const COORD_FACT_TEXT_MAX = 200
+
+/** what a coordinator on another device reads of a Claude tab with a session */
+export interface RemoteCoordFacts {
+  /** an open permission or question dialog, its line */
+  prompt: { kind: 'permission' | 'question'; text: string | null; since: number } | null
+  /** a usage limit stopped its turn; resetsAt null: not known */
+  limit: { resetsAt: number | null; since: number } | null
+  /** its task list while it keeps one; current: the title of its first current task, else its first left one */
+  progress: { done: number; total: number; finished: boolean; current: string | null } | null
+  /** the coordinator task it holds: the delivered or open one, else the oldest queued */
+  task: { id: string; state: TaskState; since: number } | null
+  /** the name of the coordinator it is attached to; null: none */
+  attachedTo: string | null
+  /** it is a coordinator on its device */
+  coordinator: boolean
+}
 
 /** A tab of a device as the other devices of the group show it. */
 export interface RemoteTab {
@@ -45,6 +65,8 @@ export interface RemoteTab {
   fork: boolean
   /** the view a Claude tab shows on its device; an older device leaves it out, and null is a shell tab or no view */
   view?: TabView | null
+  /** a Claude tab's coordinator facts; null without a session; an older device leaves it out */
+  coord?: RemoteCoordFacts | null
 }
 
 export interface RemoteDeviceView {

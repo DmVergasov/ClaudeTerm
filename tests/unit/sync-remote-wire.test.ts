@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { parseMessage } from '../../src/main/sync/wire'
 import { MAX_REMOTE_COLS, MAX_REMOTE_ROWS, parseRemoteMessage, parseRemoteTab } from '../../src/main/sync/remote-wire'
-import { DEVICE_COLORS, deviceColor, MAX_CHAT_PUSH_BYTES, MAX_INPUT_CHARS, MAX_REMOTE_TABS, PUSH_KINDS } from '../../src/shared/remote'
+import { DEVICE_COLORS, deviceColor, MAX_CHAT_PUSH_BYTES, MAX_INPUT_CHARS, MAX_REMOTE_TABS, PUSH_KINDS, type RemoteCoordFacts } from '../../src/shared/remote'
 
 const T1 = '0a1b2c3d-0000-4000-8000-000000000001'
 const T2 = '0a1b2c3d-0000-4000-8000-000000000002'
 const S1 = 'a0000000-0000-4000-8000-000000000001'
+const TASK_ID = '0a1b2c3d-0000-4000-8000-0000000000c1'
+const FACTS: RemoteCoordFacts = {
+  prompt: { kind: 'permission', text: 'Allow Bash: npm test', since: 5 }, limit: { resetsAt: null, since: 6 },
+  progress: { done: 3, total: 7, finished: false, current: 'Grouping crashes by call stack' },
+  task: { id: TASK_ID, state: 'open', since: 7 }, attachedTo: 'coord · Studio', coordinator: false
+}
 
 /** a valid remote tab, as a device describes it; `over` changes some of its fields */
 const tab = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -267,4 +273,38 @@ describe('chat on the wire', () => {
   })
 
   it('a chat push is capped at 2 MiB of JSON', () => expect(MAX_CHAT_PUSH_BYTES).toBe(2 * 1024 * 1024))
+})
+
+describe('coordinator facts of a Claude tab on the wire', () => {
+  it('a tab keeps its coordinator facts when they fit; null stays null; a tab of an older device has none', () => {
+    expect(parseRemoteTab(tab({ coord: FACTS }))!.coord).toEqual(FACTS)
+    expect(parseRemoteTab(tab({ coord: null }))!.coord).toBeNull()
+    expect(parseRemoteTab(tab())).not.toHaveProperty('coord')
+  })
+
+  it('facts that do not fit are left out and the tab is kept', () => {
+    for (const bad of [
+      { ...FACTS, prompt: { ...FACTS.prompt!, text: 'x'.repeat(201) } }, { ...FACTS, task: { ...FACTS.task!, state: 'done' } },
+      { ...FACTS, progress: { ...FACTS.progress!, done: 8 } }, { ...FACTS, attachedTo: 'a\nb' }, { ...FACTS, coordinator: 'no' }, 'facts'
+    ]) expect(parseRemoteTab(tab({ coord: bad }))).not.toHaveProperty('coord')
+  })
+
+  it('a prompt line of 200 characters is kept, though its UTF-16 length is over 200: the bound counts code points', () => {
+    const emoji = '😀'.repeat(200)
+    expect(emoji.length).toBe(400)
+    expect(parseRemoteTab(tab({ coord: { ...FACTS, prompt: { kind: 'question', text: emoji, since: 5 } } }))!.coord!.prompt!.text).toBe(emoji)
+    expect(parseRemoteTab(tab({ coord: { ...FACTS, prompt: { kind: 'question', text: '😀'.repeat(201), since: 5 } } }))).not.toHaveProperty('coord')
+  })
+
+  it('a text with a line or paragraph separator is refused, and so is one with a control character', () => {
+    expect(parseRemoteTab(tab({ coord: { ...FACTS, prompt: { ...FACTS.prompt!, text: 'Allow Bash' } } }))).not.toHaveProperty('coord')
+    expect(parseRemoteTab(tab({ coord: { ...FACTS, attachedTo: 'coord Studio' } }))).not.toHaveProperty('coord')
+    expect(parseRemoteTab(tab({ coord: { ...FACTS, progress: { ...FACTS.progress!, current: 'Grouping\u0007' } } }))).not.toHaveProperty('coord')
+  })
+
+  it('a time or a count that is not a non-negative safe integer is refused', () => {
+    expect(parseRemoteTab(tab({ coord: { ...FACTS, limit: { resetsAt: -1, since: 6 } } }))).not.toHaveProperty('coord')
+    expect(parseRemoteTab(tab({ coord: { ...FACTS, prompt: { ...FACTS.prompt!, since: 5.5 } } }))).not.toHaveProperty('coord')
+    expect(parseRemoteTab(tab({ coord: { ...FACTS, progress: { ...FACTS.progress!, done: 1, total: 1.5 } } }))).not.toHaveProperty('coord')
+  })
 })

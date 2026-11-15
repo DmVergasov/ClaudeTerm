@@ -15,7 +15,7 @@ import { socketDir } from '../shared/protocol'
 import { describeTaskList, taskListSummary } from '../shared/task-list'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
 import type { NotificationCase, OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout, TabPlace } from '../shared/types'
-import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteDeviceView } from '../shared/remote'
+import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteDeviceView } from '../shared/remote'
 import { AccountStore, accountLaunch, electronVault, loginEnv, nodeAccountFile } from './accounts'
 import { accountsRoot, canonical, identityOf, inAccountsRoot, NO_IDENTITY, parseAuthStatus, signInCommand, type AuthStatus, type Identity } from './account-login'
 import { AccountChecks, STATUS_TIMEOUT_MS } from './account-checks'
@@ -1555,9 +1555,12 @@ function bootstrap(): void {
     return opened.id
   }
 
+  /** the coordinator facts of a Claude tab; set once the coordinators exist (the directory can be read before that) */
+  let coordFactsOf: (tabId: string) => RemoteCoordFacts | null = () => null
   /** what this device serves its members of its own tabs: the tabs, their sizes, the pushes and the calls */
   const hostCtx: HostContext = {
     memberApp: (device) => remote?.host.appOf(device) ?? null,
+    coordFacts: (id) => coordFactsOf(id),
     tabs: {
       list: () => tabs.list(),
       get: (tabId) => tabs.get(tabId),
@@ -2328,6 +2331,8 @@ function bootstrap(): void {
       coordViews.delete(id)
       send(IPC.evCoordView, id, null)
     }
+    // the facts of the Claude tabs reach the other devices whatever changed: a new prompt or a task-list step changes no mark
+    remote?.host.changed()
     const marks = projectCoordinators.marks()
     const json = JSON.stringify(marks)
     if (json === coordMarksSent) return
@@ -2377,6 +2382,7 @@ function bootstrap(): void {
   })
   // the tabs restored before the coordinators existed: their sessions are known to the hub from the start
   for (const t of tabs.list()) if (t.kind === 'claude') projectCoordinators.tabSession(t.id, t.claudeSessionId)
+  coordFactsOf = (id) => projectCoordinators.facts(id)
 
   // a socket left by a run that crashed would refuse the new one; a socket folder others can enter is never used
   const uid = process.getuid?.() ?? -1
