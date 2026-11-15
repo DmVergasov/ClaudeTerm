@@ -251,6 +251,27 @@ describe('mail sync over the device links', () => {
     b.attach(server, helloOf(DEV_A))
     await until(() => sb.all().length === 1200, 10000)
   })
+
+  it('a record written after the attach and before the answer to the peer digest arrives after the records of the answer', async () => {
+    const sa = store()
+    // the peer lacks this record, so the answer to its digest carries it
+    const old = record()
+    sa.add(old)
+    const a = sync(sa)
+    const { client, server } = await linkPair()
+    const heard: string[] = []
+    server.on('message', (m: Message) => {
+      if (m.t === 'mail-records') for (const r of m.records) heard.push(r.id)
+    })
+    a.attach(client, helloOf(DEV_B))
+    // written while the peer's digest is still on its way
+    const late = record()
+    sa.add(late)
+    server.send({ t: 'mail-have', have: [] })
+    await until(() => heard.length >= 2)
+    await settle()
+    expect([...new Set(heard)]).toEqual([old.id, late.id])
+  })
 })
 
 describe('coordinator records between devices', () => {

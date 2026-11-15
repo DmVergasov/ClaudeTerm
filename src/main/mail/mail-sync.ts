@@ -38,6 +38,8 @@ interface MailLink {
   accept: MailAccept | null
   coord: boolean
   have: HaveBuffer
+  /** the relays held back until this side has answered the peer's digest; null once they are sent */
+  held: MailRecord[] | null
   onMessage(m: Message): void
   onClose(): void
 }
@@ -64,6 +66,7 @@ export class MailSync {
       accept: null,
       coord: hello.coord === 1,
       have: { entries: [], chunks: 0, dropped: false },
+      held: [],
       onMessage: (m) => this.onMessage(link, m),
       onClose: () => this.detach(link)
     }
@@ -155,6 +158,9 @@ export class MailSync {
     have.chunks = 0
     have.dropped = false
     if (digest) this.sendRecords(link, this.forLink(entry, this.deps.store.missingFor(digest)))
+    const held = entry.held ?? []
+    entry.held = null
+    this.sendRecords(link, held)
   }
 
   /** Sends the changed records that may leave this device to every mail link, but not back to the link they came from. */
@@ -164,7 +170,10 @@ export class MailSync {
     if (out.length === 0) return
     for (const [link, entry] of this.links) {
       if (origin !== 'local' && origin.link === link) continue
-      this.sendRecords(link, this.forLink(entry, out))
+      const records = this.forLink(entry, out)
+      // a link whose peer has not had this side's answer to its digest yet gets the records after the answer
+      if (entry.held) entry.held.push(...records)
+      else this.sendRecords(link, records)
     }
   }
 
