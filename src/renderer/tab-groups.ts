@@ -128,7 +128,7 @@ export function moveGroup(groups: PanelGroup[], dragKey: string, targetKey: stri
   next.splice(from < to ? at + 1 : at, 0, groups[from])
 
   const order = panelOrder(next)
-  return sameOrder(order, panelOrder(groups)) ? null : order
+  return sameOrder(order, panelOrder(groups)) ? null : withoutPulled(order, groups)
 }
 
 /**
@@ -363,8 +363,28 @@ export function withoutPulled(order: string[], groups: PanelGroup[]): string[] {
   return order.filter((id) => !pulled.has(id))
 }
 
+/** this device's tab ids in the order the panel shows them: panelOrder without the pulled rows, the order main is given */
+export function panelOwnOrder(groups: PanelGroup[]): string[] {
+  return withoutPulled(panelOrder(groups), groups)
+}
+
 /** one part of the left panel: this device's groups (device null), or a device's section with its groups */
 export interface PanelSection<D> { device: D | null; groups: PanelGroup[] }
+
+/**
+ * The keyboard's walk over the device sections, in the devices' order: a device's section ids, unless the device is folded,
+ * then its pulled rows (`pulled`: the rows shown in this device's blocks, each with its device). The fold gates only the
+ * section: a pulled row is drawn in a block outside the folded section, so it is still reached.
+ */
+export function panelDeviceOrder<D extends { id: string }>(devices: D[], sections: PanelSection<D>[], pulled: { id: string; device: string }[], folded: ReadonlySet<string>): string[] {
+  return devices.flatMap((device) => {
+    const section = sections.find((s) => s.device?.id === device.id)
+    return [
+      ...(section && !folded.has(device.id) ? panelOrder(section.groups) : []),
+      ...pulled.filter((p) => p.device === device.id).map((p) => p.id)
+    ]
+  })
+}
 
 /**
  * The left panel's parts in the order it shows them: this device's groups, arranged by coordinator, with each paired device's

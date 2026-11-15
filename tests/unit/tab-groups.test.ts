@@ -364,6 +364,15 @@ describe('pulled rows: a paired device\'s session attached to a coordinator of t
     expect(withoutPulled(['C', 'A1', 'R1', 'X'], groups)).toEqual(['C', 'A1', 'X'])
   })
 
+  it('a group dragged past another group, with a pulled row in it, gives an order with no remote id', () => {
+    const groups = placePulled(
+      arrangeCoordinators(panelGroups([tab('C', acme), tab('A1', acme), tab('B', blog)]), marks({ C, A1: to('C') }), true),
+      [{ id: 'R1', coordinatorTabId: 'C' }]
+    )
+
+    expect(moveGroup(groups, acme.project.key, blog.project.key)).toEqual(['B', 'C', 'A1'])
+  })
+
   describe('drops with a pulled row', () => {
     const local = marks({ C, A1: to('C'), A2: to('C') })
     const groups = placePulled(arrangeCoordinators(panelGroups(['C', 'A1', 'A2', 'X'].map((id) => tab(id, acme))), local, true), [{ id: 'R1', coordinatorTabId: 'C' }])

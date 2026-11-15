@@ -6,10 +6,11 @@ import {
   groupLabels,
   moveGroup,
   moveTab,
+  panelDeviceOrder,
   panelOrder,
+  panelOwnOrder,
   panelSections,
   tabBarOrder,
-  withoutPulled,
   type GroupInput,
   type PanelGroup,
   type PanelItem
@@ -116,8 +117,28 @@ describe('device sections: the fold keys', () => {
     it('the panel\'s visual order has no remote id', () => {
       const [own] = panelSections(items(to('C')), devices)
 
-      expect(withoutPulled(panelOrder(own.groups), own.groups)).toEqual(['C', 'A1'])
+      expect(panelOwnOrder(own.groups)).toEqual(['C', 'A1'])
       expect(panelOrder(own.groups)).toContain('R1')
+    })
+
+    it('the keyboard walks a device\'s section ids, then its pulled rows at the end', () => {
+      const parts = panelSections(items(to('C')), devices)
+
+      expect(panelDeviceOrder(devices, parts, [{ id: 'R1', device: 'dev-b' }], new Set())).toEqual(['R2', 'R1'])
+    })
+
+    it('a folded device\'s section ids are left out, but its pulled row is still reached', () => {
+      const parts = panelSections(items(to('C')), devices)
+
+      expect(panelDeviceOrder(devices, parts, [{ id: 'R1', device: 'dev-b' }], new Set(['dev-b']))).toEqual(['R1'])
+    })
+
+    it('a device with only pulled tabs that is offline has no section, and its pulled row is still reached', () => {
+      const offline = [{ id: 'dev-b', online: false }]
+      const parts = panelSections([item('C', { coord: C }), item('A1', { coord: to('C') }), item('R1', { group: 'dev-b', coord: to('C') })], offline)
+
+      expect(parts.map((p) => p.device?.id ?? null)).toEqual([null])
+      expect(panelDeviceOrder(offline, parts, [{ id: 'R1', device: 'dev-b' }], new Set())).toEqual(['R1'])
     })
 
     it('with the mark gone, the row is back in its device\'s section', () => {

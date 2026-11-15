@@ -1,6 +1,6 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
 import { REMOTE_COPY, deviceColor } from '../shared/remote'
-import { dropAttaches, groupLabels, moveGroup, panelDrop, panelOrder, panelSections, withoutPulled, type DropRow, type PanelGroup, type PanelRow, type PanelSection } from './tab-groups'
+import { dropAttaches, groupLabels, moveGroup, panelDeviceOrder, panelDrop, panelOwnOrder, panelSections, type DropRow, type PanelGroup, type PanelRow, type PanelSection } from './tab-groups'
 import { icon } from './icons'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
@@ -74,21 +74,19 @@ export class TabPanel {
 
   /** this device's tab ids in the order the panel shows them: group by group, folded groups included; no other device's, and no pulled row */
   get visualOrder(): string[] {
-    const own = this.sections()[0].groups
-    return withoutPulled(panelOrder(own), own)
+    return panelOwnOrder(this.sections()[0].groups)
   }
 
   /**
-   * the tab ids of the device sections not folded, in the order the panel shows them: the keyboard walks them after this device's.
-   * A device's session pulled into a block of this device comes at the end of its device's ids.
+   * the tab ids the keyboard walks after this device's: each device's section ids unless it is folded, then its pulled rows (panelDeviceOrder)
    */
   deviceOrder(folded: ReadonlySet<string>): string[] {
     const parts = this.sections()
-    const pulled = parts[0].groups.flatMap((g) => g.rows.filter((r) => r.pulled).map((r) => r.id))
-    return this.devices.filter((d) => !folded.has(d.id)).flatMap((d) => {
-      const section = parts.find((s) => s.device?.id === d.id)
-      return [...(section ? panelOrder(section.groups) : []), ...pulled.filter((id) => this.items.find((i) => i.id === id)?.group === d.id)]
-    })
+    const pulled = parts[0].groups.flatMap((g) => g.rows.filter((r) => r.pulled).flatMap((r) => {
+      const device = this.items.find((i) => i.id === r.id)?.group
+      return device ? [{ id: r.id, device }] : []
+    }))
+    return panelDeviceOrder(this.devices, parts, pulled, folded)
   }
 
   render(items: TabBarItem[], activeId: string | null, groups: TabBarGroup[] = []): void {
