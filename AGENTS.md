@@ -81,8 +81,9 @@ what it starts (closes the app, kills a server it runs).
 - **Comments, logs and every UI-visible string are English.**
 - **The hook script never prints to stdout** (Claude Code puts `SessionStart` output into the conversation and
   shows `statusLine` output in its UI), always exits with code 0, quickly, even when ClaudeTerm is not running, except
-  the UserPromptSubmit hook of a coordinator tab, which prints one JSON object whose `additionalContext` is the coordinator's instruction
-  (Claude Code adds it to that turn), and the mail watcher, which waits for mail and, only when it hands mail to Claude Code, writes the mail to stderr and exits 2 (`asyncRewake`).
+  the `UserPromptSubmit` hook of a coordinator tab, which prints one JSON object whose `additionalContext` is the
+  coordinator's instruction (Claude Code adds it to that turn) and also exits 0 quickly, and the mail watcher, which
+  waits for mail and, only when it hands mail to Claude Code, writes the mail to stderr and exits 2 (`asyncRewake`).
 - **Everything from the pipe and from transcript files is untrusted.** Any local process can write to the pipe,
   and transcript formats change between Claude Code versions: validate, and degrade gracefully.
 - **The renderer stays sandboxed**: it reaches the system only through the preload bridge, and images only

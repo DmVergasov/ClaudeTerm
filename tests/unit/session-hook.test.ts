@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WIN } from '../fixtures/platform'
-import { hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine } from '../../src/hook/session-hook'
-import { encodeMessage, type AttentionMessage } from '../../src/shared/protocol'
+import { hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine, turnContextLine } from '../../src/hook/session-hook'
+import { encodeMessage, type AttentionMessage, type PipeResponse } from '../../src/shared/protocol'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -49,6 +49,36 @@ describe('runSessionHook', () => {
 
 const ENV = { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: '\\\\.\\pipe\\x' }
 const AGENT = 'a40a10c1d655cf759'
+
+describe('turnContextLine: the line a UserPromptSubmit hook prints for its turn', () => {
+  const line = (info: string): string => `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: info } })}\n`
+  const prompt = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: WORK, hook_event_name: 'UserPromptSubmit', prompt: 'go on' })
+
+  it('a valid instruction is the one JSON line with its additionalContext', () => {
+    expect(turnContextLine({ ok: true, info: 'Note from ClaudeTerm.' })).toBe(line('Note from ClaudeTerm.'))
+  })
+
+  it('an empty instruction prints nothing, and so does a missing answer', () => {
+    expect(turnContextLine({ ok: true, info: '' })).toBe('')
+    expect(turnContextLine({ ok: true })).toBe('')
+    expect(turnContextLine(null)).toBe('')
+  })
+
+  it('an answer that is not ok prints nothing, even with info in it', () => {
+    expect(turnContextLine({ ok: false, error: 'unknown claude tab', info: 'Note from ClaudeTerm.' } as unknown as PipeResponse)).toBe('')
+  })
+
+  it('2000 characters are printed, 2001 are not', () => {
+    expect(turnContextLine({ ok: true, info: 'n'.repeat(2000) })).toBe(line('n'.repeat(2000)))
+    expect(turnContextLine({ ok: true, info: 'n'.repeat(2001) })).toBe('')
+  })
+
+  it('a non-UserPromptSubmit event prints nothing, even when its answer carries info', async () => {
+    const send = vi.fn(async () => ({ ok: true as const, info: 'Note from ClaudeTerm.' }))
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)).toBe('')
+    expect(await runSessionHook(prompt, ENV, send)).toBe(line('Note from ClaudeTerm.'))
+  })
+})
 
 describe('runSessionHook: other hook events', () => {
   it('maps SubagentStart and SubagentStop to subagent messages', async () => {

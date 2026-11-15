@@ -347,6 +347,27 @@ describe('session hook end to end', () => {
       expect(await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)).toEqual({ code: 0, stdout: '' })
     })
 
+    // non-ASCII text and a line break: the JSON line must come through the wrapper intact, as one line
+    const WRAPPED = 'Note — Café ✓ for the coordinator of acme.\nSecond line: give the work to its sessions.'
+
+    it.runIf(WIN)('the exec-form hook from the settings file prints the instruction as one intact JSON line', async () => {
+      const { pipe, got } = await listen({ ok: true }, { turn: { ok: true, info: WRAPPED } })
+      const { settingsPath } = writeClaudeTabFiles(join(work, 'data-turn-exec'), process.execPath, bundle, 5, false)
+      const r = await runExecForm(settingsHook(settingsPath, 'UserPromptSubmit'), { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
+      expect(r).toEqual({ code: 0, stdout: contextLine(WRAPPED) })
+      expect(JSON.parse(r.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: WRAPPED } })
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID }])
+    })
+
+    it.runIf(!WIN)('the .sh hook from the settings file prints the instruction as one intact JSON line', async () => {
+      const { pipe, got } = await listen({ ok: true }, { turn: { ok: true, info: WRAPPED } })
+      const { hookPath } = writeClaudeTabFiles(join(work, 'data-turn-sh'), process.execPath, bundle, 5, false)
+      const r = await run('/bin/sh', ['-c', hookCommandString(hookPath!)], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
+      expect(r).toEqual({ code: 0, stdout: contextLine(WRAPPED) })
+      expect(JSON.parse(r.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: WRAPPED } })
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID }])
+    })
+
     it('node bundle: with no app running UserPromptSubmit prints nothing and exits 0', async () => {
       const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: testPipeName('none') }, PROMPT)
       expect(r).toEqual({ code: 0, stdout: '' })

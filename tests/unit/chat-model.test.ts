@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { forwardText } from '../../src/main/chat/agent-forward'
 import { resultAgentId } from '../../src/main/chat/chat-fold'
 import { ChatModel, toolSubject } from '../../src/main/chat/chat-model'
+import { personWords } from '../../src/main/chat/heads-up'
 import { typedMessages, type ChatItem, type ChatPatch, type ChatToolCall } from '../../src/shared/chat'
 import { fixtureHistory, fixtureLines } from '../fixtures/chat-fixtures'
 
@@ -1070,23 +1071,36 @@ const TASK_NOTICE = [
 ].join('\n')
 
 describe('messages Claude Code puts in the conversation', () => {
-  // a UserPromptSubmit hook's additional context is stored as an attachment entry (Claude Code's own shape), not as the person's words
-  it('the context a coordinator\'s turn note adds draws nothing, and is not the person\'s bubble', () => {
+  // the instruction a coordinator's turn gets from its UserPromptSubmit hook can reach the chat in these two shapes; neither is the person's words
+  const NOTE = 'Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions.'
+
+  it('the hook_response system message of a UserPromptSubmit, whose stdout holds the instruction, draws nothing', () => {
     const { m } = model()
-    const entry = {
-      type: 'attachment',
-      attachment: {
-        type: 'hook_additional_context',
-        content: ['Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions.'],
-        hookName: 'UserPromptSubmit',
-        toolUseID: 'hook-1',
-        hookEvent: 'UserPromptSubmit'
-      },
-      uuid: 'a1b2c3d4-0000-4000-8000-000000000001',
-      timestamp: '2026-11-15T10:00:00.000Z'
+    const hookResponse = {
+      type: 'system',
+      subtype: 'hook_response',
+      hook_event: 'UserPromptSubmit',
+      stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: NOTE } })}\n`,
+      session_id: 'a1b2c3d4-0000-4000-8000-000000000002',
+      uuid: 'a1b2c3d4-0000-4000-8000-000000000003'
     }
-    expect(run(m, [entry])).toEqual([])
+    expect(run(m, [hookResponse])).toEqual([])
     expect(m.items()).toEqual([])
+    expect(personWords(m.items())).toEqual([])
+  })
+
+  it('a synthetic user message that carries the instruction draws nothing and is not the person\'s words', () => {
+    const { m } = model()
+    const synthetic = {
+      type: 'user',
+      message: { role: 'user', content: NOTE },
+      isSynthetic: true,
+      uuid: 'a1b2c3d4-0000-4000-8000-000000000004',
+      session_id: 'a1b2c3d4-0000-4000-8000-000000000002'
+    }
+    expect(run(m, [synthetic])).toEqual([])
+    expect(m.items()).toEqual([])
+    expect(personWords(m.items())).toEqual([])
   })
 
   it('a background task notice is a system row with its summary and result, not the person\'s bubble', () => {
