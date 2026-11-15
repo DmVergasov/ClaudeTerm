@@ -6,6 +6,9 @@ export const DEVICE_PLATFORMS: readonly DevicePlatform[] = ['windows', 'macos', 
 /** The longest device name a peer may announce, in characters. */
 export const MAX_DEVICE_NAME = 64
 
+/** whether a device name a peer announces is valid: 1 to MAX_DEVICE_NAME characters, none of them a control character */
+export const isDeviceName = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= MAX_DEVICE_NAME && !/[\u0000-\u001f\u007f]/.test(v)
+
 /** The longest address a peer may announce, in characters. */
 export const MAX_ADDRESS_LENGTH = 255
 

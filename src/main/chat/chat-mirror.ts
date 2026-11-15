@@ -1,5 +1,5 @@
 import { acceptPatches, type AgentPatch, type AgentSnapshot, type ChatActivity, type ChatAgentInfo, type ChatCard, type ChatItem, type ChatPatch, type ChatSnapshot, type ChatState, type ChatToolCall, isAgentId } from '../../shared/chat'
-import { MAX_DEVICE_NAME } from '../../shared/devices'
+import { isDeviceName } from '../../shared/devices'
 import { MAIL_REASON_MAX, REPORT_OUTCOMES } from '../../shared/mail'
 import { outcomeText } from '../../shared/report-wake'
 import type { PushKind } from '../../shared/remote'
@@ -16,7 +16,6 @@ import { cap, PAGE, SUBJECT_CAP } from './chat-model'
 const TEXT_CAP = 1024 * 1024
 const OUTPUT_CAP = 64 * 1024
 const NAME_CAP = 500
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
 const PATH_CAP = 4096
 const MODEL_CAP = 200
 const CARD_CAP = 64 * 1024
@@ -137,7 +136,7 @@ function isItem(v: unknown): v is ChatItem {
       // the device it came from when that is another one (a name of 1 to MAX_DEVICE_NAME characters, no control character)
       return isId(v.mailId) && str(v.name, NAME_CAP) && str(v.ref, NAME_CAP) && oneOf(REPORT_OUTCOMES, v.outcome)
         && opt(v.reason, (s) => str(s, MAIL_REASON_MAX)) && opt(v.at, isCount) && str(v.text, TEXT_CAP)
-        && (v.device === undefined || (str(v.device, MAX_DEVICE_NAME, 1) && !CONTROL_CHARACTER.test(v.device)))
+        && (v.device === undefined || isDeviceName(v.device))
     default:
       return false
   }

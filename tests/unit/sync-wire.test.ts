@@ -86,6 +86,8 @@ describe('parseMessage', () => {
       { ...hello, platform: 'amiga' },
       { ...hello, port: 65536 },
       { ...hello, port: 1.5 },
+      { ...hello, name: 'Lap\ntop' },
+      { ...hello, name: 'Lap\u0007top' },
       { ...hello, name: '' },
       { ...hello, name: 'x'.repeat(65) },
       { ...hello, addresses: Array(17).fill('10.0.0.2') },

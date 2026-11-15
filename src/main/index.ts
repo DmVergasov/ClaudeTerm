@@ -10,7 +10,7 @@ import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type Image
 import type { DocRead } from '../shared/docs'
 import type { FileLink } from '../shared/chat-paths'
 import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
-import { DEVICE_COPY, type ActiveDevicesView, type DeviceResult, type DevicePlatform, type DevicesView, MAX_DEVICE_NAME } from '../shared/devices'
+import { DEVICE_COPY, type ActiveDevicesView, type DeviceResult, type DevicePlatform, type DevicesView, isDeviceName, MAX_DEVICE_NAME } from '../shared/devices'
 import { socketDir } from '../shared/protocol'
 import { describeTaskList, taskListSummary } from '../shared/task-list'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
@@ -2140,8 +2140,12 @@ function bootstrap(): void {
   setInterval(() => mailStore.prune(), 24 * 60 * 60 * 1000).unref()
   /** this device's name in the group, or the host name while the group is not open */
   const selfName = (): string => group?.view().self.name || hostname().slice(0, MAX_DEVICE_NAME)
-  /** the name of a paired device other than this one, for a report's card: null for this device, or a device not in the group */
-  const otherDeviceName = (device: string | null): string | null => (device === null || device === selfDeviceId ? null : group?.view().devices.find((d) => d.id === device)?.name ?? null)
+  /** the name of a paired device other than this one, for a report's card: null for this device, a device not in the group, or a name that is no device name */
+  const otherDeviceName = (device: string | null): string | null => {
+    if (device === null || device === selfDeviceId) return null
+    const name = group?.view().devices.find((d) => d.id === device)?.name
+    return isDeviceName(name) ? name : null
+  }
   /** whether an address' device is this device: null (a device never paired) is this device too */
   const isSelfDevice = (device: string | null): boolean => device === null || device === selfDeviceId
   /** the commands asked for their version this run: each is asked once */
@@ -2218,7 +2222,7 @@ function bootstrap(): void {
     const accept = mailSync.acceptOf(d.id)
     return {
       id: d.id,
-      name: d.name,
+      name: isDeviceName(d.name) ? d.name : d.id,
       online: remote?.viewer.online(d.id) ?? false,
       listed: remote?.viewer.listedOf(d.id) ?? false,
       coord: mailSync.knowsCoordinator(d.id),

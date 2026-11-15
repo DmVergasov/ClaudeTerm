@@ -1,4 +1,4 @@
-import { DEVICE_PLATFORMS, MAX_ADDRESS_LENGTH, MAX_DEVICE_NAME, type DevicePlatform } from '../../shared/devices'
+import { DEVICE_PLATFORMS, isDeviceName, MAX_ADDRESS_LENGTH, type DevicePlatform } from '../../shared/devices'
 import { isUuid } from '../../shared/protocol'
 import { COLLECTIONS, type Collection, type KeyState, type RecordUpdate, type Sibling, type VersionVector } from './replica'
 import { type RemoteMessage, parseRemoteMessage } from './remote-wire'
@@ -215,7 +215,7 @@ export function parseMessage(v: unknown): Message | 'unknown' | null {
     }
     case 'removed': {
       const by = v.by
-      if (typeof by !== 'string' || by.length < 1 || by.length > MAX_DEVICE_NAME) return null
+      if (!isDeviceName(by)) return null
       return { t: 'removed', by }
     }
     case 'sync': {
@@ -235,7 +235,7 @@ export function parseMessage(v: unknown): Message | 'unknown' | null {
 function parseHello(v: Record<string, unknown>): HelloMessage | null {
   const { id, name, platform, port, addresses, reachedYou } = v
   if (!isPositiveSafeInteger(v.v) || !isUuid(id)) return null
-  if (typeof name !== 'string' || name.length < 1 || name.length > MAX_DEVICE_NAME) return null
+  if (!isDeviceName(name)) return null
   const known = DEVICE_PLATFORMS.find((p) => p === platform)
   if (!known || !isInteger(port, 0, 65535)) return null
   const list = parseStrings(addresses, MAX_ADDRESSES, MAX_ADDRESS_LENGTH)
