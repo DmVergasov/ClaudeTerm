@@ -2588,7 +2588,9 @@ function bootstrap(): void {
       projectCoordinators.turnStarted(msg.tabId)
       tabWaits.dialogsClosed(msg.tabId)
       tabWaits.turnStarted(msg.tabId)
-      return { ok: true }
+      // a coordinator's turn starts with ClaudeTerm's instruction, which the hook gives Claude Code as the turn's context
+      const note = projectCoordinators.turnNote(msg.tabId)
+      return note === null ? { ok: true } : { ok: true, info: note }
     },
     editBefore: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }

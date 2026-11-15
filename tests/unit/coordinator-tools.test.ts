@@ -97,7 +97,7 @@ describe('coordTool', () => {
   })
 })
 
-const DELEGATE = 'As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
+const DELEGATE = 'As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
 
 describe('COORD_TOOL_DESCRIPTIONS', () => {
   it('the list_sessions description ends with the delegation sentence', () => {

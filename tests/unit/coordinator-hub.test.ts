@@ -188,6 +188,20 @@ describe('roles', () => {
   })
 })
 
+describe('the turn note', () => {
+  it('turnNote is the instruction for a coordinator tab, null for any other tab, and null once it stops coordinating', () => {
+    const w = world()
+    expect(w.hub.turnNote('tab-c')).toBeNull()
+    w.hub.make('tab-c', false)
+    expect(w.hub.turnNote('tab-c')).toBe(
+      'Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Reports come by themselves when a task ends. A session\'s permission prompts and questions are the person\'s to answer, in that session.'
+    )
+    expect(w.hub.turnNote('tab-1')).toBeNull()
+    w.hub.stop('tab-c')
+    expect(w.hub.turnNote('tab-c')).toBeNull()
+  })
+})
+
 describe('attach and detach', () => {
   it('attach by ref or name attaches a session of this or another project; only an attach record is written', () => {
     const w = world()
@@ -635,7 +649,7 @@ describe('views', () => {
         '- docs · Desktop [b20000] · Idle · D:\\Work\\acme · main',
         'Notes:',
         '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
-        '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
+        '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
       ].join('\n')
     })
     expect(w.hub.read('tab-c', 'a10000')).toEqual({
@@ -1171,7 +1185,7 @@ describe('facts for other devices', () => {
 })
 
 describe('the role note of a coordinator', () => {
-  const EMPTY = 'You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to. No sessions are attached yet: attach one with attach_session, or start one with start_session.'
+  const EMPTY = 'You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. No sessions are attached yet: attach one with attach_session, or start one with start_session.'
   /** the note's block as the mail carries it: its head, from and id lines, and the text quoted */
   const BLOCK = (text: string): string => ['Note from ClaudeTerm, not from the user:', 'from: ClaudeTerm', 'id: role-note', '', `> ${text}`].join('\n')
 
@@ -1269,7 +1283,7 @@ describe('the role note of a coordinator', () => {
     w.hub.attach('tab-c', 'a10000')
     const row = w.hub.view('tab-c')!.sessions[0]!
     expect(w.hub.roleNote('tab-c')).toBe(
-      BLOCK(`You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to. 1 session (${row.name} — ${row.line}). Reports come by themselves when a task ends; use list_sessions for more.`)
+      BLOCK(`You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. 1 session (${row.name} — ${row.line}). Reports come by themselves when a task ends; use list_sessions for more.`)
     )
   })
 })

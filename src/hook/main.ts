@@ -4,6 +4,8 @@ import { runSessionHook, runStatusLine } from './session-hook'
 
 // Never write to stdout: SessionStart hook stdout is added to Claude's context, and statusLine stdout
 // is shown in Claude's own status row (kept empty: ClaudeTerm shows the data in its status bar).
+// The one exception: the UserPromptSubmit hook of a coordinator tab prints one JSON line whose additionalContext is the
+// coordinator's instruction, which Claude Code adds to that turn (see turnContextLine).
 function readStdin(timeoutMs: number): Promise<string> {
   return new Promise((resolve) => {
     let data = ''
@@ -40,9 +42,14 @@ if (mail) {
     .then(() => readStdin(3000))
     .then((text) =>
       statusLine
-        ? runStatusLine(text, process.env, (pipe, msg) => sendPipeMessage(pipe, msg, 1000))
+        ? runStatusLine(text, process.env, (pipe, msg) => sendPipeMessage(pipe, msg, 1000)).then(() => '')
         : runSessionHook(text, process.env, (pipe, msg) => sendPipeMessage(pipe, msg, msg.type === 'edit_before' ? 8000 : 2000))
     )
-    .catch(() => false)
-    .finally(() => process.exit(0))
+    .catch(() => '')
+    .then((out) => {
+      // the exit waits for the write to be flushed, or the instruction is lost
+      if (out === '') process.exit(0)
+      else process.stdout.write(out, () => process.exit(0))
+    })
+    .catch(() => process.exit(0))
 }

@@ -14,6 +14,14 @@ export const ROLE_NOTE_MAX = 1200
 const NAME_MAX = 40
 const LINE_MAX = 60
 
+/**
+ * The instruction a coordinator's every turn starts with, as Claude Code's additional context for it: the project, the line
+ * that gives the work to the sessions, and what a report and a session's prompt mean. The project name is cut and made one line.
+ */
+export function turnNoteText(projectName: string): string {
+  return `Note from ClaudeTerm, not from the user: you are the coordinator of ${cutText(replaceControls(projectName), NAME_MAX)}: ${COORD_DELEGATE} Reports come by themselves when a task ends. A session's permission prompts and questions are the person's to answer, in that session.`
+}
+
 function rowLine(r: CoordSessionRow, clock: (ms: number) => string): string {
   let line = `- ${replaceControls(r.name)}${r.ref ? ` [${r.ref}]` : ''} · ${r.line}`
   if (r.folder) line += ` · ${replaceControls(r.folder)}`

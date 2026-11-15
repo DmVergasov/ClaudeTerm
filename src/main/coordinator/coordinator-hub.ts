@@ -14,7 +14,7 @@ import type { MailStore } from '../mail/mail-store'
 import type { TabWaitsState } from '../tab-waits'
 import { LIMIT_ERROR } from '../auto-continue'
 import { findRow, rowState } from './session-state'
-import { listText, readText, roleBlock, roleNoteText } from './session-text'
+import { listText, readText, roleBlock, roleNoteText, turnNoteText } from './session-text'
 import {
   MAX_ATTACHMENTS,
   MAX_COORDINATORS,
@@ -775,6 +775,12 @@ export class CoordinatorHub {
       return null
     }
     return roleBlock(roleNoteText(this.viewOf(c, tabId)))
+  }
+
+  /** the instruction a coordinator tab's every turn starts with; null when the tab is no coordinator now */
+  turnNote(tabId: string): string | null {
+    const c = this.own(tabId)
+    return c === null ? null : turnNoteText(c.project.name)
   }
 
   /** the role note of the tab was handed to its coordinator: it is no longer due */

@@ -64,7 +64,7 @@ function run(file: string, args: string[], env: Record<string, string>, input = 
 /** the answer the fake main gives to mail_wait: the mail, or a superseded watcher */
 const MAIL_TEXT = 'You have 1 new message from reviewer: Please re-run the checks.'
 
-async function listen(mailAnswer: PipeResponse = { ok: true }): Promise<{ pipe: string; got: PipeMessage[] }> {
+async function listen(mailAnswer: PipeResponse = { ok: true }, answers: { turn?: PipeResponse; attention?: PipeResponse } = {}): Promise<{ pipe: string; got: PipeMessage[] }> {
   const pipe = testPipeName('test')
   const got: PipeMessage[] = []
   const take = (m: PipeMessage): PipeResponse => {
@@ -72,8 +72,9 @@ async function listen(mailAnswer: PipeResponse = { ok: true }): Promise<{ pipe: 
     return { ok: true }
   }
   server = await startPipeServer(pipe, {
-    showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take, attention: take,
-    turn: take, editBefore: take, showDiff: async (m) => take(m),
+    showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take,
+    attention: (m) => { got.push(m); return answers.attention ?? { ok: true } },
+    turn: (m) => { got.push(m); return answers.turn ?? { ok: true } }, editBefore: take, showDiff: async (m) => take(m),
     showDocument: async () => ({ ok: true }), taskList: take, taskListGet: take, deviceStatus: take, openDeviceSettings: take,
     agentList: take, agentSend: take, coord: async (m) => take(m),
     noteRead: () => ({ ok: true }), noteAdd: () => ({ ok: true }), noteCheck: () => ({ ok: true }),
@@ -300,6 +301,56 @@ describe('session hook end to end', () => {
   it('in mail mode a superseded answer exits 0 silently', async () => {
     const { pipe } = await listen({ ok: false, error: 'superseded' })
     expect(await runAll(process.execPath, [bundle, 'mail'], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe })).toEqual({ code: 0, stdout: '', stderr: '' })
+  })
+
+  describe('the coordinator\'s turn note', () => {
+    const NOTE = 'Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions.'
+    const PROMPT = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: START, hook_event_name: 'UserPromptSubmit', prompt: 'go on' })
+    /** the one line a UserPromptSubmit hook prints for the instruction, as Claude Code reads it */
+    const contextLine = (text: string): string => `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: text } })}\n`
+
+    it('node bundle: UserPromptSubmit whose answer carries the instruction prints exactly that JSON line, and sends the turn', async () => {
+      const { pipe, got } = await listen({ ok: true }, { turn: { ok: true, info: NOTE } })
+      const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
+      expect(r).toEqual({ code: 0, stdout: contextLine(NOTE) })
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID }])
+    })
+
+    it('node bundle: a line break in the instruction stays inside the one JSON line', async () => {
+      const { pipe } = await listen({ ok: true }, { turn: { ok: true, info: `${NOTE}\nSecond line.` } })
+      const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
+      expect(r.stdout).toBe(contextLine(`${NOTE}\nSecond line.`))
+      expect(r.stdout.split('\n')).toHaveLength(2)
+    })
+
+    it('node bundle: UserPromptSubmit whose answer has no instruction prints nothing', async () => {
+      const { pipe, got } = await listen({ ok: true }, { turn: { ok: true } })
+      const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
+      expect(r).toEqual({ code: 0, stdout: '' })
+      expect(got).toHaveLength(1)
+    })
+
+    it('node bundle: another event whose answer carries an instruction prints nothing', async () => {
+      const { pipe } = await listen({ ok: true }, { attention: { ok: true, info: NOTE } })
+      const stop = JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false })
+      const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, stop)
+      expect(r).toEqual({ code: 0, stdout: '' })
+    })
+
+    it('node bundle: an instruction of 2000 characters is printed', async () => {
+      const { pipe } = await listen({ ok: true }, { turn: { ok: true, info: 'n'.repeat(2000) } })
+      expect(await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)).toEqual({ code: 0, stdout: contextLine('n'.repeat(2000)) })
+    })
+
+    it('node bundle: an instruction of 2001 characters prints nothing', async () => {
+      const { pipe } = await listen({ ok: true }, { turn: { ok: true, info: 'n'.repeat(2001) } })
+      expect(await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)).toEqual({ code: 0, stdout: '' })
+    })
+
+    it('node bundle: with no app running UserPromptSubmit prints nothing and exits 0', async () => {
+      const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: testPipeName('none') }, PROMPT)
+      expect(r).toEqual({ code: 0, stdout: '' })
+    })
   })
 
   it('in mail mode with no pipe it exits 0 quickly', async () => {

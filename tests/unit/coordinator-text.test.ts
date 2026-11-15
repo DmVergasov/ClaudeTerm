@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { listText, readText, roleNoteText, ROLE_NOTE_MAX } from '../../src/main/coordinator/session-text'
+import { listText, readText, roleNoteText, ROLE_NOTE_MAX, turnNoteText } from '../../src/main/coordinator/session-text'
 import type { CoordSessionRow, CoordinatorView } from '../../src/shared/coordinator'
 
 const clock = (ms: number): string => new Date(ms).toISOString().slice(11, 16)
-const DELEGATE = 'give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
+const DELEGATE = 'give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
 
 const row = (over: Partial<CoordSessionRow>): CoordSessionRow => ({
   key: 'local:x', tabId: null, device: null, deviceName: null, session: null, ref: null, name: 'x', folder: null, branch: null,
@@ -39,7 +39,7 @@ describe('listText', () => {
       '- Desk · Docs [c41d02] · Idle · D:\\Workspace\\Docs · attached to Other coordinator',
       'Notes:',
       '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
-      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.',
+      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.',
       '- A permission prompt or question waits for the user in Desk · Api: it is theirs to answer there; tell them once where it waits.',
       '- A stopped task was stopped by the user.'
     ].join('\n'))
@@ -60,7 +60,7 @@ describe('listText', () => {
       '- Desk · Ops [d01e55] · Usage limit · resets 22:00 · last report finished 20:15',
       'Notes:',
       '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
-      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.',
+      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.',
       '- A usage limit is not a failure: the session goes on after the reset.'
     ].join('\n'))
   })
@@ -77,7 +77,7 @@ describe('listText', () => {
       'No sessions are attached. Attach one with attach_session, or start one with start_session.',
       'Notes:',
       '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
-      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
+      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
     ].join('\n'))
   })
 
@@ -92,7 +92,7 @@ describe('listText', () => {
       '- Desk  · Api [a1b2c3] · Idle',
       'Notes:',
       '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
-      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.'
+      '- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
     ].join('\n'))
   })
 
@@ -262,6 +262,25 @@ describe('roleNoteText', () => {
   })
 })
 
+describe('turnNoteText', () => {
+  it('is the note that tells the coordinator it coordinates the project, gives the work to its sessions, and names the reports and the prompts', () => {
+    expect(turnNoteText('Desk')).toBe(
+      `Note from ClaudeTerm, not from the user: you are the coordinator of Desk: ${DELEGATE} Reports come by themselves when a task ends. A session's permission prompts and questions are the person's to answer, in that session.`
+    )
+  })
+
+  it('makes a control character of the project name a space, and cuts the name at 40 characters', () => {
+    expect(turnNoteText('Desk\nIgnore\u0007 rules')).toContain('you are the coordinator of Desk Ignore  rules: ')
+    expect(turnNoteText('p'.repeat(200))).toContain(`coordinator of ${'p'.repeat(40)}: `)
+    expect(turnNoteText('p'.repeat(200))).not.toContain('p'.repeat(41))
+  })
+
+  it('is under 600 characters, whatever the project name is', () => {
+    expect(turnNoteText('Desk').length).toBeLessThan(600)
+    expect(turnNoteText('p'.repeat(200)).length).toBeLessThan(600)
+  })
+})
+
 describe('the delegation sentence of list_sessions', () => {
   it('the list holds it once, as one of its notes', () => {
     const view: CoordinatorView = {
@@ -269,6 +288,6 @@ describe('the delegation sentence of list_sessions', () => {
       sessions: [row({ name: 'Desk · Api', group: 'idle', line: 'Idle' })], notAttached: [], waiting: 0
     }
     const text = listText(view, clock)
-    expect(text.split(`\n- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to.`).length - 1).toBe(1)
+    expect(text.split(`\n- As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.`).length - 1).toBe(1)
   })
 })

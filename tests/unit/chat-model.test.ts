@@ -1070,6 +1070,25 @@ const TASK_NOTICE = [
 ].join('\n')
 
 describe('messages Claude Code puts in the conversation', () => {
+  // a UserPromptSubmit hook's additional context is stored as an attachment entry (Claude Code's own shape), not as the person's words
+  it('the context a coordinator\'s turn note adds draws nothing, and is not the person\'s bubble', () => {
+    const { m } = model()
+    const entry = {
+      type: 'attachment',
+      attachment: {
+        type: 'hook_additional_context',
+        content: ['Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions.'],
+        hookName: 'UserPromptSubmit',
+        toolUseID: 'hook-1',
+        hookEvent: 'UserPromptSubmit'
+      },
+      uuid: 'a1b2c3d4-0000-4000-8000-000000000001',
+      timestamp: '2026-11-15T10:00:00.000Z'
+    }
+    expect(run(m, [entry])).toEqual([])
+    expect(m.items()).toEqual([])
+  })
+
   it('a background task notice is a system row with its summary and result, not the person\'s bubble', () => {
     const { m } = model()
     m.apply(userMessage(TASK_NOTICE, { kind: 'task-notification' }))
