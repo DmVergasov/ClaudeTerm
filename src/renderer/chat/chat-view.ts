@@ -44,6 +44,8 @@ export interface ChatViewOptions {
   restart(): void
   /** the reload card's buttons: Not now or Restart for this chat; null for a remote chat, whose card has none */
   reload: ((action: ReloadAction) => void) | null
+  /** a report card's buttons for this chat: the session's row in the coordinator's view; null for a remote chat, whose cards have none */
+  report: { open(ref: string, name: string): void; resolve(ref: string, name: string): void } | null
   /** the page of items before `beforeId`; null when the chat is gone */
   older(beforeId: string): Promise<{ items: ChatItem[]; hasOlder: boolean } | null>
   imageCard(cardId: string): ImageCard | null
@@ -238,6 +240,8 @@ export class ChatView {
       // a notice's button opens the servers, as /mcp does
       openMcp: () => { o.openMcp('servers') },
       reload: o.reload,
+      hasItem: (id) => this.get(id) !== undefined,
+      report: o.report,
       imageCard: (cardId) => o.imageCard(cardId),
       openImages: (cards, index) => o.openImages(cards, index),
       openAgent: (agentId) => {

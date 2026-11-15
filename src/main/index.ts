@@ -74,6 +74,7 @@ import { Coalescer } from './coalesce'
 import { SettingsWindow } from './settings-window'
 import { claudeProjectsDir, SessionHistory } from './session-history'
 import { ChatHub, WINDOW_VIEWER } from './chat/chat-hub'
+import { reportItemOf } from './chat/report-item'
 import { ChatSessions } from './chat/chat-sessions'
 import { isHandoffLine, openInTerminal, type HandoffDeps } from './chat/terminal-handoff'
 import { chatPromptState, planChatResume, routeChatResume, type ChatResumeDeps } from './chat/chat-routing'
@@ -2257,7 +2258,14 @@ function bootstrap(): void {
     },
     // the coordinators say which mail a tab takes: a task of its coordinator, a report, or any message when no task is held
     accepts: (r, tabId, into) => projectCoordinators.accepts(r, tabId, into),
-    handedOver: (tabId, taken, into) => projectCoordinators.handedOver(tabId, taken, into),
+    // a report handed to a tab is also its card in the chat, before the text of a prompt that carries it is sent
+    handedOver: (tabId, taken, into) => {
+      projectCoordinators.handedOver(tabId, taken, into)
+      for (const r of taken) {
+        const item = reportItemOf(r)
+        if (item) chatHub.reportCard(tabId, item)
+      }
+    },
     onUnread: () => {
       mailChanged = true
       mailSoon.request()

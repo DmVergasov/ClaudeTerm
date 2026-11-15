@@ -376,6 +376,17 @@ export class ChatHub {
     })
   }
 
+  /**
+   * A report's card in the tab's chat, put or updated in place (one card per mail id). Main puts it when mail is handed to the tab.
+   * A card is not persisted, and that is intended: a card of a watcher's report is gone after a restart or a reload from the
+   * transcript, while a report written as a prompt comes back from its text. A chat that does not run keeps none.
+   */
+  reportCard(tabId: string, item: Extract<ChatItem, { kind: 'report' }>): void {
+    const live = this.tabs.get(tabId)
+    if (!live || live.ended) return
+    this.whenLoaded(live, () => this.publish(live, live.model.put(item)))
+  }
+
   /** the restart is reported: its divider says what the session loaded, and each notice follows it with the MCP button */
   restartReport(tabId: string, divider: { text: string; good: string | null }, notices: { text: string; tone: 'info' | 'error' }[]): void {
     const live = this.tabs.get(tabId)

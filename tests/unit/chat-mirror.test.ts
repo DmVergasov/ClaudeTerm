@@ -565,6 +565,27 @@ describe('an older member gets a forward as a notice', () => {
   })
 })
 
+describe("a report's card: the mirror checks its item, a member draws it as it is, and an older member gets a notice", () => {
+  const reportItem = (over: Record<string, unknown> = {}): ChatItem => ({ kind: 'report', id: 'report:m1', mailId: 'm1', name: 'parser · Desktop', ref: 'a10000', outcome: 'finished', reason: null, at: 5, text: 'Parser fixed.', ...over } as ChatItem)
+
+  it('a snapshot with a report item validates, and a member device gets the item as it is', () => {
+    expect(parseChatPush(snapshot([reportItem()]))).not.toBeNull()
+    expect(parseChatPush(snapshot([reportItem({ outcome: 'failed', reason: 'Claude Code exited', at: null })]))).not.toBeNull()
+    expect(itemForMembers(reportItem())).toEqual(reportItem())
+  })
+
+  it('a report with an unknown outcome, an oversize text or an oversize reason does not validate', () => {
+    expect(parseChatPush(snapshot([reportItem({ outcome: 'done' })]))).toBeNull()
+    expect(parseChatPush(snapshot([reportItem({ text: 'x'.repeat(1024 * 1024 + 1) })]))).toBeNull()
+    expect(parseChatPush(snapshot([reportItem({ outcome: 'failed', reason: 'x'.repeat(201) })]))).toBeNull()
+  })
+
+  it('itemForOlder maps a report item to a notice of its outcome and its text', () => {
+    expect(itemForOlder(reportItem())).toEqual({ kind: 'notice', id: 'report:m1', tone: 'info', text: 'Report from parser · Desktop: finished\n\nParser fixed.', action: null })
+    expect(itemForOlder(reportItem({ outcome: 'failed', reason: 'Claude Code exited' }))).toEqual({ kind: 'notice', id: 'report:m1', tone: 'error', text: 'Report from parser · Desktop: failed: Claude Code exited\n\nParser fixed.', action: null })
+  })
+})
+
 describe('chat-older to an older member', () => {
   it('chat-older answers an older member with notices, and a newer one with forwards', () => {
     const f = fakeHost()

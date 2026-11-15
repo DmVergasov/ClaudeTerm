@@ -2508,3 +2508,14 @@ button.chat-event-head:hover .chat-event-title {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* a report of a session attached to the coordinator: the agents block's look, its text under its head */
+.chat-agents.coord-report { margin: 0 0 10px; }
+.coord-report .chat-agents-head { display: flex; align-items: center; gap: 8px; }
+.coord-report-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coord-report-title b { color: var(--text); font-weight: 600; }
+.coord-report-acts { display: flex; flex: none; gap: 6px; margin-left: auto; }
+.coord-report-acts .chat-button { border-color: var(--line-2); background: none; color: var(--text-3); }
+.coord-report .chat-step-state.stopped { color: var(--text-3); }
+.coord-report[data-outcome="failed"] { border-color: color-mix(in srgb, var(--red) 40%, var(--line)); }
+.coord-report-body { padding: 8px 12px 10px; border-top: 1px solid var(--line); color: var(--text-2); font-size: 13px; line-height: 1.5; }

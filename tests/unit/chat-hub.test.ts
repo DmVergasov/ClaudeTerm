@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatHub, WINDOW_VIEWER, type ChatHubDeps } from '../../src/main/chat/chat-hub'
 import { ChatMirror } from '../../src/main/chat/chat-mirror'
+import { reportItemOf } from '../../src/main/chat/report-item'
 import { attachmentOf } from '../../src/main/chat/chat-attachments'
 import type { ChatEngine, ChatEngineHandlers, ChatEngineStart, McpLiveServer } from '../../src/main/chat/chat-engine'
 import type { AgentPatch, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode } from '../../src/shared/chat'
@@ -1770,6 +1771,29 @@ describe('ChatHub', () => {
     hub.reloadCard(TAB, null)
     expect(flushed()).toEqual(['remove'])
     expect(reloads()).toEqual([])
+  })
+
+  it('reportCard puts one card per report', async () => {
+    const { hub, engines, windows } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    // the start's own patches go out first: the batch they wait in is flushed before the card is counted
+    vi.advanceTimersByTime(16)
+    windows.length = 0
+    const flushed = (): ChatPatch['op'][] => {
+      vi.advanceTimersByTime(16)
+      return windows.splice(0).flatMap(w => w.patches.map(p => p.op))
+    }
+    const item = reportItemOf({ v: 1, id: '0b9a7c1e-2d3f-4a5b-8c6d-7e8f9a0b1c2d', from: { device: null, session: 'a1000000-0000-4000-8000-000000000002', name: 'parser · Desktop' }, to: { device: null, session: 'c0000000-0000-4000-8000-000000000001', name: 'coord · Desktop' }, text: 'Parser fixed.', replyTo: '1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f', sentAt: 5, delivered: false, read: false, kind: 'report', outcome: 'finished' })!
+
+    hub.reportCard(TAB, item)
+    expect(flushed()).toEqual(['add'])
+    hub.reportCard(TAB, item)
+    expect(flushed()).toEqual(['set'])
+    expect(hub.snapshot(TAB)!.items.filter(i => i.kind === 'report')).toEqual([item])
+    expect(() => hub.reportCard('no-such-tab', item)).not.toThrow()
   })
 
   it('restartReport rewrites the restart divider and adds notices with the MCP button', async () => {

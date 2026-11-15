@@ -8,6 +8,8 @@ import { renderCard } from './chat-cards'
 import { renderImages, renderSteps, type StepKeep } from './chat-steps'
 import { splitQuotes } from './chat-quote'
 import { forwardMark } from './agent-text'
+import { reportCard } from './report-card'
+import { splitWake } from '../../shared/report-wake'
 
 export interface ItemCallbacks {
   answer(cardId: string, a: ChatAnswer): void | Promise<boolean>
@@ -18,6 +20,10 @@ export interface ItemCallbacks {
   openMcp(): void
   /** the reload card's buttons: Not now keeps the card, Restart restarts the chat; null: the card has no buttons (a remote chat) */
   reload: ((action: ReloadAction) => void) | null
+  /** whether the column holds an item of this id: a report's card is not drawn again where its item is */
+  hasItem(id: string): boolean
+  /** a report card's buttons, by the session's ref and name; null: the card has none (another device's chat) */
+  report: { open(ref: string, name: string): void; resolve(ref: string, name: string): void } | null
   /** the Media card of an image, from the tab's last images update; null when the panel has no such card */
   imageCard(cardId: string): ImageCard | null
   openImages(cards: ImageCard[], index: number): void
@@ -67,6 +73,7 @@ export function renderItem(item: ChatItem, cb: ItemCallbacks, keep: StepKeep | n
     case 'event': return eventItem(item.source, item.title, item.status, item.body)
     case 'prompt': return promptItem(item, cb, prompt)
     case 'forward': return forwardNote(item, cb)
+    case 'report': return reportCard(item, cb)
   }
 }
 
@@ -135,9 +142,27 @@ export function streamText(node: HTMLElement, markdown: string): void {
   tailNode.innerHTML = chatMarkdownHtml(tail, { paths: true })
 }
 
+/**
+ * A message the person or ClaudeTerm sent. A wake text's report blocks are cards, drawn in place of the text; a report the column
+ * holds already (one handed to the tab) is not drawn again. The rest of the text, and the files, are the message as it was.
+ */
 function userItem(item: Extract<ChatItem, { kind: 'user' }>, cb: ItemCallbacks): HTMLElement {
+  const { reports, rest } = splitWake(item.text)
+  const row = userRow(item, rest, cb)
+  if (reports.length === 0) return row
+  const wake = el('div', 'chat-item coord-wake')
+  for (const r of reports) {
+    if (cb.hasItem(`report:${r.mailId}`)) continue
+    wake.append(reportCard({ mailId: r.mailId, name: r.name, ref: r.ref, outcome: r.outcome, reason: r.reason, at: null, text: r.text }, cb))
+  }
+  if (rest !== '' || item.attachments.length > 0 || item.queued) wake.append(row)
+  return wake
+}
+
+/** a message's row: its bubble with the text given, its files, and its Queued mark */
+function userRow(item: Extract<ChatItem, { kind: 'user' }>, text: string, cb: ItemCallbacks): HTMLElement {
   const row = el('div', `chat-item chat-user-row${item.queued ? ' queued' : ''}`)
-  if (item.text !== '') row.append(userBubble(item.text))
+  if (text !== '') row.append(userBubble(text))
   if (item.attachments.length > 0) row.append(attachments(item.attachments, cb))
   if (item.queued) row.append(el('div', 'chat-quiet', 'Queued'))
   return row

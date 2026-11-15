@@ -94,6 +94,7 @@ function searchText(item: ChatItem, hasCard: (cardId: string | null) => boolean)
     case 'event': return item.title
     case 'prompt': return item.text
     case 'forward': return item.text
+    case 'report': return `${item.name}\n${item.text}`
     case 'card': return item.answered ?? cardText(item.card)
     // a thinking block shows its summary when it is open, which is its start; a folded one draws no summary, and the search reads a drawn
     // item first, so the summary is not found then. An image shows no text.

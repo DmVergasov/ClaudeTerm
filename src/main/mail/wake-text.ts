@@ -1,5 +1,6 @@
 import { kindOf, type MailAddress, type MailRecord } from '../../shared/mail'
 import { refOf, replaceControls } from './agent-directory'
+import { MESSAGE_WAKE_HEAD, REPORT_WAKE_HEAD, TASK_WAKE_HEAD } from '../../shared/report-wake'
 
 /** the blocks of a wake text are separated by a blank line */
 const SEPARATOR = '\n\n'
@@ -52,18 +53,18 @@ function headerOf(r: MailRecord, ref: string): { header: string; id: string } {
     case 'task': {
       const coordinator = r.project === undefined ? 'their coordinator' : `their ${replaceControls(r.project)} coordinator`
       return {
-        header: `Task from your coordinator, through ClaudeTerm: the user's instruction, given through ${coordinator}.`,
+        header: `${TASK_WAKE_HEAD} the user's instruction, given through ${coordinator}.`,
         id: `id: ${r.id}  (do it; when it is done, end your turn: ClaudeTerm sends your last answer to the coordinator as your report)`
       }
     }
     case 'report':
       return {
-        header: `Report from a session attached to you, through ClaudeTerm: ${outcomeOf(r)}.`,
+        header: `${REPORT_WAKE_HEAD} ${outcomeOf(r)}.`,
         id: `id: ${r.id}  (the report on task ${r.replyTo}; read_session "${ref}" shows the session)`
       }
     default:
       return {
-        header: 'Message from another agent, not from the user, through ClaudeTerm:',
+        header: MESSAGE_WAKE_HEAD,
         id: `id: ${r.id}  (reply with mcp__claudeterm__message_agent, to: "${ref}", reply_to: "${r.id}")`
       }
   }

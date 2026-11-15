@@ -4,7 +4,7 @@ import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import type { AppInfo, RestoreInfo, ImagesUpdate, PlanUpdate, StatusUpdate } from '../shared/ipc'
 import type { DocsUpdate } from '../shared/docs'
 import type { MailUnread } from '../shared/mail'
-import type { CoordMark, CoordMarks, CoordResult, CoordinatorView } from '../shared/coordinator'
+import type { CoordMark, CoordMarks, CoordResult, CoordSessionRow, CoordinatorView } from '../shared/coordinator'
 import { noteProjectOf } from '../shared/note'
 import type { TabView } from '../shared/chat'
 import { NOT_RUNNING, type ReviewCounter, type ReviewUpdate } from '../shared/review'
@@ -50,7 +50,7 @@ import { attachChoices, type AttachTab } from './sessions-model'
 import { TitleBar } from './title-bar'
 import { applyTheme } from './app-theme'
 import { limitMeters } from './limit-meters'
-import { claudeTitle, folderName } from './util'
+import { claudeTitle, folderName, labelOf } from './util'
 
 interface TabState {
   info: TabInfo
@@ -908,6 +908,11 @@ function makeChat(tabId: string, remote: boolean): ChatView {
     restart: () => ct.restartTab(tabId, false),
     // the reload card's buttons act on this tab's session; a member's tab has none (its host's Claude Code loads the servers)
     reload: remote ? null : (action) => { void ct.mcpReload(tabId, action) },
+    // a report card's buttons find its session in this coordinator's view; a member's tab has none
+    report: remote ? null : {
+      open: (ref, name) => { void openReportSession(tabId, ref, name) },
+      resolve: (ref, name) => { void resolveReportSession(tabId, ref, name) }
+    },
     older: (beforeId) => ct.chatOlder(tabId, beforeId),
     agentSnapshot: (agentId) => ct.chatAgentSnapshot(tabId, agentId),
     agentOlder: (agentId, beforeId) => ct.chatAgentOlder(tabId, agentId, beforeId),
@@ -1288,6 +1293,27 @@ async function coordViewOf(tabId: string): Promise<CoordinatorView | null> {
 /** a failed CoordResult as a toast */
 function toastFailure(r: CoordResult): void {
   if (!r.ok) showToast(r.error)
+}
+
+/** the row of the session a report card names, in this coordinator's view; a toast says so when it is no longer attached */
+async function reportRow(coordinatorTabId: string, ref: string, name: string): Promise<CoordSessionRow | null> {
+  const row = (await coordViewOf(coordinatorTabId))?.sessions.find((r) => r.ref === ref) ?? null
+  if (row === null) showToast(`${labelOf(name)} is no longer attached to this coordinator.`)
+  return row
+}
+
+/** Open session on a report card: the session's tab comes to the front; a session with no open tab says so */
+async function openReportSession(coordinatorTabId: string, ref: string, name: string): Promise<void> {
+  const row = await reportRow(coordinatorTabId, ref, name)
+  if (row === null) return
+  if (row.tabId === null) showToast(`${labelOf(name)} has no open tab.`)
+  else ct.activateTab(row.tabId)
+}
+
+/** Resolve on a report card: the session is resolved in this coordinator's view */
+async function resolveReportSession(coordinatorTabId: string, ref: string, name: string): Promise<void> {
+  const row = await reportRow(coordinatorTabId, ref, name)
+  if (row !== null) void ct.coordResolve(coordinatorTabId, row.key).then(toastFailure)
 }
 
 /** every tab as Attach… reads it: a Claude tab's session, its folder and its branch */

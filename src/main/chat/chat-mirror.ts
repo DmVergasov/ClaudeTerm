@@ -1,4 +1,6 @@
 import { acceptPatches, type AgentPatch, type AgentSnapshot, type ChatActivity, type ChatAgentInfo, type ChatCard, type ChatItem, type ChatPatch, type ChatSnapshot, type ChatState, type ChatToolCall, isAgentId } from '../../shared/chat'
+import { MAIL_REASON_MAX, REPORT_OUTCOMES } from '../../shared/mail'
+import { outcomeText } from '../../shared/report-wake'
 import type { PushKind } from '../../shared/remote'
 import { isChatOrigin, isPermissionMode } from './chat-guards'
 import { cap, PAGE, SUBJECT_CAP } from './chat-model'
@@ -127,6 +129,10 @@ function isItem(v: unknown): v is ChatItem {
       // an agent page only: a message the person sent to the agent, its label, its state and why it did not go (or none)
       return isAgentId(v.agentId) && str(v.label, FORWARD_LABEL_CAP) && str(v.text, TEXT_CAP) && oneOf(FORWARD_STATES, v.state)
         && opt(v.reason, (s) => str(s, REASON_CAP))
+    case 'report':
+      // a report a coordinator was handed: its mail, the session's name and ref, how its task ended and why (or none), when, and its text
+      return isId(v.mailId) && str(v.name, NAME_CAP) && str(v.ref, NAME_CAP) && oneOf(REPORT_OUTCOMES, v.outcome)
+        && opt(v.reason, (s) => str(s, MAIL_REASON_MAX)) && opt(v.at, isCount) && str(v.text, TEXT_CAP)
     default:
       return false
   }
@@ -395,6 +401,8 @@ export function itemForOlder(item: ChatItem): ChatItem {
       return { kind: 'notice', id: item.id, tone: item.state === 'failed' ? 'error' : 'info', text: cap(`↗ To ${item.label}: ${item.text.split(/\r?\n/)[0]}`, OUTPUT_CAP), action: null }
     case 'prompt':
       return { kind: 'notice', id: item.id, tone: 'info', text: cap(item.text, OUTPUT_CAP), action: null }
+    case 'report':
+      return { kind: 'notice', id: item.id, tone: item.outcome === 'failed' ? 'error' : 'info', text: cap(`Report from ${item.name}: ${outcomeText(item.outcome, item.reason)}\n\n${item.text}`, OUTPUT_CAP), action: null }
     default:
       return item
   }
