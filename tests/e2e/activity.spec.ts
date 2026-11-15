@@ -190,7 +190,7 @@ test('a folded group spins while Claude works in one of its tabs, the agents it 
   await activate(page, home)
   const group = page.locator('#tabpanel .tp-group').filter({ has: page.locator('.tp-group-name', { hasText: new RegExp(`^${basename(repo)}$`) }) })
   await expect(group).toHaveCount(1)
-  await group.locator('.tp-group-head').click()
+  await group.locator('.tp-group-name').click()
   await expect(group).toHaveClass(/\bfolded\b/)
   const spin = group.locator('.tp-group-spin')
   await expect(spin).toHaveCount(0)

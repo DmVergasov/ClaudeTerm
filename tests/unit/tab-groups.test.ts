@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   NO_PROJECT,
   arrangeCoordinators,
+  deviceGroups,
   dropAttaches,
+  groupChip,
   groupLabels,
   placePulled,
   pulledBy,
@@ -431,5 +433,30 @@ describe('pulled rows: a paired device\'s session attached to a coordinator of t
     it('a local attached row dropped off the rows goes to the end of its group, in an order with no pulled id', () => {
       expect(panelDropOut(groups, row('A1'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'A2', 'X', 'A1'] })
     })
+  })
+})
+
+describe("the coordinator chip on a group's header", () => {
+  const C: CoordMark = { role: 'coordinator', project: 'acme', sessions: 0, waiting: 0 }
+  const to = (coordinatorTabId: string): CoordMark => ({ role: 'attached', project: 'acme', coordinator: 'coord · Desktop', coordinatorTabId })
+  const marks = (m: Record<string, CoordMark>) => (id: string): CoordMark | null => m[id] ?? null
+
+  it("a group of this device with a coordinator shows it running, with the coordinator's tab", () => {
+    const [g] = panelGroups([tab('A', acme), tab('C', acme)])
+    expect(groupChip(g, true, marks({ C }))).toEqual({ kind: 'running', tabId: 'C' })
+  })
+  it('a group of this device without one offers a start from its first row; an attached row is no coordinator', () => {
+    const [g] = panelGroups([tab('A', acme), tab('B', acme)])
+    expect(groupChip(g, true, marks({ A: to('Z') }))).toEqual({ kind: 'start', tabId: 'A' })
+  })
+  it("a pulled row (a paired device's session) is never the tab a start is asked from", () => {
+    const g: PanelGroup = { key: acme.project.key, project: acme.project, rows: [{ id: 'R', fork: false, block: 'X', attached: true, pulled: true }, { id: 'A', fork: false }] }
+    expect(groupChip(g, true, marks({}))).toEqual({ kind: 'start', tabId: 'A' })
+  })
+  it("No project and a paired device's groups have no chip, a coordinator there included", () => {
+    const [none] = panelGroups([tab('N', null)])
+    expect(groupChip(none, true, marks({}))).toBeNull()
+    const [remote] = deviceGroups('dev-a', [tab('C', acme)])
+    expect(groupChip(remote, false, marks({ C }))).toBeNull()
   })
 })

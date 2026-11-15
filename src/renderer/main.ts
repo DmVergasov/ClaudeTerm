@@ -1554,6 +1554,7 @@ async function boot(): Promise<void> {
     },
     detachTab: (id) => void detachFromCoordinator(id),
     attachTab: (coordinatorId, id) => void ct.coordAttach(coordinatorId, id).then(toastFailure),
+    startCoordinator: (id) => void ct.coordStartCoordinator(id).then((r) => { if (r !== null) toastFailure(r) }),
     toggleNote: () => {
       runAction({ type: 'toggleNote' }, activeId)
       // the keyboard goes back to the terminal, unless an empty note took it to be written in

@@ -1,6 +1,6 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
 import { REMOTE_COPY, deviceColor } from '../shared/remote'
-import { dropAttaches, groupLabels, moveGroup, panelDeviceOrder, panelDrop, panelDropOut, panelOwnOrder, panelSections, type DropRow, type PanelDrop, type PanelGroup, type PanelRow, type PanelSection } from './tab-groups'
+import { dropAttaches, groupChip, groupLabels, moveGroup, panelDeviceOrder, panelDrop, panelDropOut, panelOwnOrder, panelSections, type DropRow, type GroupChip, type PanelDrop, type PanelGroup, type PanelRow, type PanelSection } from './tab-groups'
 import { icon } from './icons'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
@@ -21,7 +21,7 @@ const onRow = (e: DragEvent): boolean => e.target instanceof Element && e.target
 /**
  * The left tab panel: the head (New tab and ▾), then this device's tabs as groups by project, each group with its tabs in rows
  * of two lines (the title, and the branch of the tab's folder). Then one section per other device that has tabs or is
- * online: its header, and its tabs grouped the same way. Groups fold on a click on their header, a device on a click on its header;
+ * online: its header, and its tabs grouped the same way. Groups fold on a click on their header (not on its coordinator chip), a device on a click on its header;
  * the panel's right edge is dragged to change its width. Its items and callbacks are the tab bar's: main shows one or the other.
  */
 export class TabPanel {
@@ -261,7 +261,8 @@ export class TabPanel {
     const name = document.createElement('span')
     name.className = 'tp-group-name'
     name.textContent = label
-    head.append(chevron, name)
+    const chip = groupChip(group, section.device === null, (id) => byId.get(id)?.coord ?? null)
+    head.append(chevron, name, ...(chip ? [this.coordChip(chip)] : []))
     el.append(head)
 
     // a group shows how many tabs it holds, and a dot that pulses while Claude waits in one of them; folded, it also shows
@@ -284,6 +285,31 @@ export class TabPanel {
         if (item) el.append(this.renderRow(section, item, row, item.id === this.activeId))
       }
     }
+    return el
+  }
+
+  /**
+   * The coordinator chip on a project group's header: `running` brings the coordinator's tab to the front, `start` opens a new
+   * coordinator from the group's tab. The chip is no part of the header: its click does not fold the group, and its drag is not the group's.
+   */
+  private coordChip(chip: GroupChip): HTMLButtonElement {
+    const el = document.createElement('button')
+    el.type = 'button'
+    el.className = `tp-coord-chip ${chip.kind}`
+    const mark = document.createElement('span')
+    mark.className = 'tp-coord-chip-mark'
+    if (chip.kind === 'start') mark.innerHTML = icon('plus', 10)
+    const word = document.createElement('span')
+    word.className = 'tp-coord-chip-word'
+    word.textContent = 'Coordinator'
+    el.append(mark, word)
+    el.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (chip.kind === 'running') this.cb.activate(chip.tabId)
+      else this.cb.startCoordinator(chip.tabId)
+    })
+    el.draggable = true
+    el.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation() })
     return el
   }
 

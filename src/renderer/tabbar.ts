@@ -85,6 +85,8 @@ export interface TabBarCallbacks {
   detachTab(id: string): void
   /** a tab dropped on a coordinator's tab or row: the coordinator takes it as an attached session */
   attachTab(coordinatorId: string, tabId: string): void
+  /** + Coordinator on a project group's header in the left panel: a tab of this device in the group */
+  startCoordinator(tabId: string): void
   toggleNote(): void
   switchPosition(): void
 }

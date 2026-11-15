@@ -254,6 +254,22 @@ export function moveInGroup(groups: PanelGroup[], dragId: string, targetId: stri
   return sameOrder(next, panelOrder(groups)) ? null : next
 }
 
+/** the coordinator chip on a project group's header: `running` names the coordinator's tab (brought to the front), `start` the tab a new coordinator is started from */
+export type GroupChip = { kind: 'running'; tabId: string } | { kind: 'start'; tabId: string }
+
+/**
+ * The chip on a group's header: none (null) for a group of another device, and for No project. `running` when one of the group's
+ * tabs is this device's coordinator (its mark has role 'coordinator'); a pulled row is never the coordinator of this device, and
+ * never the tab a start is asked from. Otherwise `start`, from the group's first row that is not pulled; null when no row is.
+ */
+export function groupChip(group: PanelGroup, own: boolean, coordOf: (id: string) => CoordMark | null): GroupChip | null {
+  if (!own || group.project === null) return null
+  const rows = group.rows.filter((row) => !row.pulled)
+  const coordinator = rows.find((row) => coordOf(row.id)?.role === 'coordinator')
+  if (coordinator) return { kind: 'running', tabId: coordinator.id }
+  return rows.length > 0 ? { kind: 'start', tabId: rows[0].id } : null
+}
+
 /**
  * Each group that holds a coordinator (a row whose mark is { role: 'coordinator' }): the units whose first row is attached to
  * it (mark { role: 'attached', coordinatorTabId: <its id> }) move right after the coordinator's unit, in their order; the

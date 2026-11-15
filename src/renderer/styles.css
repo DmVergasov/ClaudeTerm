@@ -180,6 +180,14 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .tp-group-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .tp-group-dot.pulse { animation: tp-dot-pulse 0.8s ease-in-out infinite alternate; }
 @keyframes tp-dot-pulse { from { opacity: 0.25; } to { opacity: 1; } }
+/* the coordinator chip on a project's header, between its name and its count: ● Coordinator in the accent with a thin accent
+   outline while the project has a coordinator here, + Coordinator muted and dashed while it has none. It never moves */
+.tp-coord-chip { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px; box-sizing: border-box; height: 18px; padding: 0 7px; border-radius: 9px; background: none; font: inherit; font-size: 10.5px; line-height: 1; white-space: nowrap; cursor: pointer; }
+.tp-coord-chip.running { border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); }
+.tp-coord-chip.start { border: 1px dashed var(--line-3); color: var(--text-3); }
+.tp-coord-chip.start:hover { border-color: var(--text-3); color: var(--text-2); }
+.tp-coord-chip-mark { flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.tp-coord-chip.running .tp-coord-chip-mark { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 /* a row: raised when it is the active tab, on a rounded edge of its own; the hover is a faint lift */
 .tp-tab { position: relative; display: flex; flex-direction: column; gap: 1px; min-width: 0; margin: 1px 0; padding: 7px 10px; border-radius: 8px; color: var(--text-2); cursor: default; white-space: nowrap; }
 .tp-tab.fork { padding-left: 26px; }
@@ -245,6 +253,9 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
   /* the account row keeps its buttons: the avatar and the names step aside (the row's title still names them) */
   .tp-avatar, .tp-account-text { display: none; }
   .tp-account { justify-content: space-between; padding-left: 0; }
+  /* the coordinator chip keeps its dot or its +, as a circle; the project's name has given way before it */
+  .tp-coord-chip-word { display: none; }
+  .tp-coord-chip { width: 18px; padding: 0; }
 }
 .tp-resize { position: absolute; top: 0; bottom: 0; right: -3px; width: 6px; cursor: col-resize; z-index: 5; }
 .tp-resize:hover { background: var(--tint-6); }

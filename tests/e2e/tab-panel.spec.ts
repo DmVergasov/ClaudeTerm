@@ -292,14 +292,14 @@ test('a folded group shows its count and a dot, and stays folded after a restart
   await expect(groupB).toHaveCount(1)
   const keyA = (await groupOf(page, a1).getAttribute('data-group'))!
   const keyB = (await groupOf(page, b1).getAttribute('data-group'))!
-  await groupA.locator('.tp-group-head').click()
+  await groupA.locator('.tp-group-name').click()
   await expect(groupA).toHaveClass(/\bfolded\b/)
   await expect(groupA.locator('.tp-group-count')).toHaveText('2')
   await expect(groupA.locator('.tp-tab')).toHaveCount(0)
   await expect(groupA.locator('.tp-group-dot')).toBeVisible()
   await expect(groupA.locator('.tp-group-dot')).not.toHaveClass(/\bpulse\b/)
 
-  await groupB.locator('.tp-group-head').click()
+  await groupB.locator('.tp-group-name').click()
   await expect(groupB.locator('.tp-group-dot')).toHaveClass(/\bpulse\b/)
 
   await app.close()
@@ -369,7 +369,7 @@ test('a tab in a folded group unfolds its group when it becomes the active tab',
   const group = groupNamed(page, basename(repo))
   await page.evaluate((id) => window.ct.activateTab(id), home)
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, home)
-  await group.locator('.tp-group-head').click()
+  await group.locator('.tp-group-name').click()
   await expect(group).toHaveClass(/\bfolded\b/)
 
   await page.evaluate((id) => window.ct.activateTab(id), a1)
@@ -387,7 +387,7 @@ test('with tabs on the left, a new tab unfolds its project group and leaves No p
   const groupA = groupNamed(page, basename(repo))
   const noProject = groupNamed(page, 'No project')
   await expect(groupA).toHaveCount(1)
-  await groupA.locator('.tp-group-head').click()
+  await groupA.locator('.tp-group-name').click()
   await noProject.locator('.tp-group-head').click()
   await expect(groupA).toHaveClass(/\bfolded\b/)
   await expect(noProject).toHaveClass(/\bfolded\b/)
@@ -525,7 +525,7 @@ test('a group is dragged by its header', async () => {
   await expect(groupB).toHaveCount(1)
 
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([a1, a2, b1, home])
-  await groupB.locator('.tp-group-head').dragTo(groupA.locator('.tp-group-head'))
+  await groupB.locator('.tp-group-name').dragTo(groupA.locator('.tp-group-head'))
   await expect.poll(() => page.evaluate(() => window.__ct!.tabIds())).toEqual([b1, a1, a2, home])
   await app.close()
 })
@@ -631,7 +631,7 @@ test('switching the tabs to the left unfolds the group of the active tab', async
   const a1 = await openTab(page, 'shell', repo)
   const group = groupNamed(page, basename(repo))
   await expect(group).toHaveCount(1)
-  await group.locator('.tp-group-head').click()
+  await group.locator('.tp-group-name').click()
   await expect(group).toHaveClass(/\bfolded\b/)
 
   await page.locator('#tabpanel .tab-position').click()
