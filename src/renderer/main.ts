@@ -1861,6 +1861,7 @@ async function boot(): Promise<void> {
     message: (coordinatorTabId, key, text) => ct.coordMessage(coordinatorTabId, key, text).then((r) => (r.ok ? null : r.error)),
     newSession: (coordinatorTabId) => openNewSessionDialog({
       folder: tabs.get(coordinatorTabId)?.info.folder ?? '',
+      paired: remoteDevices,
       start: (req) => ct.coordNewSession(coordinatorTabId, req),
       late: toastFailure
     }),

@@ -1,4 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { activate, refOf, startSession, waitForMail } from './agent-mail'
@@ -212,4 +215,64 @@ test('a Laptop tab is attached from its menu, and its row joins the coordinator\
   await expect.poll(async () => (await marksOf(b.page))[sessionTab], SLOW).toEqual({ role: 'attached', project: 'acme', coordinator: 'acme · Studio', coordinatorTabId: null })
   await expect(tpRow(a.page, sessionTab)).toHaveClass(/coord-attached/)
   await expect(tpRow(a.page, sessionTab).locator('.tp-coord-device')).toHaveText('Laptop')
+})
+
+/** the tab a start opened on Laptop, titled as the start asked: polled until Laptop lists it */
+async function startedTabOf(page: Page, title: string): Promise<string> {
+  const tabOf = (): Promise<string | null> => page.evaluate((t) => window.__ct!.tabIds().find((id) => window.__ct!.tabTitle!(id) === t) ?? null, title)
+  await expect.poll(tabOf, SLOW).not.toBeNull()
+  return (await tabOf())!
+}
+
+test('start_session on Laptop opens a tab there in the folder of its acme tab, and sends the task once its session starts', async () => {
+  test.setTimeout(180_000)
+  const { a, b, coordTab, repoB } = await coordDevices()
+  const answer = coord(a.pipeName, coordTab, { op: 'start', task: 'Write the release notes.', name: 'Release notes', folder: null, device: 'Laptop', worktree: null })
+  const newTab = await startedTabOf(b.page, 'Release notes')
+  const sid = randomUUID()
+  expect(await startSession(b.pipeName, newTab, sid)).toEqual({ ok: true })
+  expect(await answer).toEqual({
+    ok: true,
+    info: `Started Release notes · Laptop [${refOf(sid)}] on Laptop in ${repoB}, the folder of its acme tab, on Main account; it is attached to you once Laptop confirms. Its task is its first message; its report comes to you by itself when its task ends.`
+  })
+  expect((await within(waitForMail(b.pipeName, newTab, sid), 30_000)).info).toContain('> Write the release notes.')
+})
+
+test('a folder Laptop does not have: the session opens in Laptop\'s default folder and the answer says so', async () => {
+  test.setTimeout(180_000)
+  const { a, b, coordTab } = await coordDevices()
+  const missing = join(tmpdir(), 'ct-no-such-folder')
+  const answer = coord(a.pipeName, coordTab, { op: 'start', task: 'Write the release notes.', name: 'Release notes', folder: missing, device: 'Laptop', worktree: null })
+  const newTab = await startedTabOf(b.page, 'Release notes')
+  const sid = randomUUID()
+  expect(await startSession(b.pipeName, newTab, sid)).toEqual({ ok: true })
+  expect((await answer).info).toContain(`in ${b.work}, its default folder (${missing} is not a folder there)`)
+})
+
+test('New session on Laptop: Studio\'s dialog offers Laptop, the row shows Laptop\'s new tab until its session starts, and the task reaches the session', async () => {
+  test.setTimeout(180_000)
+  const { a, b, coordTab } = await coordDevices()
+  await activate(a.page, coordTab)
+  await openSessions(a.page)
+  await a.page.locator('#image-panel .coord-bar button', { hasText: 'New session' }).click()
+  const dialog = a.page.locator('.coord-dialog[data-dialog="new-session"]')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('select[name="device"] option')).toHaveText(['This device', 'Laptop'])
+  await dialog.locator('textarea[name="task"]').fill('Write the release notes.')
+  await dialog.locator('input[name="name"]').fill('Release notes')
+  await dialog.locator('select[name="device"]').selectOption({ label: 'Laptop' })
+  await dialog.getByRole('button', { name: 'Start', exact: true }).click()
+
+  // Laptop opens the tab; Studio's view lists it on Laptop as Starting… until the session comes
+  const newTab = await startedTabOf(b.page, 'Release notes')
+  const laptopRow = async () => (await coordViewOf(a, coordTab))?.sessions.find((r) => r.deviceName === 'Laptop') ?? null
+  await expect.poll(async () => (await laptopRow())?.key ?? null, SLOW).toBe(`start:${newTab}`)
+
+  const sid = randomUUID()
+  expect(await startSession(b.pipeName, newTab, sid)).toEqual({ ok: true })
+  await expect.poll(async () => (await laptopRow())?.key ?? null, SLOW).toBe(`${b.id}:${sid}`)
+  // attached: the row has no marker (a missing row reads 'missing', which is not null)
+  await expect.poll(async () => { const r = await laptopRow(); return r === null ? 'missing' : r.marker }, SLOW).toBeNull()
+  await expect(dialog).toHaveCount(0, { timeout: 45_000 })
+  expect((await within(waitForMail(b.pipeName, newTab, sid), 30_000)).info).toContain('> Write the release notes.')
 })

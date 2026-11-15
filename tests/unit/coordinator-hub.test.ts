@@ -1047,8 +1047,10 @@ describe('CoordinatorHub start', () => {
   it('a folder that is not a directory and another device are refused, and nothing opens; this device\'s name is accepted in any case', async () => {
     const w = world()
     w.hub.make('tab-c', false)
-    expect(await w.hub.start('tab-c', { ...START, device: 'Laptop' })).toEqual({ ok: false, error: HUB_TEXT.otherDevice })
+    expect(await w.hub.start('tab-c', { ...START, device: 'Laptop' })).toEqual({ ok: false, error: 'No paired device named "Laptop".' })
     expect(await w.hub.start('tab-c', { ...START, folder: 'D:\\Nowhere' })).toEqual({ ok: false, error: 'No folder D:\\Nowhere on this device.' })
+    // a folder named for this device is a path here: a relative one is no folder, even when the device's name is given
+    expect(await w.hub.start('tab-c', { ...START, device: 'desktop', folder: 'relative/acme' })).toEqual({ ok: false, error: 'No folder relative/acme on this device.' })
     expect(w.opened).toEqual([])
     void w.hub.start('tab-c', { ...START, device: 'desktop' })
     await tick()

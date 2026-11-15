@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
+import { HUB_TEXT, START_WAIT_MS } from '../../src/main/coordinator/coordinator-hub'
 import { MAX_ATTACHMENTS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
 import { checkMailRecord } from '../../src/main/mail/mail-record'
 import { coordinatorProblem, type CoordSessionRow, type CoordinatorView } from '../../src/shared/coordinator'
-import type { MailRecord } from '../../src/shared/mail'
+import { MAIL_MIN_CLAUDE, type MailRecord } from '../../src/shared/mail'
 import { attachDirect, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NO_FACTS, NOW, peerOf, records, remoteTab, S, sync, uid, world, type World } from '../fixtures/coordinator-world'
 
 const TASK = '7a000000-0000-4000-8000-000000000001'
@@ -555,5 +555,179 @@ describe('attach, detach and tasks across devices', () => {
     })
     expect(s.store.hosted(L.one)).toMatchObject({ coordinator: { device: DEV_C, session: S.coord } })
     expect(s.mail.get(OTHER_DETACH)).toMatchObject({ delivered: true, read: true })
+  })
+})
+
+describe('start on another device', () => {
+  const REFUSAL = '7c000000-0000-4000-8000-000000000003'
+  const START_LAPTOP = { task: 'Write the release notes.', name: 'Release notes', folder: null, device: 'laptop', worktree: null }
+  const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
+  let c: World
+
+  beforeEach(() => {
+    c = world({ self: DEV_C, selfName: 'Studio' })
+    c.peers = [peerOf(DEV_S, 'Laptop')]
+    c.hub.make('tab-c', false)
+  })
+
+  it('start on Laptop opens a tab there in the folder of its acme tab with the coordinator\'s email, and is Starting… until the session comes', async () => {
+    c.tabs[0] = { ...c.tabs[0], account: 'acc-1' }
+    c.emails = { 'acc-1': 'sam@example.com' }
+    c.remoteTabs = [remoteTab({ tabId: 'tab-l2', session: L.two, name: 'docs · Laptop' })]
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    expect(c.openedRemote).toEqual([{ device: DEV_S, req: { cwd: '/home/sam/acme', email: 'sam@example.com', title: 'Release notes' } }])
+    expect(c.hub.view('tab-c')!.sessions).toEqual([expect.objectContaining({ key: 'start:rt-new', marker: 'starting', line: 'Starting…', device: DEV_S, deviceName: 'Laptop' })])
+    c.remoteTabs.push(remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop' }))
+    c.hub.remoteChanged()
+    expect(await answer).toEqual({
+      ok: true,
+      info: 'Started Release notes · Laptop [e40000] on Laptop in /home/sam/acme, the folder of its acme tab, on Main account; it is attached to you once Laptop confirms. Its task is its first message; its report comes to you by itself when its task ends.'
+    })
+    expect(records(c, 'attach')).toEqual([expect.objectContaining({ to: expect.objectContaining({ device: DEV_S, session: L.fresh }) })])
+    expect(records(c, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: L.fresh }), text: 'Write the release notes.' })])
+  })
+
+  it('a coordinator without a known email starts the session on Laptop\'s main account; a folder Laptop refuses is named', async () => {
+    c.remoteAnswer = { ok: true, tabId: 'rt-new', cwd: '/home/sam', accountName: 'Main account', defaulted: true }
+    const answer = c.hub.start('tab-c', { ...START_LAPTOP, folder: '/nope' })
+    await tick()
+    expect(c.openedRemote).toEqual([{ device: DEV_S, req: { cwd: '/nope', email: null, title: 'Release notes' } }])
+    c.remoteTabs.push(remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop', folder: '/home/sam' }))
+    c.hub.remoteChanged()
+    expect(await answer).toEqual({
+      ok: true,
+      info: 'Started Release notes · Laptop [e40000] on Laptop in /home/sam, its default folder (/nope is not a folder there), on Main account; it is attached to you once Laptop confirms. Its task is its first message; its report comes to you by itself when its task ends.'
+    })
+  })
+
+  it('with no acme tab on Laptop it asks for no folder, and the answer says it opened in the default folder', async () => {
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    expect(c.openedRemote).toEqual([{ device: DEV_S, req: { cwd: null, email: null, title: 'Release notes' } }])
+    c.remoteTabs.push(remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop', folder: '/home/sam' }))
+    c.hub.remoteChanged()
+    expect(await answer).toEqual({
+      ok: true,
+      info: 'Started Release notes · Laptop [e40000] on Laptop in /home/sam, its default folder (no acme tab is open there), on Main account; it is attached to you once Laptop confirms. Its task is its first message; its report comes to you by itself when its task ends.'
+    })
+  })
+
+  it('an unknown device, an offline one, one without coordinator records and one without mail are refused, and nothing opens', async () => {
+    const start = { task: 'Write the release notes.', name: null, folder: null, device: 'Tablet', worktree: null }
+    expect(await c.hub.start('tab-c', start)).toEqual({ ok: false, error: 'No paired device named "Tablet".' })
+    c.peers = [peerOf(DEV_S, 'Laptop', { online: false })]
+    expect(await c.hub.start('tab-c', { ...start, device: 'Laptop' })).toEqual({ ok: false, error: 'Laptop is not connected; its sessions can be attached or started while it is.' })
+    c.peers = [peerOf(DEV_S, 'Laptop', { coord: false })]
+    expect(await c.hub.start('tab-c', { ...start, device: 'Laptop' })).toEqual({
+      ok: false,
+      error: 'Laptop runs a ClaudeTerm that does not know coordinators; update ClaudeTerm there to coordinate its sessions.'
+    })
+    c.peers = [peerOf(DEV_S, 'Laptop', { mail: false })]
+    expect(await c.hub.start('tab-c', { ...start, device: 'Laptop' })).toEqual({
+      ok: false,
+      error: `Laptop does not take agent messages now, which coordinating its sessions needs: they are turned off there, or its Claude Code is older than ${MAIL_MIN_CLAUDE}.`
+    })
+    expect(c.openedRemote).toEqual([])
+  })
+
+  it('Laptop\'s refusal to open is the answer', async () => {
+    c.remoteAnswer = { ok: false, error: 'The tab could not be opened' }
+    expect(await c.hub.start('tab-c', START_LAPTOP)).toEqual({ ok: false, error: 'The tab could not be opened' })
+    expect(c.hub.view('tab-c')!.sessions).toEqual([])
+  })
+
+  it('a device named as this device starts the session here, as part 1 does', async () => {
+    void c.hub.start('tab-c', { ...START_LAPTOP, device: 'studio' })
+    await tick()
+    expect(c.opened).toHaveLength(1)
+    expect(c.openedRemote).toEqual([])
+  })
+
+  it('a remote tab that closes before its session starts drops the start, once Laptop has listed the tab', async () => {
+    c.remoteTabs = [remoteTab({ tabId: 'rt-new', session: null, name: null })]
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    c.hub.remoteChanged()
+    expect(c.hub.view('tab-c')!.sessions).toEqual([expect.objectContaining({ key: 'start:rt-new', marker: 'starting' })])
+    c.remoteTabs = []
+    c.hub.remoteChanged()
+    expect(await answer).toEqual({ ok: false, error: 'The new tab closed before its session started.' })
+    expect(c.hub.view('tab-c')!.sessions).toEqual([])
+    expect(records(c, 'attach')).toEqual([])
+  })
+
+  it('a remote start whose tab Laptop has not listed is not closed by a list without it: only START_WAIT_MS ends its wait', async () => {
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    c.hub.remoteChanged()
+    expect(c.hub.view('tab-c')!.sessions).toEqual([expect.objectContaining({ key: 'start:rt-new', marker: 'starting' })])
+    fire(c)
+    expect(await answer).toEqual({
+      ok: true,
+      info: 'Opening Release notes on Laptop in /home/sam, its default folder (no acme tab is open there), on Main account. It shows as Starting… until its session starts; its task is sent then.'
+    })
+    expect(c.hub.view('tab-c')!.sessions).toEqual([expect.objectContaining({ key: 'start:rt-new', marker: 'starting' })])
+  })
+
+  it('the wait for a remote start counts from the start of the call: the time Laptop took is taken off START_WAIT_MS, and it is at least 1 s', async () => {
+    c.remoteDelayMs = 15_000
+    c.remoteAnswer = { ok: true, tabId: 'rt-a', cwd: '/home/sam/acme', accountName: 'Main account', defaulted: false }
+    void c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    c.remoteDelayMs = 19_500
+    c.remoteAnswer = { ok: true, tabId: 'rt-b', cwd: '/home/sam/acme', accountName: 'Main account', defaulted: false }
+    void c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    expect(c.timers.map((t) => t.ms)).toEqual([START_WAIT_MS - 15_000, 1000])
+  })
+
+  it('a remote start counts toward the attachments of its coordinator: the start past 200 is refused with fullAttached', async () => {
+    const coordinator = c.store.coordinator(S.coord)!
+    c.store.putCoordinator({
+      ...coordinator,
+      attachments: Array.from({ length: MAX_ATTACHMENTS - 1 }, (_, i) => ({ device: null, session: uid(0x10000 + i), name: `session ${i}`, attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null }))
+    })
+    void c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    expect(await c.hub.start('tab-c', START_LAPTOP)).toEqual({
+      ok: false,
+      error: `This coordinator has ${MAX_ATTACHMENTS} sessions attached already, the most it keeps; detach one first.`
+    })
+    expect(c.openedRemote).toHaveLength(1)
+  })
+
+  it('a remote start does not count toward the attached sessions of this device: it starts with 500 hosted already', async () => {
+    for (let i = 0; i < MAX_HOSTED; i++) {
+      c.store.putHosted({ session: uid(0x20000 + i), coordinator: { device: null, session: uid(0x30000), name: 'other' }, project: 'other', tasks: [], former: [] })
+    }
+    void c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    expect(c.openedRemote).toHaveLength(1)
+  })
+
+  it('a remote start whose attach Laptop refuses marks its task delivered and read, so it leaves no unread mark', async () => {
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    c.remoteTabs = [remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop' })]
+    c.hub.remoteChanged()
+    const attachId = records(c, 'attach')[0].id
+    const taskId = records(c, 'task')[0].id
+    expect(c.mail.get(taskId)).toMatchObject({ delivered: false, read: false })
+    c.mail.add({
+      v: 1,
+      id: REFUSAL,
+      from: { device: DEV_S, session: L.fresh, name: 'Release notes · Laptop' },
+      to: { device: DEV_C, session: S.coord, name: 'coord · Studio' },
+      replyTo: attachId,
+      text: 'Refused.',
+      sentAt: NOW,
+      delivered: false,
+      read: false,
+      kind: 'detach'
+    })
+    expect(c.store.coordinator(S.coord)!.attachments).toEqual([])
+    expect(c.mail.get(taskId)).toMatchObject({ delivered: true, read: true })
+    await answer
   })
 })

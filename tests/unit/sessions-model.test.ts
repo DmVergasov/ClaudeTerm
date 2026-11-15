@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CoordGroup, CoordinatorView, CoordMarks, CoordSessionRow } from '../../src/shared/coordinator'
-import { attachChoices, cardRow, checkStartForm, DEFAULT_FOLDED, FOLDER_ERROR, NAME_ERROR, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, startError, WORKTREE_ERROR, type AttachTab } from '../../src/renderer/sessions-model'
+import { attachChoices, cardRow, checkStartForm, DEFAULT_FOLDED, FOLDER_ERROR, NAME_ERROR, nextRedrawAt, rowActions, rowIcon, rowTime, sessionSections, startDevices, startError, WORKTREE_ERROR, type AttachTab } from '../../src/renderer/sessions-model'
 
 const row = (key: string, group: CoordGroup, o: Partial<CoordSessionRow> = {}): CoordSessionRow => ({
   key, tabId: `tab-${key}`, device: null, deviceName: null, session: 'a1000000-0000-4000-8000-000000000002', ref: 'a10000', name: `${key} · Desktop`,
@@ -95,6 +95,15 @@ it('checkStartForm accepts a full path of either system and refuses a name with 
   for (const folder of ['C:\\Work\\acme', 'C:/Work/acme', '\\\\server\\share', '/x']) expect(checkStartForm({ task: 'x', name: '', folder, worktree: '' })).toMatchObject({ req: { folder } })
   expect(checkStartForm({ task: 'x', name: 'Notes\u0007', folder: '', worktree: '' })).toEqual({ error: NAME_ERROR })
   expect(checkStartForm({ task: 'x', name: 'No\tte', folder: '', worktree: '' })).toEqual({ error: NAME_ERROR })
+})
+it('startDevices lists this device first, then each online paired device by its name in the order given; with none online, no choice', () => {
+  expect(startDevices([{ name: 'Laptop', online: true }, { name: 'Tablet', online: false }, { name: 'Desk', online: true }])).toEqual([
+    { device: null, label: 'This device' },
+    { device: 'Laptop', label: 'Laptop' },
+    { device: 'Desk', label: 'Desk' }
+  ])
+  expect(startDevices([{ name: 'Tablet', online: false }])).toEqual([])
+  expect(startDevices([])).toEqual([])
 })
 it('startError is null for a start that was made, says the fields are refused for an invalid request, and shows any other error', () => {
   expect(startError({ ok: true })).toBeNull()

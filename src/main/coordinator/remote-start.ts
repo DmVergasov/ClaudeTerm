@@ -13,3 +13,14 @@ export function accountForEmail(email: string, view: { main: { email: string | n
   const extra = view.accounts.find((a) => a.readable && a.email !== null && emailKey(a.email) === key)
   return extra?.id ?? null
 }
+
+/**
+ * where a session opened on another device: `asked` is the folder sent (the one asked for, or that of a project's tab when fromTab),
+ * and the device says when it opened in its default folder instead
+ */
+export function remoteFolderText(o: { cwd: string; asked: string | null; fromTab: boolean; defaulted: boolean; project: string }): string {
+  if (o.defaulted) return `in ${o.cwd}, its default folder (${o.asked} is not a folder there)`
+  if (o.fromTab) return `in ${o.cwd}, the folder of its ${o.project} tab`
+  if (o.asked !== null) return `in ${o.cwd}`
+  return `in ${o.cwd}, its default folder (no ${o.project} tab is open there)`
+}

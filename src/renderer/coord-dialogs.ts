@@ -3,10 +3,10 @@
 import { COORD_NAME_MAX, COORD_TASK_MAX, type CoordResult, type CoordStartRequest } from '../shared/coordinator'
 import { el } from './dom'
 import { openDialog, type DialogHandle } from './coord-dialog'
-import { checkStartForm, startError, type AttachChoice, type StartForm } from './sessions-model'
+import { checkStartForm, startDevices, startError, type AttachChoice, type StartForm } from './sessions-model'
 
 /** a labelled field of the form: its label over its control, then the hint of the field, if any */
-function field(id: string, label: string, control: HTMLInputElement | HTMLTextAreaElement, hint?: string): HTMLElement {
+function field(id: string, label: string, control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, hint?: string): HTMLElement {
   control.id = id
   return el('div', { className: 'mcp-add-server' },
     el('label', { className: 'mcp-add-label', htmlFor: id, textContent: label }),
@@ -14,12 +14,15 @@ function field(id: string, label: string, control: HTMLInputElement | HTMLTextAr
     ...(hint === undefined ? [] : [el('div', { className: 'coord-field-hint', textContent: hint })]))
 }
 
-/** the New session dialog: Task, Name, Folder (empty: the coordinator's), Worktree; Start asks main and closes on its yes */
-export function openNewSessionDialog(o: { folder: string; start(req: CoordStartRequest): Promise<CoordResult>; late(r: CoordResult): void }): void {
+/** the New session dialog: Task, Device (only when a paired device is online), Name, Folder (empty: the coordinator's), Worktree; Start asks main and closes on its yes */
+export function openNewSessionDialog(o: { folder: string; paired: { name: string; online: boolean }[]; start(req: CoordStartRequest): Promise<CoordResult>; late(r: CoordResult): void }): void {
   const task = el('textarea', { className: 'mcp-add-field', name: 'task', placeholder: 'What should the new session do?', maxLength: COORD_TASK_MAX })
   const name = el('input', { className: 'mcp-add-name', name: 'name', type: 'text', placeholder: 'Optional', maxLength: COORD_NAME_MAX, spellcheck: false })
   const folder = el('input', { className: 'mcp-add-name', name: 'folder', type: 'text', placeholder: o.folder, spellcheck: false })
   const worktree = el('input', { className: 'mcp-add-name', name: 'worktree', type: 'text', placeholder: 'Optional', spellcheck: false })
+  // the devices offered: this device first, and no choice at all when no paired device is online
+  const devices = startDevices(o.paired)
+  const device = devices.length === 0 ? null : el('select', { className: 'mcp-add-name', name: 'device' }, ...devices.map((d, i) => el('option', { value: String(i), textContent: d.label })))
   // once the dialog is closed, a refusal main answers later is told as a toast
   let open = true
   let handle: DialogHandle
@@ -28,6 +31,7 @@ export function openNewSessionDialog(o: { folder: string; start(req: CoordStartR
     title: 'New session',
     body: [
       field('coord-new-task', 'Task', task),
+      ...(device === null ? [] : [field('coord-new-device', 'Device', device)]),
       field('coord-new-name', 'Name', name),
       field('coord-new-folder', 'Folder', folder),
       field('coord-new-worktree', 'Worktree', worktree, 'The session first enters a new git worktree of this name.')
@@ -38,10 +42,12 @@ export function openNewSessionDialog(o: { folder: string; start(req: CoordStartR
       const form: StartForm = { task: task.value, name: name.value, folder: folder.value, worktree: worktree.value }
       const checked = checkStartForm(form)
       if (!('req' in checked)) return checked.error
+      // the device chosen is the device of the option picked; this device when no choice is shown
+      const chosen = device === null ? null : (devices[Number(device.value)]?.device ?? null)
       handle.busy(true, 'Starting…')
       let r: CoordResult
       try {
-        r = await o.start(checked.req)
+        r = await o.start({ ...checked.req, device: chosen })
       } catch (e) {
         // a call that rejects is a refusal too: the dialog shows it, or late() tells it when the dialog is closed
         r = { ok: false, error: String(e) }

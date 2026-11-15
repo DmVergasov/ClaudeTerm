@@ -44,6 +44,15 @@ describe('coordTool', () => {
     expect(r).toEqual({ text: 'Started a10000.', isError: false })
   })
 
+  it('start_session with a device passes the folder as it is: it is a path on that device', async () => {
+    const sent: CoordMessage[] = []
+    await coordTool('start_session', { op: 'start', task: 'T', name: null, folder: 'relative/acme', device: 'Laptop', worktree: null }, deps(async (_p, m) => {
+      sent.push(m)
+      return { ok: true, info: 'Started a10000.' }
+    }))
+    expect(sent[0]).toMatchObject({ folder: 'relative/acme', device: 'Laptop' })
+  })
+
   it('attach_session waits 15 s for its answer', async () => {
     const timeouts: number[] = []
     await coordTool('attach_session', { op: 'attach', session: 'a10000' }, deps(async (_p, _m, ms) => {

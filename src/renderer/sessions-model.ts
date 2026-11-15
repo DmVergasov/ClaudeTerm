@@ -92,7 +92,7 @@ const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
 const FULL_PATH = /^(?:\/|\\|[A-Za-z]:[\\/])/
 
 /** the fields trimmed, an empty optional field null; a blank task: 'A task needs a text.'; a name with a control character: NAME_ERROR; a folder that is not a full path of either system: FOLDER_ERROR; a worktree isWorktreeName refuses: WORKTREE_ERROR */
-export function checkStartForm(f: StartForm): { req: CoordStartRequest } | { error: string } {
+export function checkStartForm(f: StartForm): { req: Omit<CoordStartRequest, 'device'> } | { error: string } {
   const task = f.task.trim()
   const name = f.name.trim()
   const folder = f.folder.trim()
@@ -102,6 +102,16 @@ export function checkStartForm(f: StartForm): { req: CoordStartRequest } | { err
   if (folder !== '' && !FULL_PATH.test(folder)) return { error: FOLDER_ERROR }
   if (worktree !== '' && !isWorktreeName(worktree)) return { error: WORKTREE_ERROR }
   return { req: { task, name: name === '' ? null : name, folder: folder === '' ? null : folder, worktree: worktree === '' ? null : worktree } }
+}
+
+/** a device a New session can start on: null for this device, else a paired device's name */
+export interface StartDevice { device: string | null; label: string }
+
+/** the devices the New session dialog offers: this device first, then each online paired device by its name, in the order given; none online: an empty list, and no choice is shown */
+export function startDevices(paired: { name: string; online: boolean }[]): StartDevice[] {
+  const online = paired.filter((d) => d.online)
+  if (online.length === 0) return []
+  return [{ device: null, label: 'This device' }, ...online.map((d) => ({ device: d.name, label: d.name }))]
 }
 
 /** the text a start main refused shows: null for a start that was made; the refusal of the fields in words of the dialog; any other error as main said it */

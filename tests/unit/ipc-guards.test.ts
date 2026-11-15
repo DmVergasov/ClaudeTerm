@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { COORD_KEY_MAX, COORD_NAME_MAX, COORD_TASK_MAX } from '../../src/shared/coordinator'
-import { MAX_ADDRESS_LENGTH } from '../../src/shared/devices'
+import { MAX_ADDRESS_LENGTH, MAX_DEVICE_NAME } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
@@ -473,8 +473,8 @@ describe('MCP guards', () => {
   })
 
   it('isCoordStartRequest takes a task with its optional fields and refuses a blank task, a relative folder and a bad worktree', () => {
-    expect(isCoordStartRequest({ task: 'Write the notes.', name: null, folder: null, worktree: null })).toBe(true)
-    expect(isCoordStartRequest({ task: 'Write the notes.', name: 'Notes', folder: '/work/notes', worktree: 'notes' })).toBe(true)
+    expect(isCoordStartRequest({ task: 'Write the notes.', name: null, folder: null, worktree: null, device: null })).toBe(true)
+    expect(isCoordStartRequest({ task: 'Write the notes.', name: 'Notes', folder: '/work/notes', worktree: 'notes', device: null })).toBe(true)
     for (const v of [
       { task: '   ', name: null, folder: null, worktree: null },
       { task: 'x'.repeat(COORD_TASK_MAX + 1), name: null, folder: null, worktree: null },
@@ -485,6 +485,15 @@ describe('MCP guards', () => {
       { task: 'Write.', name: null, folder: null },
       null
     ]) expect(isCoordStartRequest(v)).toBe(false)
+  })
+
+  it('isCoordStartRequest takes the device a session starts on: null for this device, or a paired device\'s name of 1 to 64 characters with no control character', () => {
+    const request = { task: 'Write the notes.', name: null, folder: null, worktree: null }
+    expect(isCoordStartRequest({ ...request, device: 'Laptop' })).toBe(true)
+    expect(isCoordStartRequest({ ...request, device: 'x'.repeat(MAX_DEVICE_NAME) })).toBe(true)
+    for (const device of ['', 'x'.repeat(MAX_DEVICE_NAME + 1), 'Lap\ntop', 'Lap\u0007top', 7, undefined]) {
+      expect(isCoordStartRequest({ ...request, device })).toBe(false)
+    }
   })
 
   it('isCoordKey refuses an empty key, 201 characters and a newline', () => {

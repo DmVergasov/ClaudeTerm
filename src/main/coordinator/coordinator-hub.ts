@@ -26,6 +26,7 @@ import {
   type StoredHosted,
   type StoredTask
 } from './coordinator-store'
+import { remoteFolderText } from './remote-start'
 import { REASONS, reportText } from './report-text'
 import { currentTask, nextTask, stepTask, type TaskEvent } from './task-machine'
 
@@ -74,6 +75,9 @@ interface RemoteSnapshot {
   tabByKey: Map<string, HubRemoteTab>
 }
 
+/** what a paired device answers to open-tab: the new tab, and where and on which account it opened; or the device's refusal */
+export type RemoteOpened = { ok: true; tabId: string; cwd: string; accountName: string; defaulted: boolean } | { ok: false; error: string }
+
 export interface CoordinatorHubDeps {
   store: CoordinatorStore
   mail: MailStore
@@ -91,6 +95,8 @@ export interface CoordinatorHubDeps {
   isDirectory(path: string): Promise<boolean> // Task 8
   accountLabel(account: string | null): string // Task 8
   openTab(req: OpenTabRequest): string | null // Task 8: the new tab's id, opened behind the tab in front
+  openRemoteTab(device: string, req: { cwd: string | null; email: string | null; title: string | null }): Promise<RemoteOpened> // open-tab on a paired device (its id)
+  accountEmail(account: string | null): string | null // the email of an account of this device (null: Main account); null when not known
   recheckMail(): void // MailHub.tabsChanged
   poke(tabId: string): void // PromptDelivery.poke
   alias(oldSession: string, newSession: string): void // MailHub.alias: queued records to the old id still reach the session
@@ -149,7 +155,7 @@ export const HUB_TEXT = {
   fullAttached: `This coordinator has ${MAX_ATTACHMENTS} sessions attached already, the most it keeps; detach one first.`,
   fullHosted: `This device has ${MAX_HOSTED} attached sessions already, the most it keeps; detach one first.`,
   notSaved: 'ClaudeTerm could not save this; nothing was changed.',
-  otherDevice: 'Sessions on other devices cannot be started yet; leave device out.',
+  noDevice: (device: string) => `No paired device named "${device}".`,
   noFolder: (folder: string) => `No folder ${folder} on this device.`,
   notOpened: 'The new tab could not be opened.',
   closedEarly: 'The new tab closed before its session started.',
@@ -159,6 +165,10 @@ export const HUB_TEXT = {
     `Started ${name} [${ref}] in ${folder} on ${account}, attached to you. Its task is its first message; its report comes to you by itself when the task ends.`,
   opening: (name: string, folder: string, account: string) =>
     `Opening ${name} in ${folder} on ${account}. It shows as Starting… until its session starts; its task is sent then.`,
+  startedThere: (name: string, ref: string, device: string, place: string, account: string) =>
+    `Started ${name} [${ref}] on ${device} ${place}, on ${account}; it is attached to you once ${device} confirms. Its task is its first message; its report comes to you by itself when its task ends.`,
+  openingThere: (name: string, device: string, place: string, account: string) =>
+    `Opening ${name} on ${device} ${place}, on ${account}. It shows as Starting… until its session starts; its task is sent then.`,
   deviceOffline: (device: string) => `${device} is not connected; its sessions can be attached or started while it is.`,
   oldDevice: (device: string) => `${device} runs a ClaudeTerm that does not know coordinators; update ClaudeTerm there to coordinate its sessions.`,
   noMail: (device: string) => `${device} does not take agent messages now, which coordinating its sessions needs: they are turned off there, or its Claude Code is older than ${MAIL_MIN_CLAUDE}.`,
@@ -182,11 +192,21 @@ interface PendingStart {
   coordinator: string // the coordinator's session
   name: string // the name asked for, else the folder's last part
   folder: string
-  account: string | null
+  account: string | null // a start here: the account its tab opens on
   text: string // the worktree instruction, if one was asked for, and the task
   startedAt: number
+  remote: RemoteStart | null // a start on a paired device; null for one on this device
   answer: ((r: PipeResponse) => void) | null // null once answered
   cancelWait: () => void // the START_WAIT_MS timer
+}
+
+/** a start on a paired device: where and on which account its tab opened, and whether the device has listed the tab yet */
+interface RemoteStart {
+  device: string // the device's id
+  deviceName: string
+  place: string // remoteFolderText: where the session opened
+  account: string // the account's name, as the device gives it
+  listed: boolean
 }
 
 /** a remote attach a tool waits on: answered once, by the outcome of its attach record, or by the attaching answer when the wait is over */
@@ -208,6 +228,9 @@ type FoundRow = { row: CoordSessionRow; att: StoredAttachment; start: null } | {
 function folderName(folder: string): string {
   return folder.split(/[\\/]/).filter((p) => p !== '').pop() ?? folder
 }
+
+/** a folder that is a full path on either system (from a root or a drive): the same on every platform, so a test on any of them sees the same answer */
+const isFullPath = (folder: string): boolean => /^(?:[A-Za-z]:)?[\\/]/.test(folder)
 
 /** a row's key for a session of another device */
 const remoteKey = (device: string, session: string): string => `${device}:${session}`
@@ -362,24 +385,31 @@ export class CoordinatorHub {
     }
   }
 
-  /** starts a new Claude tab in the coordinator's folder: its task is given when its session id comes; the answer waits for that, or for START_WAIT_MS */
-  async start(tabId: string, req: CoordStartRequest & { device: string | null }): Promise<PipeResponse> {
+  /** starts a new Claude tab: on this device, or on the paired device named; its task is given when its session id comes, and the answer waits for that, or for START_WAIT_MS */
+  async start(tabId: string, req: CoordStartRequest): Promise<PipeResponse> {
+    const began = this.d.now()
     if (!this.isCoordinator(tabId)) return fail(HUB_TEXT.notCoordinator)
     const problem = this.d.problem()
     if (problem !== null) return fail(problem)
     if (req.task.trim() === '') return fail(HUB_TEXT.noText)
     if (req.task.length > COORD_TASK_MAX) return fail(HUB_TEXT.tooLong)
-    if (req.device !== null && req.device.toLowerCase() !== this.d.selfName().toLowerCase()) return fail(HUB_TEXT.otherDevice)
+    if (req.device === null || sameName(req.device, this.d.selfName())) return this.startHere(tabId, req)
+    return this.startOnPeer(tabId, req, req.device, began)
+  }
+
+  /** a start on this device: its tab opens in the folder asked for, else in the coordinator's folder, on the coordinator's account */
+  private async startHere(tabId: string, req: CoordStartRequest): Promise<PipeResponse> {
     const tab = this.d.tabs().find((t) => t.tabId === tabId)
     if (!tab) return fail(HUB_TEXT.notCoordinator)
     const folder = req.folder ?? tab.folder
-    const isFolder = await this.d.isDirectory(folder)
+    // a folder named for this device is a path here: one that is not a full path is no folder
+    const isFolder = isFullPath(folder) && (await this.d.isDirectory(folder))
     // the coordinator may have stopped while the folder was checked
     const c = this.own(tabId)
     if (!c) return fail(HUB_TEXT.notCoordinator)
     if (!isFolder) return fail(HUB_TEXT.noFolder(folder))
     if (c.attachments.length + this.startsOf(c).length >= MAX_ATTACHMENTS) return fail(HUB_TEXT.fullAttached)
-    if (this.d.store.allHosted().length + this.starts.size >= MAX_HOSTED) return fail(HUB_TEXT.fullHosted)
+    if (this.d.store.allHosted().length + this.localStarts().length >= MAX_HOSTED) return fail(HUB_TEXT.fullHosted)
     const newTab = this.d.openTab({ kind: 'claude', cwd: folder, account: tab.account, title: req.name })
     if (newTab === null) return fail(HUB_TEXT.notOpened)
     const text = (req.worktree === null ? '' : worktreeInstruction(req.worktree)) + req.task
@@ -392,11 +422,55 @@ export class CoordinatorHub {
         account: tab.account,
         text,
         startedAt: this.d.now(),
+        remote: null,
         answer,
         cancelWait: () => {}
       }
       start.cancelWait = this.d.later(START_WAIT_MS, () => this.waitOver(newTab))
       this.starts.set(newTab, start)
+      this.d.changed()
+    })
+  }
+
+  /** a start on a paired device: it opens the tab there in the folder asked for, else in the folder of a tab of this project there, with this coordinator's email; the session is attached once its tab has one */
+  private async startOnPeer(tabId: string, req: CoordStartRequest, device: string, began: number): Promise<PipeResponse> {
+    const snap = this.remoteSnapshot()
+    const peer = [...snap.peers.values()].find((p) => sameName(p.name, device)) ?? null
+    if (!peer) return fail(HUB_TEXT.noDevice(device))
+    if (!peer.online) return fail(HUB_TEXT.deviceOffline(peer.name))
+    if (!peer.coord) return fail(HUB_TEXT.oldDevice(peer.name))
+    if (!peer.mail) return fail(HUB_TEXT.noMail(peer.name))
+    const tab = this.d.tabs().find((t) => t.tabId === tabId)
+    const c = this.own(tabId)
+    if (!tab || !c) return fail(HUB_TEXT.notCoordinator)
+    if (c.attachments.length + this.startsOf(c).length >= MAX_ATTACHMENTS) return fail(HUB_TEXT.fullAttached)
+    // the folder asked for, else the folder of the device's first live tab of this project
+    const projectTab = req.folder === null ? (snap.tabs.find((t) => t.device === peer.id && !t.exited && t.project !== null && sameName(t.project, c.project.name)) ?? null) : null
+    const folder = req.folder ?? projectTab?.folder ?? null
+    const fromTab = req.folder === null && projectTab !== null
+    const opened = await this.d.openRemoteTab(peer.id, { cwd: folder, email: this.d.accountEmail(tab.account), title: req.name })
+    // the coordinator may have stopped while the tab opened
+    const owner = this.own(tabId)
+    if (!owner) return fail(HUB_TEXT.notCoordinator)
+    if (!opened.ok) return fail(opened.error)
+    const place = remoteFolderText({ cwd: opened.cwd, asked: folder, fromTab, defaulted: opened.defaulted, project: owner.project.name })
+    return new Promise<PipeResponse>((answer) => {
+      const start: PendingStart = {
+        tabId: opened.tabId,
+        coordinator: owner.session,
+        name: req.name ?? folderName(opened.cwd),
+        folder: opened.cwd,
+        account: null,
+        text: (req.worktree === null ? '' : worktreeInstruction(req.worktree)) + req.task,
+        startedAt: this.d.now(),
+        remote: { device: peer.id, deviceName: peer.name, place, account: opened.accountName, listed: false },
+        answer,
+        cancelWait: () => {}
+      }
+      // START_WAIT_MS counts from the call: the time the device took to open the tab comes off it, and it is at least a second
+      start.cancelWait = this.d.later(Math.max(1000, START_WAIT_MS - (this.d.now() - began)), () => this.waitOver(opened.tabId))
+      this.starts.set(opened.tabId, start)
+      this.settleRemoteStarts()
       this.d.changed()
     })
   }
@@ -689,8 +763,9 @@ export class CoordinatorHub {
     }
   }
 
-  /** the paired devices or their tabs changed: the views and the marks are asked again */
+  /** the paired devices or their tabs changed: the remote starts settle, and the views and the marks are asked again */
   remoteChanged(): void {
+    this.settleRemoteStarts()
     this.d.changed()
   }
 
@@ -888,7 +963,47 @@ export class CoordinatorHub {
   /** START_WAIT_MS passed without a session id: the start answers without one, and it goes on */
   private waitOver(tabId: string): void {
     const s = this.starts.get(tabId)
-    if (s) this.answerStart(s, { ok: true, info: HUB_TEXT.opening(s.name, s.folder, this.d.accountLabel(s.account)) })
+    if (!s) return
+    const info = s.remote === null
+      ? HUB_TEXT.opening(s.name, s.folder, this.d.accountLabel(s.account))
+      : HUB_TEXT.openingThere(s.name, s.remote.deviceName, s.remote.place, s.remote.account)
+    this.answerStart(s, { ok: true, info })
+  }
+
+  /** the remote starts, as their devices list their tabs: a tab with its session is attached and given the task; a tab that its listed device no longer has was closed, once it had been listed; the rest wait */
+  private settleRemoteStarts(): void {
+    const remote = [...this.starts.values()].flatMap((s) => (s.remote === null ? [] : [{ s, r: s.remote }]))
+    if (remote.length === 0) return
+    const snap = this.remoteSnapshot()
+    for (const { s, r } of remote) {
+      const tab = snap.tabs.find((t) => t.device === r.device && t.tabId === s.tabId) ?? null
+      if (tab === null) {
+        if (r.listed && snap.peers.get(r.device)?.listed === true) this.cancelStart(s.tabId, HUB_TEXT.closedEarly)
+        continue
+      }
+      r.listed = true
+      if (tab.session !== null && tab.name !== null) this.attachRemoteStart(s, r, tab.session, tab.name)
+    }
+  }
+
+  /** a remote start's session has come: it is attached to the coordinator, pending its device's confirmation, and given the task; the answer says where it started */
+  private attachRemoteStart(s: PendingStart, r: RemoteStart, session: string, name: string): void {
+    const c = this.d.store.coordinator(s.coordinator)
+    if (!c) return this.cancelStart(s.tabId, HUB_TEXT.startCancelled)
+    const to: MailAddress = { device: r.device, session, name }
+    const project = c.project.name
+    // the task record is checked first, so a record the mail check refuses changes nothing
+    const task = this.record({ kind: 'task', from: this.address(null, c.session), to, replyTo: null, text: s.text, project, delivered: false, read: false })
+    if (task === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
+    // the attach record goes before the task: Laptop takes the attach first, in store order
+    const attachId = this.write({ kind: 'attach', from: this.address(null, c.session), to, replyTo: null, text: HUB_TEXT.attachText(project), project, delivered: false, read: false })
+    if (attachId === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
+    const attachment: StoredAttachment = { device: r.device, session, name, attachedAt: this.d.now(), resolved: false, failed: false, lastReport: null, pending: attachId }
+    this.d.store.putCoordinator({ ...c, attachments: [...c.attachments, attachment] })
+    this.d.mail.add(task)
+    this.dropStart(s.tabId)
+    this.d.changed()
+    this.answerStart(s, { ok: true, info: HUB_TEXT.startedThere(name, refOf(session), r.deviceName, r.place, r.account) })
   }
 
   /** a pending start leaves the hub: its wait timer is cancelled, and the caller answers it */
@@ -918,6 +1033,11 @@ export class CoordinatorHub {
     return [...this.starts.values()].filter((s) => s.coordinator === c.session)
   }
 
+  /** the starts on this device: their tabs open here, and they count toward this device's hosted sessions */
+  private localStarts(): PendingStart[] {
+    return [...this.starts.values()].filter((s) => s.remote === null)
+  }
+
   /** the starts that followed a coordinator to another session id */
   private moveStarts(from: string, to: string): void {
     for (const s of this.starts.values()) if (s.coordinator === from) s.coordinator = to
@@ -927,9 +1047,10 @@ export class CoordinatorHub {
   private startRow(s: PendingStart): CoordSessionRow {
     return {
       key: `start:${s.tabId}`,
-      tabId: s.tabId,
-      device: null,
-      deviceName: null,
+      // a tab of another device is not this device's tab
+      tabId: s.remote === null ? s.tabId : null,
+      device: s.remote?.device ?? null,
+      deviceName: s.remote?.deviceName ?? null,
       session: null,
       ref: null,
       name: s.name,
