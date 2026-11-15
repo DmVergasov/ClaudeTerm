@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatItem, HeadsUpCard } from '../../src/shared/chat'
-import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, askMessage, excerpt, parseFinding, personWords } from '../../src/main/chat/heads-up'
+import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, askMessage, checkPrompt, excerpt, explainPrompt, parseFinding, personWords } from '../../src/main/chat/heads-up'
 import { BACKGROUND_PROMPT } from '../../src/main/auto-continue'
 import { ChatModel } from '../../src/main/chat/chat-model'
 
@@ -361,5 +361,44 @@ describe('what the side agent takes for the person\'s words', () => {
     const items = conversation([text])
     expect(personWords(items)).toEqual(['Перенеси замеры в отчёт', 'че там долго еще?'])
     expect(personLines(items)).toHaveLength(2)
+  })
+})
+
+describe('the language of a card in a long English session', () => {
+  const user = (text: string, extra: object = {}): unknown => ({ type: 'user', message: { role: 'user', content: text }, session_id: 's1', uuid: 'u' + Math.random(), ...extra })
+  const PEER = 'Another Claude session sent a message:\n<agent-message from="agent-7" name="Explore">\n[Subagent hand-back] ' + 'The collector sorts long freezes into sustained drops. '.repeat(10) + '\n</agent-message>'
+  const NOTICE = '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command "npm test" completed</summary>\n<result>' + 'All suites passed. '.repeat(20) + '</result>\n</task-notification>'
+
+  /** a chat the way the live stream fills it: short Russian prompts of the person, then dozens of long English items of Claude and of Claude Code */
+  function longChat(): ChatItem[] {
+    let n = 0
+    const m = new ChatModel({ now: () => 0, newId: () => 'i' + (++n), folder: () => '/work/acme' })
+    m.apply(user('Почини сборку'))
+    m.apply(user('Перенеси замеры в отчёт'))
+    m.apply(user('че там долго еще?'))
+    for (let i = 0; i < 40; i++) {
+      m.apply({ type: 'assistant', message: { id: 'a' + i, role: 'assistant', content: [{ type: 'text', text: 'The collector now sorts long freezes into sustained drops. '.repeat(6) }, { type: 'tool_use', id: 't' + i, name: 'Bash', input: { command: 'npm test' } }] } })
+      m.apply(user([{ type: 'tool_result', tool_use_id: 't' + i, content: 'ok' }] as never))
+      if (i % 10 === 0) m.apply(user(PEER, { origin: { kind: 'peer', name: 'Explore' }, isMeta: true }))
+      if (i % 10 === 5) m.apply(user(NOTICE, { origin: { kind: 'task-notification' } }))
+    }
+    return [...m.items()]
+  }
+
+  it('the person\'s three prompts reach the side agent, wherever they are in the session', () => {
+    expect(personWords(longChat())).toEqual(['Почини сборку', 'Перенеси замеры в отчёт', 'че там долго еще?'])
+  })
+
+  it.each([['check', (items: ChatItem[]) => checkPrompt(excerpt(items), [], [], personWords(items))],
+    ['explain', (items: ChatItem[]) => explainPrompt({ id: 'c', tag: 'heads-up', title: 'T', text: 'x', more: null } as never, 'a topic', excerpt(items), personWords(items))]])
+  ('the %s question ends by binding the card to the language of the person\'s messages', (_name, build) => {
+    const prompt = build(longChat())
+    const tail = prompt.slice(prompt.indexOf('</person>'))
+    expect(tail).toMatch(/language of the messages above/i)
+    expect(tail).toMatch(/not the language of the session/i)
+  })
+
+  it('the system prompts say the language is binding, whatever the session is in', () => {
+    for (const system of [CHECK_SYSTEM, EXPLAIN_SYSTEM]) expect(system).toMatch(/must be written in the language/i)
   })
 })
