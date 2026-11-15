@@ -671,4 +671,29 @@ describe('new ids across devices', () => {
     expect(c.store.coordinator(S.coord)).not.toBeNull()
     expect(records(c, 'attach').filter((r) => r.was !== undefined)).toEqual([])
   })
+
+  it('a remote task Laptop took but did not hand over is held once after its session clears, and the record still to hand over is accepted', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    clear(s, 'tab-l1', L.one, NEW.one)
+    expect(s.store.hosted(NEW.one)!.tasks).toHaveLength(1)
+    const open = records(s, 'task').filter((r) => !r.delivered)
+    expect(open).toHaveLength(1)
+    expect(s.hub.accepts(open[0], 'tab-l1', 'idle')).toBe(true)
+  })
+
+  it('a task Laptop holds from the coordinator that cleared is re-addressed to the new id, and its report has no previous-coordinator note', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    clear(c, 'tab-c', S.coord, NEW.coord)
+    sync(c, s)
+    expect(s.store.hosted(L.one)!.tasks).toEqual([expect.objectContaining({ from: expect.objectContaining({ session: NEW.coord }) })])
+    s.hub.turnEnded('tab-l1', { background: false, lastMessage: 'Parser fixed.' })
+    fire(s)
+    sync(c, s)
+    const report = records(c, 'report').at(-1)!
+    expect(report).toMatchObject({ to: { session: NEW.coord }, text: 'Parser fixed.' })
+    expect(report.text.startsWith('(This task was given by the previous coordinator')).toBe(false)
+  })
 })

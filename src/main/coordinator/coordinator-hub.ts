@@ -1149,9 +1149,9 @@ export class CoordinatorHub {
     this.forwardFormer(old)
   }
 
-  /** what is in flight to a former id here is written again to the current one */
+  /** a coordinator's remote reports in flight to a former id here are written again to the current one; a task a hosted session holds is taken by its own hand-over, so it is not copied */
   private forwardFormer(old: string): void {
-    for (const r of this.d.mail.all()) if (r.to.session === old) this.forwardArrived(r)
+    for (const r of this.d.mail.all()) if (r.to.session === old && kindOf(r) === 'report') this.forwardArrived(r)
   }
 
   /** a report or a task from another device, not delivered or read, addressed to a former id of a coordinator or hosted session here, is written again to the current id, and the original is delivered and read */
@@ -1161,6 +1161,8 @@ export class CoordinatorHub {
     if (kind !== 'report' && kind !== 'task') return false
     const holder = kind === 'report' ? this.d.store.coordinatorBy(r.to.session) : this.d.store.hostedBy(r.to.session)
     if (!holder || holder.session === r.to.session) return false
+    // a task the hosted session already holds is not copied: a copy would queue it twice
+    if (kind === 'task' && this.d.store.hostedBy(r.to.session)?.tasks.some((t) => t.id === r.id)) return false
     const copy = this.write({
       kind,
       from: r.from,
