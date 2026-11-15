@@ -12,6 +12,7 @@ import {
   moveTab,
   orderToWrite,
   panelDrop,
+  panelDropOut,
   panelGroups,
   panelOrder,
   showsGroupLabels,
@@ -320,6 +321,30 @@ describe('coordinator blocks', () => {
       const target: DropRow = { id: 'X', claude: true, local: true, coord: null, block: null }
       expect(panelDrop(hand, drag, target)).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'X', 'A1'] })
     })
+
+    it('an attached row dropped off the rows is detached and goes to the end of its group', () => {
+      expect(panelDropOut(g, row('A1'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'A2', 'X', 'S', 'A1'] })
+    })
+    it('a group that is all one block: an attached row dropped off the rows is detached and goes last, the other groups keep their order', () => {
+      const all = arrangeCoordinators(panelGroups([tab('C', acme), tab('A1', acme), tab('A2', acme), tab('B', blog)]), m, true)
+      const inBlock = (id: string): DropRow => ({ id, claude: true, local: true, coord: m(id), block: 'C' })
+      expect(panelDropOut(all, inBlock('A2'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A2', order: ['C', 'A1', 'A2', 'B'] })
+      expect(panelDropOut(all, inBlock('A1'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'A2', 'A1', 'B'] })
+    })
+    it('a row outside a block, and the coordinator, dropped off the rows do nothing', () => {
+      expect(panelDropOut(g, row('X'))).toBeNull()
+      expect(panelDropOut(g, row('C'))).toBeNull()
+    })
+    it('a paired device\'s attached row dropped off the rows is detached, with no order: its device keeps its order', () => {
+      expect(panelDropOut(g, row('A1', { local: false }))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: null })
+    })
+    it('an attached row dropped off the rows takes its forks to the end of its group; a fork alone stays in its family', () => {
+      const fm = marks({ C, A: to('C'), A1: to('C') })
+      const fg = arrangeCoordinators(panelGroups([tab('C', acme), tab('A', acme), tab('A1', acme, 'A'), tab('X', acme)]), fm, true)
+      const r = (id: string): DropRow => ({ id, claude: true, local: true, coord: fm(id), block: fg[0].rows.find((x) => x.id === id)?.block ?? null })
+      expect(panelDropOut(fg, r('A'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A', order: ['C', 'X', 'A', 'A1'] })
+      expect(panelDropOut(fg, r('A1'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: null })
+    })
   })
 })
 
@@ -399,6 +424,12 @@ describe('pulled rows: a paired device\'s session attached to a coordinator of t
     })
     it('a local attached row detached onto a row outside its block gets an order with no pulled id', () => {
       expect(panelDrop(groups, row('A1'), row('X'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'A2', 'X', 'A1'] })
+    })
+    it('a pulled row dropped off the rows is detached, with no order', () => {
+      expect(panelDropOut(groups, pulled)).toEqual({ kind: 'detach', coordinator: 'C', tab: 'R1', order: null })
+    })
+    it('a local attached row dropped off the rows goes to the end of its group, in an order with no pulled id', () => {
+      expect(panelDropOut(groups, row('A1'))).toEqual({ kind: 'detach', coordinator: 'C', tab: 'A1', order: ['C', 'A2', 'X', 'A1'] })
     })
   })
 })

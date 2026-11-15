@@ -1,6 +1,6 @@
 import { clampTabPanelWidth, MAX_FOLDED_GROUPS, WORKTREE_COLORS, type TabLayout } from '../shared/types'
 import { REMOTE_COPY, deviceColor } from '../shared/remote'
-import { dropAttaches, groupLabels, moveGroup, panelDeviceOrder, panelDrop, panelOwnOrder, panelSections, type DropRow, type PanelGroup, type PanelRow, type PanelSection } from './tab-groups'
+import { dropAttaches, groupLabels, moveGroup, panelDeviceOrder, panelDrop, panelDropOut, panelOwnOrder, panelSections, type DropRow, type PanelDrop, type PanelGroup, type PanelRow, type PanelSection } from './tab-groups'
 import { icon } from './icons'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
@@ -14,6 +14,9 @@ const BRANCH_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none"
 
 /** a part of the panel: this device's own groups (device null), or another device's section with its groups */
 type Section = PanelSection<TabBarGroup>
+
+/** whether a drag event is over a row of the panel: the row takes its drop */
+const onRow = (e: DragEvent): boolean => e.target instanceof Element && e.target.closest('.tp-tab') !== null
 
 /**
  * The left tab panel: the head (New tab and ▾), then this device's tabs as groups by project, each group with its tabs in rows
@@ -52,6 +55,18 @@ export class TabPanel {
     const h = this.header
     this.head.replaceChildren(h.plus, h.more)
     this.list.className = 'tp-list'
+    // a tab dropped on the list off its rows (its free space, a group's header) may leave its coordinator's block: dropOut says.
+    // Its data cannot be read during the drag, so dragover asks with the tab the drag carries
+    this.list.addEventListener('dragover', (e) => {
+      const from = draggingTab()
+      if (from !== null && dragCarries(e, TAB_DRAG) && !onRow(e) && this.dropOut(from)) e.preventDefault()
+    })
+    this.list.addEventListener('drop', (e) => {
+      if (!dragCarries(e, TAB_DRAG) || onRow(e)) return
+      e.preventDefault()
+      const out = this.dropOut(e.dataTransfer?.getData(TAB_DRAG) ?? '')
+      if (out) this.applyDrop(out.section, out.drop)
+    })
     this.foot.className = 'tp-foot'
     this.foot.replaceChildren(h.recent, h.account)
     this.handle.className = 'tp-resize'
@@ -373,16 +388,28 @@ export class TabPanel {
     return drag !== null && dropAttaches(drag, dropRowOf(target, row.block ?? null))
   }
 
-  /**
-   * a row dropped on another row of its section: panelDrop says what it does. An attach or a detach goes to the coordinator
-   * (a detach then puts the row where it was dropped); a reorder goes to main for the section's device; `from` is the drag's own tab id
-   */
+  /** a row dropped on another row of its section: panelDrop says what it does; `from` is the drag's own tab id */
   private dropTab(section: Section, targetId: string, from: string): void {
     const drag = from ? this.dropRow(from) : null
     const target = this.dropRow(targetId)
     if (!drag || !target) return
     const drop = panelDrop(section.groups, drag, target)
-    if (drop === null) return
+    if (drop !== null) this.applyDrop(section, drop)
+  }
+
+  /** a row dropped on the list off the rows: panelDropOut, in the section the row stands in, says what it does; null: nothing */
+  private dropOut(from: string): { section: Section; drop: PanelDrop } | null {
+    const drag = this.dropRow(from)
+    const section = this.sections().find((s) => s.groups.some((g) => g.rows.some((r) => r.id === from)))
+    const drop = drag && section ? panelDropOut(section.groups, drag) : null
+    return drop && section ? { section, drop } : null
+  }
+
+  /**
+   * what a drop says: an attach or a detach goes to the coordinator (a detach then puts the row where its order says); a
+   * reorder goes to main for the section's device
+   */
+  private applyDrop(section: Section, drop: PanelDrop): void {
     switch (drop.kind) {
       case 'attach':
         this.cb.attachTab(drop.coordinator, drop.tab)

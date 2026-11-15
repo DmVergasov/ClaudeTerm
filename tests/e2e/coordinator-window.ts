@@ -72,6 +72,21 @@ export async function dragOnto(page: Page, from: Locator, to: Locator): Promise<
   await page.mouse.up()
 }
 
+/** a mouse drag from the centre of an element to the left panel's free space, half way between its last row and its bottom, measured in one evaluate */
+export async function dragBelowRows(page: Page, from: Locator): Promise<void> {
+  const handle = await from.elementHandle()
+  const [start, end] = await page.evaluate((el) => {
+    const box = el!.getBoundingClientRect()
+    const list = document.querySelector('#tabpanel .tp-list')!.getBoundingClientRect()
+    const last = Math.max(...[...document.querySelectorAll('#tabpanel .tp-tab')].map((row) => row.getBoundingClientRect().bottom))
+    return [{ x: box.x + box.width / 2, y: box.y + box.height / 2 }, { x: list.x + list.width / 2, y: (last + list.bottom) / 2 }]
+  }, handle)
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(end.x, end.y, { steps: 8 })
+  await page.mouse.up()
+}
+
 /** presses on the centre of `from` and moves over the centre of `to`, the button still down: the caller releases it */
 export async function holdOver(page: Page, from: Locator, to: Locator): Promise<void> {
   const [start, end] = await centres(page, from, to)

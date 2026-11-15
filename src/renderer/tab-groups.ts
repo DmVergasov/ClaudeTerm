@@ -332,6 +332,22 @@ export function panelDrop(groups: PanelGroup[], drag: DropRow, target: DropRow):
 }
 
 /**
+ * What a row dropped in the left panel off the rows (on the list's free space or a group's header) does; null: nothing.
+ * `groups`: the dragged row's section, arranged. Only an attached session standing in its coordinator's block does something:
+ * it is detached, and goes with its forks to the end of its group, an order without the pulled rows. A paired device's row
+ * gets no order, as its device keeps it, and nor does a fork, which stays in its family.
+ */
+export function panelDropOut(groups: PanelGroup[], drag: DropRow): PanelDrop | null {
+  if (drag.block === null || drag.coord?.role !== 'attached') return null
+  const group = groups.find((g) => g.rows.some((r) => r.id === drag.id && !r.fork))
+  if (!drag.local || !group) return { kind: 'detach', coordinator: drag.block, tab: drag.id, order: null }
+  const blocks = blocksOf(group.rows)
+  const [moving] = blocks.splice(blocks.findIndex((b) => b[0] === drag.id), 1)
+  const order = groups.flatMap((g) => (g === group ? [...blocks.flat(), ...moving] : g.rows.map((r) => r.id)))
+  return { kind: 'detach', coordinator: drag.block, tab: drag.id, order: withoutPulled(order, groups) }
+}
+
+/**
  * The coordinator a tab is pulled into: its mark names a coordinator that is a tab of this device (`localIds`), so the left
  * panel shows the tab in that coordinator's block. Null when it is not pulled.
  */

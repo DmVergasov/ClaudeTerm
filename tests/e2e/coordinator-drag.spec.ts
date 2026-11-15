@@ -1,7 +1,7 @@
 import { expect as baseExpect, test } from '@playwright/test'
 import { activate, refOf } from './agent-mail'
 import { coord, coordApp, makeCoordinator } from './coordinator-helpers'
-import { dragOnto, holdOver, LEFT, marksOf, moveOver, openSessions, panelRows, pill, restOver, rowKey, sessionRow, tabOrder, tpRow } from './coordinator-window'
+import { dragBelowRows, dragOnto, holdOver, LEFT, marksOf, moveOver, openSessions, panelRows, pill, restOver, rowKey, sessionRow, tabOrder, tpRow } from './coordinator-window'
 
 const expect = baseExpect.configure({ timeout: 15_000 })
 
@@ -30,6 +30,52 @@ test('an attached row dropped onto a row outside its block is detached and stays
     await expect.poll(() => tabOrder(page)).toEqual([t0, t1, t2])
     await expect(async () => {
       await dragOnto(page, tpRow(page, t1), tpRow(page, t2))
+      await expect.poll(async () => (await marksOf(page))[t1], { timeout: 3000 }).toBeUndefined()
+    }).toPass({ timeout: 30_000 })
+    await expect.poll(() => tabOrder(page)).toEqual([t0, t2, t1])
+    await expect.poll(() => panelRows(page)).toEqual([
+      { id: t0, attached: false, label: 'Coordinator', to: null },
+      { id: t2, attached: false, label: null, to: null },
+      { id: t1, attached: false, label: null, to: null }
+    ])
+  } finally {
+    await l.app.close()
+  }
+})
+
+test('a group that is all one block: an attached row dropped on the panel\'s free space is detached and stands after the block', async () => {
+  const l = await coordApp(3, { settings: LEFT })
+  const { page, pipeName, tabs: [t0, t1, t2], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[2]) })).toMatchObject({ ok: true })
+    await expect.poll(() => tabOrder(page)).toEqual([t0, t1, t2])
+    await expect(async () => {
+      await dragBelowRows(page, tpRow(page, t2))
+      await expect.poll(async () => (await marksOf(page))[t2], { timeout: 3000 }).toBeUndefined()
+    }).toPass({ timeout: 30_000 })
+    expect((await marksOf(page))[t1]).toMatchObject({ role: 'attached', coordinatorTabId: t0 })
+    await expect.poll(() => panelRows(page)).toEqual([
+      { id: t0, attached: false, label: 'Coordinator', to: null },
+      { id: t1, attached: true, label: null, to: null },
+      { id: t2, attached: false, label: null, to: null }
+    ])
+    await expect.poll(() => tabOrder(page)).toEqual([t0, t1, t2])
+  } finally {
+    await l.app.close()
+  }
+})
+
+test('an attached row dropped on its group\'s header is detached and goes to the end of the group', async () => {
+  const l = await coordApp(3, { settings: LEFT })
+  const { page, pipeName, tabs: [t0, t1, t2], sids } = l
+  try {
+    expect(await makeCoordinator(page, t0)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, t0, { op: 'attach', session: refOf(sids[1]) })).toMatchObject({ ok: true })
+    await expect.poll(() => tabOrder(page)).toEqual([t0, t1, t2])
+    await expect(async () => {
+      await dragOnto(page, tpRow(page, t1), page.locator('#tabpanel .tp-group-head').first())
       await expect.poll(async () => (await marksOf(page))[t1], { timeout: 3000 }).toBeUndefined()
     }).toPass({ timeout: 30_000 })
     await expect.poll(() => tabOrder(page)).toEqual([t0, t2, t1])
