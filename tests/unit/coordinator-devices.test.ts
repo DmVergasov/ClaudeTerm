@@ -774,6 +774,36 @@ describe('new ids across devices', () => {
     const copy = reports.find((r) => r.to.session === NEW.coord)!
     expect(copy.sentAt).toBe(original.sentAt)
   })
+
+  it('a was notice goes to a pending attachment too: it stays pending under the new id until Laptop confirms it', () => {
+    c.hub.detach('tab-c', 'e10000')
+    c.hub.attach('tab-c', 'e10000')
+    const pending = records(c, 'attach').at(-1)!.id
+    clear(c, 'tab-c', S.coord, NEW.coord)
+    expect(records(c, 'attach').at(-1)).toMatchObject({ was: S.coord, from: { device: DEV_C, session: NEW.coord }, to: { device: DEV_S, session: L.one } })
+    expect(c.store.coordinator(NEW.coord)!.attachments).toEqual([expect.objectContaining({ device: DEV_S, session: L.one, pending })])
+  })
+
+  it('an attach that replaces a coordinator Laptop hosts nothing for is a plain attach: the session is hosted by its sender and the attach is taken', () => {
+    const id = '7b300000-0000-4000-8000-000000000001'
+    const { s: fresh } = deviceWorlds()
+    fresh.mail.add(checkMailRecord({
+      v: 1, id, from: { device: DEV_C, session: NEW.coord, name: 'coord · Studio' }, to: { device: DEV_S, session: L.one, name: 'parser · Laptop' },
+      replyTo: null, text: 'Attached.', sentAt: NOW, delivered: false, read: false, kind: 'attach', project: 'acme', replaces: S.two
+    })!)
+    expect(fresh.store.hosted(L.one)).toMatchObject({ coordinator: { device: DEV_C, session: NEW.coord }, project: 'acme' })
+    expect(fresh.mail.get(id)).toMatchObject({ delivered: true, read: true })
+  })
+
+  it('a pending attach that a replacing coordinator moved is confirmed once Laptop takes the replacing attach', () => {
+    c.hub.detach('tab-c', 'e10000')
+    c.hub.attach('tab-c', 'e10000')
+    c.hub.make('tab-2', true)
+    const replacing = records(c, 'attach').at(-1)!.id
+    sync(c, s)
+    expect(records(c, 'attach').find((r) => r.id === replacing)).toMatchObject({ delivered: true })
+    expect(c.store.coordinator(S.two)!.attachments).toEqual([expect.objectContaining({ device: DEV_S, session: L.one, pending: null })])
+  })
 })
 
 describe('start on another device', () => {
@@ -996,5 +1026,28 @@ describe('start on another device', () => {
     c.hub.tabSession('rt-x', local)
     expect(c.store.hosted(local)).toBeNull()
     expect(records(c, 'task')).toEqual([])
+  })
+
+  it('a pending remote start follows its coordinator to the new id a /clear gives it: its task and attach come from the new id', async () => {
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    c.hub.tabSession('tab-c', NEW.coord)
+    c.hub.sessionStarted('tab-c', S.coord, NEW.coord, 'clear')
+    c.remoteTabs.push(remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop' }))
+    c.hub.remoteChanged()
+    await answer
+    expect(records(c, 'task')).toEqual([expect.objectContaining({ from: expect.objectContaining({ session: NEW.coord }), to: expect.objectContaining({ session: L.fresh }) })])
+    expect(c.store.coordinator(NEW.coord)!.attachments).toEqual([expect.objectContaining({ session: L.fresh })])
+  })
+
+  it('a pending remote start follows the coordinator that a replacing one takes over: its task and attach come from the replacing coordinator', async () => {
+    const answer = c.hub.start('tab-c', START_LAPTOP)
+    await tick()
+    c.hub.make('tab-2', true)
+    c.remoteTabs.push(remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop' }))
+    c.hub.remoteChanged()
+    await answer
+    expect(records(c, 'task')).toEqual([expect.objectContaining({ from: expect.objectContaining({ session: S.two }), to: expect.objectContaining({ session: L.fresh }) })])
+    expect(c.store.coordinator(S.two)!.attachments).toEqual([expect.objectContaining({ session: L.fresh })])
   })
 })
