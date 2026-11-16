@@ -4,42 +4,15 @@ import { appendFileSync } from 'node:fs'
 import type { CoordMarks } from '../../src/shared/coordinator'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { gitRepo, launchApp, type Launched } from './helpers'
-import { activate, envelopeOf, hasMailWatcher, refOf, sendText, startSession, waitForMail } from './agent-mail'
-import { chatStandIn, launchChatTab, sendMessage, userMessages } from './chat-helpers'
-import { coord, coordApp, done, makeCoordinator, stillWaiting, turnOf, within } from './coordinator-helpers'
+import { activate, envelopeOf, refOf, sendText, startSession, waitForMail } from './agent-mail'
+import { launchChatTab, sendMessage, userMessages } from './chat-helpers'
+import { chatState, coord, coordApp, done, logHas, makeCoordinator, stillWaiting, terminalPair, turnOf, within } from './coordinator-helpers'
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const ask = (pipeName: string, tabId: string, sessionId: string, prompt: string): Promise<unknown> =>
   sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId, reason: 'permission', prompt })
 const listOf = async (pipeName: string, tabId: string): Promise<string> => (await coord(pipeName, tabId, { op: 'list' })).info ?? ''
-const logHas = (log: () => { in?: unknown }[], text: string): boolean => log().some((e) => typeof e.in === 'string' && e.in.includes(text))
 const marksOf = (page: Page): Promise<CoordMarks> => page.evaluate(() => window.ct.coordMarks())
-/** a chat tab's turn, session and items, or null while the chat is not there */
-const chatState = (page: Page, tabId: string): Promise<{ turn: string; sessionId: string | null; items: unknown[] } | null> =>
-  page.evaluate((id) => window.ct.chatSnapshot(id).then((s) => (s === null ? null : { turn: s.state.turn, sessionId: s.state.sessionId ?? null, items: s.items })), tabId)
-
-/** the app of the terminal view with two Claude tabs in one folder, both with a session, and no watcher: the stand-in runs no hooks */
-async function terminalPair(): Promise<Launched & { standIn: ReturnType<typeof chatStandIn>; tab1: string; tab2: string; sid1: string; sid2: string }> {
-  const standIn = chatStandIn({ turns: {} })
-  const repo = gitRepo()
-  const launched = await launchApp({
-    settings: { ...standIn.settings, claude: { ...(standIn.settings as { claude: object }).claude, view: 'terminal' } },
-    args: ['--claude', repo],
-    env: { ...standIn.env, CLAUDETERM_TEST_PROMPT_DELAY_MS: '300' }
-  })
-  const { page, pipeName } = launched
-  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
-  const tab1 = (await page.evaluate(() => window.__ct!.activeTabId()))!
-  const tab2 = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'claude', cwd }), repo))!.id
-  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
-  const sid1 = randomUUID()
-  const sid2 = randomUUID()
-  expect(await startSession(pipeName, tab1, sid1)).toEqual({ ok: true })
-  expect(await startSession(pipeName, tab2, sid2)).toEqual({ ok: true })
-  // agent messages wait for the version probe: the tab settings file gets the mail watcher once it has answered
-  await expect.poll(() => hasMailWatcher(launched.dataDir), { timeout: 15_000 }).toBe(true)
-  return { ...launched, standIn, tab1, tab2, sid1, sid2 }
-}
 
 /**
  * The app with a coordinator in tab 1 that has attached the session of tab 2 and given it a task, 'Fix the parser.'. The task

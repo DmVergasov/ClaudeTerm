@@ -208,3 +208,21 @@ export async function showSettingsTab(win: Page, tab: string): Promise<void> {
   await win.locator(`#settings-nav [data-tab="${tab}"]`).click()
   await win.waitForSelector(`.settings-page[data-page="${tab}"]`, { state: 'visible' })
 }
+
+/** every text a toast showed since the watch began: the page keeps the ones it has seen */
+export async function watchToasts(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __seenToasts: string[] }
+    w.__seenToasts = []
+    new MutationObserver(() => {
+      for (const t of Array.from(document.querySelectorAll('.toast'))) {
+        const text = t.textContent ?? ''
+        if (!w.__seenToasts.includes(text)) w.__seenToasts.push(text)
+      }
+    }).observe(document.body, { childList: true, subtree: true })
+  })
+}
+
+export async function seenToasts(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __seenToasts: string[] }).__seenToasts ?? [])
+}

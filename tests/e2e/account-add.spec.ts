@@ -2,7 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CI_BOT, CI_TOKEN, hashTree, launchAccounts, loginEntry, MAIN_CREDENTIAL, MAIN_WHO, runs, settingsWindow, signedIn, STUDIO, tokenEntry, trust, WORK } from './account-helpers'
-import { showSettingsTab } from './helpers'
+import { seenToasts, showSettingsTab, watchToasts } from './helpers'
 
 // the stand-in's token in every .credentials.json it writes: FAKE_CREDENTIAL of tests/fixtures/fake-claude/install.ts (not imported: that module is ESM-only)
 const FAKE_CREDENTIAL = 'fake-credential-never-shown-0001'
@@ -30,24 +30,6 @@ function workEntry(root: string): object[] {
   signedIn(folder)
   trust(folder, join(root, 'work'))
   return [loginEntry(WORK, 'Work', folder)]
-}
-
-/** every text a toast showed since the watch began: the page keeps the ones it has seen */
-async function watchToasts(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const w = window as unknown as { __seenToasts: string[] }
-    w.__seenToasts = []
-    new MutationObserver(() => {
-      for (const t of Array.from(document.querySelectorAll('.toast'))) {
-        const text = t.textContent ?? ''
-        if (!w.__seenToasts.includes(text)) w.__seenToasts.push(text)
-      }
-    }).observe(document.body, { childList: true, subtree: true })
-  })
-}
-
-async function seenToasts(page: Page): Promise<string[]> {
-  return page.evaluate(() => (window as unknown as { __seenToasts: string[] }).__seenToasts ?? [])
 }
 
 async function flow(page: Page) {

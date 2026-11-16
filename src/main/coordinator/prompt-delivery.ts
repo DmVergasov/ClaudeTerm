@@ -1,12 +1,13 @@
 import type { PromptState } from '../../shared/ipc'
 import type { TabView } from '../../shared/chat'
-import { ENTER_DELAY_MS } from '../auto-continue'
+import { ENTER_DELAY_MS, WORDS_RETRY_FOR_MS, WORDS_RETRY_MS } from '../auto-continue'
 import type { Logger } from '../log'
 
 /*
  * A task or a report waits for a session that no mail watcher is waiting to take it: its text is typed into the session's
  * prompt instead, once the session is idle and the prompt on screen is empty. A chat tab takes the text as one message; a
- * terminal tab takes it as a bracketed paste, and Enter follows on its own, as Send does.
+ * terminal tab takes it as a bracketed paste, and Enter follows on its own, as Send does. The person's words a coordinator
+ * passed on are typed the same way, with or without a watcher, and ahead of the mail of the same session.
  */
 
 export interface PromptDeliveryDeps {
@@ -16,6 +17,10 @@ export interface PromptDeliveryDeps {
   idle(tabId: string): boolean
   hasWatcher(tabId: string): boolean
   canTake(tabId: string, session: string): boolean
+  /** the person's words a coordinator passed on wait for this session (CoordinatorHub.canTakeWords) */
+  canTakeWords?(tabId: string, session: string): boolean
+  /** their text, the task marked delivered: once it has returned, the text must be written */
+  takeWords?(tabId: string, session: string): { info: string } | null
   /** the mail's text for the session, marked delivered: once it has returned, the text must be written */
   take(tabId: string, session: string): { info: string } | null
   promptState(tabId: string): Promise<PromptState>
@@ -42,6 +47,10 @@ interface TabState {
   cancelEnter: (() => void) | null
   /** bumped by whatever stops a try under way, so one still waiting for the window's answer knows */
   run: number
+  /** the person's words waiting for this tab: the tries retried since the first one that found the session not ready */
+  retries: number
+  /** the retries of the words ran out, and that was logged */
+  gaveUp: boolean
 }
 
 /** a paste's text, with its line breaks as carriage returns, between the bracketed-paste markers */
@@ -75,6 +84,8 @@ export class PromptDelivery {
     if (!s) return
     this.disarm(s)
     s.again = false
+    s.retries = 0
+    s.gaveUp = false
     // a paste already written keeps its try until its Enter
     if (s.cancelEnter === null) s.busy = false
     this.prune(tabId, s)
@@ -91,10 +102,10 @@ export class PromptDelivery {
     this.tabs.clear()
   }
 
-  private arm(tabId: string, s: TabState): void {
+  private arm(tabId: string, s: TabState, ms: number = this.d.delayMs): void {
     if (s.cancelTry) return
     const run = s.run
-    s.cancelTry = this.later(this.d.delayMs, () => {
+    s.cancelTry = this.later(ms, () => {
       s.cancelTry = null
       s.busy = true
       this.attempt(tabId, s, run).catch((err: unknown) => {
@@ -105,21 +116,28 @@ export class PromptDelivery {
   }
 
   private async attempt(tabId: string, s: TabState, run: number): Promise<void> {
-    const session = this.waitingSession(tabId)
-    if (session === null) return this.end(tabId, s, run)
+    const waiting = this.waitingSession(tabId)
+    if (waiting === null) {
+      this.retryWords(tabId, s, 'the session is not idle')
+      return this.end(tabId, s, run)
+    }
     const prompt = await this.d.promptState(tabId)
     // a turn, a watcher, the tab closing or a forget while the window answered
     if (s.run !== run) return
     if (prompt !== 'empty') {
       this.d.log.info(`prompt delivery tab=${tabId}: not written, ${prompt === 'draft' ? "the prompt holds the user's text" : 'no prompt on screen'}`)
+      // a draft is the person's own text, and a later turn end pokes; no prompt yet is a prompt that is still coming
+      if (prompt === 'none') this.retryWords(tabId, s, 'no prompt on screen')
       return this.end(tabId, s, run)
     }
     // no await from here to the write: what take marks delivered must be written
     const again = this.waitingSession(tabId)
     const view = this.d.view(tabId)
-    if (again !== session || view === null) return this.end(tabId, s, run)
-    const taken = this.d.take(tabId, session)
+    if (again === null || again.session !== waiting.session || again.words !== waiting.words || view === null) return this.end(tabId, s, run)
+    const taken = waiting.words ? (this.d.takeWords?.(tabId, waiting.session) ?? null) : this.d.take(tabId, waiting.session)
     if (taken === null) return this.end(tabId, s, run)
+    s.retries = 0
+    s.gaveUp = false
     if (view === 'chat') {
       this.write(tabId, taken.info, 'as a message')
       return this.end(tabId, s, run)
@@ -169,11 +187,36 @@ export class PromptDelivery {
     this.prune(tabId, s)
   }
 
-  /** the session a try may write for now: it runs one, is idle, has no watcher and has mail or a report to take */
-  private waitingSession(tabId: string): string | null {
+  /** the session a try may write for now: it runs one and is idle; the person's words are typed whether or not a watcher waits, as no watcher takes them; mail or a report goes only when no watcher waits */
+  private waitingSession(tabId: string): { session: string; words: boolean } | null {
     const session = this.d.session(tabId)
-    if (session === null || !this.d.idle(tabId) || this.d.hasWatcher(tabId)) return null
-    return this.d.canTake(tabId, session) ? session : null
+    if (session === null || !this.d.idle(tabId)) return null
+    if (this.d.canTakeWords?.(tabId, session) === true) return { session, words: true }
+    if (this.d.hasWatcher(tabId)) return null
+    return this.d.canTake(tabId, session) ? { session, words: false } : null
+  }
+
+  /**
+   * the person's words wait for the tab, but this try found the session not ready or no prompt on screen yet: the try is armed again
+   * every WORDS_RETRY_MS, until WORDS_RETRY_FOR_MS of tries have passed, then one line is logged and the retries stop. Other mail
+   * waits are not retried; a words wait that is gone resets the count
+   */
+  private retryWords(tabId: string, s: TabState, why: string): void {
+    const session = this.d.session(tabId)
+    if (session === null || this.d.canTakeWords?.(tabId, session) !== true) {
+      s.retries = 0
+      s.gaveUp = false
+      return
+    }
+    if (s.retries >= WORDS_RETRY_FOR_MS / WORDS_RETRY_MS) {
+      if (!s.gaveUp) {
+        s.gaveUp = true
+        this.d.log.info(`prompt delivery tab=${tabId}: the person's words are not typed, ${why}, after ${WORDS_RETRY_FOR_MS / 1000} s`)
+      }
+      return
+    }
+    s.retries++
+    this.arm(tabId, s, WORDS_RETRY_MS)
   }
 
   private disarm(s: TabState): void {
@@ -189,7 +232,7 @@ export class PromptDelivery {
   private state(tabId: string): TabState {
     let s = this.tabs.get(tabId)
     if (!s) {
-      s = { cancelTry: null, busy: false, again: false, cancelEnter: null, run: 0 }
+      s = { cancelTry: null, busy: false, again: false, cancelEnter: null, run: 0, retries: 0, gaveUp: false }
       this.tabs.set(tabId, s)
     }
     return s

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ENTER_DELAY_MS } from '../../src/main/auto-continue'
+import { ENTER_DELAY_MS, WORDS_RETRY_FOR_MS, WORDS_RETRY_MS } from '../../src/main/auto-continue'
 import { PromptDelivery, bracketedPaste, type PromptDeliveryDeps } from '../../src/main/coordinator/prompt-delivery'
 import type { PromptState } from '../../src/shared/ipc'
 import type { TabView } from '../../src/shared/chat'
@@ -48,11 +48,14 @@ function asker() {
 /** lets the promises of a try settle, and a rejection reach its handler */
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
-function world(o: { view?: TabView | null; prompt?: PromptState | 'manual' | 'reject'; session?: string | null; idle?: boolean; watcher?: boolean; canTake?: boolean; info?: string | null; writeThrows?: boolean } = {}) {
+function world(o: { view?: TabView | null; prompt?: PromptState | 'manual' | 'reject'; prompts?: PromptState[]; session?: string | null; idle?: boolean; watcher?: boolean; canTake?: boolean; info?: string | null; writeThrows?: boolean; words?: string | null; wordsNull?: boolean } = {}) {
   const t = clock()
   const a = asker()
+  // the prompt states the window answers in turn; the last one answers every later call
+  const queue = [...(o.prompts ?? [])]
   const writes: [string, string][] = []
   const takes: [string, string][] = []
+  const wordsTakes: [string, string][] = []
   const logs: string[] = []
   const warns: string[] = []
   const state = {
@@ -61,19 +64,26 @@ function world(o: { view?: TabView | null; prompt?: PromptState | 'manual' | 're
     idle: o.idle ?? true,
     watcher: o.watcher ?? false,
     canTake: o.canTake ?? true,
-    info: o.info === undefined ? 'WAKE' : o.info
+    info: o.info === undefined ? 'WAKE' : o.info,
+    words: o.words === undefined ? null : o.words
   }
   const d: PromptDeliveryDeps = {
     session: () => state.session,
     idle: () => state.idle,
     hasWatcher: () => state.watcher,
     canTake: () => state.canTake,
+    canTakeWords: () => state.words !== null,
+    takeWords: (tabId, session) => {
+      wordsTakes.push([tabId, session])
+      return state.words === null || o.wordsNull ? null : { info: state.words }
+    },
     take: (tabId, session) => {
       takes.push([tabId, session])
       return state.info === null ? null : { info: state.info }
     },
     promptState: () => {
       if (o.prompt === 'reject') return Promise.reject(new Error('window gone'))
+      if (o.prompts !== undefined) return Promise.resolve(queue.length > 1 ? queue.shift()! : queue[0]!)
       return o.prompt === 'manual' || o.prompt === undefined ? a.ask() : Promise.resolve(o.prompt)
     },
     view: () => state.view,
@@ -87,7 +97,7 @@ function world(o: { view?: TabView | null; prompt?: PromptState | 'manual' | 're
     log: { info: (m) => logs.push(m), warn: (m) => warns.push(m) }
   }
   const delivery = new PromptDelivery(d)
-  return { delivery, t, a, writes, takes, logs, warns, state }
+  return { delivery, t, a, writes, takes, wordsTakes, logs, warns, state }
 }
 
 describe('PromptDelivery', () => {
@@ -283,6 +293,138 @@ describe('PromptDelivery', () => {
     expect(w.a.count()).toBe(1)
     expect(w.t.pending()).toBe(0)
     expect(w.takes).toHaveLength(1)
+  })
+})
+
+describe("the person's words", () => {
+  it('are typed while a watcher waits, which plain mail is not; a terminal gets them as a paste, then Enter', async () => {
+    const w = world({ view: 'terminal', prompt: 'empty', watcher: true, words: 'WORDS' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.wordsTakes).toEqual([['tab-1', 's-1']])
+    expect(w.takes).toEqual([])
+    expect(w.writes).toEqual([['tab-1', bracketedPaste('WORDS')]])
+    w.t.fire(ENTER_DELAY_MS)
+    expect(w.writes.at(-1)).toEqual(['tab-1', '\r'])
+  })
+
+  it('wait for a draft in the prompt to go, as mail does: nothing is taken or typed', async () => {
+    const w = world({ view: 'chat', prompt: 'draft', words: 'WORDS' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.wordsTakes).toEqual([])
+    expect(w.writes).toEqual([])
+    expect(w.logs).toContain("prompt delivery tab=tab-1: not written, the prompt holds the user's text")
+  })
+
+  it('come before the mail of the same tab, and not while the session is not idle', async () => {
+    const w = world({ view: 'chat', prompt: 'empty', canTake: true, words: 'WORDS', idle: false })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.writes).toEqual([])
+    w.state.idle = true
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.writes).toEqual([['tab-1', 'WORDS']])
+    expect(w.takes).toEqual([])
+  })
+
+  it('are not taken when the session has no words, even with a watcher waiting', async () => {
+    const w = world({ view: 'chat', prompt: 'empty', watcher: true, words: null })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.wordsTakes).toEqual([])
+    expect(w.takes).toEqual([])
+    expect(w.writes).toEqual([])
+  })
+
+  it('with no prompt on screen at the first try, are typed once the prompt shows up, with no new poke', async () => {
+    const w = world({ view: 'chat', prompts: ['none', 'empty'], words: 'WORDS' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.writes).toEqual([])
+    w.t.fire(WORDS_RETRY_MS)
+    await flush()
+    expect(w.writes).toEqual([['tab-1', 'WORDS']])
+  })
+
+  it('of a session not yet idle at the first try, are typed once it is idle, with no new poke', async () => {
+    const w = world({ view: 'chat', prompt: 'empty', words: 'WORDS', idle: false })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.writes).toEqual([])
+    w.state.idle = true
+    w.t.fire(WORDS_RETRY_MS)
+    await flush()
+    expect(w.writes).toEqual([['tab-1', 'WORDS']])
+  })
+
+  it('stop being retried after 30 s, with one line in the log', async () => {
+    const w = world({ view: 'chat', prompt: 'none', words: 'WORDS' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    // the first try, and a retry every 500 ms for 30 s
+    for (let i = 0; i < WORDS_RETRY_FOR_MS / WORDS_RETRY_MS + 2; i++) {
+      w.t.fire(WORDS_RETRY_MS)
+      await flush()
+    }
+    expect(w.t.pending()).toBe(0)
+    expect(w.writes).toEqual([])
+    expect(w.logs.filter((l) => l.includes("the person's words are not typed"))).toHaveLength(1)
+  })
+
+  it('a draft in the prompt is not retried: the person\'s text wins', async () => {
+    const w = world({ view: 'chat', prompt: 'draft', words: 'WORDS' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    w.t.fire(WORDS_RETRY_FOR_MS)
+    await flush()
+    expect(w.t.pending()).toBe(0)
+    expect(w.wordsTakes).toEqual([])
+    expect(w.writes).toEqual([])
+  })
+
+  it('a forget cancels the pending retry', async () => {
+    const w = world({ view: 'chat', prompts: ['none', 'empty'], words: 'WORDS' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    w.delivery.forget('tab-1')
+    w.t.fire(WORDS_RETRY_MS)
+    await flush()
+    expect(w.writes).toEqual([])
+    expect(w.wordsTakes).toEqual([])
+  })
+
+  it('a dispose cancels the pending retry', async () => {
+    const w = world({ view: 'chat', prompts: ['none', 'empty'], words: 'WORDS' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    w.delivery.dispose()
+    w.t.fire(WORDS_RETRY_MS)
+    await flush()
+    expect(w.writes).toEqual([])
+    expect(w.wordsTakes).toEqual([])
+  })
+
+  it('type nothing when the take of the words returns nothing', async () => {
+    const w = world({ view: 'chat', prompt: 'empty', watcher: true, words: 'WORDS', wordsNull: true })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    expect(w.wordsTakes).toEqual([['tab-1', 's-1']])
+    expect(w.takes).toEqual([])
+    expect(w.writes).toEqual([])
   })
 })
 

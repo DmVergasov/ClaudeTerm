@@ -2375,6 +2375,9 @@ function bootstrap(): void {
     idle: (id) => claudeIdle(id) && !autoContinue.pending(id) && !resumeAfterRestore.has(id),
     hasWatcher: (id) => mailHub.hasWatcher(id),
     canTake: (id, session) => mailHub.canTakeForPrompt(id, session),
+    // the person's words a coordinator passed on: typed whether or not a watcher waits, as no watcher takes them
+    canTakeWords: (id, session) => projectCoordinators.canTakeWords(id, session),
+    takeWords: (id, session) => projectCoordinators.takeWords(id, session),
     take: (id, session) => mailHub.takeForPrompt(id, session),
     promptState: (id) => chatPromptState(tabs.get(id)?.view ?? null, chatHub.isRunning(id), () => promptQueries.ask(id)),
     view: (id) => tabs.get(id)?.view ?? null,

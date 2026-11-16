@@ -50,6 +50,10 @@ export function limitResetOf(main: Pick<MainStatus, 'fiveHour' | 'sevenDay'> | n
 export const CONTINUE_DELAY_MS = 5000
 /** Enter goes on its own after the text, as Send does: in the same write it would be part of a paste */
 export const ENTER_DELAY_MS = 50
+/** the person's words wait for a session that is not idle or has no prompt yet: they are tried again this often ... */
+export const WORDS_RETRY_MS = 500
+/** ... for this long from the first try that found the session not ready, then the retries stop */
+export const WORDS_RETRY_FOR_MS = 30_000
 
 export interface AutoContinueDeps {
   enabled(): boolean
