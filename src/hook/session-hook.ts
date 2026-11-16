@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
 import { type AttentionMessage, type AttentionReason, cutText, defaultPipeName, isUuid, LAST_MESSAGE_MAX, oneLineText, parseTasks, type PipeMessage, type PipeResponse, PROMPT_TEXT_MAX } from '../shared/protocol'
+import { isBridgeId } from '../shared/remote-control'
 import { compactWindow } from './compact-window'
 import { statusFromStatusLine } from './status-line'
 
@@ -120,6 +121,12 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
   return null
 }
 
+/** the Remote Control id Claude Code gives the session through its environment, or null when it gives none */
+export function bridgeId(env: NodeJS.ProcessEnv): string | null {
+  const id = env.CLAUDE_CODE_BRIDGE_SESSION_ID
+  return isBridgeId(id) ? id : null
+}
+
 /** the pipe a hook reports to: CLAUDETERM_PIPE when the app set it, else the user's default pipe */
 export function hookPipe(env: NodeJS.ProcessEnv): string {
   return env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username)
@@ -154,7 +161,9 @@ export async function runSessionHook(stdinText: string, env: NodeJS.ProcessEnv, 
   const input = parseInput(stdinText)
   const msg = input ? hookMessage(input, tabId) : null
   if (msg === null) return ''
-  const answer = await deliver(msg, env, send)
+  // the session, its turns and its attention carry the Remote Control id: the app shows Remote Control from them
+  const sent: PipeMessage = msg.type === 'session' || msg.type === 'turn' || msg.type === 'attention' ? { ...msg, remote: bridgeId(env) } : msg
+  const answer = await deliver(sent, env, send)
   return msg.type === 'turn' && input?.hook_event_name === 'UserPromptSubmit' ? turnContextLine(answer) : ''
 }
 
@@ -163,5 +172,5 @@ export async function runStatusLine(stdinText: string, env: NodeJS.ProcessEnv, s
   if (!isUuid(tabId)) return false
   const input = parseInput(stdinText)
   const msg = input ? statusFromStatusLine(input, tabId, (model, dir) => compactWindow(model, dir, env, readText)) : null
-  return msg ? (await deliver(msg, env, send)) !== null : false
+  return msg ? (await deliver({ ...msg, remote: bridgeId(env) }, env, send)) !== null : false
 }

@@ -2,6 +2,7 @@ import { isAbsolute, posix } from 'node:path'
 import { COORD_NAME_MAX, COORD_TASK_MAX, COORD_WORDS_MAX, isWorktreeName, type CoordOp } from './coordinator'
 import { MAIL_TEXT_MAX, MAIL_TO_MAX } from './mail'
 import { NOTE_ADD_MAX, NOTE_ITEM_MAX, NOTE_SIDES, type NoteSide } from './note'
+import { isBridgeId } from './remote-control'
 import { REVIEW_SCOPES, type ReviewScope } from './review'
 import { normalizeTaskList, type TaskList } from './task-list'
 import type { BackgroundTask, MainStatus } from './types'
@@ -54,6 +55,8 @@ export interface SessionMessage {
   transcriptPath: string | null
   /** the folder Claude Code runs in as the session starts (the hook input's cwd); null or absent when it names none (a hook script of an older version sends none) */
   cwd?: string | null
+  /** the Remote Control session id (CLAUDE_CODE_BRIDGE_SESSION_ID) while the session is connected, null while it is not; absent from a sender that does not say (an older hook, a chat tab's status) */
+  remote?: string | null
 }
 
 export interface StatusMessage extends MainStatus {
@@ -63,6 +66,8 @@ export interface StatusMessage extends MainStatus {
   sessionId: string
   /** the session's folder (the statusLine's workspace.project_dir): /cd and a worktree change it, a Bash cd does not */
   projectDir?: string
+  /** the Remote Control session id (CLAUDE_CODE_BRIDGE_SESSION_ID) while the session is connected, null while it is not; absent from a sender that does not say (an older hook, a chat tab's status) */
+  remote?: string | null
 }
 
 export interface SubagentMessage {
@@ -103,6 +108,8 @@ export interface AttentionMessage {
   prompt?: string
   /** done without error (Stop): Claude Code's last_assistant_message, at most LAST_MESSAGE_MAX characters */
   lastMessage?: string
+  /** the Remote Control session id (CLAUDE_CODE_BRIDGE_SESSION_ID) while the session is connected, null while it is not; absent from a sender that does not say (an older hook, a chat tab's status) */
+  remote?: string | null
 }
 
 /** Claude Code took a prompt (UserPromptSubmit): a turn starts. */
@@ -111,6 +118,8 @@ export interface TurnMessage {
   type: 'turn'
   tabId: string
   sessionId: string
+  /** the Remote Control session id (CLAUDE_CODE_BRIDGE_SESSION_ID) while the session is connected, null while it is not; absent from a sender that does not say (an older hook, a chat tab's status) */
+  remote?: string | null
 }
 
 /** Claude is about to change a file (PreToolUse of an edit tool). ClaudeTerm reads the file before it replies. */
@@ -269,6 +278,12 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const label = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v.slice(0, MAX_LABEL) : null)
 
+/** the Remote Control id a sender reports: an id or null is kept, anything else is left out as if it were not sent */
+function remoteField(v: unknown): { remote?: string | null } {
+  if (v === null) return { remote: null }
+  return isBridgeId(v) ? { remote: v } : {}
+}
+
 function parseContext(v: unknown): MainStatus['context'] {
   if (!isObj(v) || !isNum(v.usedTokens) || !isNum(v.size) || v.size <= 0 || !isNum(v.usedPct)) return null
   return { usedTokens: v.usedTokens, size: v.size, usedPct: v.usedPct }
@@ -363,14 +378,14 @@ export function parsePipeMessage(line: string): ParseResult {
     const cwd = typeof m.cwd === 'string' && m.cwd !== '' && m.cwd.length <= MAX_FOLDER && !m.cwd.includes('\0') && isAbsolute(m.cwd) ? m.cwd : null
     return {
       ok: true,
-      message: { v: 1, type: 'session', tabId: m.tabId, sessionId: m.sessionId, source: typeof m.source === 'string' ? m.source : 'unknown', transcriptPath, cwd }
+      message: { v: 1, type: 'session', tabId: m.tabId, sessionId: m.sessionId, source: typeof m.source === 'string' ? m.source : 'unknown', transcriptPath, cwd, ...remoteField(m.remote) }
     }
   }
 
   if (m.type === 'turn' || m.type === 'edit_before') {
     if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
     if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
-    if (m.type === 'turn') return { ok: true, message: { v: 1, type: 'turn', tabId: m.tabId, sessionId: m.sessionId } }
+    if (m.type === 'turn') return { ok: true, message: { v: 1, type: 'turn', tabId: m.tabId, sessionId: m.sessionId, ...remoteField(m.remote) } }
     if (typeof m.toolUseId !== 'string' || !TOOL_USE_ID_RE.test(m.toolUseId)) return { ok: false, error: 'toolUseId must match [A-Za-z0-9_-]{1,200}' }
     if (typeof m.path !== 'string' || !isAbsolute(m.path)) return { ok: false, error: 'path must be an absolute path' }
     return { ok: true, message: { v: 1, type: 'edit_before', tabId: m.tabId, sessionId: m.sessionId, toolUseId: m.toolUseId, path: m.path } }
@@ -460,7 +475,7 @@ export function parsePipeMessage(line: string): ParseResult {
       const line = typeof m.prompt === 'string' ? oneLineText(m.prompt, PROMPT_TEXT_MAX) : ''
       const prompt = m.reason !== 'done' && line !== '' ? { prompt: line } : {}
       const lastMessage = m.reason === 'done' && !('error' in error) && typeof m.lastMessage === 'string' ? { lastMessage: cutText(m.lastMessage, LAST_MESSAGE_MAX) } : {}
-      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background, ...error, ...tasks, ...prompt, ...lastMessage } }
+      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background, ...error, ...tasks, ...prompt, ...lastMessage, ...remoteField(m.remote) } }
     }
     if (m.type === 'subagent') {
       if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }
@@ -473,7 +488,7 @@ export function parsePipeMessage(line: string): ParseResult {
     const projectDir = typeof m.projectDir === 'string' && isAbsolute(m.projectDir) ? { projectDir: m.projectDir } : {}
     return {
       ok: true,
-      message: { v: 1, type: 'status', ...ids, model: { id, displayName: label(model.displayName) ?? id }, effort: label(m.effort), context: parseContext(m.context), fiveHour: parseLimit(m.fiveHour), sevenDay: parseLimit(m.sevenDay), ...projectDir }
+      message: { v: 1, type: 'status', ...ids, model: { id, displayName: label(model.displayName) ?? id }, effort: label(m.effort), context: parseContext(m.context), fiveHour: parseLimit(m.fiveHour), sevenDay: parseLimit(m.sevenDay), ...projectDir, ...remoteField(m.remote) }
     }
   }
 

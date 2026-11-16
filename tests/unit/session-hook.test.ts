@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WIN } from '../fixtures/platform'
 import { hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine, turnContextLine } from '../../src/hook/session-hook'
-import { encodeMessage, type AttentionMessage, type PipeResponse } from '../../src/shared/protocol'
+import { encodeMessage, type AttentionMessage, type PipeMessage, type PipeResponse } from '../../src/shared/protocol'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -14,7 +14,7 @@ describe('runSessionHook', () => {
   it('sends the session id and transcript path for the tab', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     expect(await runSessionHook(input, { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: '\\\\.\\pipe\\x' }, send)).toBe('')
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP, cwd: WORK })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'clear', transcriptPath: TP, cwd: WORK, remote: null })
   })
 
   it('passes the folder the session starts in, and none for a missing, relative or non-string one', async () => {
@@ -100,7 +100,7 @@ describe('runSessionHook: other hook events', () => {
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'mkdir x' } }), ENV, send)
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: {} }), ENV, send)
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)
-    const attention = (reason: string) => ({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason })
+    const attention = (reason: string) => ({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason, remote: null })
     expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', { ...attention('permission'), prompt: 'Allow Bash: mkdir x' })
     expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', attention('question'))
     expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', attention('done'))
@@ -112,7 +112,7 @@ describe('runSessionHook: other hook events', () => {
     const ask = { session_id: SID, tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Which colour?', options: [] }] } }
     await runSessionHook(JSON.stringify({ ...ask, hook_event_name: 'PreToolUse' }), ENV, send)
     await runSessionHook(JSON.stringify({ ...ask, hook_event_name: 'PermissionRequest' }), ENV, send)
-    expect(send.mock.calls.map((c) => (c as unknown[])[1])).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', prompt: 'Which colour?' }])
+    expect(send.mock.calls.map((c) => (c as unknown[])[1])).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', prompt: 'Which colour?', remote: null }])
   })
 
   it('marks a Stop with background work still in flight and lists it; an empty background_tasks lists none; a missing one says nothing of it', async () => {
@@ -121,7 +121,7 @@ describe('runSessionHook: other hook events', () => {
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [task], session_crons: [] }), ENV, send)
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [], session_crons: [] }), ENV, send)
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)
-    const done = { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done' }
+    const done = { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', remote: null }
     expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', { ...done, background: true, tasks: [{ id: 'bmv6531d6', type: 'shell', description: 'build', command: 'make' }] })
     expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', { ...done, tasks: [] })
     expect(send).toHaveBeenNthCalledWith(3, '\\\\.\\pipe\\x', done)
@@ -131,7 +131,7 @@ describe('runSessionHook: other hook events', () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     const tasks = [{ id: 'm1', type: 'monitor', status: 'running' }, { type: 'shell', command: 'make' }, 'junk']
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', background_tasks: tasks }), ENV, send)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true, tasks: [{ id: 'm1', type: 'monitor', description: null, command: null }] })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true, tasks: [{ id: 'm1', type: 'monitor', description: null, command: null }], remote: null })
   })
 
   it('a Stop with 80 background tasks of 5000-character commands keeps 50 tasks of at most 300 characters, and its line stays under the pipe limit', async () => {
@@ -148,7 +148,7 @@ describe('runSessionHook: other hook events', () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     const cron = { id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: '/loop check' }
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [], session_crons: [cron] }), ENV, send)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', tasks: [] })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', tasks: [], remote: null })
   })
 
   it('maps StopFailure to the end of a turn with the error it ended in', async () => {
@@ -156,8 +156,8 @@ describe('runSessionHook: other hook events', () => {
     const cutOff = 'API Error: Connection lost mid-response. The response above may be incomplete.'
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'StopFailure', error: 'server_error', last_assistant_message: cutOff }), ENV, send)
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'StopFailure' }), ENV, send)
-    expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error' })
-    expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'unknown' })
+    expect(send).toHaveBeenNthCalledWith(1, '\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error', remote: null })
+    expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'unknown', remote: null })
   })
 
   it('ignores notifications and other tools', async () => {
@@ -183,7 +183,7 @@ describe('runStatusLine', () => {
     expect(await runStatusLine(input, ENV, send)).toBe(true)
     expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', {
       v: 1, type: 'status', tabId: TAB, sessionId: SID,
-      model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: null, context: null, fiveHour: null, sevenDay: null
+      model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: null, context: null, fiveHour: null, sevenDay: null, remote: null
     })
   })
 
@@ -217,7 +217,7 @@ describe('runSessionHook: review events', () => {
   it('maps UserPromptSubmit to a turn, without the folder Claude\'s shell is in', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'UserPromptSubmit', prompt: 'fix it', cwd: CWD }), ENV, send)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'turn', tabId: TAB, sessionId: SID })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null })
   })
 
   it('maps PreToolUse of Edit, Write, MultiEdit and NotebookEdit to edit_before', async () => {
@@ -246,7 +246,7 @@ describe('runSessionHook: review events', () => {
   it('puts the subagent id on a permission prompt from a subagent', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'PermissionRequest', tool_name: 'Bash', agent_id: AGENT }), ENV, send)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'permission', agentId: AGENT, prompt: 'Allow Bash' })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'permission', agentId: AGENT, prompt: 'Allow Bash', remote: null })
   })
 })
 
@@ -288,5 +288,45 @@ describe('hookMessage: the last answer and the prompt line', () => {
     expect(msg).toMatchObject({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true })
     expect(msg).not.toHaveProperty('lastMessage')
     expect((msg as AttentionMessage).tasks).toHaveLength(50)
+  })
+})
+
+describe('the Remote Control id', () => {
+  const ID = 'session_011edtAbC'
+  const sentBy = async (input: object, env: Record<string, string>, statusLine = false): Promise<PipeMessage[]> => {
+    const sent: PipeMessage[] = []
+    const send = async (_pipe: string, msg: PipeMessage): Promise<PipeResponse> => { sent.push(msg); return { ok: true } }
+    const full = { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: 'p', ...env }
+    if (statusLine) await runStatusLine(JSON.stringify(input), full, send)
+    else await runSessionHook(JSON.stringify(input), full, send)
+    return sent
+  }
+  const events = [
+    { session_id: SID, hook_event_name: 'SessionStart', source: 'startup' },
+    { session_id: SID, hook_event_name: 'UserPromptSubmit' },
+    { session_id: SID, hook_event_name: 'Stop' },
+    { session_id: SID, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } }
+  ]
+  it('SessionStart, UserPromptSubmit, Stop and a permission request carry CLAUDE_CODE_BRIDGE_SESSION_ID as remote', async () => {
+    for (const e of events) expect((await sentBy(e, { CLAUDE_CODE_BRIDGE_SESSION_ID: ID }))[0]).toMatchObject({ remote: ID })
+  })
+  it('without the variable, or with a value that is no id, they carry null', async () => {
+    for (const e of events) {
+      expect((await sentBy(e, {}))[0]).toMatchObject({ remote: null })
+      expect((await sentBy(e, { CLAUDE_CODE_BRIDGE_SESSION_ID: 'not an id' }))[0]).toMatchObject({ remote: null })
+    }
+  })
+  it('a subagent start, a session end and an edit carry no remote field', async () => {
+    const file = WIN ? 'C:\\w\\a.ts' : '/w/a.ts'
+    for (const e of [
+      { session_id: SID, hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'Explore' },
+      { session_id: SID, hook_event_name: 'SessionEnd' },
+      { session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_use_id: 'toolu_1', tool_input: { file_path: file } }
+    ]) expect('remote' in (await sentBy(e, { CLAUDE_CODE_BRIDGE_SESSION_ID: ID }))[0]).toBe(false)
+  })
+  it('the statusLine carries it too', async () => {
+    const input = { session_id: SID, model: { id: 'claude-opus-5-5', display_name: 'Opus 5.5' } }
+    expect((await sentBy(input, { CLAUDE_CODE_BRIDGE_SESSION_ID: ID }, true))[0]).toMatchObject({ type: 'status', remote: ID })
+    expect((await sentBy(input, {}, true))[0]).toMatchObject({ type: 'status', remote: null })
   })
 })

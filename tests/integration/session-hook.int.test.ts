@@ -26,7 +26,7 @@ const SUBAGENT_INPUT = JSON.stringify({ session_id: SID, hook_event_name: 'Subag
 const expectedStatus = {
   v: 1, type: 'status', tabId: TAB, sessionId: SID,
   model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'xhigh',
-  context: { usedTokens: 82314, size: 200000, usedPct: 41.2 }, fiveHour: null, sevenDay: null
+  context: { usedTokens: 82314, size: 200000, usedPct: 41.2 }, fiveHour: null, sevenDay: null, remote: null
 }
 
 const work = mkdtempSync(join(tmpdir(), 'ct-hookint-'))
@@ -47,7 +47,10 @@ afterEach(async () => {
 
 function runAll(file: string, args: string[], env: Record<string, string>, input = INPUT): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((res) => {
-    const p = spawn(file, args, { env: { ...(process.env as Record<string, string>), CLAUDE_CONFIG_DIR: CLAUDE_CONFIG, ...env }, windowsHide: true })
+    // a run from a Claude Code session connected to Remote Control inherits its id: a hook must not take it for its own
+    const inherited: Record<string, string> = { ...(process.env as Record<string, string>) }
+    delete inherited.CLAUDE_CODE_BRIDGE_SESSION_ID
+    const p = spawn(file, args, { env: { ...inherited, CLAUDE_CONFIG_DIR: CLAUDE_CONFIG, ...env }, windowsHide: true })
     let stdout = ''
     let stderr = ''
     p.stdout.on('data', (d) => { stdout += String(d) })
@@ -86,7 +89,7 @@ async function listen(mailAnswer: PipeResponse = { ok: true }, answers: { turn?:
   return { pipe, got }
 }
 
-const expected = { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'startup', transcriptPath: TP, cwd: START }
+const expected = { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'startup', transcriptPath: TP, cwd: START, remote: null }
 
 /** the hook script in a folder of its own, for paths with spaces and apostrophes */
 function bundleIn(folder: string): string {
@@ -117,12 +120,20 @@ describe('session hook end to end', () => {
     expect(got).toEqual([expected])
   })
 
+  it('node bundle: with CLAUDE_CODE_BRIDGE_SESSION_ID the statusLine and the hooks send it as remote', async () => {
+    const { pipe, got } = await listen()
+    const env = { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe, CLAUDE_CODE_BRIDGE_SESSION_ID: 'session_01IntTest' }
+    expect(await run(process.execPath, [bundle, 'status'], env, STATUS_INPUT)).toEqual({ code: 0, stdout: '' })
+    expect(await run(process.execPath, [bundle], env)).toEqual({ code: 0, stdout: '' })
+    expect(got).toEqual([{ ...expectedStatus, remote: 'session_01IntTest' }, { ...expected, remote: 'session_01IntTest' }])
+  })
+
   it('node bundle: StopFailure forwards the end of the turn with the error it ended in and prints nothing', async () => {
     const { pipe, got } = await listen()
     const failure = JSON.stringify({ session_id: SID, hook_event_name: 'StopFailure', error: 'server_error', last_assistant_message: 'API Error: The response stopped arriving. The response above may be incomplete.' })
     const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, failure)
     expect(r).toEqual({ code: 0, stdout: '' })
-    expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error' }])
+    expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'server_error', remote: null }])
   })
 
   // a Bash cd only looks around: Claude Code fires CwdChanged for it, and the tab must not follow
@@ -139,7 +150,7 @@ describe('session hook end to end', () => {
     const prompt = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: elsewhere, hook_event_name: 'UserPromptSubmit', prompt: 'go on' })
     const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, prompt)
     expect(r).toEqual({ code: 0, stdout: '' })
-    expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID }])
+    expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null }])
   })
 
   it('node bundle: the status line forwards the folder Claude Code names as the session\'s, not the one its shell is in, and prints nothing', async () => {
@@ -171,7 +182,7 @@ describe('session hook end to end', () => {
     const stop = JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [{ id: 'bmv6531d6', type: 'shell', status: 'running', description: 'build', command: 'make' }] })
     const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, stop)
     expect(r).toEqual({ code: 0, stdout: '' })
-    expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true, tasks: [{ id: 'bmv6531d6', type: 'shell', description: 'build', command: 'make' }] }])
+    expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', background: true, tasks: [{ id: 'bmv6531d6', type: 'shell', description: 'build', command: 'make' }], remote: null }])
   })
 
   it('node bundle: Stop forwards the last answer, a permission request its line, and both print nothing', async () => {
@@ -183,8 +194,8 @@ describe('session hook end to end', () => {
     expect(a).toEqual({ code: 0, stdout: '' })
     expect(b).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([
-      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', lastMessage: 'Parser fixed.' },
-      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'permission', prompt: 'Allow Bash: npm test' }
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', lastMessage: 'Parser fixed.', remote: null },
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'permission', prompt: 'Allow Bash: npm test', remote: null }
     ])
   })
 
@@ -242,8 +253,8 @@ describe('session hook end to end', () => {
     expect(await runExecForm(settingsHook(settingsPath, 'PreToolUse'), env, ask)).toEqual({ code: 0, stdout: '' })
     expect(await runExecForm(settingsHook(settingsPath, 'Stop'), env, stop)).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([
-      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question' },
-      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done' }
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', remote: null },
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', remote: null }
     ])
   })
 
@@ -281,8 +292,8 @@ describe('session hook end to end', () => {
     expect(await run('/bin/sh', ['-c', hookCommandString(hookPath!)], env, ask)).toEqual({ code: 0, stdout: '' })
     expect(await run('/bin/sh', ['-c', hookCommandString(hookPath!)], env, stop)).toEqual({ code: 0, stdout: '' })
     expect(got).toEqual([
-      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question' },
-      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done' }
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', remote: null },
+      { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', remote: null }
     ])
   })
 
@@ -313,7 +324,7 @@ describe('session hook end to end', () => {
       const { pipe, got } = await listen({ ok: true }, { turn: { ok: true, info: NOTE } })
       const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
       expect(r).toEqual({ code: 0, stdout: contextLine(NOTE) })
-      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID }])
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null }])
     })
 
     it('node bundle: a line break in the instruction stays inside the one JSON line', async () => {
@@ -356,7 +367,7 @@ describe('session hook end to end', () => {
       const r = await runExecForm(settingsHook(settingsPath, 'UserPromptSubmit'), { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
       expect(r).toEqual({ code: 0, stdout: contextLine(WRAPPED) })
       expect(JSON.parse(r.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: WRAPPED } })
-      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID }])
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null }])
     })
 
     it.runIf(!WIN)('the .sh hook from the settings file prints the instruction as one intact JSON line', async () => {
@@ -365,7 +376,7 @@ describe('session hook end to end', () => {
       const r = await run('/bin/sh', ['-c', hookCommandString(hookPath!)], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
       expect(r).toEqual({ code: 0, stdout: contextLine(WRAPPED) })
       expect(JSON.parse(r.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: WRAPPED } })
-      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID }])
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null }])
     })
 
     it('node bundle: with no app running UserPromptSubmit prints nothing and exits 0', async () => {

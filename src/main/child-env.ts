@@ -1,4 +1,4 @@
-const STRIPPED = new Set(['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'WT_SESSION', 'WT_PROFILE_ID'])
+const STRIPPED = new Set(['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'WT_SESSION', 'WT_PROFILE_ID', 'CLAUDE_CODE_BRIDGE_SESSION_ID'])
 
 /** Environment for a PTY child: parent env minus ClaudeTerm/Electron/Windows Terminal markers. */
 export function buildChildEnv(parent: NodeJS.ProcessEnv): Record<string, string> {

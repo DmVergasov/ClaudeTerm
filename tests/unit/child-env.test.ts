@@ -15,6 +15,10 @@ describe('buildChildEnv', () => {
     })
     expect(env).toEqual({ PATH: 'C:\\Windows', TERM_PROGRAM: 'ClaudeTerm', COLORTERM: 'truecolor' })
   })
+
+  it('a tab never inherits the Remote Control id of the Claude Code that started ClaudeTerm', () => {
+    expect(buildChildEnv({ PATH: 'C:\\Windows', CLAUDE_CODE_BRIDGE_SESSION_ID: 'session_01abc' })).toEqual({ PATH: 'C:\\Windows', TERM_PROGRAM: 'ClaudeTerm', COLORTERM: 'truecolor' })
+  })
 })
 
 describe('applyEnvPatch', () => {

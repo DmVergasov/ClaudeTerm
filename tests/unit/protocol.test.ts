@@ -439,3 +439,30 @@ describe('parsePipeMessage: the note messages', () => {
     expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'note_add', note: 'session', text: 'x' }))).toEqual({ ok: false, error: 'tabId must be a UUID' })
   })
 })
+
+describe('parsePipeMessage: the Remote Control id', () => {
+  const ID = 'session_011edtAbC-9_x'
+  const messages = [
+    { v: 1, type: 'status', tabId: TAB, sessionId: SID, model: { id: 'claude-opus-5-5' } },
+    { v: 1, type: 'session', tabId: TAB, sessionId: SID, source: 'startup' },
+    { v: 1, type: 'turn', tabId: TAB, sessionId: SID },
+    { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done' }
+  ]
+  const parsed = (m: object): Record<string, unknown> => {
+    const r = parsePipeMessage(JSON.stringify(m))
+    if (!r.ok) throw new Error(r.error)
+    return r.message as unknown as Record<string, unknown>
+  }
+  it('keeps a valid id, and a null, on status, session, turn and attention messages', () => {
+    for (const m of messages) {
+      expect(parsed({ ...m, remote: ID }).remote).toBe(ID)
+      expect(parsed({ ...m, remote: null }).remote).toBeNull()
+    }
+  })
+  it('drops a value that is no id: the message is taken without the field', () => {
+    for (const m of messages) for (const bad of ['', 'has space', 'x'.repeat(129), 42, { id: ID }]) expect('remote' in parsed({ ...m, remote: bad })).toBe(false)
+  })
+  it('a message without the field has none', () => {
+    for (const m of messages) expect('remote' in parsed(m)).toBe(false)
+  })
+})
