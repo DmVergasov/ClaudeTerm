@@ -13,8 +13,8 @@ export type ChatPermissionMode = 'default' | 'acceptEdits' | 'plan' | 'auto' | '
 /** a file the user attached, on this computer: main reads it when the message goes; cardId: its Media card, for a thumbnail;
  * oversize: an image too big to scale in main, which goes to Claude as its path */
 export interface ChatAttachment { kind: 'image' | 'file'; path: string; name: string; size: number; cardId: string | null; oversize?: boolean }
-/** who sent a message that is not the user's own typing: an auto-continue, or the Review panel's Send. Such a message is no recall */
-export type ChatSendOrigin = 'auto' | 'review' | 'agent'
+/** who sent a message that is not the user's own typing: an auto-continue, or the Review panel's Send. Such a message is no recall. remote: typed on claude.ai, through Remote Control */
+export type ChatSendOrigin = 'auto' | 'review' | 'agent' | 'remote'
 export interface ChatSend { text: string; attachments: ChatAttachment[]; from?: ChatSendOrigin }
 
 /** the longest line the terminal handoff types: one line of printable text, as main checks it before it types it */

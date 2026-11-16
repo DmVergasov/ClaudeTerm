@@ -13,7 +13,7 @@ const ALWAYS_DESTINATIONS = ['localSettings', 'projectSettings', 'userSettings']
 const LABEL_CAP = 500
 const MAX_SUGGESTIONS = 20
 
-export interface PermissionAsk { toolName: string; input: Record<string, unknown>; title?: string; description?: string; displayName?: string; suggestions?: unknown[]; defaultToNo?: boolean; suppressAlwaysAllowRule?: boolean; folder: string }
+export interface PermissionAsk { toolName: string; input: Record<string, unknown>; title?: string; description?: string; displayName?: string; suggestions?: unknown[]; defaultToNo?: boolean; suppressAlwaysAllowRule?: boolean; folder: string; toolUseId?: string }
 
 export type SdkPermissionResult = { behavior: 'allow'; updatedInput?: Record<string, unknown>; updatedPermissions?: unknown[] } | { behavior: 'deny'; message: string; interrupt?: boolean }
 
