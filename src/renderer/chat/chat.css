@@ -2519,5 +2519,14 @@ button.chat-event-head:hover .chat-event-title {
 .coord-report .chat-step-state.stopped { color: var(--text-3); }
 .coord-report[data-outcome="failed"] { border-color: color-mix(in srgb, var(--red) 40%, var(--line)); }
 .coord-report-body { padding: 8px 12px 10px; border-top: 1px solid var(--line); color: var(--text-2); font-size: 13px; line-height: 1.5; }
+/* the person's words a coordinator passed on: the report card's look, the coordinator's question quiet above the words, the task under them */
+.chat-agents.coord-words { margin: 0 0 10px; }
+.coord-words .chat-agents-head { display: flex; align-items: center; gap: 8px; }
+.coord-words-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coord-words-title b { color: var(--text); font-weight: 600; }
+.coord-words-context, .coord-words-words, .coord-words-task { padding: 8px 12px; border-top: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
+.coord-words-context { color: var(--text-3); }
+.coord-words-words { color: var(--text); }
+.coord-words-task { color: var(--text-2); }
 /* a wake with no card left to draw is hidden: .chat-item's own display would show it */
 .chat-item.coord-wake[hidden] { display: none; }

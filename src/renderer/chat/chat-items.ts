@@ -9,7 +9,8 @@ import { renderImages, renderSteps, type StepKeep } from './chat-steps'
 import { splitQuotes } from './chat-quote'
 import { forwardMark } from './agent-text'
 import { reportCard } from './report-card'
-import { splitWake, WAKE_HEADS } from '../../shared/report-wake'
+import { wordsCard } from './words-card'
+import { PERSON_WORDS_HEAD, splitPersonWords, splitWake, WAKE_HEADS } from '../../shared/report-wake'
 
 export interface ItemCallbacks {
   answer(cardId: string, a: ChatAnswer): void | Promise<boolean>
@@ -148,9 +149,18 @@ const ROLE_NOTE_TITLE = 'ClaudeTerm told the coordinator its role'
 /**
  * A message the person or ClaudeTerm sent. A wake text's report blocks are cards, drawn in place of the text; a report the column
  * holds already (one handed to the tab) is not drawn again. A role note is a compact event row, its text folded under it, never a
- * bubble. The rest of the text, and the files, are the message as it was.
+ * bubble. The person's words a coordinator passed on are a card of their own, the coordinator's question above them and its task
+ * under them. The rest of the text, and the files, are the message as it was.
  */
 function userItem(item: Extract<ChatItem, { kind: 'user' }>, cb: ItemCallbacks): HTMLElement {
+  // the person's words a coordinator passed on: a card of their own in place of the text
+  const words = item.text.startsWith(PERSON_WORDS_HEAD) ? splitPersonWords(item.text) : null
+  if (words !== null) {
+    const wake = el('div', 'chat-item coord-wake')
+    wake.append(wordsCard(words))
+    if (item.attachments.length > 0 || item.queued) wake.append(userRow(item, '', cb))
+    return wake
+  }
   // a wake text starts with one of its heads: a text that does not is no wake, and is not read
   const { reports, notes, rest } = WAKE_HEADS.some((h) => item.text.startsWith(h)) ? splitWake(item.text) : { reports: [], notes: [], rest: item.text }
   const row = userRow(item, rest, cb)

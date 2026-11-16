@@ -1,11 +1,14 @@
 import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
+import { join } from 'node:path'
 import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { PERSON_WORDS_ANSWER, PERSON_WORDS_CONTEXT, PERSON_WORDS_HEAD, PERSON_WORDS_NOTE } from '../../src/shared/report-wake'
-import { hasMailWatcher, refOf, startSession, waitForMail } from './agent-mail'
-import { coord, coordinatorTranscript, done, makeCoordinator, personSays, stillWaiting, terminalStandInApp, turnOf, typedHas, typedLines, within } from './coordinator-helpers'
-import { seenToasts, watchToasts } from './helpers'
+import { activate, hasMailWatcher, refOf, startSession, waitForMail } from './agent-mail'
+import { CHAT_INPUT, launchChatTab, sendMessage, userMessages } from './chat-helpers'
+import { chatState, coord, coordinatorTranscript, done, makeCoordinator, personSays, stillWaiting, terminalStandInApp, turnOf, typedHas, typedLines, within } from './coordinator-helpers'
+import { gitRepo, seenToasts, watchToasts } from './helpers'
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -164,5 +167,58 @@ test("a new conversation in the coordinator's tab does not take the old conversa
     expect(await give(t, 'Merge it into master.')).toEqual({ ok: false, error: HUB_TEXT.wordsNotPerson })
   } finally {
     await t.app.close()
+  }
+})
+
+test("chat view: a draft in the session's composer is not typed over; the words come once it is sent, drawn as the person's words above the task", async () => {
+  const work = gitRepo()
+  const l = await launchChatTab({ turns: { 'Should we ship?': [{ text: 'Shall I merge feat/x into master?' }] }, fallback: [{ text: 'OK.' }] }, { work, env: { CLAUDETERM_TEST_PROMPT_DELAY_MS: '300' } })
+  const { page, pipeName } = l
+  const idle = (id: string) => expect.poll(async () => (await chatState(page, id))?.turn ?? null, { timeout: 30_000 }).toBe('idle')
+  try {
+    const a = l.tabId
+    const b = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'claude', cwd }), work))!.id
+    await activate(page, b)
+    await sendMessage(page, 'hello')
+    await idle(b)
+    // the person and the coordinator: its question, then the person's answer, both through the composer
+    await activate(page, a)
+    await sendMessage(page, 'Should we ship?')
+    await idle(a)
+    await sendMessage(page, 'Yes, merge it.')
+    await idle(a)
+    const sidA = (await chatState(page, a))!.sessionId!
+    const sidB = (await chatState(page, b))!.sessionId!
+    // the coordinator's transcript, as the stand-in wrote it: the session start reports it, as the hook does
+    const transcript = join(l.config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'), `${sidA}.jsonl`)
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: a, sessionId: sidA, source: 'startup', transcriptPath: transcript })).toEqual({ ok: true })
+    expect(await makeCoordinator(page, a)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, a, { op: 'attach', session: refOf(sidB) })).toMatchObject({ ok: true })
+
+    // a draft waits in the session's composer: the words do not go over it
+    await activate(page, b)
+    await page.locator(CHAT_INPUT).click()
+    await page.keyboard.type('my draft')
+    expect(await coord(pipeName, a, { op: 'message', session: refOf(sidB), text: 'Merge feat/x into master and push.', words: 'Yes, merge it.' })).toMatchObject({ ok: true })
+    await pause(3000)
+    expect(userMessages(l.log).some((m) => m.startsWith(PERSON_WORDS_HEAD))).toBe(false)
+    await expect(page.locator(CHAT_INPUT)).toHaveValue('my draft')
+
+    // the person sends the draft; at the end of its turn the words are typed
+    await page.keyboard.press('Enter')
+    await expect.poll(() => userMessages(l.log)).toContain('my draft')
+    await idle(b)
+    await turnOf(pipeName, b, sidB)
+    await done(pipeName, b, sidB)
+    await expect.poll(() => userMessages(l.log).some((m) => m.startsWith(PERSON_WORDS_HEAD) && m.includes('> Shall I merge feat/x into master?') && m.includes('> Yes, merge it.')), { timeout: 15_000 }).toBe(true)
+
+    // the chat draws the person's words above the task, the coordinator's question above them
+    const card = page.locator('.chat-host:visible .coord-words')
+    await expect(card).toHaveCount(1, { timeout: 15_000 })
+    await expect(card.locator('.coord-words-context')).toHaveText('Shall I merge feat/x into master?')
+    await expect(card.locator('.coord-words-words')).toHaveText('Yes, merge it.')
+    await expect(card.locator('.coord-words-task')).toHaveText('Merge feat/x into master and push.')
+  } finally {
+    await l.app.close()
   }
 })
