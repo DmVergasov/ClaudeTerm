@@ -44,9 +44,10 @@ function timeOf(sentAt: number): string {
 /** the colour of an end's device, as its tabs show it; this device, which has none, is drawn in a quiet grey */
 const colorOf = (end: MailEndView): string => (end.device === null ? 'var(--text-3)' : deviceColor(end.device))
 
-/** what a message is, when it is not a plain message: "Task", or "Report · <outcomeText>" */
+/** what a message is, when it is not a plain message: "Task", "Progress", or "Report · <outcomeText>" */
 export function kindLabel(m: Pick<MailMessageView, 'kind' | 'outcome' | 'reason'>): string | null {
   if (m.kind === 'task') return 'Task'
+  if (m.kind === 'progress') return 'Progress'
   if (m.kind !== 'report') return null
   return m.outcome === null ? 'Report' : `Report · ${outcomeText(m.outcome, m.reason)}`
 }

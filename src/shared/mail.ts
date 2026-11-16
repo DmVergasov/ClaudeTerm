@@ -10,7 +10,7 @@ export const MAIL_MIN_CLAUDE = '2.1.287'
 export const MAIL_REASON_MAX = 200
 
 /** what a record is: a message between two agents, a task, a report, or the signal of a session that attaches or detaches */
-export type MailKind = 'message' | 'task' | 'report' | 'attach' | 'detach'
+export type MailKind = 'message' | 'task' | 'report' | 'attach' | 'detach' | 'progress'
 /** how the task of a report ended */
 export type ReportOutcome = 'finished' | 'failed' | 'stopped'
 export const REPORT_OUTCOMES: readonly ReportOutcome[] = ['finished', 'failed', 'stopped']
@@ -27,13 +27,14 @@ export interface MailRecord {
   id: string
   from: MailAddress
   to: MailAddress
+  /** progress: the task the note is on (required) */
   replyTo: string | null
   text: string
   sentAt: number
   delivered: boolean
   read: boolean
   /** absent: a message (every record of an older ClaudeTerm) */
-  kind?: 'task' | 'report' | 'attach' | 'detach'
+  kind?: 'task' | 'report' | 'attach' | 'detach' | 'progress'
   /** task, attach: the coordinator's project name */
   project?: string
   /** report: how the task ended (required on a report) */

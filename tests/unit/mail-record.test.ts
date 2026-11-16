@@ -101,6 +101,16 @@ describe('checkMailRecord kinds', () => {
     expect(checkMailRecord({ ...a, replaces: 'not-an-id' })).toBeNull()
     expect(checkMailRecord({ ...base, kind: 'task', project: 'acme', was: OLD })).toEqual({ ...base, kind: 'task', project: 'acme' })
   })
+
+  it('keeps a progress note with its task id as replyTo, and drops the fields of other kinds', () => {
+    const p = { ...base, kind: 'progress', replyTo: TASK_ID }
+    expect(checkMailRecord(p)).toEqual(p)
+    expect(checkMailRecord({ ...p, outcome: 'finished', reason: 'x', project: 'acme' })).toEqual(p)
+  })
+
+  it('refuses a progress note without a task id', () => {
+    expect(checkMailRecord({ ...base, kind: 'progress', replyTo: null })).toBeNull()
+  })
 })
 
 describe('mergeMail', () => {

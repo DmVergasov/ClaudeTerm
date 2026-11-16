@@ -1,6 +1,6 @@
 import { kindOf, type MailAddress, type MailRecord } from '../../shared/mail'
 import { refOf, replaceControls } from './agent-directory'
-import { MESSAGE_WAKE_HEAD, REPORT_WAKE_HEAD, TASK_WAKE_HEAD } from '../../shared/report-wake'
+import { MESSAGE_WAKE_HEAD, PROGRESS_WAKE_HEAD, REPORT_WAKE_HEAD, TASK_WAKE_HEAD } from '../../shared/report-wake'
 
 /** the blocks of a wake text are separated by a blank line */
 const SEPARATOR = '\n\n'
@@ -61,6 +61,11 @@ function headerOf(r: MailRecord, ref: string): { header: string; id: string } {
       return {
         header: `${REPORT_WAKE_HEAD} ${outcomeOf(r)}.`,
         id: `id: ${r.id}  (the report on task ${r.replyTo}; read_session "${ref}" shows the session)`
+      }
+    case 'progress':
+      return {
+        header: `${PROGRESS_WAKE_HEAD}.`,
+        id: `id: ${r.id}  (progress on task ${r.replyTo}; its report comes when the task ends; read_session "${ref}" shows the session)`
       }
     default:
       return {

@@ -13,4 +13,8 @@ describe('kindLabel', () => {
   it('kindLabel names a report without an outcome as a plain report', () => {
     expect(kindLabel({ kind: 'report', outcome: null, reason: null })).toBe('Report')
   })
+
+  it('kindLabel names a progress note', () => {
+    expect(kindLabel({ kind: 'progress', outcome: null, reason: null })).toBe('Progress')
+  })
 })

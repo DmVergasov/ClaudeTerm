@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { roleBlock } from '../../src/main/coordinator/session-text'
 import { wakeText } from '../../src/main/mail/wake-text'
 import type { MailRecord } from '../../src/shared/mail'
-import { outcomeText, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD, splitWake } from '../../src/shared/report-wake'
+import { outcomeText, PROGRESS_WAKE_HEAD, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD, splitWake, WAKE_HEADS } from '../../src/shared/report-wake'
 
 const COORD = { device: null, session: 'c0000000-0000-4000-8000-000000000001', name: 'coord · Desktop' }
 const PARSER = { device: null, session: 'a1000000-0000-4000-8000-000000000002', name: 'parser · Desktop' }
@@ -37,6 +37,15 @@ describe('splitWake reads the report blocks of a wake text', () => {
   it('a text that is not wholly wake blocks is no wake', () => {
     expect(splitWake('Report from a session attached to you, through ClaudeTerm: its task finished.\nplain')).toEqual({ reports: [], notes: [], rest: 'Report from a session attached to you, through ClaudeTerm: its task finished.\nplain' })
     expect(splitWake('Fix the parser.')).toEqual({ reports: [], notes: [], rest: 'Fix the parser.' })
+  })
+
+  it('a progress block is a block of the wake: the report beside it is still a card, and the note is the rest', () => {
+    const progress = report({ id: '3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b', kind: 'progress', outcome: undefined, text: 'Waiting for the tests.', sentAt: 1 })
+    const split = splitWake(wakeText([progress, report({})], where))
+    expect(WAKE_HEADS).toContain(PROGRESS_WAKE_HEAD)
+    expect(split.reports.map((r) => r.text)).toEqual(['Parser fixed.'])
+    expect(split.rest).toBe(wakeText([progress], where))
+    expect(split.rest.startsWith(`${PROGRESS_WAKE_HEAD}.\n`)).toBe(true)
   })
 })
 

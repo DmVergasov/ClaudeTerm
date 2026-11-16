@@ -58,6 +58,8 @@ function checkKind(v: Record<string, unknown>): KindFields | null {
     if (reason === null) return null
     return reason === undefined ? { kind: 'report', outcome } : { kind: 'report', outcome, reason }
   }
+  // a progress note: the turn's answer on a task still open, which replyTo names
+  if (v.kind === 'progress') return isUuid(v.replyTo) ? { kind: 'progress' } : null
   return null
 }
 
