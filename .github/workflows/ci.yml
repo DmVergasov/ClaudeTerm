@@ -66,8 +66,9 @@ jobs:
           retention-days: 7
 
   e2e:
-    # the end-to-end tests run one at a time, each against its own app: four jobs per system share them out, so that the
-    # longest one stays well inside its time limit (with three, a job on macOS and on Windows took 29.5 of its 30 minutes)
+    # the end-to-end tests run one at a time, each against its own app: four jobs per system share them out. The jobs are
+    # split by spec file, so the one with the large chat specs runs longest (26 minutes on macOS in 0.22.0): the limit leaves
+    # it room to grow and still stops a hung run
     name: End-to-end tests (${{ matrix.os }}, ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
@@ -75,7 +76,7 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
         shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
