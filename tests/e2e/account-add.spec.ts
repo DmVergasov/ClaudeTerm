@@ -532,10 +532,17 @@ test('a carried item that fails shows its line; Try again on it carries the item
 test('Settings opened on the Accounts section checks the sign-ins when the page shows', async () => {
   const { app, page, log } = await launchAccounts({ accounts: workEntry, script: { turns: {} } })
   const statuses = (): number => runs(log).filter((r) => r.argv[0] === 'auth' && r.argv[1] === 'status').length
-  const before = statuses()
+  // the launch check has answered; a sign-in checked within the last minute is not checked again, so main's clock moves past it
+  await expect.poll(() => page.evaluate(async () => (await window.ct.listAccounts()).accounts.every((a) => !a.checking)), LONG).toBe(true)
+  const launched = statuses()
+  expect(launched).toBeGreaterThan(0)
+  await app.evaluate(() => {
+    const real = Date.now
+    Date.now = () => real() + 61_000
+  })
   const win = await settingsWindow(app, page, 'accounts')
   await expect(win.locator('.settings-page[data-page="accounts"]')).toBeVisible(LONG)
-  await expect.poll(statuses, LONG).toBeGreaterThan(before)
+  await expect.poll(statuses, LONG).toBeGreaterThan(launched)
   await expect(row(win, 'Work')).toContainText('Signed in as work@example.com', LONG)
   await app.close()
 })
