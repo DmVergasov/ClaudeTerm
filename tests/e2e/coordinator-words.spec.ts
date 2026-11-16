@@ -46,7 +46,8 @@ test("the person's words go with the task: typed into the idle session's prompt 
     w2.catch(() => {})
     expect(await coord(t.pipeName, t.tab1, { op: 'message', session: refOf(t.sid2), text: 'Merge feat/x into master and push.', words: 'Merge it into master.' }))
       .toMatchObject({ ok: true, info: expect.stringContaining("The person's words went to ") })
-    await expect.poll(() => typedHas(t.standIn.log, PERSON_WORDS_ANSWER), { timeout: 15_000 }).toBe(true)
+    // the block is typed in pieces: wait for its last line, the task, before reading its order
+    await expect.poll(() => typedHas(t.standIn.log, '> Merge feat/x into master and push.'), { timeout: 15_000 }).toBe(true)
     const lines = typedLines(t.standIn.log)
     const order = [PERSON_WORDS_HEAD, PERSON_WORDS_NOTE, PERSON_WORDS_CONTEXT, '> Shall I merge feat/x into master?', PERSON_WORDS_ANSWER, '> Merge it into master.', 'Task from your coordinator, through ClaudeTerm:', '> Merge feat/x into master and push.']
       .map((text) => lines.findIndex((l) => l.includes(text)))

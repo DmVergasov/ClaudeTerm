@@ -358,9 +358,10 @@ test("the person's words to Laptop's session are typed into its prompt there, an
   watcher.catch(() => {})
   expect(await coord(a.pipeName, coordTab, { op: 'message', session: refOf(sessionSid), text: 'Merge feat/x into master and push.', words: 'Merge it into master.' }))
     .toEqual({ ok: true, info: HUB_TEXT.queuedWords('acme · Laptop', refOf(sessionSid)) })
-  await expect.poll(() => typedHas(laptop.log, '> Merge it into master.'), SLOW).toBe(true)
+  // the block is typed in pieces: wait for its last line, the task, before reading the rest
+  await expect.poll(() => typedHas(laptop.log, '> Merge feat/x into master and push.'), SLOW).toBe(true)
   expect(typedHas(laptop.log, '> Shall I merge feat/x into master?')).toBe(true)
-  expect(typedHas(laptop.log, '> Merge feat/x into master and push.')).toBe(true)
+  expect(typedHas(laptop.log, '> Merge it into master.')).toBe(true)
   await stillWaiting(watcher, 1000)
 
   const report = waitForMail(a.pipeName, coordTab, coordSid)
