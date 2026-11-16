@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHAT_INPUT, chatReady, launchChatTab, userMessages } from './chat-helpers'
-import { bufferText, keepingClipboard } from './helpers'
+import { bufferText, keepingClipboard, panelSettled } from './helpers'
 import { chatStarts, cliCalls } from './mcp-helpers'
 
 // The MCP · Plugins panel of a Claude tab's chat: its segment of the status bar, the /mcp and /plugin commands, the servers grouped by what they need,
@@ -765,6 +765,7 @@ test('a switch clicked in a long list keeps the list where it was scrolled to', 
   try {
     await chatReady(page)
     await page.locator(TOGGLE).click()
+    await panelSettled(page, true)
     const list = page.locator('.panel-mcp .mcp-list')
     await expect(page.locator('.panel-mcp .mcp-item')).toHaveCount(40)
     // the list is scrolled to the middle
@@ -784,17 +785,25 @@ test('a switch clicked in a long list keeps the list where it was scrolled to', 
     })
     const toggle = page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(index)
     const name = ((await toggle.getAttribute('aria-label')) ?? '').replace(/^Turn (\S+) off$/, '$1')
-    const before = await toggle.boundingBox()
+    // where the list stands and where the switch is when the click reaches it: Playwright may scroll the list itself to reach
+    // the switch (a retry puts it at the list's bottom edge), so the place to keep is the one the click finds
+    await list.evaluate((el) => {
+      el.addEventListener('pointerdown', (e) => {
+        const sw = (e.target as Element).closest('[role="switch"]')
+        ;(window as unknown as { __atClick?: { top: number; y: number } }).__atClick = { top: el.scrollTop, y: sw?.getBoundingClientRect().y ?? NaN }
+      }, { capture: true, once: true })
+    })
     await toggle.click()
     // the server is off and its row has moved to the OFF group; wait for the answer, then the settled list
     await expect(page.getByRole('switch', { name: `Turn ${name} on` })).toHaveAttribute('aria-checked', 'false')
     await expect(page.locator(GROUP_HEAD)).toHaveText(['CONNECTED', 'OFF'])
     await page.waitForTimeout(1500)
+    const at = (await page.evaluate(() => (window as unknown as { __atClick?: { top: number; y: number } }).__atClick))!
     const after = await list.evaluate((el) => el.scrollTop)
-    expect(Math.abs(after - middle)).toBeLessThanOrEqual(4)
+    expect(Math.abs(after - at.top)).toBeLessThanOrEqual(4)
     // the row that took the clicked one's place is still under the pointer
     const next = await page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(index).boundingBox()
-    expect(Math.abs((next?.y ?? 0) - (before?.y ?? 0))).toBeLessThanOrEqual(4)
+    expect(Math.abs((next?.y ?? 0) - at.y)).toBeLessThanOrEqual(4)
   } finally {
     await app.close()
   }
