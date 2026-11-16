@@ -1,8 +1,8 @@
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chatReady, controlResponses, CHAT_INPUT, launchChatTab, sendMessage, userMessages } from './chat-helpers'
-import { KEYS, noteText, openTabInFront } from './helpers'
+import { externalCalls, KEYS, noteText, openTabInFront, stubExternal } from './helpers'
 
 // the tab-switch chord of the app (Ctrl+Alt+digit on Windows and Linux, ⌘ digit on macOS): on a card it answers nothing
 const TAB_CHORD = process.platform === 'darwin' ? 'Meta+Digit2' : 'Control+Alt+Digit2'
@@ -24,17 +24,6 @@ const COLORS = {
   }]
 }
 const BASH = { command: 'ls' }
-
-/** records the URLs main hands to shell.openExternal, instead of opening a browser */
-async function stubExternal(app: ElectronApplication): Promise<void> {
-  await app.evaluate(({ shell }) => {
-    const calls: string[] = []
-    ;(globalThis as Record<string, unknown>).__externalCalls = calls
-    shell.openExternal = (u: string) => { calls.push(u); return Promise.resolve() }
-  })
-}
-const externalCalls = (app: ElectronApplication): Promise<string[]> =>
-  app.evaluate(() => (globalThis as Record<string, unknown>).__externalCalls as string[])
 
 /** the answers Claude Code got to its questions, in order */
 function answersSent(log: () => Record<string, unknown>[]): unknown[] {

@@ -56,7 +56,9 @@ test('a claude tab shows model, context, the 5h and weekly limits and running su
   await expect(bar.locator('.status-agents')).toHaveCount(0)
 
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'session_end', tabId, sessionId: SID })).toEqual({ ok: true })
-  await expect(bar).toBeHidden()
+  // the Remote segment stays after the session ends: a Claude tab always has it
+  await expect(bar.locator('.status-seg')).toHaveCount(1)
+  await expect(bar.locator('.status-remote')).toBeVisible()
   await app.close()
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountSegment, changesSegment, formatTokens, levelFor, limitPace, mcpSegment, modelFamily, planSegment, statusSegments } from '../../src/renderer/status-bar'
+import { accountSegment, changesSegment, formatTokens, levelFor, limitPace, mcpSegment, modelFamily, planSegment, remoteSegment, statusSegments } from '../../src/renderer/status-bar'
 import type { McpReload, McpServerView, McpServersView, McpStatus } from '../../src/shared/mcp'
 import type { AgentStatus, MainStatus, PlanStatus } from '../../src/shared/types'
 import { taskListStatus } from '../../src/shared/task-list'
@@ -173,6 +173,14 @@ it('planSegment: a list with no task in progress shows its count alone; ✓ only
   expect(planSegment(taskListStatus({ title: 'Release prep', tasks: [{ title: 'A', status: 'pending' }, { title: 'B', status: 'pending' }, { title: 'C', status: 'pending' }] })).text).toBe('0/3')
   expect(planSegment(taskListStatus({ title: 'Release prep', tasks: [{ title: 'A', status: 'completed' }, { title: 'B', status: 'pending' }, { title: 'C', status: 'pending' }] })).text).toBe('1/3')
   expect(planSegment(taskListStatus({ title: 'Release prep', tasks: [{ title: 'A', status: 'completed' }, { title: 'B', status: 'completed' }, { title: 'C', status: 'completed' }] })).text).toBe('✓ 3/3')
+})
+
+describe('remoteSegment', () => {
+  it('shows Remote with the radio icon, the state as the dot, and the state’s title', () => {
+    expect(remoteSegment({ kind: 'on', url: 'https://claude.ai/code/session_01abc' })).toEqual({
+      key: 'remote', text: 'Remote', title: 'Remote Control is on: this session is on claude.ai and in the Claude app', level: 'normal', icon: 'radio', dot: 'on'
+    })
+  })
 })
 
 describe('limitPace', () => {

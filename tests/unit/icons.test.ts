@@ -12,6 +12,10 @@ describe('icon', () => {
     }
   })
 
+  it('has the radio icon of the Remote Control segment and tab glyph', () => {
+    expect(ICON_NAMES).toContain('radio')
+  })
+
   it('defaults to 16 px', () => {
     expect(icon('plus')).toContain('width="16"')
   })

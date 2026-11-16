@@ -9,7 +9,7 @@ import { IPC } from '../../src/shared/ipc'
 import type { ChatSnapshot } from '../../src/shared/chat'
 import { chatSettled, launchChatTab } from './chat-helpers'
 import { claudeTempRoot, sessionTempDir } from '../../src/main/image-watcher'
-import { gitRepo, KEYS, keepingClipboard, launchApp, openTabInFront, PNG_1x1 } from './helpers'
+import { externalCalls, gitRepo, KEYS, keepingClipboard, launchApp, openTabInFront, PNG_1x1, stubExternal } from './helpers'
 
 const INPUT = '.chat-input'
 
@@ -27,17 +27,6 @@ async function send(page: Page, text: string): Promise<void> {
   await page.keyboard.type(text)
   await page.keyboard.press('Enter')
 }
-
-/** records the URLs main hands to shell.openExternal, instead of opening a browser */
-async function stubExternal(app: ElectronApplication): Promise<void> {
-  await app.evaluate(({ shell }) => {
-    const calls: string[] = []
-    ;(globalThis as Record<string, unknown>).__externalCalls = calls
-    shell.openExternal = (u: string) => { calls.push(u); return Promise.resolve() }
-  })
-}
-const externalCalls = (app: ElectronApplication): Promise<string[]> =>
-  app.evaluate(() => (globalThis as Record<string, unknown>).__externalCalls as string[])
 
 test("Claude's Markdown is drawn, a code block can be copied", { tag: '@alone' }, async () => {
   const text = ['## Plan', '', '- first item', '- second item', '', 'Run `npm test` first.', '', '```', 'npm test', '```'].join('\n')

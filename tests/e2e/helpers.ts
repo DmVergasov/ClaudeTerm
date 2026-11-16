@@ -131,6 +131,17 @@ export async function launchClaudeTab(settings: object = FAKE_CLAUDE_SETTINGS, w
   return { ...launched, work, tabId }
 }
 
+/** records the URLs main hands to shell.openExternal, instead of opening a browser */
+export async function stubExternal(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const calls: string[] = []
+    ;(globalThis as Record<string, unknown>).__externalCalls = calls
+    shell.openExternal = (u: string) => { calls.push(u); return Promise.resolve() }
+  })
+}
+export const externalCalls = (app: ElectronApplication): Promise<string[]> =>
+  app.evaluate(() => (globalThis as Record<string, unknown>).__externalCalls as string[])
+
 /** a git repository with one commit: a.ts = "one\ntwo\nthree\n". Its own folder is `name` when one is given, in a new temp folder */
 export function gitRepo(name?: string): string {
   const root = mkdtempSync(join(tmpdir(), 'ct-repo-'))

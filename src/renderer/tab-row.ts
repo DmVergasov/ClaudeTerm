@@ -138,6 +138,13 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
     b.append(String(item.images))
     marks.push(b)
   }
+  if (item.rc) {
+    const rc = document.createElement('span')
+    rc.className = 'tab-rc'
+    rc.title = 'Remote Control is on'
+    rc.innerHTML = icon('radio', 12)
+    marks.push(rc)
+  }
   if (words && item.waiting !== null) {
     const w = document.createElement('span')
     w.className = `tab-status ${item.waiting === 'done' ? 'done' : 'ask'}`

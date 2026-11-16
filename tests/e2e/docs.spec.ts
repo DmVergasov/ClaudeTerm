@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MAC } from '../fixtures/platform'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { FAKE_CLAUDE_SETTINGS, KEYS, KEY_LABELS, PNG_1x1, launchClaudeTab, panelSettled } from './helpers'
+import { externalCalls, FAKE_CLAUDE_SETTINGS, KEYS, KEY_LABELS, PNG_1x1, launchClaudeTab, panelSettled, stubExternal } from './helpers'
 
 const SID = '7a1f2e3d-4c5b-4a69-8d7e-f0a1b2c3d4e5'
 
@@ -42,16 +42,6 @@ async function stubShell(app: App): Promise<void> {
   })
 }
 const shellCalls = (app: App) => app.evaluate(() => (globalThis as Record<string, unknown>).__shellCalls as string[])
-
-/** records the URLs main hands to shell.openExternal, instead of opening a browser */
-async function stubExternal(app: App): Promise<void> {
-  await app.evaluate(({ shell }) => {
-    const calls: string[] = []
-    ;(globalThis as Record<string, unknown>).__externalCalls = calls
-    shell.openExternal = (u: string) => { calls.push(u); return Promise.resolve() }
-  })
-}
-const externalCalls = (app: App) => app.evaluate(() => (globalThis as Record<string, unknown>).__externalCalls as string[])
 
 /** records the texts main writes to the clipboard, instead of writing them: the test leaves the clipboard of the machine alone */
 async function stubClipboard(app: App): Promise<void> {

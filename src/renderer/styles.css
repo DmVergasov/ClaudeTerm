@@ -115,6 +115,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-bell { color: var(--accent); font-size: 10px; }
 .tab-mail { display: flex; color: var(--accent); }
+.tab-rc { display: flex; color: var(--green); }
 .tab-muted, .tab-note { display: flex; color: var(--muted); }
 /* Claude is waiting in this tab: a badge breathes on it until the tab is opened, and the title reads at full strength */
 .tab.attention .tab-title, .tp-tab.attention .tab-title { color: var(--text); }
@@ -676,6 +677,16 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 #plan-list .plan-task.current .plan-mark { color: var(--accent); }
 #statusbar .status-account { cursor: pointer; }
 #statusbar .status-account:hover { color: var(--fg); }
+#statusbar .status-remote { cursor: pointer; gap: 6px; }
+#statusbar .status-remote:hover { color: var(--fg); }
+#statusbar .status-remote .status-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; }
+#statusbar .status-remote[data-dot="off"] .status-dot { border: 1.5px solid var(--text-3); }
+#statusbar .status-remote[data-dot="off"] .status-text { opacity: 0.7; }
+#statusbar .status-remote[data-dot="connecting"] .status-dot { background: var(--amber); }
+#statusbar .status-remote[data-dot="on"] .status-dot { background: var(--green); }
+#statusbar .status-remote[data-dot="unavailable"] { color: var(--text-4); }
+#statusbar .status-remote[data-dot="unavailable"] .status-dot { border: 1.5px solid var(--text-4); background: linear-gradient(135deg, transparent 42%, var(--text-4) 42% 58%, transparent 58%); }
+#statusbar .status-remote[data-dot="failed"] .status-dot { background: var(--red); }
 #statusbar.in-chat .status-background { cursor: pointer; }
 #statusbar.in-chat .status-background:hover { color: var(--fg); }
 .status-tasks { position: fixed; z-index: 50; width: 340px; max-height: 60vh; overflow: auto; background: var(--raised); border: 1px solid var(--line-2); border-radius: 12px; padding: 6px 0; box-shadow: 0 16px 40px #000a; -webkit-app-region: no-drag; }
@@ -683,6 +694,26 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .status-tasks .status-task-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-tasks .status-task-stop { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); cursor: pointer; }
 .status-tasks .status-task-stop:hover { border-color: var(--border); color: var(--fg); }
+/* the Remote Control popover: the tasks popover's box, placed above the bar by remote-popover.ts */
+.remote-popover { position: fixed; z-index: 50; width: 340px; padding: 12px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 16px 40px #000a; -webkit-app-region: no-drag; }
+.remote-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.remote-heading { font-weight: 600; color: var(--text); }
+.remote-line { margin-top: 8px; color: var(--text-2); }
+.remote-actions { display: flex; gap: 8px; margin-top: 10px; }
+.remote-actions[hidden] { display: none; }
+.remote-chat-note { margin-top: 10px; color: var(--text-3); font-size: 12px; }
+/* the separator above the account's checkbox */
+.remote-account { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); cursor: pointer; }
+.remote-account.dim { opacity: 0.5; }
+.remote-account-note { margin-top: 4px; color: var(--text-3); font-size: 12px; }
+/* the settings window's switch, copied: an accent track with a knob */
+.remote-popover input.switch { appearance: none; flex: none; position: relative; width: 36px; height: 20px; margin: 0; border-radius: 10px; background: var(--line-2); cursor: pointer; }
+.remote-popover input.switch::before { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-2); box-shadow: 0 1px 2px #0006; transition: transform 0.12s ease; }
+.remote-popover input.switch:checked { background: var(--accent); }
+.remote-popover input.switch:checked::before { transform: translateX(16px); background: #FFFFFF; }
+.remote-popover input.switch:focus-visible { outline: 2px solid rgba(217, 119, 87, 0.6); outline-offset: 2px; }
+.remote-popover input.switch:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .remote-popover input.switch::before { transition: none; } }
 
 /* the menus and dialogs pop in (140 ms, from 98% size), the toasts slide up 8 px, the lightbox fades in; all off under reduced motion */
 @media (prefers-reduced-motion: no-preference) {

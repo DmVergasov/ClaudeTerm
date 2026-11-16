@@ -21,6 +21,7 @@ import { SidePanel } from './side-panel'
 import { SheetHeader } from './sheet-header'
 import { Lightbox } from './lightbox'
 import { PlanList } from './plan-list'
+import { RemotePopover, type RemotePopoverView } from './remote-popover'
 import { RecentSessionsWindow } from './recent-sessions'
 import { imagePasteInput, imagePasteRoute, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar, type FindTarget } from './search'
@@ -132,6 +133,7 @@ let lightbox: Lightbox
 let sessionsWindow: RecentSessionsWindow
 let folderDialog: FolderDialog
 let planList: PlanList
+let remotePopover: RemotePopover
 const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
 let titleBar: TitleBar
@@ -258,6 +260,7 @@ function tabBarItem(id: string): TabBarItem | null {
     group: remote?.device ?? null,
     deviceName: remote ? remoteDeviceOf(remote.device)?.name ?? null : null,
     dim: remote !== undefined && !isOnline(remote.device),
+    rc: statusUpdates.get(id)?.remote?.kind === 'on',
     coord: detaching.has(id) ? null : coordMarkOf(id)
   }
 }
@@ -480,6 +483,16 @@ function accountOf(tabId: string | null): string | null {
   return accounts.length > 0 || t.info.account !== null ? accountLabel(t.info.account, accounts) : null
 }
 
+/** the popover's view of a local Claude tab; null for a tab without the segment (a shell tab, a paired device's tab) */
+function remoteViewOf(tabId: string): RemotePopoverView | null {
+  const t = tabs.get(tabId)
+  const state = statusUpdates.get(tabId)?.remote
+  if (!t || t.info.remote || !state) return null
+  // the main account's flag is the setting; an extra account keeps its own
+  const accountFlag = t.info.account === null ? settings.claude.remoteControl : accounts.find((a) => a.id === t.info.account)?.remoteControl === true
+  return { tabId, state, chat: isChatView(t), accountName: accountLabel(t.info.account, accounts), accountFlag }
+}
+
 function renderStatus(tabId: string): void {
   // the background tasks of the status decide whether the view switch asks first
   refreshModes()
@@ -488,6 +501,8 @@ function renderStatus(tabId: string): void {
   const mcp = mcpAvailable(t) && mcpStatus?.tabId === tabId ? mcpStatus.view : null
   const chat = t && isChatView(t) ? { tab: tabId, mcp, mcpAlerts: settings.chat.mcpAlerts, stopTask: (taskId: string) => stopTaskOf(tabId, taskId) } : undefined
   statusBar.render(statusUpdates.get(tabId) ?? null, counterOf(tabId), accountOf(tabId), planUpdates.get(tabId)?.plan ?? null, Date.now(), chat)
+  // the popover follows the tab in front: it closes when that tab has no Remote Control state
+  remotePopover.update(activeId ? remoteViewOf(activeId) : null)
   renderMeters(tabId)
 }
 
@@ -1116,6 +1131,7 @@ function activate(tabId: string): void {
   activeId = tabId
   frontFallback.activated(tabId)
   planList.close()
+  remotePopover.close()
   const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement || !!document.activeElement?.closest('#note .cm-content')
   const focus = !busy
   for (const [id, t] of tabs) showTab(t, id === tabId, focus)
@@ -1722,6 +1738,12 @@ async function boot(): Promise<void> {
   ct.onStarred((ids) => sessionsWindow.applyStars(new Set(ids)))
   ct.onRemoteSessions((list) => sessionsWindow.applyRemote(list))
   planList = new PlanList(document.getElementById('plan-list')!, () => { if (activeId) focusTab(activeId) }, () => { if (activeId) ct.clearTaskList(activeId) })
+  remotePopover = new RemotePopover({
+    set: (id, on) => ct.remoteControlSet(id, on),
+    setAccount: (id, on) => ct.remoteControlAccount(id, on),
+    open: (url) => ct.openExternal(url),
+    copy: (url) => ct.writeClipboardText(url)
+  }, () => { if (activeId) focusTab(activeId) })
   statusBar =new StatusBar(document.getElementById('statusbar')!, () => sidePanel.open('changes'), (anchor) => {
     const r = anchor.getBoundingClientRect()
     // the menu opens over the status bar, kept inside the window; a remote tab's accounts are asked for first, a local tab's need no answer
@@ -1743,6 +1765,9 @@ async function boot(): Promise<void> {
     // the MCP servers' segment opens and closes MCP · Plugins beside the chat
     sidePanel.toggle('mcp')
     if (activeId) focusTab(activeId)
+  }, (anchor) => {
+    const v = activeId ? remoteViewOf(activeId) : null
+    if (v) remotePopover.toggle(anchor, v)
   })
   statusBar.alignTo(document.getElementById('terminals')!)
   ct.onAccounts((v) => {
@@ -1760,7 +1785,10 @@ async function boot(): Promise<void> {
   ct.onUpdate((s) => updateBanner.update(s))
   void ct.getUpdateState().then((s) => updateBanner.update(s))
   ct.onStatus((u) => {
+    const wasOn = statusUpdates.get(u.tabId)?.remote?.kind === 'on'
     statusUpdates.set(u.tabId, u)
+    // the Remote Control glyph on the tab's row shows while it is on
+    if (wasOn !== (u.remote?.kind === 'on')) renderTabs()
     // a turn the usage limit stopped: the chat says when Claude goes on by itself
     tabs.get(u.tabId)?.chat?.setLimitWait(u.goesOnAt ?? null)
     if (u.tabId === activeId) renderStatus(u.tabId)

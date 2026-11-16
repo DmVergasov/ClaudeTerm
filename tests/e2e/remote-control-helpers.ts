@@ -1,5 +1,9 @@
 import type { Page } from '@playwright/test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { StatusMessage } from '../../src/shared/protocol'
+import { FAKE_CLAUDE_SETTINGS, launchApp, type Launched } from './helpers'
 
 /** the tabs' own title: a terminal tab's title otherwise follows the shell's, which differs between machines */
 export const RC_TITLE = 'Fix the parser'
@@ -19,5 +23,12 @@ export const RC_CLEAN_ENV: Record<string, string> = {
 export const rcStatus = (tabId: string, remote: string | null): StatusMessage => ({
   v: 1, type: 'status', tabId, sessionId: RC_SID, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: null, context: null, fiveHour: null, sevenDay: null, remote
 })
+/** the app with one Claude tab of the echo stand-in in a temp folder, with no sign-in in its environment */
+export async function launchRcTerminal(): Promise<Launched & { tabId: string; work: string }> {
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const launched = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, args: ['--claude', work], env: RC_CLEAN_ENV })
+  await launched.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  return { ...launched, work, tabId: (await launched.page.evaluate(() => window.__ct!.activeTabId()))! }
+}
 /** the lines the stand-in Claude Code read in its terminal, in order */
 export const typedLines = (log: () => Record<string, unknown>[]): string[] => log().flatMap((e) => (typeof e.in === 'string' ? [e.in] : []))

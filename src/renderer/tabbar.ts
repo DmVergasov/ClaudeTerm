@@ -26,6 +26,8 @@ export interface TabBarItem {
   /** what Claude is doing in the tab; the icon spins for it unless Claude waits for the user */
   activity: TabActivity
   images: number
+  /** the tab has Remote Control on: a green glyph marks it */
+  rc?: boolean
   exited: boolean
   /** the tab's note has text */
   note: boolean

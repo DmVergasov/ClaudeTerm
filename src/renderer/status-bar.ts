@@ -1,15 +1,17 @@
 import type { StatusUpdate } from '../shared/ipc'
 import type { McpServersView, McpStatus } from '../shared/mcp'
+import type { RemoteState } from '../shared/remote-control'
 import type { ReviewCounter } from '../shared/review'
 import type { AgentStatus, BackgroundTask, PlanStatus } from '../shared/types'
 import { icon, type IconName } from './icons'
 import { detailOf } from './mcp/mcp-view-model'
+import { remoteTitle } from './remote-popover'
 
 /** info: something waits for the person that is not a warning (the MCP changes a restart loads) */
 export type Level = 'normal' | 'warn' | 'crit' | 'info'
 
 export interface Segment {
-  key: 'account' | 'model' | 'context' | 'agents' | 'background' | 'plan' | 'mcp' | 'changes'
+  key: 'account' | 'remote' | 'model' | 'context' | 'agents' | 'background' | 'plan' | 'mcp' | 'changes'
   text: string
   title: string
   level: Level
@@ -19,6 +21,8 @@ export interface Segment {
   fill?: number
   /** an icon before the text */
   icon?: IconName
+  /** a dot before the text, colored by the state; the Remote Control segment only */
+  dot?: RemoteState['kind']
   /** the Changes counter's parts, which the text shows in their own colors */
   diff?: { files: string; added: string; removed: string }
 }
@@ -189,11 +193,16 @@ export function accountSegment(label: string): Segment {
   return { key: 'account', text: label, title: 'The account this tab runs on — click to switch', level: 'normal' }
 }
 
+/** the tab's Remote Control: its state as the dot, and the state in words on hover */
+export function remoteSegment(s: RemoteState): Segment {
+  return { key: 'remote', text: 'Remote', title: remoteTitle(s), level: 'normal', icon: 'radio', dot: s.kind }
+}
+
 const ZONES = ['start', 'middle', 'end'] as const
 
-/** where a segment sits on the bar: the account at its start, the MCP servers and the changes at its end, the session in its middle */
+/** where a segment sits on the bar: the account and Remote Control at its start, the MCP servers and the changes at its end, the session in its middle */
 function zoneOf(key: Segment['key']): (typeof ZONES)[number] {
-  return key === 'account' ? 'start' : key === 'mcp' || key === 'changes' ? 'end' : 'middle'
+  return key === 'account' || key === 'remote' ? 'start' : key === 'mcp' || key === 'changes' ? 'end' : 'middle'
 }
 
 /** a chat tab's side of the status bar: its Stop for a background task, and the tab those tasks belong to */
@@ -228,7 +237,7 @@ export class StatusBar {
   private readonly stopping = new Set<string>()
   private readonly onClick: (e: MouseEvent) => void
 
-  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}, onPlanClick: (anchor: HTMLElement) => void = () => {}, onMcpClick: () => void = () => {}) {
+  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}, onPlanClick: (anchor: HTMLElement) => void = () => {}, onMcpClick: () => void = () => {}, onRemoteClick: (anchor: HTMLElement) => void = () => {}) {
     this.list.className = 'status-tasks'
     this.list.hidden = true
     this.list.setAttribute('role', 'dialog')
@@ -242,6 +251,8 @@ export class StatusBar {
       if (account) onAccountClick(account)
       const planSeg = target.closest<HTMLElement>('.status-plan')
       if (planSeg) onPlanClick(planSeg)
+      const remoteSeg = target.closest<HTMLElement>('.status-remote')
+      if (remoteSeg) onRemoteClick(remoteSeg)
       if (target.closest('.status-background') && this.chat) this.toggleTasks()
     }
     el.addEventListener('click', this.onClick)
@@ -255,6 +266,7 @@ export class StatusBar {
     this.el.classList.toggle('in-chat', chat !== undefined)
     const segments = [
       ...(account !== null ? [accountSegment(account)] : []),
+      ...(u?.remote ? [remoteSegment(u.remote)] : []),
       ...(u ? statusSegments(u, now).filter((s) => chat === undefined || s.key !== 'model') : []),
       ...(plan ? [planSegment(plan)] : []),
       ...(chat?.mcp ? [mcpSegment(chat.mcp, chat.mcpAlerts)] : []),
@@ -481,7 +493,7 @@ export class StatusBar {
 }
 
 /** the parts of a segment, in the order they sit in its span */
-const PARTS = ['status-icon', 'status-text', 'status-pill', 'status-bar']
+const PARTS = ['status-icon', 'status-dot', 'status-text', 'status-pill', 'status-bar']
 
 /** the span's own part of the class: made when missing, placed before the parts that follow it */
 function part(span: HTMLElement, cls: string): HTMLElement {
@@ -525,6 +537,13 @@ function fill(span: HTMLElement, s: Segment): void {
       ic.innerHTML = icon(s.icon, 13)
     }
   } else span.querySelector(':scope > .status-icon')?.remove()
+  if (s.dot !== undefined) {
+    span.dataset.dot = s.dot
+    part(span, 'status-dot')
+  } else {
+    delete span.dataset.dot
+    span.querySelector(':scope > .status-dot')?.remove()
+  }
   const text = part(span, 'status-text')
   if (s.diff !== undefined) fillDiff(text, s.diff)
   else if (text.textContent !== s.text) text.textContent = s.text
