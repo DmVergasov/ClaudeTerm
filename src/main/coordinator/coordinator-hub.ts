@@ -809,6 +809,12 @@ export class CoordinatorHub {
       .some((r) => kindOf(r) === 'task' && r.words !== undefined && !r.delivered && this.wroteAs(r, c) && r.to.session === att.session && this.norm(r.to.device) === att.device)
   }
 
+  /** a session took a new row key (a clear, a rename): the messages relayed under the old key are relayed under the new one too, so the same words do not go again */
+  private carryRelayed(oldKey: string, newKey: string): void {
+    const suffix = `\n${oldKey}`
+    for (const k of [...this.relayed]) if (k.endsWith(suffix)) this.relayed.add(`${k.slice(0, -suffix.length)}\n${newKey}`)
+  }
+
   /** the person's words went to a session: the person is told where, and the log says which task carries them */
   private wordsWent(name: string, words: string, taskId: string | null): void {
     this.d.toast(HUB_TEXT.wordsToast(name, oneLineText(words.split('\n')[0] ?? '', 60)))
@@ -995,6 +1001,7 @@ export class CoordinatorHub {
       if (this.d.store.renameSession(old, after)) {
         this.moveStarts(old, after)
         this.tellRenamed(old, after)
+        this.carryRelayed(`local:${old}`, `local:${after}`)
       }
       this.d.alias(old, after)
       this.d.changed()
@@ -1560,7 +1567,10 @@ export class CoordinatorHub {
     const device = this.norm(r.from.device)
     const c = this.d.store.coordinatorBy(r.to.session)
     const att = c?.attachments.find((a) => a.device === device && a.session === was)
-    if (c && att) this.patchAttachment(c, att.session, { session: r.from.session, name: r.from.name })
+    if (c && att) {
+      this.patchAttachment(c, att.session, { session: r.from.session, name: r.from.name })
+      if (device !== null) this.carryRelayed(remoteKey(device, was), remoteKey(device, r.from.session))
+    }
     const hosted = this.d.store.hostedBy(r.to.session)
     if (hosted && this.norm(hosted.coordinator.device) === device && hosted.coordinator.session === was) {
       const from = this.stored(r.from)
@@ -1608,6 +1618,8 @@ export class CoordinatorHub {
       ...(r.project === undefined ? {} : { project: r.project }),
       ...(r.outcome === undefined ? {} : { outcome: r.outcome }),
       ...(r.reason === undefined ? {} : { reason: r.reason }),
+      ...(r.words === undefined ? {} : { words: r.words }),
+      ...(r.context === undefined ? {} : { context: r.context }),
       delivered: false,
       read: false
     })

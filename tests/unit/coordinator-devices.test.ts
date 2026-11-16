@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { HUB_TEXT, START_WAIT_MS } from '../../src/main/coordinator/coordinator-hub'
 import { MAX_ATTACHMENTS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
+import { refOf } from '../../src/main/mail/agent-directory'
 import { checkMailRecord } from '../../src/main/mail/mail-record'
 import { isShareable } from '../../src/main/mail/mail-store'
 import { coordinatorProblem, type CoordSessionRow, type CoordinatorView } from '../../src/shared/coordinator'
@@ -666,6 +667,29 @@ describe('new ids across devices', () => {
     c.hub.make('tab-c', false)
     c.hub.attach('tab-c', 'e10000')
     sync(c, s)
+  })
+
+  it("a task with the person's words sent to Laptop's old id is forwarded with them, so it is never handed to a watcher", async () => {
+    said(c, 'Merge it into master.')
+    await c.hub.tool('tab-c', { op: 'message', session: 'e10000', text: 'Merge.', words: 'Merge it into master.' }) // Laptop clears before it hears of the task
+    clear(s, 'tab-l1', L.one, NEW.one)
+    sync(c, s)
+    const copy = records(s, 'task').find((r) => r.to.session === NEW.one)!
+    expect(copy).toMatchObject({ words: 'Merge it into master.', context: 'Shall I merge feat/x into master?' })
+    expect(s.hub.accepts(copy, 'tab-l1', 'idle')).toBe(false)
+  })
+
+  it("the words given to Laptop's session before its clear are not relayed to it again after the clear: they went already", async () => {
+    said(c, 'Merge it into master.')
+    expect(await c.hub.tool('tab-c', { op: 'message', session: 'e10000', text: 'Merge.', words: 'Merge it into master.' })).toMatchObject({ ok: true })
+    sync(c, s)
+    // Laptop's tab runs the new session, so the session is named after its tab
+    s.tabs = s.tabs.map((t) => (t.tabId === 'tab-l1' ? { ...t, session: NEW.one } : t))
+    clear(s, 'tab-l1', L.one, NEW.one)
+    sync(c, s)
+    expect(await c.hub.tool('tab-c', { op: 'message', session: refOf(NEW.one), text: 'Merge feat/x again.', words: 'Merge it into master.' })).toEqual({ ok: false, error: HUB_TEXT.wordsAgain('parser · Laptop') })
+    expect(records(c, 'task')).toHaveLength(1)
+    expect(c.toasts).toHaveLength(1)
   })
 
   it('a clear in the coordinator tells Laptop: the session\'s tasks then come from the new id and are taken', () => {

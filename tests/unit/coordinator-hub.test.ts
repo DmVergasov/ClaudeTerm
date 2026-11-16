@@ -658,6 +658,17 @@ describe("message_session with the person's words", () => {
     const [plain] = records(w, 'task')
     expect(w.hub.accepts(plain, 'tab-1', 'idle')).toBe(true)
   })
+
+  it("a clear that gives the session a new id does not relay the same words to it again: they went already", async () => {
+    said(w, 'Merge it into master.')
+    expect(await give('Merge it into master.')).toMatchObject({ ok: true })
+    const NEW = uid(0x2003)
+    update(w, 'tab-1', { session: NEW })
+    w.hub.sessionStarted('tab-1', S.one, NEW, 'clear')
+    expect(await give('Merge it into master.', 'Merge feat/x again.', refOf(NEW))).toEqual({ ok: false, error: HUB_TEXT.wordsAgain('parser · Desktop') })
+    expect(records(w, 'task')).toHaveLength(1)
+    expect(w.toasts).toHaveLength(1)
+  })
 })
 
 describe('views', () => {
