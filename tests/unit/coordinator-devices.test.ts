@@ -1199,10 +1199,12 @@ describe('start on another device', () => {
     const answer = c.hub.start('tab-c', { ...START_LAPTOP, words: 'Write them now.' })
     await tick()
     await tick()
-    expect(c.toasts).toEqual(['Your words went to Release notes: «Write them now.»'])
+    // the toast comes when Laptop's session is attached and its task written, not before
+    expect(c.toasts).toEqual([])
     c.remoteTabs.push(remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop' }))
     c.hub.remoteChanged()
     expect(await answer).toEqual({ ok: true, info: expect.stringMatching(/ The person's words go with its task\.$/) })
+    expect(c.toasts).toEqual(['Your words went to Release notes: «Write them now.»'])
     expect(records(c, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: L.fresh }), words: 'Write them now.' })])
   })
 })

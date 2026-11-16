@@ -1310,6 +1310,26 @@ describe('CoordinatorHub start', () => {
     expect(records(w, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: S_NEW }), text: 'Write the release notes.' })])
   })
 
+  it("words of a start that ends before its session comes: no toast, and the same words still go to a session", async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    TITLES['new-tab-1'] = 'Release notes'
+    said(w, 'Write them now.')
+    const cancelled = w.hub.start('tab-c', { ...START, words: 'Write them now.' })
+    await tick()
+    w.hub.tabClosed('new-tab-1')
+    expect(await cancelled).toEqual({ ok: false, error: HUB_TEXT.closedEarly })
+    expect(w.toasts).toEqual([])
+    // the words went nowhere: a session of the coordinator takes the same message through message_session
+    const again = w.hub.start('tab-c', START)
+    await tick()
+    showSession(w, 'new-tab-2', S_NEW)
+    expect(await again).toMatchObject({ ok: true })
+    expect(await w.hub.tool('tab-c', { op: 'message', session: refOf(S_NEW), text: 'And publish them.', words: 'Write them now.' })).toMatchObject({ ok: true })
+    expect(w.toasts).toHaveLength(1)
+    expect(records(w, 'task').map((r) => r.words)).toEqual([undefined, 'Write them now.'])
+  })
+
   it('a worktree name puts the EnterWorktree instruction before the task', async () => {
     const w = world()
     w.hub.make('tab-c', false)
@@ -1446,9 +1466,11 @@ describe('CoordinatorHub start', () => {
     await tick()
     await tick()
     expect(w.opened).toHaveLength(1)
-    expect(w.toasts).toEqual(['Your words went to Release notes: «Write them now.»'])
+    // the toast comes when the task's record is written, not before the session is there
+    expect(w.toasts).toEqual([])
     showSession(w, 'new-tab-1', S_NEW)
     expect(await answer).toEqual({ ok: true, info: expect.stringMatching(/ The person's words go with its task\.$/) })
+    expect(w.toasts).toEqual(['Your words went to Release notes: «Write them now.»'])
     expect(records(w, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: S_NEW }), text: 'Write the release notes.', words: 'Write them now.', context: 'Shall I merge feat/x into master?' })])
     // the same message cannot go to that session a second time
     expect(await w.hub.tool('tab-c', { op: 'message', session: refOf(S_NEW), text: 'And publish them.', words: 'Write them now.' }))

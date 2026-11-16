@@ -594,7 +594,6 @@ export class CoordinatorHub {
       }
       start.cancelWait = this.d.later(START_WAIT_MS, () => this.waitOver(newTab))
       this.starts.set(newTab, start)
-      if (checked !== null) this.wordsWent(start.name, checked.words, null)
       this.d.changed()
     })
   }
@@ -647,7 +646,6 @@ export class CoordinatorHub {
       // START_WAIT_MS counts from the call: the time the device took to open the tab comes off it, and it is at least a second
       start.cancelWait = this.d.later(Math.max(1000, START_WAIT_MS - (this.d.now() - began)), () => this.waitOver(opened.tabId))
       this.starts.set(opened.tabId, start)
-      if (checked !== null) this.wordsWent(start.name, checked.words, null)
       this.settleRemoteStarts()
       this.d.changed()
     })
@@ -863,11 +861,11 @@ export class CoordinatorHub {
     this.d.log.info(`coordinator: the person's words went to ${name}${taskId === null ? '' : ` with the task ${taskId}`}`)
   }
 
-  /** a start's task carries the person's words: they are relayed to its session under the session's row key, so the same words do not go again, and the log says which task carries them */
-  private relayStartWords(s: PendingStart, key: string, name: string, task: MailRecord): void {
+  /** the person's words are in a task record: they are relayed to its session under the session's row key, so the same words do not go again, and the person is told they went; a start that ends before its task is written tells and relays nothing */
+  private relayStartWords(s: PendingStart, key: string, task: MailRecord): void {
     if (s.words === null) return
     this.relayed.add(`${s.words.id}\n${key}`)
-    this.d.log.info(`coordinator: the person's words went to ${name} with the task ${task.id}`)
+    this.wordsWent(s.name, s.words.words, task.id)
   }
 
   /** writes a task from the coordinator to one of its sessions, and un-resolves the attachment; the id of the record, or null when it cannot be written */
@@ -1354,7 +1352,7 @@ export class CoordinatorHub {
     if (!attached.ok) return this.answerStart(s, attached)
     // the record goes after the hosted entry exists: the mail listener takes the task into it
     this.d.mail.add(task)
-    this.relayStartWords(s, `local:${session}`, to.name, task)
+    this.relayStartWords(s, `local:${session}`, task)
     this.d.changed()
     this.answerStart(s, { ok: true, info: HUB_TEXT.started(to.name, refOf(session), s.folder, this.d.accountLabel(s.account)) })
   }
@@ -1408,7 +1406,7 @@ export class CoordinatorHub {
     const task = this.record(taskInput)
     if (task === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
     this.d.mail.add(task)
-    this.relayStartWords(s, remoteKey(r.device, session), name, task)
+    this.relayStartWords(s, remoteKey(r.device, session), task)
     this.dropStart(s.tabId)
     this.d.changed()
     this.answerStart(s, { ok: true, info: HUB_TEXT.startedThere(name, refOf(session), r.deviceName, r.place, r.account) })
