@@ -773,7 +773,16 @@ test('a switch clicked in a long list keeps the list where it was scrolled to', 
       return el.scrollTop
     })
     expect(middle).toBeGreaterThan(100)
-    const toggle = page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(20)
+    // the switch in the middle of what the list shows, whatever a row's height on this system: fully in view, so the click
+    // itself scrolls nothing (a switch picked by its place could sit below the fold where rows are taller, as on macOS)
+    const index = await list.evaluate((el) => {
+      const box = el.getBoundingClientRect()
+      const mid = box.top + box.height / 2
+      const switches = [...el.querySelectorAll<HTMLElement>('[role="switch"]')].filter((s) => /^Turn srv\d+ off$/.test(s.getAttribute('aria-label') ?? ''))
+      const off = (s: HTMLElement): number => { const r = s.getBoundingClientRect(); return Math.abs(r.top + r.height / 2 - mid) }
+      return switches.reduce((best, s, i) => (off(s) < off(switches[best]!) ? i : best), 0)
+    })
+    const toggle = page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(index)
     const name = ((await toggle.getAttribute('aria-label')) ?? '').replace(/^Turn (\S+) off$/, '$1')
     const before = await toggle.boundingBox()
     await toggle.click()
@@ -784,7 +793,7 @@ test('a switch clicked in a long list keeps the list where it was scrolled to', 
     const after = await list.evaluate((el) => el.scrollTop)
     expect(Math.abs(after - middle)).toBeLessThanOrEqual(4)
     // the row that took the clicked one's place is still under the pointer
-    const next = await page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(20).boundingBox()
+    const next = await page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(index).boundingBox()
     expect(Math.abs((next?.y ?? 0) - (before?.y ?? 0))).toBeLessThanOrEqual(4)
   } finally {
     await app.close()

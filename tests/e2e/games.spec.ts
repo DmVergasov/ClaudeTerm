@@ -2,7 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chatReady, CHAT_INPUT, launchChatTab, sendMessage } from './chat-helpers'
-import { KEY_LABELS, KEYS, launchApp, makeDataDir, openTabInFront } from './helpers'
+import { KEY_LABELS, KEYS, launchApp, makeDataDir, openTabInFront, panelSettled } from './helpers'
 
 const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']
 
@@ -469,13 +469,18 @@ async function closeWindow(app: ElectronApplication): Promise<void> {
 test('the window stays left of the side panel', async () => {
   const { app, page } = await launchApp()
   await page.keyboard.press(KEYS.images)
-  await expect(page.locator('#image-panel')).not.toHaveClass(/collapsed/)
+  // the panel is in and at rest: where the window grows for it (macOS), the room comes before the slide ends
+  await panelSettled(page, true)
   await toggle(page).click()
   await expect(win(page)).toBeVisible()
 
-  const window = await win(page).boundingBox()
-  const panel = await page.locator('#image-panel').boundingBox()
-  expect(window!.x + window!.width).toBeLessThanOrEqual(panel!.x)
+  // how far the game window's right edge is left of the panel: at least 0 once the layout has settled
+  const clear = async (): Promise<number> => {
+    const window = await win(page).boundingBox()
+    const panel = await page.locator('#image-panel').boundingBox()
+    return panel!.x - (window!.x + window!.width)
+  }
+  await expect.poll(clear).toBeGreaterThanOrEqual(0)
   await app.close()
 })
 
