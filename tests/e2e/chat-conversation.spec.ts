@@ -1567,6 +1567,34 @@ test('new items that come before the view is told of a scroll up keep the reader
   }
 })
 
+test('a size change before the view hears of a scroll up keeps the reader where they are', async () => {
+  const { app, page, tabId, pipeName } = await restoredLong()
+  try {
+    // the scroll event is held back, as in the test above, while the window still draws: its frame delivers a size change of
+    // the chat area (the window is resized) to the view's resize observer before the view has heard of the scroll
+    await page.evaluate(() => {
+      window.addEventListener('scroll', (e) => {
+        if (e.target instanceof Element && e.target.classList.contains('chat-scroll')) e.stopImmediatePropagation()
+      }, true)
+    })
+    const before = await page.locator(SCROLL).evaluate((el) => { el.scrollTop -= 1500; return el.scrollTop })
+    const height = await page.locator(SCROLL).evaluate((el) => el.clientHeight)
+    await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]!
+      const [w, h] = win.getContentSize()
+      win.setContentSize(w!, h! + 40)
+    })
+    await expect.poll(() => page.locator(SCROLL).evaluate((el) => el.clientHeight)).not.toBe(height)
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    expect(Math.abs(await page.locator(SCROLL).evaluate((el) => el.scrollTop) - before)).toBeLessThanOrEqual(2)
+    await sendDividers(pipeName, tabId, 3)
+    await expect(page.locator('.chat-pill')).toBeVisible()
+    expect(Math.abs(await page.locator(SCROLL).evaluate((el) => el.scrollTop) - before)).toBeLessThanOrEqual(2)
+  } finally {
+    await app.close()
+  }
+})
+
 test('a step and a thinking block that leave the window come back with their state, and a call that ends away shows its result', async () => {
   const { app, page, tabId, pipeName } = await launchChatTab({
     turns: { keep: [{ thinking: 'Checking the build first.', ms: 2000 }, { tool: { name: 'Bash', input: { command: 'npm test' }, result: 'ok', ms: 5000 } }, { text: 'Done.' }] }

@@ -193,6 +193,8 @@ export class ChatView {
   private readonly resize = new ResizeObserver(() => {
     // a plan card is at most half the conversation's height
     this.element.style.setProperty('--chat-plan-max', `${Math.floor(this.scroll.clientHeight / 2)}px`)
+    // a scroll up the view has not heard of yet is taken first, or the column would go back to its end
+    this.catchScroll()
     this.settle()
     this.updatePill()
   })
