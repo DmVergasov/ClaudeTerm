@@ -1455,7 +1455,7 @@ export class CoordinatorHub {
     this.forwardFormer(old)
   }
 
-  /** a coordinator's remote reports in flight to a former id here are written again to the current one; a task a hosted session holds is taken by its own hand-over, so it is not copied */
+  /** a coordinator's remote reports and progress notes in flight to a former id here are written again to the current one; a task a hosted session holds is taken by its own hand-over, so it is not copied */
   private forwardFormer(old: string): void {
     for (const r of this.d.mail.all()) if (r.to.session === old && (kindOf(r) === 'report' || kindOf(r) === 'progress')) this.forwardArrived(r)
   }
@@ -1493,12 +1493,12 @@ export class CoordinatorHub {
     return this.norm(r.from.device) === null && (r.from.session === c.session || c.former.includes(r.from.session))
   }
 
-  /** whether a coordinator takes a report from another device: its session is attached to it */
+  /** whether a coordinator takes a report or a progress note from another device: its session is attached to it */
   private takesReport(r: MailRecord, c: StoredCoordinator | null): boolean {
     return c !== null && c.attachments.some((a) => a.session === r.from.session && a.device === this.norm(r.from.device))
   }
 
-  /** an undelivered, unread report from another device that no coordinator here takes: its session is attached to no coordinator of this device, by its id or a former one */
+  /** an undelivered, unread report or progress note from another device that no coordinator here takes: its session is attached to no coordinator of this device, by its id or a former one */
   private unroutedReport(r: MailRecord): boolean {
     if (r.delivered || r.read || this.norm(r.to.device) !== null || this.norm(r.from.device) === null) return false
     return !this.takesReport(r, this.d.store.coordinatorBy(r.to.session))

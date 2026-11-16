@@ -691,6 +691,21 @@ describe('new ids across devices', () => {
     expect(c.hub.accepts(copy, 'tab-c', 'prompt')).toBe(true)
   })
 
+  it('a progress note that waited in Studio before its coordinator cleared is forwarded to the new id at the clear, and the new coordinator takes it', () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    s.hub.turnEnded('tab-l1', { background: true, lastMessage: 'Waiting for the tests.' })
+    sync(c, s)
+    const waiting = records(c, 'progress')[0]
+    expect(waiting).toMatchObject({ to: { session: S.coord }, delivered: false, read: false })
+    clear(c, 'tab-c', S.coord, NEW.coord)
+    const copy = records(c, 'progress').find((r) => r.to.session === NEW.coord)!
+    expect(copy).toMatchObject({ delivered: false, read: false, text: 'Waiting for the tests.', replyTo: waiting.replyTo, from: expect.objectContaining({ session: L.one }) })
+    expect(c.mail.get(waiting.id)).toMatchObject({ delivered: true, read: true })
+    expect(c.hub.accepts(copy, 'tab-c', 'prompt')).toBe(true)
+  })
+
   it('a replacing coordinator takes Laptop\'s session with its task; the report goes to it with the previous coordinator\'s note', () => {
     c.hub.message('tab-c', 'e10000', 'Fix the parser.')
     sync(c, s)
