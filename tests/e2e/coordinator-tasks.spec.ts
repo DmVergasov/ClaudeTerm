@@ -99,6 +99,31 @@ test('background work still running at the Stop keeps the task open', async () =
   }
 })
 
+test('a Stop with background work still running sends the coordinator the answer at once as a progress note; the report comes when the work ends', async () => {
+  const t = await openTask()
+  try {
+    await done(t.pipeName, t.tab2, t.sid2, {
+      background: true,
+      tasks: [{ id: 'b1', type: 'shell', description: 'npm run test:e2e', command: 'npm run test:e2e' }],
+      lastMessage: "The full test run is going in the background. I wait for the person's go to push."
+    })
+    const note = await within(t.c, 10_000)
+    expect(note.info).toContain('Progress from a session attached to you, through ClaudeTerm: its task is still open, background work is running.')
+    expect(note.info).toContain("> The full test run is going in the background. I wait for the person's go to push.")
+
+    // the coordinator answers the person and rests; its next watcher gets the report when the work ends
+    await done(t.pipeName, t.tab1, t.sid1, { lastMessage: 'The tests run; I will tell you.' })
+    const c2 = waitForMail(t.pipeName, t.tab1, t.sid1)
+    c2.catch(() => {})
+    await done(t.pipeName, t.tab2, t.sid2, { lastMessage: 'Tests pass; pushed.' })
+    const report = await within(c2, 15_000)
+    expect(report.info).toContain('Report from a session attached to you, through ClaudeTerm: its task finished.')
+    expect(report.info).toContain('> Tests pass; pushed.')
+  } finally {
+    await t.app.close()
+  }
+})
+
 test('an error ClaudeTerm does not continue fails the task', async () => {
   const t = await openTask()
   try {

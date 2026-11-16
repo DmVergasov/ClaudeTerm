@@ -28,7 +28,7 @@ import {
   type StoredTask
 } from './coordinator-store'
 import { remoteFolderText } from './remote-start'
-import { REASONS, reportText } from './report-text'
+import { progressText, REASONS, reportText } from './report-text'
 import { currentTask, nextTask, stepTask, type TaskEvent } from './task-machine'
 
 /** a Claude tab of this device, as the hub needs it */
@@ -744,11 +744,11 @@ export class CoordinatorHub {
       const held = hosted.tasks.find((t) => t.id === r.id)
       return held?.state === 'queued' && this.nextQueuedTask(session)?.id === r.id
     }
-    // a report from another device is taken only by the coordinator it is addressed to, while its session is attached to it
-    if (kind === 'report' && this.norm(r.from.device) !== null && !this.takesReport(r, this.d.store.coordinator(r.to.session))) return false
+    // a report or a progress note from another device is taken only by the coordinator it is addressed to, while its session is attached to it
+    if ((kind === 'report' || kind === 'progress') && this.norm(r.from.device) !== null && !this.takesReport(r, this.d.store.coordinator(r.to.session))) return false
     if (kind === 'report' && r.outcome === 'stopped') return into === 'running'
-    // a prompt carries a report, never a plain message; and only a tab that still coordinates takes a report as a prompt
-    if (into === 'prompt') return kind === 'report' && this.isCoordinator(tabId)
+    // a prompt carries a report or a progress note, never a plain message; and only a tab that still coordinates takes one as a prompt
+    if (into === 'prompt') return (kind === 'report' || kind === 'progress') && this.isCoordinator(tabId)
     return true
   }
 
@@ -769,7 +769,7 @@ export class CoordinatorHub {
     this.d.changed()
   }
 
-  /** a turn ended; without background work left, the task ends at rest after REST_SETTLE_MS, unless a turn starts meanwhile */
+  /** a turn ended; without background work left, the task ends at rest after REST_SETTLE_MS, unless a turn starts meanwhile; with background work left, the coordinator gets the answer at once as a progress note */
   turnEnded(tabId: string, end: { background: boolean; lastMessage: string | null }): void {
     this.inTurn.delete(tabId)
     const cur = this.currentOf(tabId)
@@ -779,8 +779,36 @@ export class CoordinatorHub {
       const taskId = cur.task.id
       this.settle.set(tabId, this.d.later(REST_SETTLE_MS, () => this.rest(tabId, taskId)))
     }
+    // background work still runs: the task stays open, and the coordinator hears at once what the turn ended with
+    if (cur && end.background && end.lastMessage !== null && cur.task.state === 'open') this.sendProgress(cur, end.lastMessage)
     this.d.recheckMail()
     this.d.poke(tabId)
+  }
+
+  /** a turn on an open task ended with background work left: the coordinator gets the turn's answer at once as a progress note, unless the newest note on this task says the same */
+  private sendProgress(cur: { session: string; task: StoredTask }, lastMessage: string): void {
+    const text = progressText(lastMessage)
+    if (text === null) return
+    const h = this.d.store.hosted(cur.session)
+    if (!h) return
+    if (this.lastProgress(cur.task.id)?.text === text) return
+    const id = this.write({
+      kind: 'progress',
+      from: this.address(null, h.session),
+      to: this.address(h.coordinator.device, h.coordinator.session),
+      replyTo: cur.task.id,
+      text,
+      delivered: false,
+      read: false
+    })
+    if (id === null) this.d.log.warn(`coordinator: the progress note of the task of ${h.session} was not saved`)
+  }
+
+  /** the newest progress note on a task: the latest sentAt, and among equal times the record later in mail.all() */
+  private lastProgress(taskId: string): MailRecord | null {
+    let last: MailRecord | null = null
+    for (const r of this.d.mail.all()) if (kindOf(r) === 'progress' && r.replyTo === taskId && (last === null || r.sentAt >= last.sentAt)) last = r
+    return last
   }
 
   /** a turn failed: a usage limit, or a cut ClaudeTerm continues, ends nothing; any other error fails the task */
@@ -1429,15 +1457,15 @@ export class CoordinatorHub {
 
   /** a coordinator's remote reports in flight to a former id here are written again to the current one; a task a hosted session holds is taken by its own hand-over, so it is not copied */
   private forwardFormer(old: string): void {
-    for (const r of this.d.mail.all()) if (r.to.session === old && kindOf(r) === 'report') this.forwardArrived(r)
+    for (const r of this.d.mail.all()) if (r.to.session === old && (kindOf(r) === 'report' || kindOf(r) === 'progress')) this.forwardArrived(r)
   }
 
-  /** a report or a task from another device, not delivered or read, addressed to a former id of a coordinator or hosted session here, is written again to the current id, and the original is delivered and read */
+  /** a report, a progress note or a task from another device, not delivered or read, addressed to a former id of a coordinator or hosted session here, is written again to the current id, and the original is delivered and read */
   private forwardArrived(r: MailRecord): boolean {
     if (r.delivered || r.read || this.norm(r.to.device) !== null || this.norm(r.from.device) === null) return false
     const kind = kindOf(r)
-    if (kind !== 'report' && kind !== 'task') return false
-    const holder = kind === 'report' ? this.d.store.coordinatorBy(r.to.session) : this.d.store.hostedBy(r.to.session)
+    if (kind !== 'report' && kind !== 'task' && kind !== 'progress') return false
+    const holder = kind === 'task' ? this.d.store.hostedBy(r.to.session) : this.d.store.coordinatorBy(r.to.session)
     if (!holder || holder.session === r.to.session) return false
     // a task the hosted session already holds is not copied: a copy would queue it twice
     if (kind === 'task' && this.d.store.hostedBy(r.to.session)?.tasks.some((t) => t.id === r.id)) return false
@@ -1726,6 +1754,7 @@ export class CoordinatorHub {
     let taken = false
     let held = false
     let signalled = false
+    let noted = false
     const pokes: string[] = []
     for (const r of changed) {
       if (kindOf(r) === 'attach') {
@@ -1736,7 +1765,7 @@ export class CoordinatorHub {
         if (this.detachArrived(r)) signalled = true
         continue
       }
-      // a report or task still addressed to a former id is written again to the current one, before any rule that would drop it
+      // a report, a progress note or a task still addressed to a former id is written again to the current one, before any rule that would drop it
       if (this.forwardArrived(r)) continue
       if (kindOf(r) === 'report') {
         if (this.holdReport(r)) {
@@ -1747,6 +1776,18 @@ export class CoordinatorHub {
           // a report that no coordinator here takes wakes nobody, so it is marked delivered and read
           this.d.mail.mark([r.id], 'delivered')
           this.d.mail.mark([r.id], 'read')
+        }
+        continue
+      }
+      if (kindOf(r) === 'progress') {
+        // a progress note no coordinator here takes wakes nobody; one a coordinator takes wakes its tab, which is prompted with it
+        if (this.unroutedReport(r)) {
+          this.d.mail.mark([r.id], 'delivered')
+          this.d.mail.mark([r.id], 'read')
+        } else if (!r.delivered && this.norm(r.to.device) === null) {
+          const tab = this.tabOfSession(r.to.session)
+          if (tab) pokes.push(tab.tabId)
+          noted = true
         }
         continue
       }
@@ -1763,7 +1804,7 @@ export class CoordinatorHub {
     }
     if (taken) this.d.recheckMail()
     for (const tabId of pokes) this.d.poke(tabId)
-    if (taken || held || signalled) this.d.changed()
+    if (taken || held || signalled || noted) this.d.changed()
   }
 
   /** a report a session of this device sent a coordinator of this device is the last report of that session's attachment, unless it holds this one or a newer one */

@@ -768,6 +768,71 @@ describe('CoordinatorHub task lifecycle', () => {
     expect(records(w, 'report')).toMatchObject([{ outcome: 'finished', text: 'Tests pass.' }])
   })
 
+  it('a Stop with background work sends a progress note at once with the answer; the task stays open and its report comes at the end', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.pokes.length = 0
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: "Tests run in the background; I wait for the person's go to push." })
+    expect(records(w, 'progress')).toEqual([
+      expect.objectContaining({
+        from: expect.objectContaining({ session: S.one }),
+        to: expect.objectContaining({ session: S.coord }),
+        replyTo: task.id,
+        text: "Tests run in the background; I wait for the person's go to push.",
+        delivered: false,
+        read: false
+      })
+    ])
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ id: task.id, state: 'open' }])
+    expect(w.timers).toEqual([])
+    expect(records(w, 'report')).toEqual([])
+    expect(w.pokes).toContain('tab-c')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Pushed.' })
+    fire(w)
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'finished', text: 'Pushed.' }])
+    expect(records(w, 'progress')).toHaveLength(1)
+  })
+
+  it('the same answer at the next background Stop sends no second note; a new answer sends one', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: 'Waiting for the tests.' })
+    w.hub.turnStarted('tab-1')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: '  Waiting for the tests.\n' })
+    expect(records(w, 'progress').map((r) => r.text)).toEqual(['Waiting for the tests.'])
+    w.hub.turnStarted('tab-1')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: '3 of 5 suites pass.' })
+    expect(records(w, 'progress').map((r) => r.text)).toEqual(['Waiting for the tests.', '3 of 5 suites pass.'])
+  })
+
+  it('an answer that returns to an earlier one after a different note is sent again', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: 'Waiting for the tests.' })
+    w.hub.turnStarted('tab-1')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: '3 of 5 suites pass.' })
+    w.hub.turnStarted('tab-1')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: 'Waiting for the tests.' })
+    expect(records(w, 'progress').map((r) => r.text)).toEqual(['Waiting for the tests.', '3 of 5 suites pass.', 'Waiting for the tests.'])
+  })
+
+  it('no note for a Stop without an answer, for a task not open yet, or without background work', () => {
+    w.hub.handedOver('tab-1', [task], 'prompt')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: 'An answer of the turn before the task.' })
+    w.hub.turnStarted('tab-1')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: null })
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: '   ' })
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Done.' })
+    expect(records(w, 'progress')).toEqual([])
+  })
+
+  it('a progress note is mail for the coordinator: a watcher takes it, a prompt carries it, and no other tab takes it as a prompt', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: 'Waiting for the tests.' })
+    const note = records(w, 'progress')[0]
+    expect(w.hub.accepts(note, 'tab-c', 'idle')).toBe(true)
+    expect(w.hub.accepts(note, 'tab-c', 'running')).toBe(true)
+    expect(w.hub.accepts(note, 'tab-c', 'prompt')).toBe(true)
+    expect(w.hub.accepts(note, 'tab-2', 'prompt')).toBe(false)
+  })
+
   it('a Stop while the tab is not resting does not end the task', () => {
     w.resting['tab-1'] = false
     w.hub.handedOver('tab-1', [task], 'idle')

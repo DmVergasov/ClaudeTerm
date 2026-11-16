@@ -586,6 +586,35 @@ describe('attach, detach and tasks across devices', () => {
     sync(c, s)
     expect(await answer).toEqual({ ok: false, error: 'parser · Laptop is not open under this session id on its device: it was closed, or cleared to a new session id.' })
   })
+
+  it('a progress note from a session no longer attached wakes nobody', () => {
+    c.hub.attach('tab-c', 'e10000')
+    sync(c, s)
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    c.hub.detach('tab-c', 'e10000') // Laptop hears of it at the next sync only
+    s.hub.turnEnded('tab-l1', { background: true, lastMessage: 'Waiting for the tests.' })
+    sync(c, s)
+    const [note] = records(c, 'progress')
+    expect(note).toMatchObject({ delivered: true, read: true })
+    expect(c.hub.accepts(note, 'tab-c', 'idle')).toBe(false)
+  })
+
+  it("a progress note of Laptop's session reaches Studio's coordinator, and the task stays open there", () => {
+    c.hub.attach('tab-c', 'e10000')
+    sync(c, s)
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    const [task] = records(s, 'task')
+    s.hub.handedOver('tab-l1', [task], 'idle')
+    s.hub.turnEnded('tab-l1', { background: true, lastMessage: 'Waiting for the tests.' })
+    sync(c, s)
+    const [note] = records(c, 'progress')
+    expect(note).toMatchObject({ from: { device: DEV_S, session: L.one }, to: { device: DEV_C, session: S.coord }, replyTo: task.id, text: 'Waiting for the tests.', delivered: false })
+    expect(c.hub.accepts(note, 'tab-c', 'prompt')).toBe(true)
+    expect(s.store.hosted(L.one)!.tasks).toMatchObject([{ state: 'open' }])
+  })
 })
 
 describe('new ids across devices', () => {
@@ -646,6 +675,20 @@ describe('new ids across devices', () => {
     const copy = reports.find((r) => r.to.session === NEW.coord)!
     expect(copy).toMatchObject({ delivered: false, text: 'Parser fixed.', from: expect.objectContaining({ session: L.one }) })
     expect(c.store.coordinator(NEW.coord)!.attachments[0].lastReport!.id).toBe(copy.id)
+  })
+
+  it("a progress note Laptop sent to the coordinator's old id is forwarded to its new one, which takes it", () => {
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    clear(c, 'tab-c', S.coord, NEW.coord) // Laptop's turn ends before it hears of the clear
+    s.hub.turnEnded('tab-l1', { background: true, lastMessage: 'Waiting for the tests.' })
+    sync(c, s)
+    const notes = records(c, 'progress')
+    expect(notes.find((r) => r.to.session === S.coord)).toMatchObject({ delivered: true, read: true })
+    const copy = notes.find((r) => r.to.session === NEW.coord)!
+    expect(copy).toMatchObject({ delivered: false, text: 'Waiting for the tests.' })
+    expect(c.hub.accepts(copy, 'tab-c', 'prompt')).toBe(true)
   })
 
   it('a replacing coordinator takes Laptop\'s session with its task; the report goes to it with the previous coordinator\'s note', () => {

@@ -24,6 +24,17 @@ export function reportText(o: { outcome: ReportOutcome; reason: string | null; l
     text = body ? `${head}\n\nIts last answer:\n\n${body}` : head
   }
   if (o.previous) text = `(This task was given by the previous coordinator, ${o.previous}.)\n\n${text}`
+  return cutReport(text)
+}
+
+/** the text of a progress note: the turn's answer, cut as a report's is; null for a turn without an answer */
+export function progressText(lastMessage: string): string | null {
+  const body = lastMessage.trim()
+  return body === '' ? null : cutReport(body)
+}
+
+/** a text kept to REPORT_TEXT_MAX, with the CUT_NOTE after it, when it is longer */
+function cutReport(text: string): string {
   if (text.length <= REPORT_TEXT_MAX) return text
 
   let kept = text.slice(0, REPORT_TEXT_MAX)

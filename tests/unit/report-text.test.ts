@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CUT_NOTE, NO_ANSWER, REASONS, REPORT_TEXT_MAX, reportText } from '../../src/main/coordinator/report-text'
+import { CUT_NOTE, NO_ANSWER, REASONS, REPORT_TEXT_MAX, progressText, reportText } from '../../src/main/coordinator/report-text'
 import { MAIL_TEXT_MAX } from '../../src/shared/mail'
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
@@ -54,5 +54,15 @@ describe('reportText', () => {
   it('3000 emoji, 6000 units, are kept whole without the note', () => {
     expect(reportText({ outcome: 'finished', reason: null, lastMessage: '😀'.repeat(3000), previous: null }))
       .toBe('😀'.repeat(3000))
+  })
+})
+
+describe('progressText', () => {
+  it('is the answer trimmed, cut as a report is; null for a turn without an answer', () => {
+    expect(progressText("  Tests run in the background; I wait for the person's go to push.\n")).toBe("Tests run in the background; I wait for the person's go to push.")
+    expect(progressText('   ')).toBeNull()
+    const long = progressText('x'.repeat(REPORT_TEXT_MAX + 10))!
+    expect(long.endsWith(CUT_NOTE)).toBe(true)
+    expect(long.length).toBeLessThanOrEqual(MAIL_TEXT_MAX)
   })
 })
