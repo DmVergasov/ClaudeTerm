@@ -353,6 +353,23 @@ test('the setting switches the open tab to the terminal and back, and the conver
   }
 })
 
+test('the setting switches a tab whose message box has the keyboard to the terminal: the terminal takes the keyboard', async () => {
+  const { app, page, tabId } = await launchChatTab({ turns: { hello: [{ text: 'Hi there' }] } })
+  try {
+    await send(page, 'hello')
+    await waitForTurn(page, tabId, 'idle')
+    await page.locator(INPUT).focus()
+    await expect(page.locator(INPUT)).toBeFocused()
+
+    await showClaudeTabsIn(page, 'terminal')
+    await expect(page.locator('#terminals .terminal-host:visible')).toHaveCount(1)
+    // the hidden message box keeps nothing: the keys go to Claude Code's prompt
+    await expect(page.locator('.terminal-host:visible .xterm-helper-textarea')).toBeFocused()
+  } finally {
+    await app.close()
+  }
+})
+
 test('a tab that works when the setting changes switches once its answer ends; its way back is off meanwhile', async () => {
   const { app, page, tabId } = await launchChatTab({ turns: { wait: [{ wait: 6000 }] } })
   try {

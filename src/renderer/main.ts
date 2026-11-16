@@ -1000,10 +1000,8 @@ function applyView(t: TabState): void {
   // the MCP · Plugins panel is the chat view's: a switch of the view changes whether it is offered
   syncMcpPanel()
   if (t.info.id !== activeId) return
-  // the view that comes takes the keyboard, unless the keyboard is in the game window or a field: a switch of the view does not take it from the game
-  const at = document.activeElement
-  const keep = !!at?.closest('#games') || at instanceof HTMLInputElement || at instanceof HTMLTextAreaElement
-  showTab(t, true, !keep)
+  // the view that comes takes the keyboard, unless the keyboard is in the game window: a switch of the view does not take it from the game
+  showTab(t, true, !document.activeElement?.closest('#games'))
   if (isChatView(t)) loadChat(t.info.id)
 }
 
