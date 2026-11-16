@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LIMIT_ERROR } from '../../src/main/auto-continue'
 import { HUB_TEXT, START_WAIT_MS, worktreeInstruction, type HubTab } from '../../src/main/coordinator/coordinator-hub'
 import { CoordinatorStore, MAX_ATTACHMENTS, MAX_COORDINATORS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
+import { WORDS_KEEP_MS } from '../../src/main/coordinator/person-words'
 import { refOf } from '../../src/main/mail/agent-directory'
 import type { CoordOp } from '../../src/shared/coordinator'
 import type { MailRecord } from '../../src/shared/mail'
-import { ACME, BETA, NOW, S, TITLES, cleanWorlds, fire, records, tab, uid, world, type World } from '../fixtures/coordinator-world'
+import { ACME, BETA, NOW, S, TITLES, cleanWorlds, fire, records, said, tab, uid, world, type World } from '../fixtures/coordinator-world'
 
 const SELF = 'd0000000-0000-4000-8000-0000000000dd'
 const PROBLEM =
@@ -556,6 +557,106 @@ describe('tasks given', () => {
     expect(w.store.coordinator(S.coord)!.attachments[0]).toMatchObject({ resolved: true, failed: false })
     expect(w.hub.view('tab-c')!.sessions[0].group).toBe('resolved')
     expect(w.hub.resolve('tab-1', 'a10000')).toEqual({ ok: false, error: HUB_TEXT.notCoordinator })
+  })
+})
+
+describe("message_session with the person's words", () => {
+  let w: World
+  const give = (words: string, text = 'Merge feat/x into master and push.', session = 'a10000') => w.hub.tool('tab-c', { op: 'message', session, text, words })
+
+  beforeEach(() => {
+    w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.attach('tab-c', 'b20000')
+  })
+
+  it("the person's latest message goes with the task: the record carries it and the coordinator's answer before it, and the person is told at once", async () => {
+    said(w, 'Merge it into master.')
+    expect(await give('Merge it into master.')).toEqual({ ok: true, info: HUB_TEXT.queuedWords('parser · Desktop', 'a10000') })
+    const [task] = records(w, 'task')
+    expect(task).toMatchObject({ text: 'Merge feat/x into master and push.', words: 'Merge it into master.', context: 'Shall I merge feat/x into master?', project: 'acme' })
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ id: task.id, state: 'queued' }])
+    expect(w.toasts).toEqual(['Your words went to parser · Desktop: «Merge it into master.»'])
+    expect(w.infos).toContain(`coordinator: the person's words went to parser · Desktop with the task ${task.id}`)
+  })
+
+  it("the words kept are the transcript's, normalized; the toast clips their first line to 60 characters", async () => {
+    said(w, `${'Merge '.repeat(15)}now.\nThen push.`)
+    expect(await give(`  ${'Merge '.repeat(15)}now.\r\nThen push.\n`)).toMatchObject({ ok: true })
+    expect(records(w, 'task')[0].words).toBe(`${'Merge '.repeat(15)}now.\nThen push.`)
+    expect(w.toasts).toEqual([`Your words went to parser · Desktop: «${'Merge '.repeat(9)}Merge…»`])
+  })
+
+  it("each refusal says why and writes nothing: not the person's, sent to this session already, not their latest, too old", async () => {
+    said(w, 'Merge it into master.')
+    expect(await give('Merge it into master!')).toEqual({ ok: false, error: HUB_TEXT.wordsNotPerson })
+    expect(await give('Merge it into master.')).toMatchObject({ ok: true })
+    expect(await give('Merge it into master.')).toEqual({ ok: false, error: HUB_TEXT.wordsAgain('parser · Desktop') })
+    // one message may go to another session, once
+    expect(await give('Merge it into master.', 'Merge feat/y.', 'b20000')).toMatchObject({ ok: true })
+    w.now += 60_000
+    said(w, 'Stop.')
+    expect(await give('Merge it into master.', 'x', 'b20000')).toEqual({ ok: false, error: HUB_TEXT.wordsNotLatest })
+    w.now += WORDS_KEEP_MS + 1
+    expect(await give('Stop.')).toEqual({ ok: false, error: HUB_TEXT.wordsOld })
+    expect(records(w, 'task')).toHaveLength(2)
+    expect(w.toasts).toHaveLength(2)
+  })
+
+  it("a prompt the window sent no keys for is not the person's; one from before this app run is old", async () => {
+    said(w, 'Merge it into master.', { input: false })
+    expect(await give('Merge it into master.')).toEqual({ ok: false, error: HUB_TEXT.wordsNotPerson })
+    w.now += 60_000
+    said(w, 'Push it.')
+    w.startedAt = w.now + 1
+    expect(await give('Push it.')).toEqual({ ok: false, error: HUB_TEXT.wordsOld })
+    expect(records(w, 'task')).toEqual([])
+  })
+
+  it("the context is the coordinator's own answer from the transcript, never what the tool call says", async () => {
+    said(w, 'Go.', { context: 'Shall I release 0.22.0?' })
+    await give('Go.', 'Merge feat/x and push; the person said go.')
+    expect(records(w, 'task')[0]).toMatchObject({ words: 'Go.', context: 'Shall I release 0.22.0?' })
+    w.now += 60_000
+    said(w, 'Yes.', { context: null })
+    await give('Yes.', 'x', 'b20000')
+    expect(records(w, 'task')[1]).not.toHaveProperty('context')
+  })
+
+  it('a task with words is checked as any task first: an empty text or a session not attached is refused, and nothing is told', async () => {
+    said(w, 'Go.')
+    expect(await give('Go.', ' ')).toEqual({ ok: false, error: HUB_TEXT.noText })
+    expect(await give('Go.', 'x', 'nobody')).toMatchObject({ ok: false })
+    expect(records(w, 'task')).toEqual([])
+    expect(w.toasts).toEqual([])
+  })
+
+  it("newer words of the person to the same session say that they replace the task with the earlier words, not given to it yet", async () => {
+    said(w, 'Merge it into master.')
+    await give('Merge it into master.')
+    w.now += 60_000
+    said(w, 'Stop, do not merge.')
+    expect(await give('Stop, do not merge.', 'Do not merge feat/x.')).toEqual({ ok: true, info: `${HUB_TEXT.queuedWords('parser · Desktop', 'a10000')} ${HUB_TEXT.wordsReplaced}` })
+  })
+
+  it('a task without words is given as before, with no toast', async () => {
+    expect(await w.hub.tool('tab-c', { op: 'message', session: 'a10000', text: 'Fix the parser.' })).toEqual({ ok: true, info: HUB_TEXT.queued('parser · Desktop', 'a10000') })
+    expect(records(w, 'task')[0]).not.toHaveProperty('words')
+    expect(w.toasts).toEqual([])
+  })
+
+  it('a task given with words is never handed to a watcher: no hand-over takes it, and a plain task is still taken', async () => {
+    said(w, 'Merge it into master.')
+    await give('Merge it into master.')
+    const [withWords] = records(w, 'task')
+    for (const into of ['idle', 'running', 'next', 'prompt'] as const) expect(w.hub.accepts(withWords, 'tab-1', into)).toBe(false)
+  })
+
+  it('a plain task is taken as an idle hand-over, so the refusal above is the words alone', async () => {
+    await w.hub.tool('tab-c', { op: 'message', session: 'a10000', text: 'Fix the parser.' })
+    const [plain] = records(w, 'task')
+    expect(w.hub.accepts(plain, 'tab-1', 'idle')).toBe(true)
   })
 })
 

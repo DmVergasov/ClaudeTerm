@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoordinatorHub, type HubPeer, type HubRemoteTab, type HubTab, type RemoteOpened } from '../../src/main/coordinator/coordinator-hub'
 import { CoordinatorStore, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
+import { PersonInput } from '../../src/main/coordinator/person-input'
+import type { WordsPrompt } from '../../src/main/coordinator/person-words'
 import { nameAgents, type Agent, type AgentTab } from '../../src/main/mail/agent-directory'
 import { isShareable, MailStore } from '../../src/main/mail/mail-store'
 import type { TabWaitsState } from '../../src/main/tab-waits'
@@ -121,6 +123,14 @@ export function world(o: WorldOptions = {}) {
     openFails: false,
     /** the tabs the hub brought to the front, in order */
     activated: [] as string[],
+    /** the prompts of each tab's conversation, as the hub's prompts dep reads them: said() adds the person's */
+    prompts: {} as Record<string, WordsPrompt[]>,
+    /** the window's prompt-like input into the tabs */
+    input: new PersonInput(),
+    /** when this app run started */
+    startedAt: NOW - 3_600_000,
+    toasts: [] as string[],
+    infos: [] as string[],
     problem: o.problem ?? null,
     store: new CoordinatorStore(dir, { debounceMs: 100_000 }),
     mail: MailStore.open({ dir, now: () => NOW, debounceMs: 100_000 }),
@@ -185,6 +195,13 @@ export function world(o: WorldOptions = {}) {
       w.activated.push(tabId)
     },
     accountEmail: (account) => (account === null ? w.mainEmail : (w.emails[account] ?? null)),
+    prompts: async (tabId) => w.prompts[tabId] ?? [],
+    submits: (tabId) => w.input.submits(tabId),
+    startedAt: () => w.startedAt,
+    toast: (text) => {
+      w.toasts.push(text)
+    },
+    sender: () => ({ folder: null, branch: null }),
     recheckMail: () => {
       w.rechecks++
       w.order.push('recheck')
@@ -210,7 +227,9 @@ export function world(o: WorldOptions = {}) {
     },
     newId: o.newId ?? (() => uid(++ids)),
     log: {
-      info: () => {},
+      info: (m) => {
+        w.infos.push(m)
+      },
       warn: (m) => {
         warns.push(m)
       }
@@ -223,6 +242,20 @@ export function world(o: WorldOptions = {}) {
 export type World = ReturnType<typeof world>
 
 export const records = (w: World, kind: MailRecord['kind']): MailRecord[] => w.mail.all().filter((r) => r.kind === kind)
+
+/**
+ * The person writes to a coordinator's tab (tab-c unless given): their prompt in its transcript at the world's time, after they typed it
+ * and pressed Enter in its window a second before (none when input is false), with the coordinator's answer before it as its context.
+ * Move w.now on between two of them, as time moves between two messages.
+ */
+export function said(w: World, text: string, o: { tabId?: string; context?: string | null; id?: string; input?: boolean } = {}): WordsPrompt {
+  const tabId = o.tabId ?? 'tab-c'
+  const list = (w.prompts[tabId] ??= [])
+  const prompt: WordsPrompt = { id: o.id ?? `p-${list.length + 1}`, at: w.now, text, plain: true, after: list.at(-1)?.at ?? 0, context: o.context === undefined ? 'Shall I merge feat/x into master?' : o.context }
+  list.push(prompt)
+  if (o.input !== false) w.input.keys(tabId, `${text}\r`, w.now - 1000)
+  return prompt
+}
 
 /** runs the settle timers that wait now */
 export const fire = (w: World): void => {

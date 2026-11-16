@@ -31,6 +31,8 @@ import { badgeDescription, dotBitmap } from './app-badge'
 import { AutoContinue, CONTINUE_DELAY_MS, LIMIT_ERROR, limitResetOf, type RestoreCut } from './auto-continue'
 import { CoordinatorHub, type HubPeer, type HubRemoteTab } from './coordinator/coordinator-hub'
 import { CoordinatorStore } from './coordinator/coordinator-store'
+import { PersonInput } from './coordinator/person-input'
+import { WordsLog } from './coordinator/person-words'
 import { PromptDelivery } from './coordinator/prompt-delivery'
 import { accountForEmail } from './coordinator/remote-start'
 import { TabWaits } from './tab-waits'
@@ -108,7 +110,7 @@ import { MailStore } from './mail/mail-store'
 import { MailSync } from './mail/mail-sync'
 import { nameAgents, type Agent, type AgentTab } from './mail/agent-directory'
 import { probeClaudeVersion, readVersionCache, versionAtLeast, type ProbeRun } from './claude-version'
-import { MAIL_MIN_CLAUDE, type MailConversationView, type MailUnread } from '../shared/mail'
+import { MAIL_MIN_CLAUDE, type MailAddress, type MailConversationView, type MailUnread } from '../shared/mail'
 import { localAddresses } from './sync/address'
 import { formatDeviceStatus } from './sync/device-status'
 import { PortMirrors, screenWorkerPath } from './sync/mirror-port'
@@ -259,6 +261,8 @@ function bootstrap(): void {
     minWidth: MIN_WIDTH
   }, () => settings.sidePanel.noRoom)
   const refitPanel = (): void => { void panelRoom.refit().then((mode) => send(IPC.evPanelMode, mode)) }
+  // when this app run started: the person's words are relayed only from messages written since
+  const appStartedAt = Date.now()
   const toast = (message: string): void => {
     log.warn(message)
     if (rendererReady) send(IPC.evToast, message)
@@ -742,6 +746,8 @@ function bootstrap(): void {
 
   // a test run can have idle transcripts wait long, so that a read the hooks bring is told apart from one within the wait
   const testFeedMaxMs = isTest ? Number(process.env.CLAUDETERM_TEST_FEED_MAX_MS) || undefined : undefined
+  // the prompts and answers of each tab's conversation, as the person's-words check reads them, with the session they are of
+  const wordsLogs = new Map<string, { session: string; log: WordsLog }>()
   // a test holds the transcript poll of a turn's end back, so an answer typed meanwhile is the one that counts
   const testDoneDelayMs = isTest ? Number(process.env.CLAUDETERM_TEST_DONE_DELAY_MS) || 0 : 0
   const attachTranscript = (tabId: string, sessionId: string, transcriptPath: string): void => {
@@ -756,6 +762,10 @@ function bootstrap(): void {
     const gen = images.generation(tabId)
     // the messages the transcript held before it was read are history: they come into the panel read
     const since = Date.now()
+    // a new conversation in the tab starts its words at the switch: what the person submitted before it backs none of its prompts
+    const kept = wordsLogs.get(tabId)
+    const words = kept === undefined ? new WordsLog() : kept.session === sessionId ? kept.log : new WordsLog(Date.now())
+    wordsLogs.set(tabId, { session: sessionId, log: words })
     s.feed = new TranscriptFeed({
       transcriptPath,
       sessionId,
@@ -776,6 +786,7 @@ function bootstrap(): void {
       onPlanWorkspace: (printed, at) => void planHub.workspace(tabId, printed, at),
       onTitle: (title) => setSessionTitle(tabId, title),
       onPeerMail: (mail) => mailHub.peerMail(tabId, { ...mail, read: mail.at !== null && mail.at < since }),
+      onWords: (line) => words.add(line, Date.now()),
       pollMaxMs: testFeedMaxMs,
       subagentPollMaxMs: testFeedMaxMs,
       subagentScanMaxMs: testFeedMaxMs
@@ -1036,6 +1047,8 @@ function bootstrap(): void {
         deviceSized.delete(id)
         tabAttention.drop(id)
         tabInputs.drop(id)
+        personInput.drop(id)
+        wordsLogs.delete(id)
         titles.delete(id)
         sessionTitles.delete(id)
         lastReviews.delete(id)
@@ -1315,6 +1328,8 @@ function bootstrap(): void {
   const tabAttention = new TabAttention()
   /** the answers each of this device's tabs got: an attention that starts after a turn's end is read is void if one came meanwhile */
   const tabInputs = new TabInputs()
+  /** the window's prompt-like input into each tab, from this device or a paired one: what tells the person's prompts in a transcript from written ones */
+  const personInput = new PersonInput()
   /** a tab starts waiting with a reason: the other devices show it pulsing too */
   const startAttention = (tabId: string, reason: NotificationCase): void => {
     tabAttention.start(tabId, reason)
@@ -1591,7 +1606,11 @@ function bootstrap(): void {
     // the chats of this device's tabs as the members' calls reach them: the hub's own calls, and what a message needs here
     chat: {
       snapshot: (tabId) => chatHub.remoteSnapshot(tabId),
-      send: (tabId, s) => chatHub.send(tabId, s),
+      send: (tabId, s) => {
+        // a paired device's Send is the person's too, unless it carries a from
+        if (s.from === undefined) personInput.sent(tabId, s.text, Date.now())
+        return chatHub.send(tabId, s)
+      },
       answer: (tabId, cardId, a) => chatHub.answer(tabId, cardId, a),
       interrupt: (tabId) => interruptChat(tabId),
       setMode: (tabId, mode) => chatHub.setMode(tabId, mode),
@@ -1742,7 +1761,11 @@ function bootstrap(): void {
     // typing from any device is the user at the tab: it stops waiting everywhere; terminal reports and reading keys are no answer
     if (prompt) {
       // a key pressed as a tab closes leaves no entry behind
-      if (tabs.get(tabId)) tabInputs.bump(tabId)
+      if (tabs.get(tabId)) {
+        tabInputs.bump(tabId)
+        // the keys a permission prompt or a question takes are its answer, not the prompt's draft
+        personInput.keys(tabId, data, Date.now(), tabWaits.get(tabId).prompt !== null)
+      }
       clearAttention(tabId)
     }
     if (from === null) applySize(tabId, sizes.claim(tabId, null))
@@ -2270,6 +2293,11 @@ function bootstrap(): void {
   const mailKeyOf = (t: { claudeSessionId: string | null; exited: boolean; folder: string }): string => JSON.stringify([t.claudeSessionId, t.exited, t.folder])
   /** the mail key of each of this device's tabs as the mail last heard it */
   const mailKeys = new Map<string, string>()
+  /** the folder and branch of the session a mail address names, as a wake block names them */
+  const senderOf = (a: MailAddress): { folder: string | null; branch: string | null } => {
+    const x = agentsNow().find((g) => g.device === a.device && g.session === a.session)
+    return { folder: x?.folder ?? null, branch: x?.branch ?? null }
+  }
   const mailHub = new MailHub({
     store: mailStore,
     enabled: () => settings.agentMessages.enabled,
@@ -2290,10 +2318,7 @@ function bootstrap(): void {
       return t !== null && !t.exited
     },
     working: (tabId) => tabs.isWorking(tabId),
-    sender: (a) => {
-      const x = agentsNow().find((g) => g.device === a.device && g.session === a.session)
-      return { folder: x?.folder ?? null, branch: x?.branch ?? null }
-    },
+    sender: senderOf,
     self: () => selfDeviceId || null,
     deviceName: (device) => {
       if (device === null || device === selfDeviceId) return selfName()
@@ -2412,6 +2437,19 @@ function bootstrap(): void {
     progress: (id) => taskLists.status(id),
     taskList: (id) => taskLists.get(id),
     restingNow: claudeIdle,
+    // the prompts of a coordinator tab's conversation: its transcript is read up to now first
+    prompts: async (id) => {
+      try {
+        await sources.get(id)?.feed?.pollMain()
+      } catch (e) {
+        log.warn(`cannot read the transcript of tab=${id} for the person's words: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      return wordsLogs.get(id)?.log.prompts() ?? []
+    },
+    submits: (id) => personInput.submits(id),
+    startedAt: () => appStartedAt,
+    toast,
+    sender: senderOf,
     isDirectory: isDirAsync,
     isAbsolute: (folder) => isAbsolute(folder),
     accountLabel,
@@ -3106,6 +3144,8 @@ function bootstrap(): void {
   ipcMain.handle(IPC.chatSend, (_e, tabId: unknown, s: unknown): Promise<string | null> => {
     if (!isId(tabId) || !isChatSend(s)) return Promise.resolve('Invalid message')
     if (remote?.viewer.has(tabId)) return remote.actions.chatSend(tabId, s)
+    // the composer's Send is the person's; the Changes panel's and ClaudeTerm's own carry a from
+    if (s.from === undefined) personInput.sent(tabId, s.text, Date.now())
     return chatHub.send(tabId, s)
   })
   ipcMain.handle(IPC.chatAgentSend, (_e, tabId: unknown, agentId: unknown, text: unknown): Promise<string | null> => {

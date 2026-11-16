@@ -5,7 +5,7 @@ import { checkMailRecord } from '../../src/main/mail/mail-record'
 import { isShareable } from '../../src/main/mail/mail-store'
 import { coordinatorProblem, type CoordSessionRow, type CoordinatorView } from '../../src/shared/coordinator'
 import { MAIL_MIN_CLAUDE, type MailRecord } from '../../src/shared/mail'
-import { attachDirect, ACME, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NEW, NO_FACTS, NOW, peerOf, records, remoteTab, S, sync, tab, uid, world, type World } from '../fixtures/coordinator-world'
+import { attachDirect, ACME, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NEW, NO_FACTS, NOW, peerOf, records, remoteTab, said, S, sync, tab, uid, world, type World } from '../fixtures/coordinator-world'
 
 const TASK = '7a000000-0000-4000-8000-000000000001'
 const ATTACH_ID = '7b000000-0000-4000-8000-000000000002'
@@ -217,6 +217,24 @@ describe('attach, detach and tasks across devices', () => {
     c = worlds.c
     s = worlds.s
     c.hub.make('tab-c', false)
+  })
+
+  it("the person's words to a Laptop session go with its record; an Attaching… session, an older Laptop and an offline one are refused first, and nothing is written", async () => {
+    said(c, 'Merge it into master.')
+    const give = () => c.hub.tool('tab-c', { op: 'message', session: 'e10000', text: 'Merge.', words: 'Merge it into master.' })
+    c.hub.attach('tab-c', 'e10000')
+    expect(await give()).toEqual({ ok: false, error: HUB_TEXT.notConfirmed('parser · Laptop') })
+    sync(c, s)
+    c.peers = [peerOf(DEV_S, 'Laptop', { words: false })]
+    expect(await give()).toEqual({ ok: false, error: HUB_TEXT.oldDeviceWords('Laptop') })
+    c.peers = [peerOf(DEV_S, 'Laptop', { online: false })]
+    expect(await give()).toEqual({ ok: false, error: HUB_TEXT.wordsOffline('Laptop') })
+    expect(records(c, 'task')).toEqual([])
+    c.peers = [peerOf(DEV_S, 'Laptop')]
+    expect(await give()).toEqual({ ok: true, info: HUB_TEXT.queuedWords('parser · Laptop', 'e10000') })
+    sync(c, s)
+    expect(records(s, 'task')).toEqual([expect.objectContaining({ words: 'Merge it into master.', context: 'Shall I merge feat/x into master?' })])
+    expect(c.toasts).toEqual(['Your words went to parser · Laptop: «Merge it into master.»'])
   })
 
   it("Studio's row of Laptop's session shows the session's latest progress note while its task is open", () => {

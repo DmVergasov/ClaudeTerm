@@ -13,6 +13,8 @@ import type { HandOver } from '../mail/mail-hub'
 import type { MailStore } from '../mail/mail-store'
 import type { TabWaitsState } from '../tab-waits'
 import { LIMIT_ERROR } from '../auto-continue'
+import type { Submit } from './person-input'
+import { checkWords, type WordsPrompt } from './person-words'
 import { findRow, rowState } from './session-state'
 import { listText, readText, roleBlock, roleNoteText, turnNoteText } from './session-text'
 import {
@@ -111,6 +113,11 @@ export interface CoordinatorHubDeps {
   clock(ms: number): string // HH:MM
   now(): number
   later(ms: number, fn: () => void): () => void // a timer; the function cancels it
+  prompts(tabId: string): Promise<readonly WordsPrompt[]> // the prompts of a tab's conversation, its transcript read up to now first
+  submits(tabId: string): readonly Submit[] // what the window submitted into the tab, oldest first (PersonInput.submits)
+  startedAt(): number // when this app run started
+  toast(text: string): void
+  sender(a: MailAddress): { folder: string | null; branch: string | null } // the folder and branch a wake block names, as MailHub's sender
   newId(): string
   log: Pick<Logger, 'info' | 'warn'>
 }
@@ -191,10 +198,37 @@ export const HUB_TEXT = {
   closedThere: (name: string) => `${name} is not open under this session id on its device: it was closed, or cleared to a new session id.`,
   problemThere: (device: string, problem: string) => `${device} cannot take coordinated sessions now: ${problem}`,
   noProjectGiven: 'The attach request named no project.',
-  notAttached: 'This tab is not attached to a coordinator.'
+  notAttached: 'This tab is not attached to a coordinator.',
+  queuedWords: (name: string, ref: string) =>
+    `The person's words went to ${name} [${ref}] with the task. They are typed into its prompt when it is idle, your task under them; its report comes to you by itself when its turn on it ends.`,
+  wordsReplaced: "It replaces the task with the person's earlier words that the session has not been given yet.",
+  wordsReplacedRemote: "It replaces the task with the person's earlier words, if they have not been typed yet.",
+  wordsNotPerson: "These words are not one of the person's messages to you. Pass one of their messages exactly as they wrote it, ask the person, or send the task without words.",
+  wordsOld: 'This message of the person is older than a day, or from before ClaudeTerm started again. Ask the person to say it again, or send the task without words.',
+  wordsNotLatest: 'The person has written to you since this message, and only their latest message can be passed. Pass that one exactly, ask the person, or send the task without words.',
+  wordsAgain: (name: string) => `This message of the person went to ${name} already. Put what it covers in one task, or send the follow-up without words.`,
+  wordsOffline: (device: string) => `${device} is not connected, and the person's words go only to a session whose device is connected. Say it in that session, or send the task without words.`,
+  oldDeviceWords: (device: string) => `${device} runs an older ClaudeTerm: your words cannot go there; say it in that session.`,
+  wordsToast: (name: string, line: string) => `Your words went to ${name}: «${line}»`
 }
 
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error })
+
+/** a task's target as message_session finds it */
+interface TaskTarget {
+  c: StoredCoordinator
+  att: StoredAttachment
+  row: CoordSessionRow
+}
+
+/** the person's words a task carries, as the check found them, and the coordinator's answer they reply to */
+interface WordsFields {
+  words: string
+  context: string | null
+}
+
+/** a task given: its record's id, or the refusal */
+type GiveResult = { ok: true; info: string; id: string } | { ok: false; error: string }
 
 /** a session start the hub waits on: its tab is open, and its session id has not come yet */
 interface PendingStart {
@@ -298,6 +332,8 @@ export class CoordinatorHub {
   private readonly briefDue = new Set<string>()
   /** the chip's coordinator starts, by project key: a tab that becomes the project's coordinator once it has a session and a project */
   private readonly makes = new Map<string, PendingMake>()
+  /** the person's messages relayed, each as its prompt id and the row key of the session it went to: one message goes to one session once */
+  private readonly relayed = new Set<string>()
   private readonly unsubscribe: () => void
 
   constructor(private readonly d: CoordinatorHubDeps) {
@@ -465,7 +501,7 @@ export class CoordinatorHub {
       case 'detach':
         return this.detach(tabId, op.session)
       case 'message':
-        return this.message(tabId, op.session, op.text)
+        return op.words == null ? this.message(tabId, op.session, op.text) : this.messageWords(tabId, op.session, op.text, op.words)
       case 'resolve':
         return this.resolve(tabId, op.session)
       case 'start':
@@ -675,17 +711,30 @@ export class CoordinatorHub {
   }
 
   message(tabId: string, target: string, text: string): PipeResponse {
+    const t = this.taskTarget(tabId, target, text)
+    if ('error' in t) return fail(t.error)
+    const given = this.give(t, text, null)
+    return given.ok ? { ok: true, info: given.info } : given
+  }
+
+  /** the checks of a task to one of the coordinator's sessions, in order: the target it finds, or the refusal */
+  private taskTarget(tabId: string, target: string, text: string): TaskTarget | { error: string } {
     const c = this.own(tabId)
-    if (!c) return fail(HUB_TEXT.notCoordinator)
+    if (!c) return { error: HUB_TEXT.notCoordinator }
     const problem = this.d.problem()
-    if (problem !== null) return fail(problem)
-    if (text.trim() === '') return fail(HUB_TEXT.noText)
-    if (text.length > COORD_TASK_MAX) return fail(HUB_TEXT.tooLong)
+    if (problem !== null) return { error: problem }
+    if (text.trim() === '') return { error: HUB_TEXT.noText }
+    if (text.length > COORD_TASK_MAX) return { error: HUB_TEXT.tooLong }
     const found = this.attachedFind(c, target)
-    if ('error' in found) return fail(found.error)
-    if (found.att === null) return fail(HUB_TEXT.starting(found.row.name))
-    const { att, row } = found
-    if (att.device !== null) return this.messageDevice(c, att, att.device, row, text)
+    if ('error' in found) return { error: found.error }
+    if (found.att === null) return { error: HUB_TEXT.starting(found.row.name) }
+    return { c, att: found.att, row: found.row }
+  }
+
+  /** gives a task to the session a target names: a session of another device by its record, one of this device into its hosted entry */
+  private give(t: TaskTarget, text: string, words: WordsFields | null): GiveResult {
+    const { c, att, row } = t
+    if (att.device !== null) return this.messageDevice(c, att, att.device, row, text, words)
     const stored = this.d.store.hosted(att.session)
     const hosted = stored ? this.withoutDeadTasks(stored) : null
     if (!hosted) {
@@ -698,12 +747,76 @@ export class CoordinatorHub {
     }
     if (hosted.tasks.length >= MAX_TASKS_PER_SESSION) return fail(HUB_TEXT.tooMany(row.name))
     // the record goes first: the mail listener takes the task into the hosted entry
-    if (!this.giveTask(c, att, this.address(null, att.session), text)) return fail(HUB_TEXT.notSaved)
-    return { ok: true, info: HUB_TEXT.queued(row.name, refOf(att.session)) }
+    const id = this.giveTask(c, att, this.address(null, att.session), text, words)
+    if (id === null) return fail(HUB_TEXT.notSaved)
+    return { ok: true, info: HUB_TEXT.queued(row.name, refOf(att.session)), id }
   }
 
-  /** writes a task from the coordinator to one of its sessions, and un-resolves the attachment; false when the record cannot be written */
-  private giveTask(c: StoredCoordinator, att: StoredAttachment, to: MailAddress, text: string): boolean {
+  /** a task with the person's words: the session's device and the words are checked before anything is written, and the person is told at once where the words went */
+  private async messageWords(tabId: string, target: string, text: string, words: string): Promise<PipeResponse> {
+    const first = this.taskTarget(tabId, target, text)
+    if ('error' in first) return fail(first.error)
+    const offline = this.wordsDevice(first)
+    if (offline !== null) return fail(offline)
+    const checked = await this.verifyWords(tabId, words)
+    if ('error' in checked) return fail(checked.error)
+    // the coordinator, the session or its device may have changed while the transcript was read
+    const t = this.taskTarget(tabId, target, text)
+    if ('error' in t) return fail(t.error)
+    const again = this.wordsDevice(t)
+    if (again !== null) return fail(again)
+    const key = `${checked.id}\n${t.row.key}`
+    if (this.relayed.has(key)) return fail(HUB_TEXT.wordsAgain(t.row.name))
+    const replaces = this.hasQueuedWords(t.c, t.att)
+    const given = this.give(t, text, { words: checked.words, context: checked.context })
+    if (!given.ok) return fail(given.error)
+    this.relayed.add(key)
+    this.wordsWent(t.row.name, checked.words, given.id)
+    const replacedText = t.att.device === null ? HUB_TEXT.wordsReplaced : HUB_TEXT.wordsReplacedRemote
+    return { ok: true, info: `${HUB_TEXT.queuedWords(t.row.name, refOf(t.att.session))}${replaces ? ` ${replacedText}` : ''}` }
+  }
+
+  /** why a session's device cannot take the person's words now; null when it can (this device always can) */
+  private wordsDevice(t: TaskTarget): string | null {
+    if (t.att.device === null) return null
+    if (t.att.pending !== null) return HUB_TEXT.notConfirmed(t.row.name)
+    const peer = this.d.peers().find((p) => p.id === t.att.device)
+    if (!peer || !peer.online) return HUB_TEXT.wordsOffline(peer?.name ?? t.row.deviceName ?? 'another device')
+    if (!peer.words) return HUB_TEXT.oldDeviceWords(peer.name)
+    return null
+  }
+
+  /** the person's words checked against the coordinator's tab: the prompt they are, its context, or the refusal */
+  private async verifyWords(tabId: string, words: string): Promise<{ id: string; words: string; context: string | null } | { error: string }> {
+    let prompts: readonly WordsPrompt[]
+    try {
+      prompts = await this.d.prompts(tabId)
+    } catch (e) {
+      this.d.log.warn(`coordinator: the prompts of tab=${tabId} cannot be read for the person's words: ${e instanceof Error ? e.message : String(e)}`)
+      return { error: HUB_TEXT.wordsNotPerson }
+    }
+    const checked = checkWords({ words, prompts, submits: this.d.submits(tabId), now: this.d.now(), startedAt: this.d.startedAt() })
+    if (checked.ok) return { id: checked.id, words: checked.words, context: checked.context }
+    if (checked.reason === 'old') return { error: HUB_TEXT.wordsOld }
+    if (checked.reason === 'not-latest') return { error: HUB_TEXT.wordsNotLatest }
+    return { error: HUB_TEXT.wordsNotPerson }
+  }
+
+  /** whether this coordinator gave the session a task with the person's words that the session has not been given yet */
+  private hasQueuedWords(c: StoredCoordinator, att: StoredAttachment): boolean {
+    return this.d.mail
+      .all()
+      .some((r) => kindOf(r) === 'task' && r.words !== undefined && !r.delivered && this.wroteAs(r, c) && r.to.session === att.session && this.norm(r.to.device) === att.device)
+  }
+
+  /** the person's words went to a session: the person is told where, and the log says which task carries them */
+  private wordsWent(name: string, words: string, taskId: string | null): void {
+    this.d.toast(HUB_TEXT.wordsToast(name, oneLineText(words.split('\n')[0] ?? '', 60)))
+    this.d.log.info(`coordinator: the person's words went to ${name}${taskId === null ? '' : ` with the task ${taskId}`}`)
+  }
+
+  /** writes a task from the coordinator to one of its sessions, and un-resolves the attachment; the id of the record, or null when it cannot be written */
+  private giveTask(c: StoredCoordinator, att: StoredAttachment, to: MailAddress, text: string, words: WordsFields | null): string | null {
     const written = this.write({
       kind: 'task',
       from: this.address(null, c.session),
@@ -712,12 +825,13 @@ export class CoordinatorHub {
       text,
       project: c.project.name,
       delivered: false,
-      read: false
+      read: false,
+      ...(words === null ? {} : { words: words.words, ...(words.context === null ? {} : { context: words.context }) })
     })
-    if (written === null) return false
+    if (written === null) return null
     this.patchAttachment(c, att.session, { resolved: false, failed: false })
     this.d.changed()
-    return true
+    return written
   }
 
   resolve(tabId: string, target: string): PipeResponse {
@@ -736,6 +850,8 @@ export class CoordinatorHub {
     if (isSignal(r)) return false
     const kind = kindOf(r)
     if (kind === 'task') {
+      // the person's words are typed into the session's prompt, never handed to a watcher
+      if (r.words !== undefined) return false
       if (into !== 'idle' && into !== 'prompt') return false
       // a turn the tab is in takes no task as an idle hand-over, whatever its watcher came in: the task starts with the next turn
       if (into === 'idle' && this.inTurn.has(tabId)) return false
@@ -1085,7 +1201,7 @@ export class CoordinatorHub {
   }
 
   /** a task to a session of another device: the task record goes to its device, which holds it as queued; a session not confirmed yet takes none */
-  private messageDevice(c: StoredCoordinator, att: StoredAttachment, device: string, row: CoordSessionRow, text: string): PipeResponse {
+  private messageDevice(c: StoredCoordinator, att: StoredAttachment, device: string, row: CoordSessionRow, text: string, words: WordsFields | null): GiveResult {
     if (att.pending !== null) return fail(HUB_TEXT.notConfirmed(row.name))
     const replied = new Set(this.d.mail.all().filter((r) => kindOf(r) === 'report' && r.replyTo !== null).map((r) => r.replyTo))
     const open = this.d.mail
@@ -1093,9 +1209,10 @@ export class CoordinatorHub {
       .filter((r) => kindOf(r) === 'task' && this.wroteAs(r, c) && r.to.session === att.session && this.norm(r.to.device) === device && r.sentAt >= att.attachedAt && !replied.has(r.id))
     if (open.length >= MAX_TASKS_PER_SESSION) return fail(HUB_TEXT.tooMany(row.name))
     // the record goes first: the device takes the task into its hosted entry when it has the record
-    if (!this.giveTask(c, att, { device, session: att.session, name: row.name }, text)) return fail(HUB_TEXT.notSaved)
+    const id = this.giveTask(c, att, { device, session: att.session, name: row.name }, text, words)
+    if (id === null) return fail(HUB_TEXT.notSaved)
     const ref = refOf(att.session)
-    return { ok: true, info: row.marker === 'offline' ? HUB_TEXT.queuedOffline(row.name, ref, row.deviceName ?? 'another device') : HUB_TEXT.queued(row.name, ref) }
+    return { ok: true, info: row.marker === 'offline' ? HUB_TEXT.queuedOffline(row.name, ref, row.deviceName ?? 'another device') : HUB_TEXT.queued(row.name, ref), id }
   }
 
   /** a session is attached to this coordinator: its attach record, attachment and hosted entry; `already` when it was attached before */
