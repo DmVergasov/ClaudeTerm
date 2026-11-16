@@ -81,7 +81,9 @@ function optionalText(v: unknown, max: number): string | undefined | null {
 /** a words or context field that may be absent: undefined when absent, null when present but not a string of 1 to max characters; lines and tabs are allowed, the typed text strips the other control characters */
 function optionalWords(v: unknown, max: number): string | undefined | null {
   if (v === undefined) return undefined
-  return typeof v === 'string' && v.length >= 1 && v.length <= max ? v : null
+  if (typeof v !== 'string' || v.length < 1 || v.length > max) return null
+  // whitespace or control characters alone carry no words
+  return /^[\s\u0000-\u001f\u007f-\u009f]*$/.test(v) ? null : v
 }
 
 /** an id field that may be absent: undefined when absent, null when present but not a UUID */

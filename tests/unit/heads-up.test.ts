@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatItem, HeadsUpCard } from '../../src/shared/chat'
 import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, askMessage, checkPrompt, excerpt, explainPrompt, parseFinding, personWords } from '../../src/main/chat/heads-up'
 import { BACKGROUND_PROMPT } from '../../src/main/auto-continue'
+import { FORWARD_HEAD } from '../../src/main/chat/agent-forward'
 import { ChatModel } from '../../src/main/chat/chat-model'
 
 const FINDING = [
@@ -132,6 +133,18 @@ describe('excerpt', () => {
       { kind: 'user', id: '2', text: relayed, attachments: [], queued: false },
       { kind: 'user', id: '3', text: progress, attachments: [], queued: false }
     ]
+    expect(personWords(items)).toEqual(['Почини сборку'])
+  })
+
+  it("a ClaudeTerm head after leading spaces, and a message ClaudeTerm forwards to a subagent, are ClaudeTerm's words, not the person's", () => {
+    const headed = '  \n  Note from ClaudeTerm, not from the user:\nfrom: ClaudeTerm\nid: role-note\n\n> You coordinate acme.'
+    const forward = `${FORWARD_HEAD}1a2b3c4d]\n----- message -----\nPlease check the build.\n----- end of message 1a2b3c4d -----`
+    const items: ChatItem[] = [
+      { kind: 'user', id: '1', text: 'Почини сборку', attachments: [], queued: false },
+      { kind: 'user', id: '2', text: headed, attachments: [], queued: false },
+      { kind: 'user', id: '3', text: forward, attachments: [], queued: false }
+    ]
+    expect(excerpt(items)).toBe(`Person: Почини сборку\nClaudeTerm: ${headed.trim()}\nClaudeTerm: ${forward}`)
     expect(personWords(items)).toEqual(['Почини сборку'])
   })
 })

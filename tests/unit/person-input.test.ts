@@ -103,4 +103,75 @@ describe('PersonInput', () => {
     p.keys('t1', '\r', 3)
     expect(p.submits('t1')).toEqual([])
   })
+
+  it('a draft survives a dialog: the keys and the Enter typed into the dialog push nothing, and the prompt is what it was', () => {
+    const p = new PersonInput()
+    p.keys('t', 'Merge it', 1000)
+    p.keys('t', '1', 2000, true)
+    p.keys('t', '\r', 2100, true)
+    expect(p.submits('t')).toEqual([])
+    p.keys('t', ' now\r', 3000)
+    expect(p.submits('t')).toEqual([{ at: 3000, texts: ['Merge it now'], wrote: true }])
+  })
+
+  it('a written answer in a dialog is a submit with no text, and the Enter after a digit answer pushes nothing', () => {
+    const p = new PersonInput()
+    p.keys('t', 'no, wait\r', 1000, true)
+    expect(p.submits('t')).toEqual([{ at: 1000, texts: null, wrote: true }])
+    p.keys('t', '2\r', 2000, true)
+    expect(p.submits('t')).toEqual([{ at: 1000, texts: null, wrote: true }])
+  })
+
+  it('a pasted answer in a dialog is an answer too, and Backspace and Esc in a dialog change nothing', () => {
+    const p = new PersonInput()
+    p.keys('t', 'Merge it', 1000)
+    p.keys('t', '\x1b[200~pasted\x1b[201~\x7f\x1b', 2000, true)
+    p.keys('t', '\r', 3000, true)
+    expect(p.submits('t')).toEqual([{ at: 3000, texts: null, wrote: true }])
+    p.keys('t', ' now\r', 4000)
+    expect(p.submits('t')).toEqual([
+      { at: 3000, texts: null, wrote: true },
+      { at: 4000, texts: ['Merge it now'], wrote: true }
+    ])
+  })
+
+  it('a command line (bash mode or a slash command) backs no prompt, and a line whose readings are not all commands keeps them', () => {
+    const p = new PersonInput()
+    p.keys('t1', '!git push --force\r', 1)
+    p.keys('t2', '/model\r', 2)
+    p.keys('t3', '1/2 done\r', 3)
+    expect(p.submits('t1')).toEqual([{ at: 1, texts: null, wrote: true }])
+    expect(p.submits('t2')).toEqual([{ at: 2, texts: null, wrote: true }])
+    expect(p.submits('t3')).toEqual([{ at: 3, texts: ['1/2 done', '/2 done'], wrote: true }])
+  })
+
+  it('a paste whose end marker is split across two calls is one text', () => {
+    const p = new PersonInput()
+    p.keys('t', '\x1b[200~pasted\x1b[20', 1)
+    p.keys('t', '1~', 2)
+    p.keys('t', '\r', 3)
+    expect(p.submits('t')).toEqual([{ at: 3, texts: ['pasted'], wrote: true }])
+  })
+
+  it('a paste whose start marker is split across two calls is one text', () => {
+    const p = new PersonInput()
+    p.keys('t', '\x1b[20', 1)
+    p.keys('t', '0~pasted\x1b[201~\r', 2)
+    expect(p.submits('t')).toEqual([{ at: 2, texts: ['pasted'], wrote: true }])
+  })
+
+  it('a split marker that is not a marker is processed as typed', () => {
+    const p = new PersonInput()
+    p.keys('t', 'a\x1b[2', 1)
+    p.keys('t', 'Z\r', 2)
+    expect(p.submits('t')).toEqual([{ at: 2, texts: null, wrote: false }])
+  })
+
+  it('many leading digits: the readings keep the longest one and the one with every digit an answer, and the text is still known', () => {
+    const p = new PersonInput()
+    p.keys('t', '123456789 is the id\r', 1)
+    const [s] = p.submits('t')
+    expect(s!.texts).toEqual(expect.arrayContaining(['123456789 is the id', ' is the id']))
+    expect(s!.wrote).toBe(true)
+  })
 })

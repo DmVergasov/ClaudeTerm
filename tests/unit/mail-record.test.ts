@@ -127,6 +127,12 @@ describe('checkMailRecord kinds', () => {
     expect(checkMailRecord({ ...base, kind: 'task', words: 'Go.', context: 'x'.repeat(1501) })).toBeNull()
     expect(checkMailRecord({ ...base, kind: 'task', context: 'Shall I?' })).toBeNull()
   })
+
+  it('refuses words that are only whitespace or control characters, and a context that is', () => {
+    expect(checkMailRecord({ ...base, kind: 'task', words: '  \n\t ' })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'task', words: 'Go.', context: '\u0007' })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'task', words: '\u0007' })).toBeNull()
+  })
 })
 
 describe('mergeMail', () => {

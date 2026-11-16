@@ -4,9 +4,9 @@ import { isAgentId } from '../../shared/chat'
 // The forward of a message the person writes on an agent's page: main hands Claude Code a message that asks it to pass the
 // text on to the agent with SendMessage, and nothing else. Claude's one-line reply says whether it did.
 
-/** the line that opens a forwarded message's text */
-/** the first line of the text that forwards a message to a subagent: the agent's id follows, then a ']' */
+/** the head of the text ClaudeTerm types to forward the person's message to a subagent */
 export const FORWARD_HEAD = '[ClaudeTerm: forward to agent '
+/** the line that opens a forwarded message's text */
 export const FORWARD_MARK = '----- message -----'
 /** the line that closes it: the forward's nonce is in it, so a text cannot close its own forward */
 export const forwardEnd = (nonce: string): string => `----- end of message ${nonce} -----`

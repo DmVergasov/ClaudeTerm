@@ -139,7 +139,12 @@ export class WordsLog {
   private readonly list: WordsPrompt[] = []
   private readonly seen = new Set<string>()
   private answer = ''
-  private last = 0
+  private last: number
+
+  /** a log for a conversation that began at `startAt`: no submit before that backs its first prompt */
+  constructor(startAt = 0) {
+    this.last = startAt
+  }
 
   /** a line read at `readAt`: a prompt's own time is not believed when it is ahead of that, and then counts as the read time */
   add(line: WordsLine, readAt: number): void {

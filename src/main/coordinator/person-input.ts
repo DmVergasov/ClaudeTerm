@@ -2,7 +2,7 @@ import { COORD_WORDS_MAX } from '../../shared/coordinator'
 
 /** the submits kept per tab: the latest this many */
 export const SUBMITS_KEPT = 64
-/** the readings one draft may have at most; past that the draft is unknown */
+/** the readings one draft may have at most; past that only the longest and the empty one are kept */
 export const READINGS_MAX = 8
 
 /** one Enter (or composer Send) the window gave a tab: what the prompt held, in each reading of the keys, or null when a key the record does not follow changed it */
@@ -13,15 +13,32 @@ export interface Submit {
   wrote: boolean
 }
 
-/** a prompt's draft: its readings (null when unknown), whether a bracketed paste is open, and whether it grew past the longest message */
+/** a prompt's draft: its readings (null when unknown), whether a bracketed paste is open, and whether it grew past the longest message;
+ * and, while a dialog shows, whether the person wrote in it, and the keys of a split marker that the next call completes */
 interface Draft {
   readings: string[] | null
   pasting: boolean
   overflow: boolean
+  dialogWrote: boolean
+  carry: string
 }
 
 const PASTE_START = '\x1b[200~'
 const PASTE_END = '\x1b[201~'
+
+/** how many characters at the end of `input`, from `from` on, begin `marker` (at least `min` of them, fewer than all of it): 0 when none */
+function trailingPrefix(input: string, from: number, marker: string, min: number): number {
+  for (let k = Math.min(marker.length - 1, input.length - from); k >= min; k--) {
+    if (input.endsWith(marker.slice(0, k))) return k
+  }
+  return 0
+}
+
+/** whether the text from `i` to the end of `input` is a split `marker` (at least `min` of it, fewer than all of it) */
+function splitMarkerAt(input: string, i: number, marker: string, min: number): boolean {
+  const rest = input.length - i
+  return rest >= min && rest < marker.length && marker.startsWith(input.slice(i))
+}
 
 /** the length of the escape sequence that starts at data[i], an ESC: a CSI or SS3 sequence, or an ESC with one more character */
 function escapeLength(data: string, i: number): number {
@@ -52,30 +69,50 @@ export class PersonInput {
   private readonly drafts = new Map<string, Draft>()
   private readonly submitted = new Map<string, Submit[]>()
 
-  /** keys or a paste the window sent into the tab at `at`: `writeInput`'s data, from this device or a paired one */
-  keys(tabId: string, data: string, at: number): void {
+  /**
+   * keys or a paste the window sent into the tab at `at`: `writeInput`'s data, from this device or a paired one, followed like a line
+   * editor would. While `dialog` (a permission prompt or a question) shows in the tab, the draft is left as it is: only what the person
+   * writes in the dialog is noted, as a submit with no text
+   */
+  keys(tabId: string, data: string, at: number, dialog = false): void {
     const d = this.draftOf(tabId)
+    const input = d.carry + data
+    d.carry = ''
     let i = 0
-    while (i < data.length) {
+    while (i < input.length) {
       if (d.pasting) {
-        const end = data.indexOf(PASTE_END, i)
-        const stop = end === -1 ? data.length : end
-        this.appendText(d, data.slice(i, stop).replace(/\r\n?/g, '\n'))
-        i = end === -1 ? data.length : end + PASTE_END.length
-        if (end !== -1) d.pasting = false
-        this.settle(d)
+        const end = input.indexOf(PASTE_END, i)
+        // the end marker may be split across two calls: the piece that begins it waits for the next call
+        const stop = end === -1 ? input.length - trailingPrefix(input, i, PASTE_END, 1) : end
+        this.pasted(d, input.slice(i, stop).replace(/\r\n?/g, '\n'), dialog)
+        if (end === -1) {
+          d.carry = input.slice(stop)
+          break
+        }
+        d.pasting = false
+        i = end + PASTE_END.length
+        if (!dialog) this.settle(d)
         continue
       }
-      if (data.startsWith(PASTE_START, i)) {
+      if (input.startsWith(PASTE_START, i)) {
         d.pasting = true
         i += PASTE_START.length
         continue
       }
-      const c = data[i]!
+      // a start marker split across two calls: its beginning waits for the next call
+      if (splitMarkerAt(input, i, PASTE_START, 2)) {
+        d.carry = input.slice(i)
+        break
+      }
+      if (dialog) {
+        i = this.dialogKey(tabId, d, input, i, at)
+        continue
+      }
+      const c = input[i]!
       const code = c.charCodeAt(0)
       if (c === '\x1b') {
-        const len = escapeLength(data, i)
-        const seq = data.slice(i, i + len)
+        const len = escapeLength(input, i)
+        const seq = input.slice(i, i + len)
         if (seq === '\x1b\r') this.appendText(d, '\n')
         else if (seq === '\x1b') this.abandon(d)
         // Shift+Tab does nothing; any other escape sequence is a key the record does not follow
@@ -97,12 +134,43 @@ export class PersonInput {
         d.readings = null
         i++
       } else {
-        const ch = String.fromCodePoint(data.codePointAt(i)!)
+        const ch = String.fromCodePoint(input.codePointAt(i)!)
         this.typeChar(d, ch)
         i += ch.length
       }
       this.settle(d)
     }
+  }
+
+  /**
+   * one key while a dialog shows, from `i`: an Enter after the person wrote in the dialog is a submit with no text; a printable character
+   * other than a digit says the person wrote; every other key does nothing. Returns the index after the key
+   */
+  private dialogKey(tabId: string, d: Draft, input: string, i: number, at: number): number {
+    const c = input[i]!
+    if (c === '\x1b') return i + escapeLength(input, i)
+    if (c === '\r') {
+      if (d.dialogWrote) {
+        this.push(tabId, { at, texts: null, wrote: true })
+        d.dialogWrote = false
+      }
+      return i + 1
+    }
+    const ch = String.fromCodePoint(input.codePointAt(i)!)
+    const code = c.charCodeAt(0)
+    const control = code < 0x20 || (code >= 0x7f && code <= 0x9f)
+    if (!control && !/^[0-9]$/.test(ch)) d.dialogWrote = true
+    return i + ch.length
+  }
+
+  /** pasted text: appended to the readings, or noted as the person's answer while a dialog shows */
+  private pasted(d: Draft, text: string, dialog: boolean): void {
+    if (dialog) {
+      if (text !== '') d.dialogWrote = true
+      return
+    }
+    this.appendText(d, text)
+    this.settle(d)
   }
 
   /** a whole message the window sent at once: the chat composer's Send. The draft is left alone */
@@ -125,7 +193,7 @@ export class PersonInput {
   private draftOf(tabId: string): Draft {
     let d = this.drafts.get(tabId)
     if (d === undefined) {
-      d = { readings: [''], pasting: false, overflow: false }
+      d = { readings: [''], pasting: false, overflow: false, dialogWrote: false, carry: '' }
       this.drafts.set(tabId, d)
     }
     return d
@@ -154,13 +222,16 @@ export class PersonInput {
     d.readings = null
   }
 
-  /** the readings merged, and the draft unknown past READINGS_MAX readings or a reading longer than the longest message */
+  /**
+   * the readings merged; past READINGS_MAX of them only the longest (every digit typed into the prompt) and the empty one (every digit
+   * answered a menu) are kept, which can only refuse a message. The draft is unknown when a reading is longer than the longest message
+   */
   private settle(d: Draft): void {
     if (d.readings === null) return
-    const unique = [...new Set(d.readings)]
+    let unique = [...new Set(d.readings)]
     if (unique.length > READINGS_MAX) {
-      d.readings = null
-      return
+      const longest = unique.reduce((a, b) => (b.length > a.length ? b : a))
+      unique = unique.filter((t) => t === longest || t === '')
     }
     d.readings = unique
     if (unique.some((t) => t.length > COORD_WORDS_MAX)) {
@@ -180,7 +251,9 @@ export class PersonInput {
       }
     }
     if (r === null || !r.every((t) => t.trim() === '')) {
-      this.push(tabId, { at, texts: r, wrote: d.overflow || (r !== null && r.every((t) => t.trim() !== '')) })
+      // a command line (Claude Code's bash mode, or a slash command) is not a message the coordinator can relay
+      const command = r !== null && r.every((t) => /^[!/]/.test(t.trimStart()))
+      this.push(tabId, { at, texts: command ? null : r, wrote: d.overflow || (r !== null && r.every((t) => t.trim() !== '')) })
     }
     d.readings = ['']
     d.pasting = false
