@@ -5,6 +5,8 @@ import { isAgentId } from '../../shared/chat'
 // text on to the agent with SendMessage, and nothing else. Claude's one-line reply says whether it did.
 
 /** the line that opens a forwarded message's text */
+/** the first line of the text that forwards a message to a subagent: the agent's id follows, then a ']' */
+export const FORWARD_HEAD = '[ClaudeTerm: forward to agent '
 export const FORWARD_MARK = '----- message -----'
 /** the line that closes it: the forward's nonce is in it, so a text cannot close its own forward */
 export const forwardEnd = (nonce: string): string => `----- end of message ${nonce} -----`
@@ -34,7 +36,7 @@ export function forwardText(f: { agentId: string; type: string; description: str
   if (!isAgentId(f.agentId) || !NONCE_PATTERN.test(nonce)) return null
   const id = f.agentId
   return [
-    `[ClaudeTerm: forward to agent ${id}]`,
+    `${FORWARD_HEAD}${id}]`,
     `The user wrote a message for your subagent ${id} (${cleanLabel(f.type, 40)}, "${cleanLabel(f.description, 120)}") in ClaudeTerm's agent view. It is`,
     'for that agent, not for you.',
     '1. If SendMessage is not loaded yet, first call ToolSearch once with the query "select:SendMessage". That is allowed.',

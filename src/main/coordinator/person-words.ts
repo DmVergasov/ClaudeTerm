@@ -1,21 +1,24 @@
 /*
  * The person's words through the coordinator: a coordinator can hand a session the person's own latest message. The words are
- * checked here, word for word, against the prompts of the coordinator's transcript and the window's input for each of them, so
- * that only a message the person typed in the coordinator's tab is typed into the session.
+ * checked here, word for word, against the prompts of the coordinator's transcript and the text the window submitted into its tab,
+ * so that only a message the person typed (or sent from the chat composer) in the coordinator's tab is typed into the session.
  */
 
 import { COORD_CONTEXT_MAX, COORD_WORDS_MAX } from '../../shared/coordinator'
 import { isClaudeCodeFlag, isClaudeCodeText, isObj, type Obj } from '../chat/chat-fold'
 import { isClaudeTermText } from '../claudeterm-text'
+import type { Submit } from './person-input'
 
 /** a person's message can be passed on for this long after it was written, at most */
 export const WORDS_KEEP_MS = 24 * 60 * 60 * 1000
-/** the window's input may come this long after the transcript gives the prompt: Claude Code writes a prompt a little late */
+/** a submit may come this long after the transcript gives the prompt, and a prompt's time may be this far ahead of the read: clock skew */
 export const INPUT_SLACK_MS = 5000
 /** the prompts of a transcript kept for the check: the latest this many */
 export const WORDS_PROMPTS_KEPT = 50
-/** a transcript line longer than this is no words: a pasted file or a tool result is skipped before it is parsed */
+/** a transcript line longer than this is not parsed: a pasted file or a tool result is read at its head and its tail only */
 export const WORDS_LINE_MAX = 1_000_000
+/** how much of a line too long to parse is read at its head, and how much at its tail */
+const LONG_LINE_SCAN = 65_536
 
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g
 const LOW_SURROGATE = /^[\udc00-\udfff]/
@@ -54,7 +57,7 @@ function promptOf(o: Obj, raw: string, origin: unknown, stamp: string | undefine
   const text = normWords(raw)
   if (isClaudeCodeText(text) || text.startsWith('<local-command-')) return null
   // a message the person typed has no origin but the human one; a tag such as <task-notification> is a message of a tool
-  const plain = !(isObj(origin) && origin.kind !== 'human') && !/^<[A-Za-z][\w-]*[\s>/]/.test(text) && !isClaudeTermText(text)
+  const plain = (origin === undefined || (isObj(origin) && origin.kind === 'human')) && !/^<[A-Za-z][\w-]*[\s>/]/.test(text) && !isClaudeTermText(text)
   const parsed = stamp === undefined ? NaN : Date.parse(stamp)
   const at = Number.isFinite(parsed) ? parsed : 0
   const id = typeof o.uuid === 'string' ? o.uuid : `at:${at}`
@@ -62,11 +65,30 @@ function promptOf(o: Obj, raw: string, origin: unknown, stamp: string | undefine
 }
 
 /**
- * the words of one line of a coordinator's transcript: a prompt, an answer, or null for a line that holds neither. The line is
- * not parsed when it is too long or when its text does not look like a prompt or an answer; a line that does not parse gives nothing
+ * a line too long to parse, read at its head and its tail: a user or queued line is still a prompt, so it blocks the earlier ones
+ * (with no text, so it is never relayed); its id and its time come from the tail. A tool result, a meta or sidechain entry and a
+ * compaction summary give null, as they do when parsed
+ */
+function longLineOf(line: string): WordsLine | null {
+  const head = line.slice(0, LONG_LINE_SCAN)
+  const tail = line.slice(-LONG_LINE_SCAN)
+  if (!(head.includes('"type":"user"') || head.includes('"queued_command"'))) return null
+  if (['"tool_use_id"', '"isSidechain":true', '"isMeta":true', '"isCompactSummary":true'].some((k) => head.includes(k))) return null
+  const last = (key: string): string | null => {
+    const found = [...tail.matchAll(new RegExp(`"${key}":"([^"]{1,100})"`, 'g'))]
+    return found.length === 0 ? null : found[found.length - 1]![1]!
+  }
+  const stamp = last('timestamp')
+  const parsed = stamp === null ? NaN : Date.parse(stamp)
+  return { kind: 'prompt', id: last('uuid') ?? `long:${line.length}`, at: Number.isFinite(parsed) ? parsed : 0, text: '', plain: true }
+}
+
+/**
+ * the words of one line of a coordinator's transcript: a prompt, an answer, or null for a line that holds neither. A line that does
+ * not parse gives nothing; a line too long to parse gives what longLineOf reads of it
  */
 export function wordsLine(line: string): WordsLine | null {
-  if (line.length > WORDS_LINE_MAX) return null
+  if (line.length > WORDS_LINE_MAX) return longLineOf(line)
   const maybe = (line.includes('"type":"user"') && !line.includes('"tool_use_id"')) ||
     (line.includes('"type":"assistant"') && line.includes('"type":"text"')) ||
     line.includes('"queued_command"')
@@ -106,7 +128,7 @@ export interface WordsPrompt {
   at: number
   text: string | null
   plain: boolean
-  /** the time of the prompt before this one: the window's input for this prompt came after it */
+  /** the time of the previous plain prompt: the window's submit for this prompt came after it */
   after: number
   /** the coordinator's answer that came before the prompt, since the prompt before it */
   context: string | null
@@ -119,7 +141,8 @@ export class WordsLog {
   private answer = ''
   private last = 0
 
-  add(line: WordsLine): void {
+  /** a line read at `readAt`: a prompt's own time is not believed when it is ahead of that, and then counts as the read time */
+  add(line: WordsLine, readAt: number): void {
     if (line.kind === 'answer') {
       const joined = this.answer === '' ? line.text : `${this.answer}\n\n${line.text}`
       this.answer = joined.length > 2 * COORD_CONTEXT_MAX ? joined.slice(joined.length - 2 * COORD_CONTEXT_MAX) : joined
@@ -131,11 +154,13 @@ export class WordsLog {
       return
     }
     this.seen.add(line.id)
-    const text = line.plain && line.text !== '' && line.text.length <= COORD_WORDS_MAX ? line.text : null
-    this.list.push({ id: line.id, at: line.at, text, plain: line.plain, after: this.last, context: this.answer === '' ? null : clipContext(this.answer) })
+    const ahead = line.at > readAt + INPUT_SLACK_MS
+    const at = line.at === 0 || ahead ? readAt : line.at
+    const text = line.plain && !ahead && line.text !== '' && line.text.length <= COORD_WORDS_MAX ? line.text : null
+    this.list.push({ id: line.id, at, text, plain: line.plain, after: this.last, context: this.answer === '' ? null : clipContext(this.answer) })
     if (this.list.length > WORDS_PROMPTS_KEPT) this.list.shift()
     this.answer = ''
-    this.last = Math.max(this.last, line.at)
+    if (line.plain) this.last = Math.max(this.last, at)
   }
 
   prompts(): readonly WordsPrompt[] {
@@ -146,24 +171,29 @@ export class WordsLog {
 export type WordsCheck = { ok: true; id: string; words: string; context: string | null } | { ok: false; reason: 'not-person' | 'old' | 'not-latest' }
 
 /**
- * whether `words` are the person's own latest message: a prompt of the person's kind, typed in the window (the input came after the
- * prompt before it and up to a few seconds after it), whose text is the words, and it is the newest such prompt, not older than a
- * day and written in this run of the app
+ * whether `words` are the person's own latest message: a plain prompt whose text is the words and that the window submitted (a submit
+ * after the prompt before it, up to a few seconds after its own time, with the words as one reading), the newest plain prompt of the
+ * transcript, not older than a day and from this run of the app, and with no later submit of the window that wrote something
  */
 export function checkWords(o: {
   words: string
   prompts: readonly WordsPrompt[]
-  inputBetween(after: number, until: number): boolean
+  submits: readonly Submit[]
   now: number
   startedAt: number
 }): WordsCheck {
   const words = normWords(o.words)
-  // a prompt from before this run has no record of the window's input: it counts here only so that it is refused as old
-  const isPerson = (p: WordsPrompt): boolean => p.plain && (p.at < o.startedAt || o.inputBetween(p.after, p.at + INPUT_SLACK_MS))
-  const persons = o.prompts.filter(isPerson)
-  const match = words === '' ? undefined : [...persons].reverse().find((p) => p.text === words)
+  if (words === '') return { ok: false, reason: 'not-person' }
+  const plains = o.prompts.filter((p) => p.plain)
+  const backing = (p: WordsPrompt): Submit[] =>
+    o.submits.filter((s) => s.at > p.after && s.at <= p.at + INPUT_SLACK_MS && s.texts !== null && s.texts.some((t) => normWords(t) === words))
+  // a prompt from before this run has no record of the window's submits: it counts here only so that it is refused as old
+  const match = [...plains].reverse().find((p) => p.text === words && (p.at < o.startedAt || backing(p).length > 0))
   if (match === undefined) return { ok: false, reason: 'not-person' }
   if (match.at < o.startedAt || o.now - match.at > WORDS_KEEP_MS) return { ok: false, reason: 'old' }
-  if (match !== persons[persons.length - 1]) return { ok: false, reason: 'not-latest' }
+  if (match !== plains[plains.length - 1]) return { ok: false, reason: 'not-latest' }
+  // the person wrote again after the submit that backs the words, and the transcript may not hold it yet
+  const typed = Math.max(...backing(match).map((s) => s.at))
+  if (o.submits.some((s) => s.at > typed && s.wrote)) return { ok: false, reason: 'not-latest' }
   return { ok: true, id: match.id, words, context: match.context }
 }
