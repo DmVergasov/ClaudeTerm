@@ -10,9 +10,17 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 - **Reports come by themselves.** A task waits until its session is idle and gets a turn of its own; when the session comes to rest, its last answer comes to the coordinator as a report card, with **Open session** and **Resolve**, and wakes it — the same when the task fails. When a session's turn ends while its background work still runs, the coordinator gets the answer at once as a progress note, so it can tell you where the session waits for you; the report still comes when the work is done. A session waiting for your permission, a usage limit or your own messages never cost the coordinator a turn, and a permission prompt stays yours to answer in its own session. **Esc** or `/clear` in a session stops its task, and the coordinator learns it at its next turn. Report cards are not kept across a restart; the reports stay in the Sessions panel and in the Agent messages panel.
 - **Your go reaches the session as yours.** When your message to the coordinator gives a session a go — merge, push, release, delete — the coordinator passes it on word for word, and ClaudeTerm types it into that session's prompt as your words, with the coordinator's question you answered above it and the task under it, once it has checked that it is your own latest message to the coordinator since ClaudeTerm started. A toast tells you which session it went to.
 - **The Sessions panel.** A coordinator's tab has a **Sessions** button: its sessions grouped as **Waiting on you**, **Working**, **Idle** and **Resolved** — with the permission or question each one waits for, its usage limit, its task list's progress or its finished report — and the project's sessions that are not attached. The coordinator's Claude sees the same with its `list_sessions`, `read_session`, `start_session`, `attach_session`, `detach_session`, `message_session` and `resolve_session` tools, and after it becomes the coordinator or clears its context, its next turn starts with a short note on its role and how its sessions stand.
+- **Mini-games while Claude works.** The gamepad button in a tab's header, or **Ctrl+Shift+G** (**⌘G** on a Mac), opens a small game window in the corner of the tab: **Runner** with Clawd, **Merge** with file-size tiles up to 1 MB, and **Clicker**, whose helpers keep earning while you are away. It pauses, folds into a pill and keeps your progress, and the game's keys never reach the tab.
+
+### Changes
+
+- **Agent messages have a new look.** Each conversation is a card that names both ends with their device colours and the time of its last message; every message shows who sent it, from which device and what kind it is, and its text is drawn as the chat draws Claude's Markdown, cut to ten lines with **Show more**.
 
 ### Fixes
 
+- A sign-in to an MCP server in one tab now reaches every tab of the same account: the other tabs connect without signing in again, which used to undo the first sign-in.
+- A side panel opens at once when the window does not need to grow for it, instead of after a second or more.
+- Switching an MCP server on or off in a long list no longer scrolls the list away from it.
 - Heads up cards are in your language in a long session full of English tool output and agent messages too: the side agent now names the language you write in before it writes the card. A note or a report ClaudeTerm hands to Claude is never taken for your words.
 - Agent messages written while two paired devices connect no longer arrive before the older ones they answer.
 
