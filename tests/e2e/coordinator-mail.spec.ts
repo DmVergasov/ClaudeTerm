@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { CoordinatorView } from '../../src/shared/coordinator'
 import { ROLE_NOTE_HEAD } from '../../src/shared/report-wake'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
+import { cutText } from '../../src/shared/protocol'
 import { activate, openPanelFocused, refOf, sendText, waitForMail, type WaitAnswer } from './agent-mail'
 import { coord, coordApp, done, makeCoordinator, stillWaiting, turnOf, within } from './coordinator-helpers'
 
@@ -68,7 +69,8 @@ test('the role note reaches the coordinator at its next typed turn and wakes not
     const view = (await page.evaluate((id) => window.ct.coordView(id), t0)) as CoordinatorView
     const row = view.sessions.find((r) => r.session === sids[1])!
     expect(note.info!.startsWith(`${ROLE_NOTE_HEAD}\n`)).toBe(true)
-    expect(note.info).toContain(`You coordinate ${view.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. 1 session (${row.name} — ${row.line}).`)
+    // the note cuts a session's name to 40 characters: a long device name (the macOS runner's) makes the name longer than that
+    expect(note.info).toContain(`You coordinate ${view.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. 1 session (${cutText(row.name, 40)} — ${row.line}).`)
 
     // the note is taken: the next typed turn carries the message alone, with no second note
     await done(pipeName, t0, sids[0])
