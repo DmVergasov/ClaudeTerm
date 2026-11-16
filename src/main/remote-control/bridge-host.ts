@@ -134,8 +134,10 @@ export class BridgeHost {
     const t: Tab = { gen: ++this.gens, target, state: { kind: 'connecting' }, handle: null, queue: [], openCards: new Map(), historyUuids: new Set(), secrets: [] }
     this.tabs.set(target.tabId, t)
     this.d.onChange(target.tabId)
-    this.connect(t).catch(() => {
-      if (this.current(t) && t.state.kind === 'connecting') this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
+    this.connect(t).catch((e: unknown) => {
+      if (!this.current(t)) return
+      this.d.log.warn(`remote control: the attach failed for tab ${target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+      this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
     })
   }
 
@@ -160,7 +162,7 @@ export class BridgeHost {
   /** a message of the tab's conversation, from the chat: written to claude.ai */
   message(tabId: string, msg: unknown): void {
     const t = this.tabs.get(tabId)
-    if (!t || !isRecord(msg)) return
+    if (!t || !isRecord(msg) || msg.type === 'stream_event') return
     this.send(t, (h) => this.forward(t, h, msg))
   }
 
@@ -170,7 +172,7 @@ export class BridgeHost {
     if (!t || from === 'remote') return
     const msg: Msg = { type: 'user', uuid, session_id: '', message: { role: 'user', content: text }, parent_tool_use_id: null }
     this.send(t, (h) => {
-      h.write(msg as SDKMessage)
+      if (!t.historyUuids.has(uuid)) h.write(msg as SDKMessage)
       h.reportState('running')
     })
   }
@@ -243,8 +245,6 @@ export class BridgeHost {
           return
         }
         entry = { remoteId: made, sequenceNum: 0 }
-        await this.d.sessions.put(target.sessionId, account, entry)
-        if (!alive()) return
         fresh = true
       }
       const got = await bridge.fetchRemoteCredentials(entry.remoteId, API_BASE, token, CALL_TIMEOUT_MS, creds.deviceToken ?? undefined)
@@ -327,12 +327,17 @@ export class BridgeHost {
       }
     }
 
+    // a new session is kept only once its history is written: an attach that fails before this leaves nothing for the next one to reuse
+    if (fresh) {
+      await this.d.sessions.put(target.sessionId, account, { remoteId: entry.remoteId, sequenceNum: 0 })
+      if (!alive()) return
+    }
     const queue = t.queue
     t.queue = []
     t.state = { kind: 'on', url: remoteLink(entry.remoteId) }
+    this.d.onChange(target.tabId)
     handle.reportState('idle')
     for (const run of queue) run(handle)
-    this.d.onChange(target.tabId)
   }
 
   /** a state the tab stops in: its handle closes, what waits is dropped, and an attach still running stops too */

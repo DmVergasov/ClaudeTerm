@@ -66,13 +66,14 @@ function host() {
     /** read in order before `creds`, one per read */
     credsQueue: [] as ClaudeCredentials[],
     bridgeOk: true, sent: [] as string[], answered: [] as [string, SdkPermissionResult][], answerOk: true, interrupts: 0,
-    history: [] as unknown[], historyThrows: null as Error | null, checks: 0, logs: [] as string[], timers: [] as { ms: number; run: () => void; on: boolean }[], changes: 0
+    history: [] as unknown[], historyThrows: null as Error | null, storeThrows: null as Error | null, seen: [] as (string | null)[], checks: 0, logs: [] as string[], timers: [] as { ms: number; run: () => void; on: boolean }[], changes: 0
   }
+  const hostRef: { h?: BridgeHost } = {}
   const d: BridgeHostDeps = {
     bridge: async () => (w.bridgeOk ? { ok: true, bridge } : { ok: false }),
     credentials: async () => w.credsQueue.shift() ?? w.creds,
     sessions: {
-      get: async (sid, account) => { const s = stored.get(sid); return s && s.account === account ? s.entry : null },
+      get: async (sid, account) => { if (w.storeThrows) throw w.storeThrows; const s = stored.get(sid); return s && s.account === account ? s.entry : null },
       put: async (sid, account, entry) => { stored.set(sid, { entry, account }) },
       forget: async (sid) => { stored.delete(sid) }
     },
@@ -86,12 +87,14 @@ function host() {
     },
     claudeVersion: () => '2.1.323',
     later: (ms, run) => { const t = { ms, run, on: true }; w.timers.push(t); return () => { t.on = false } },
-    onChange: () => { w.changes++ },
+    onChange: () => { w.changes++; w.seen.push(hostRef.h?.state(TAB)?.kind ?? null) },
     log: { info: (m) => w.logs.push(m), warn: (m) => w.logs.push(m) }
   }
   /** runs the pending timers of that delay */
   const fire = (ms: number): void => { for (const t of w.timers.filter((x) => x.on && x.ms === ms)) { t.on = false; t.run() } }
-  return { h: new BridgeHost(d), calls, answers, handles, stored, w, fire }
+  const h = new BridgeHost(d)
+  hostRef.h = h
+  return { h, calls, answers, handles, stored, w, fire }
 }
 const target = (over: Partial<BridgeTarget> = {}): BridgeTarget => ({ tabId: TAB, sessionId: SID, folder: FOLDER, env: {}, title: 'Fix the parser', cwd: CWD, model: 'claude-opus-5-5', ...over })
 /** lets the attach's awaits run */
@@ -231,6 +234,47 @@ describe('BridgeHost: while it is on', () => {
 })
 
 describe('BridgeHost: the edges of attach and detach', () => {
+  it('a message typed while the tab attaches is written once when the history already holds it', async () => {
+    const { h, handles, w } = host()
+    w.history = [userLine('u2', 'hello')]
+    h.attach(target())
+    h.userSent(TAB, 'u2', 'hello', null)
+    await settle()
+    expect(handles[0].writes.map((m) => m.uuid)).toEqual(['u2'])
+  })
+  it('partial frames are not queued: many of them while attaching do not push out a queued message', async () => {
+    const { h, handles } = host()
+    h.attach(target())
+    h.message(TAB, assistantLine('a1', 'Done.'))
+    for (let i = 0; i < 1500; i++) h.message(TAB, { type: 'stream_event', uuid: 's' + i, event: {} })
+    await settle()
+    expect(handles[0].writes.map((m) => m.uuid)).toEqual(['a1'])
+  })
+  it('a first attach that fails before its history is written stores nothing: the next attach makes a new session and writes the history', async () => {
+    const { h, calls, answers, stored, w, handles } = host()
+    w.history = [userLine('u1', 'Fix the parser')]
+    answers.attachThrows = new Error('attach refused')
+    h.attach(target()); await settle()
+    expect(h.state(TAB)).toEqual({ kind: 'failed', reason: REMOTE_REASONS.unreachable })
+    expect(stored.has(SID)).toBe(false)
+    answers.attachThrows = null
+    answers.create = ['cse_2']
+    h.attach(target()); await settle()
+    expect(calls.filter((c) => c[0] === 'create')).toHaveLength(2)
+    expect(handles[0].writes.map((m) => m.uuid)).toEqual(['u1'])
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_2' })
+    expect(stored.get(SID)!.entry).toEqual({ remoteId: 'cse_2', sequenceNum: 0 })
+  })
+  it('an attach that fails is logged without its tokens, and the window hears the failed state last', async () => {
+    const { h, w } = host()
+    w.storeThrows = new Error(`store failed with ${TOKEN}`)
+    h.attach(target()); await settle()
+    expect(h.state(TAB)).toEqual({ kind: 'failed', reason: REMOTE_REASONS.unreachable })
+    expect(w.logs.join('\n')).toContain('remote control: the attach failed for tab tab-1: store failed with [token]')
+    expect(w.logs.join('\n')).not.toContain(TOKEN)
+    expect(w.seen.at(-1)).toBe('failed')
+  })
+
   it('a history that cannot be read is logged without the token and left out: the attach still turns on', async () => {
     const { h, handles, w } = host()
     w.historyThrows = new Error(`history failed with ${TOKEN}`)
