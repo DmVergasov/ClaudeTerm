@@ -265,7 +265,7 @@ describe('roleNoteText', () => {
 describe('turnNoteText', () => {
   it('is the note that tells the coordinator it coordinates the project, gives the work to its sessions, and names the reports and the prompts', () => {
     expect(turnNoteText('Desk')).toBe(
-      `Note from ClaudeTerm, not from the user: you are the coordinator of Desk: ${DELEGATE} Reports come by themselves when a task ends. A session's permission prompts and questions are the person's to answer, in that session.`
+      `Note from ClaudeTerm, not from the user: you are the coordinator of Desk: ${DELEGATE} Reports come by themselves when a task ends. A progress note means the task is still running: when it says the session waits for the person, tell the person where. A session's permission prompts and questions are the person's to answer, in that session.`
     )
   })
 

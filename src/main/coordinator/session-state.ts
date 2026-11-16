@@ -1,4 +1,5 @@
 import type { CoordGroup, CoordMarker, CoordReport, CoordSessionRow, CoordTaskInfo, CoordWhy } from '../../shared/coordinator'
+import { oneLineText } from '../../shared/protocol'
 import type { PlanStatus } from '../../shared/types'
 import type { TabLimit, TabPrompt } from '../tab-waits'
 
@@ -15,11 +16,22 @@ export interface RowFacts {
   resolved: boolean
   failed: boolean
   lastReport: CoordReport | null
+  /** the text of the newest progress note on the row's task; absent or null: none */
+  note?: string | null
 }
 
 export const GROUP_LABELS: Record<CoordGroup, string> = { waiting: 'Waiting on you', working: 'Working', idle: 'Idle', resolved: 'Resolved' }
 
 const REPORT_LINES: Record<CoordReport['outcome'], string> = { finished: 'Finished · report ready', stopped: 'Stopped by you', failed: 'Failed' }
+
+/** the longest line a progress note shows on its row, in characters */
+export const NOTE_LINE_MAX = 100
+
+/** the first line with text of a progress note, one line, cut for a row */
+export function noteLine(text: string): string {
+  const line = text.split(/\r\n|\r|\n/).find((l) => l.trim() !== '') ?? ''
+  return oneLineText(line, NOTE_LINE_MAX)
+}
 
 /** the group, the reason it waits, the line and the progress of a row, from its facts */
 export function rowState(f: RowFacts, clock: (ms: number) => string): { group: CoordGroup; why: CoordWhy; line: string; progress: { done: number; total: number } | null } {
@@ -39,6 +51,8 @@ function lineOf(f: RowFacts, clock: (ms: number) => string): string {
   if (f.failed) return `Failed: ${f.lastReport?.reason ?? 'no reason given'}`
   if (f.closed) return 'Tab closed'
   if (f.exited) return 'Claude Code exited'
+  // the session's latest word on its open task while its background work runs: the first line of its newest progress note
+  if (f.note && f.task?.state === 'open' && !f.working) return `Background work · ${noteLine(f.note)}`
   if (f.progress && !f.progress.finished) {
     const counts = `${f.progress.done}/${f.progress.total}`
     const task = f.progress.tasks.find((t) => t.state === 'current') ?? f.progress.tasks.find((t) => t.state === 'left')

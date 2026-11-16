@@ -1,4 +1,4 @@
-import { COORD_DELEGATE, type CoordGroup, type CoordSessionRow, type CoordinatorView } from '../../shared/coordinator'
+import { COORD_DELEGATE, COORD_PROGRESS, type CoordGroup, type CoordSessionRow, type CoordinatorView } from '../../shared/coordinator'
 import { ROLE_NOTE_HEAD } from '../../shared/report-wake'
 import { describeTaskList, type TaskList } from '../../shared/task-list'
 import { cutText } from '../../shared/protocol'
@@ -19,7 +19,7 @@ const LINE_MAX = 60
  * that gives the work to the sessions, and what a report and a session's prompt mean. The project name is cut and made one line.
  */
 export function turnNoteText(projectName: string): string {
-  return `Note from ClaudeTerm, not from the user: you are the coordinator of ${cutText(replaceControls(projectName), NAME_MAX)}: ${COORD_DELEGATE} Reports come by themselves when a task ends. A session's permission prompts and questions are the person's to answer, in that session.`
+  return `Note from ClaudeTerm, not from the user: you are the coordinator of ${cutText(replaceControls(projectName), NAME_MAX)}: ${COORD_DELEGATE} Reports come by themselves when a task ends. ${COORD_PROGRESS} A session's permission prompts and questions are the person's to answer, in that session.`
 }
 
 function rowLine(r: CoordSessionRow, clock: (ms: number) => string): string {

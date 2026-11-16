@@ -103,4 +103,11 @@ describe('COORD_TOOL_DESCRIPTIONS', () => {
   it('the list_sessions description ends with the delegation sentence', () => {
     expect(COORD_TOOL_DESCRIPTIONS.list_sessions.slice(-DELEGATE.length)).toBe(DELEGATE)
   })
+
+  it('list_sessions and message_session say what a progress note means; list_sessions still ends with the delegation sentence', () => {
+    const PROGRESS = 'A progress note means the task is still running: when it says the session waits for the person, tell the person where.'
+    expect(COORD_TOOL_DESCRIPTIONS.list_sessions).toContain(PROGRESS)
+    expect(COORD_TOOL_DESCRIPTIONS.message_session).toContain(PROGRESS)
+    expect(COORD_TOOL_DESCRIPTIONS.list_sessions.slice(-DELEGATE.length)).toBe(DELEGATE)
+  })
 })

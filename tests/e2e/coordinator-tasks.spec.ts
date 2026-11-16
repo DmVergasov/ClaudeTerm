@@ -110,6 +110,8 @@ test('a Stop with background work still running sends the coordinator the answer
     const note = await within(t.c, 10_000)
     expect(note.info).toContain('Progress from a session attached to you, through ClaudeTerm: its task is still open, background work is running.')
     expect(note.info).toContain("> The full test run is going in the background. I wait for the person's go to push.")
+    // the coordinator's list shows the session's latest word while its work runs
+    expect(await listOf(t.pipeName, t.tab1)).toContain("· Background work · The full test run is going in the background. I wait for the person's go to push.")
 
     // the coordinator answers the person and rests; its next watcher gets the report when the work ends
     await done(t.pipeName, t.tab1, t.sid1, { lastMessage: 'The tests run; I will tell you.' })

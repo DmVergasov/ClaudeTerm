@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { HUB_TEXT, START_WAIT_MS } from '../../src/main/coordinator/coordinator-hub'
 import { MAX_ATTACHMENTS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
 import { checkMailRecord } from '../../src/main/mail/mail-record'
+import { isShareable } from '../../src/main/mail/mail-store'
 import { coordinatorProblem, type CoordSessionRow, type CoordinatorView } from '../../src/shared/coordinator'
 import { MAIL_MIN_CLAUDE, type MailRecord } from '../../src/shared/mail'
 import { attachDirect, ACME, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NEW, NO_FACTS, NOW, peerOf, records, remoteTab, S, sync, tab, uid, world, type World } from '../fixtures/coordinator-world'
@@ -216,6 +217,21 @@ describe('attach, detach and tasks across devices', () => {
     c = worlds.c
     s = worlds.s
     c.hub.make('tab-c', false)
+  })
+
+  it("Studio's row of Laptop's session shows the session's latest progress note while its task is open", () => {
+    c.hub.attach('tab-c', 'e10000')
+    sync(c, s)
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    s.hub.turnEnded('tab-l1', { background: true, lastMessage: 'Waiting for the tests.' })
+    // the note arrives on Studio alone: its arrival redraws the panel
+    c.order.length = 0
+    c.mail.merge(s.mail.all().filter(isShareable), { link: 's' })
+    expect(c.order).toContain('changed')
+    sync(c, s)
+    expect(c.hub.view('tab-c')!.sessions[0].line).toBe('Background work · Waiting for the tests.')
   })
 
   it('attaching a Laptop session writes an attach record and waits: Attaching… until Laptop confirms; then both mark it', () => {

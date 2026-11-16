@@ -194,7 +194,7 @@ describe('the turn note', () => {
     expect(w.hub.turnNote('tab-c')).toBeNull()
     w.hub.make('tab-c', false)
     expect(w.hub.turnNote('tab-c')).toBe(
-      'Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Reports come by themselves when a task ends. A session\'s permission prompts and questions are the person\'s to answer, in that session.'
+      'Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Reports come by themselves when a task ends. A progress note means the task is still running: when it says the session waits for the person, tell the person where. A session\'s permission prompts and questions are the person\'s to answer, in that session.'
     )
     expect(w.hub.turnNote('tab-1')).toBeNull()
     w.hub.stop('tab-c')
@@ -821,6 +821,17 @@ describe('CoordinatorHub task lifecycle', () => {
     w.hub.turnEnded('tab-1', { background: true, lastMessage: '   ' })
     w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Done.' })
     expect(records(w, 'progress')).toEqual([])
+  })
+
+  it("the session's row shows its latest progress note while the task is open; the report's line follows it", () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.order.length = 0
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: "Tests run in the background.\nI wait for the person's go." })
+    expect(w.order).toContain('changed')
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ line: 'Background work · Tests run in the background.', group: 'working' })
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Pushed.' })
+    fire(w)
+    expect(w.hub.view('tab-c')!.sessions[0].line).toBe('Finished · report ready')
   })
 
   it('a progress note is mail for the coordinator: a watcher takes it, a prompt carries it, and no other tab takes it as a prompt', () => {

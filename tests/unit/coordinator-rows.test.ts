@@ -96,6 +96,17 @@ describe('rowState', () => {
     expect(rowState({ ...idle, working: true }, clock)).toEqual({ group: 'working', why: null, line: 'Working', progress: null })
   })
 
+  it("an open task's progress note is the line while no turn runs: its first line with text, cut at 100", () => {
+    const open: RowFacts = { ...idle, task: { id: 't', state: 'open', since: 0 } }
+    expect(rowState({ ...open, note: "\n  I wait for the person's go to push.\nTests run." }, clock))
+      .toEqual({ group: 'working', why: null, line: "Background work · I wait for the person's go to push.", progress: null })
+    expect(rowState({ ...open, note: 'x'.repeat(150) }, clock).line).toBe(`Background work · ${'x'.repeat(99)}…`)
+    expect(rowState({ ...open, note: 'Waiting.', working: true }, clock).line).toBe('Working on its task')
+    expect(rowState({ ...open, note: 'Waiting.', prompt: { kind: 'permission', text: 'Allow Bash: git push', since: 0 } }, clock).line).toBe('Allow Bash: git push')
+    expect(rowState({ ...open, note: 'Waiting.', progress: plan({ tasks: [{ n: 1, title: 'Run e2e', state: 'current' }] }) }, clock).line).toBe('Background work · Waiting.')
+    expect(rowState({ ...idle, task: { id: 't', state: 'queued', since: 0 }, note: 'Waiting.' }, clock).line).toBe('Task waiting until the session is idle')
+  })
+
   it('a finished report idles with its line; a stopped and a failed report say so', () => {
     const report = (outcome: 'finished' | 'stopped' | 'failed') => ({ id: 'r1', outcome, reason: null, at: 0 })
     expect(rowState({ ...idle, lastReport: report('finished') }, clock))

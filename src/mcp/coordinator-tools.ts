@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { COORD_DELEGATE, type CoordOp } from '../shared/coordinator'
+import { COORD_DELEGATE, COORD_PROGRESS, type CoordOp } from '../shared/coordinator'
 import { PipeUnavailableError } from '../shared/pipe-client'
 import type { CoordMessage, PipeResponse } from '../shared/protocol'
 import type { ToolResult } from './show-image-tool'
@@ -18,7 +18,7 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
     'Coordinator only: list the Claude sessions attached to this coordinator with their state, open task, last report and task list progress, then the sessions of the project that are not attached. ' +
     'Reports come to you by themselves when a task ends: do not poll. A permission prompt or a question waiting in a session is the user\'s to answer there: tell the user once where it waits, never answer it. ' +
     'A usage limit is not a failure. A stopped task was stopped by the user. ' +
-    `As the coordinator, ${COORD_DELEGATE}`,
+    `${COORD_PROGRESS} As the coordinator, ${COORD_DELEGATE}`,
   start_session:
     'Coordinator only: open a new Claude session in ClaudeTerm and give it a task as its first message. ' +
     'It opens on this device unless device names a paired device. ' +
@@ -34,7 +34,8 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
     'Coordinator only: detach a session from this coordinator. Its open task, if any, is dropped without a report; the session is not told and goes on as it is.',
   message_session:
     'Coordinator only: give an attached session a task. It waits until the session is idle, then reaches it as the user\'s instruction given through you. ' +
-    'When the session\'s turn on it ends, ClaudeTerm sends you its last answer as a report and wakes you: do not poll or wait for it.',
+    'When the session\'s turn on it ends, ClaudeTerm sends you its last answer as a report and wakes you: do not poll or wait for it. ' +
+    COORD_PROGRESS,
   read_session:
     'Coordinator only: one session in detail: its state, a permission prompt or question waiting for the user, its open task, its last report in full and its task list.',
   resolve_session:

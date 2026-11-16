@@ -811,6 +811,17 @@ export class CoordinatorHub {
     return last
   }
 
+  /** the text of each task's newest progress note addressed to this device, by task id: the latest sentAt, and among equal times the record later in mail.all() */
+  private progressNotes(): Map<string, string> {
+    const newest = new Map<string, MailRecord>()
+    for (const r of this.d.mail.all()) {
+      if (kindOf(r) !== 'progress' || this.norm(r.to.device) !== null || r.replyTo === null) continue
+      const last = newest.get(r.replyTo)
+      if (last === undefined || r.sentAt >= last.sentAt) newest.set(r.replyTo, r)
+    }
+    return new Map([...newest].map(([taskId, r]): [string, string] => [taskId, r.text]))
+  }
+
   /** a turn failed: a usage limit, or a cut ClaudeTerm continues, ends nothing; any other error fails the task */
   turnFailed(tabId: string, error: string, continued: boolean): void {
     this.inTurn.delete(tabId)
@@ -1519,17 +1530,17 @@ export class CoordinatorHub {
   }
 
   /** the rows of a coordinator's attachments, in the order it has them */
-  private attachedRows(c: StoredCoordinator, snap: RemoteSnapshot): CoordSessionRow[] {
+  private attachedRows(c: StoredCoordinator, snap: RemoteSnapshot, notes?: Map<string, string>): CoordSessionRow[] {
     const queued = c.attachments.some((a) => a.device !== null) ? this.queuedRemoteTasks(c) : new Map<string, CoordTaskInfo>()
     return c.attachments.map((a) =>
       a.device === null
-        ? this.rowOf(a.session, this.agentName(a.session) ?? a.name, this.tabOfSession(a.session), this.d.store.hosted(a.session), a)
-        : this.attachedRemoteRow(a, a.device, queued, snap)
+        ? this.rowOf(a.session, this.agentName(a.session) ?? a.name, this.tabOfSession(a.session), this.d.store.hosted(a.session), a, notes)
+        : this.attachedRemoteRow(a, a.device, queued, snap, notes)
     )
   }
 
   /** a row of a session of another device attached here: its tab's facts from the device's list, and the attachment's marks */
-  private attachedRemoteRow(a: StoredAttachment, device: string, queued: Map<string, CoordTaskInfo>, snap: RemoteSnapshot): CoordSessionRow {
+  private attachedRemoteRow(a: StoredAttachment, device: string, queued: Map<string, CoordTaskInfo>, snap: RemoteSnapshot, notes?: Map<string, string>): CoordSessionRow {
     const rt = snap.tabByKey.get(remoteKey(device, a.session)) ?? null
     const peer = snap.peers.get(device) ?? null
     const coord = rt?.coord ?? null
@@ -1548,7 +1559,8 @@ export class CoordinatorHub {
         task,
         resolved: a.resolved,
         failed: a.failed,
-        lastReport: a.lastReport
+        lastReport: a.lastReport,
+        note: task !== null && notes ? notes.get(task.id) ?? null : null
       },
       this.d.clock
     )
@@ -1662,7 +1674,7 @@ export class CoordinatorHub {
   }
 
   /** a row of a session: its tab's facts, its hosted entry's task, and its attachment's report and marks */
-  private rowOf(session: string, name: string, tab: HubTab | null, hosted: StoredHosted | null, att: StoredAttachment | null): CoordSessionRow {
+  private rowOf(session: string, name: string, tab: HubTab | null, hosted: StoredHosted | null, att: StoredAttachment | null, notes?: Map<string, string>): CoordSessionRow {
     const tabId = tab?.tabId ?? null
     const waits: TabWaitsState = tabId === null ? { prompt: null, limit: null } : this.d.waits(tabId)
     const task: CoordTaskInfo | null = hosted ? this.taskInfo(hosted) : null
@@ -1678,7 +1690,8 @@ export class CoordinatorHub {
         task,
         resolved: att?.resolved ?? false,
         failed: att?.failed ?? false,
-        lastReport: att?.lastReport ?? null
+        lastReport: att?.lastReport ?? null,
+        note: task !== null && notes ? notes.get(task.id) ?? null : null
       },
       this.d.clock
     )
@@ -1705,7 +1718,7 @@ export class CoordinatorHub {
   }
 
   private viewOf(c: StoredCoordinator, tabId: string, snap: RemoteSnapshot = this.remoteSnapshot()): CoordinatorView {
-    const sessions = [...this.attachedRows(c, snap), ...this.startsOf(c).map((s) => this.startRow(s))]
+    const sessions = [...this.attachedRows(c, snap, this.progressNotes()), ...this.startsOf(c).map((s) => this.startRow(s))]
     const attached = new Set(c.attachments.map((a) => a.session))
     const tabs = this.d.tabs()
     const notAttached: CoordSessionRow[] = []
