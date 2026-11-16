@@ -4,13 +4,14 @@ export const ICON_NAMES = [
   'search', 'plus', 'chevron-down', 'chevron-right', 'branch', 'terminal', 'image', 'file-diff',
   'file-text', 'note', 'mail', 'history', 'settings', 'panel-left', 'panel-top', 'x', 'bell',
   'check', 'play', 'volume', 'music', 'message-square', 'paperclip', 'arrow-up', 'users', 'plug', 'arrow-left',
-  'move-horizontal'
+  'move-horizontal', 'gamepad'
 ] as const
 
 export type IconName = (typeof ICON_NAMES)[number]
 
 // the inner shapes of each icon on a 24 x 24 grid
 const SHAPES: Record<IconName, string> = {
+  gamepad: '<line x1="6" x2="10" y1="11" y2="11"/><line x1="8" x2="8" y1="9" y2="13"/><line x1="15" x2="15.01" y1="12" y2="12"/><line x1="18" x2="18.01" y1="10" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/>',
   plug: '<path d="M12 22v-5"></path><path d="M9 8V2"></path><path d="M15 8V2"></path><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"></path>',
   search: '<circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>',
   plus: '<path d="M5 12h14"></path><path d="M12 5v14"></path>',

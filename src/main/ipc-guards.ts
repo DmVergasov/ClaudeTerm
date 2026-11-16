@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import { parseGamesSave, type GamesSave } from '../shared/games'
 import { CARRY_ITEMS, FLOW_MODES, type AccountBegin, type CarryItem, type CarryLineItem, type FlowAction, type RemoveOptions } from '../shared/accounts'
 import { DOC_ACTIONS, type DocAction } from '../shared/docs'
 import type { ImageAction } from '../shared/ipc'
@@ -145,6 +146,9 @@ export const isLineSpan = (from: unknown, to: unknown): boolean => isLineNo(from
 
 /** the side panel's width in px; 0: closed */
 export const isPanelWidth = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_DIM
+
+/** a whole games save from the renderer: every part is valid, none is replaced */
+export const isGamesSave = (v: unknown): v is GamesSave => parseGamesSave(v).bad.length === 0
 
 /** a change of the left tab panel's layout: each part that is present is checked */
 export const isTabLayoutChange = (v: unknown): v is Partial<TabLayout> => {

@@ -50,6 +50,11 @@ describe.each(['win32', 'linux'])('mapKey on %s', (platform) => {
     expect(map(k('KeyO', cs, 'Щ'))).toEqual({ type: 'toggleDocs' })
   })
 
+  it('Ctrl+Shift+G maps to the games window, in any layout', () => {
+    expect(map(k('KeyG', cs, 'П'))).toEqual({ type: 'toggleGames' })
+    expect(map(k('KeyG', { ctrlKey: true }, 'п'))).toBeNull()
+  })
+
   it('Shift+Enter sends ESC CR for a newline in the claude prompt', () => {
     expect(map(k('Enter', { shiftKey: true }))).toEqual({ type: 'send', data: '\x1b\r' })
     expect(map(k('NumpadEnter', { shiftKey: true }))).toEqual({ type: 'send', data: '\x1b\r' })
@@ -109,6 +114,11 @@ describe('mapKey on macOS', () => {
     expect(map(k('KeyV', { ctrlKey: true }))).toBeNull()
     expect(map(k('KeyT', cs))).toBeNull()
     expect(map(k('KeyD', cs))).toBeNull()
+  })
+
+  it('the games window is ⌘G', () => {
+    expect(map(k('KeyG', cmd, 'п'))).toEqual({ type: 'toggleGames' })
+    expect(map(k('KeyG', { ...cmd, shiftKey: true }))).toBeNull()
   })
 
   it('the next tab that needs you is ⌘J', () => {
@@ -172,6 +182,8 @@ describe('shortcutLabel', () => {
     expect(shortcutLabel('toggleNote', 'darwin')).toBe('⌘N')
     expect(shortcutLabel('toggleDocs', 'win32')).toBe('Ctrl+Shift+O')
     expect(shortcutLabel('toggleDocs', 'darwin')).toBe('⌘O')
+    expect(shortcutLabel('toggleGames', 'win32')).toBe('Ctrl+Shift+G')
+    expect(shortcutLabel('toggleGames', 'darwin')).toBe('⌘G')
   })
 })
 

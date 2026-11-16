@@ -56,12 +56,14 @@ test('an attached session\'s header keeps its last toggle and its Detach inside 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((x) => x.getParentWindow() === null)!.setSize(200, 500))
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThan(600)
     await expect(page.locator('#sheet-header .tab-note-toggle')).toBeVisible()
+    await expect(page.locator('#sheet-header .tab-games-toggle')).toBeVisible()
     await expect(page.locator('#sheet-header .sh-detach')).toBeVisible()
     const rects = await page.evaluate(() => {
       const right = (sel: string): number => document.querySelector(sel)!.getBoundingClientRect().right
-      return { header: right('#sheet-header'), note: right('#sheet-header .tab-note-toggle'), detach: right('#sheet-header .sh-detach') }
+      return { header: right('#sheet-header'), note: right('#sheet-header .tab-note-toggle'), games: right('#sheet-header .tab-games-toggle'), detach: right('#sheet-header .sh-detach') }
     })
     expect(rects.note).toBeLessThanOrEqual(rects.header + 0.5)
+    expect(rects.games).toBeLessThanOrEqual(rects.header + 0.5)
     expect(rects.detach).toBeLessThanOrEqual(rects.header + 0.5)
   } finally { await l.app.close() }
 })

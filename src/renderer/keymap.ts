@@ -15,6 +15,7 @@ export type KeyAction =
   | { type: 'toggleChanges' }
   | { type: 'toggleDocs' }
   | { type: 'toggleNote' }
+  | { type: 'toggleGames' }
   | { type: 'zoomIn' }
   | { type: 'zoomOut' }
   | { type: 'zoomReset' }
@@ -64,6 +65,7 @@ const LABELS = {
   toggleChanges: ['Ctrl+Shift+D', '⌘D'],
   toggleDocs: ['Ctrl+Shift+O', '⌘O'],
   toggleNote: ['Ctrl+Shift+N', '⌘N'],
+  toggleGames: ['Ctrl+Shift+G', '⌘G'],
   nextWaiting: ['Ctrl+Shift+J', '⌘J'],
   recentSessions: ['Ctrl+Shift+H', '⇧⌘H'],
   openSettings: ['Ctrl+,', '⌘,'],
@@ -94,6 +96,7 @@ export function mapKey(e: KeyLike, platform: string): KeyAction | null {
       case 'KeyD': return { type: 'toggleChanges' }
       case 'KeyO': return { type: 'toggleDocs' }
       case 'KeyN': return { type: 'toggleNote' }
+      case 'KeyG': return { type: 'toggleGames' }
       case 'KeyH': return { type: 'recentSessions' }
       case 'KeyJ': return { type: 'nextWaiting' }
       case 'Tab': return { type: 'prevTab' }
@@ -138,6 +141,7 @@ function mapMacKey(e: KeyLike): KeyAction | null {
       case 'KeyD': return { type: 'toggleChanges' }
       case 'KeyO': return { type: 'toggleDocs' }
       case 'KeyN': return { type: 'toggleNote' }
+      case 'KeyG': return { type: 'toggleGames' }
       case 'KeyJ': return { type: 'nextWaiting' }
       case 'Equal':
       case 'NumpadAdd': return { type: 'zoomIn' }

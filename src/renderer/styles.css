@@ -67,8 +67,8 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .sh-mode:disabled { opacity: 0.45; cursor: default; }
 .sh-mode-confirm { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised-2); color: var(--text); font-size: 12px; white-space: nowrap; }
 .sh-mode-confirm-button { padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
-#sheet-header .tab-changes-toggle, #sheet-header .tab-sessions-toggle, #sheet-header .tab-images-toggle, #sheet-header .tab-docs-toggle, #sheet-header .tab-messages-toggle, #sheet-header .tab-note-toggle { flex: none; gap: 6px; height: 30px; padding: 0 9px; border-radius: 8px; font-size: 12px; }
-#sheet-header .tab-changes-toggle:hover, #sheet-header .tab-sessions-toggle:hover, #sheet-header .tab-images-toggle:hover, #sheet-header .tab-docs-toggle:hover, #sheet-header .tab-messages-toggle:hover, #sheet-header .tab-note-toggle:hover { background: var(--raised); }
+#sheet-header .tab-changes-toggle, #sheet-header .tab-sessions-toggle, #sheet-header .tab-images-toggle, #sheet-header .tab-docs-toggle, #sheet-header .tab-messages-toggle, #sheet-header .tab-note-toggle, #sheet-header .tab-games-toggle { flex: none; gap: 6px; height: 30px; padding: 0 9px; border-radius: 8px; font-size: 12px; }
+#sheet-header .tab-changes-toggle:hover, #sheet-header .tab-sessions-toggle:hover, #sheet-header .tab-images-toggle:hover, #sheet-header .tab-docs-toggle:hover, #sheet-header .tab-messages-toggle:hover, #sheet-header .tab-note-toggle:hover, #sheet-header .tab-games-toggle:hover { background: var(--raised); }
 #sheet-header .badge { position: static; display: inline-block; min-width: 16px; height: 16px; margin-left: -2px; }
 /* a narrow header: the buttons show their icons only, their names stay in their tooltips, so the title keeps room to be read.
    The labelled buttons, the icon and the gaps take about 450 px, more with a wider font (Linux, macOS) */
@@ -142,10 +142,10 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .tab-images { display: flex; align-items: center; gap: 3px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .tab-close, .tab-new, .tab-menu { background: none; border: 0; color: var(--muted); font-size: 14px; cursor: pointer; padding: 0 6px; }
 .tab-close:hover, .tab-new:hover, .tab-menu:hover { color: var(--fg); }
-.tab-changes-toggle, .tab-sessions-toggle, .tab-docs-toggle, .tab-images-toggle, .tab-messages-toggle, .tab-note-toggle { position: relative; display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
-.tab-changes-toggle:hover, .tab-sessions-toggle:hover, .tab-docs-toggle:hover, .tab-images-toggle:hover, .tab-messages-toggle:hover, .tab-note-toggle:hover { color: var(--fg); }
+.tab-changes-toggle, .tab-sessions-toggle, .tab-docs-toggle, .tab-images-toggle, .tab-messages-toggle, .tab-note-toggle, .tab-games-toggle { position: relative; display: flex; align-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 8px; }
+.tab-changes-toggle:hover, .tab-sessions-toggle:hover, .tab-docs-toggle:hover, .tab-images-toggle:hover, .tab-messages-toggle:hover, .tab-note-toggle:hover, .tab-games-toggle:hover { color: var(--fg); }
 /* the panel toggles live in the sheet's header only: an active one is a lit pill, with no underline */
-#sheet-header .tab-changes-toggle.active, #sheet-header .tab-sessions-toggle.active, #sheet-header .tab-docs-toggle.active, #sheet-header .tab-images-toggle.active, #sheet-header .tab-messages-toggle.active, #sheet-header .tab-note-toggle.active { color: var(--fg); background: var(--raised-2); }
+#sheet-header .tab-changes-toggle.active, #sheet-header .tab-sessions-toggle.active, #sheet-header .tab-docs-toggle.active, #sheet-header .tab-images-toggle.active, #sheet-header .tab-messages-toggle.active, #sheet-header .tab-note-toggle.active, #sheet-header .tab-games-toggle.active { color: var(--fg); background: var(--raised-2); }
 .tab-changes-toggle .badge, .tab-sessions-toggle .badge, .tab-images-toggle .badge, .tab-messages-toggle .badge { position: absolute; top: 3px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--accent); color: #111; font-size: 10px; line-height: 14px; font-weight: 600; text-align: center; }
 .tab-changes-toggle .badge[hidden], .tab-sessions-toggle .badge[hidden], .tab-images-toggle .badge[hidden], .tab-messages-toggle .badge[hidden] { display: none; }
 .tab-changes-toggle[hidden], .tab-note-toggle[hidden] { display: none; }

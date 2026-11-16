@@ -4,7 +4,7 @@ import { MAX_ADDRESS_LENGTH, MAX_DEVICE_NAME } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
-import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isLineEditKey, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isCoordKey, isCoordStartRequest } from '../../src/main/ipc-guards'
+import { isGamesSave, isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isLineEditKey, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isCoordKey, isCoordStartRequest } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -516,5 +516,17 @@ describe('MCP guards', () => {
     expect(isCoordKey('')).toBe(false)
     expect(isCoordKey('k'.repeat(COORD_KEY_MAX + 1))).toBe(false)
     expect(isCoordKey('local:a\nb')).toBe(false)
+  })
+})
+
+describe('games guards', () => {
+  it('isGamesSave takes a valid save and refuses a bad part or garbage', () => {
+    const save = { game: 'runner', runnerBest: 3, merge: null, clicker: null }
+    expect(isGamesSave(save)).toBe(true)
+    expect(isGamesSave({ ...save, clicker: { lines: -1, helpers: [0, 0, 0, 0], at: 0 } })).toBe(false)
+    expect(isGamesSave({ ...save, game: 'chess' })).toBe(false)
+    expect(isGamesSave({ ...save, merge: undefined })).toBe(false)
+    expect(isGamesSave(null)).toBe(false)
+    expect(isGamesSave('games')).toBe(false)
   })
 })

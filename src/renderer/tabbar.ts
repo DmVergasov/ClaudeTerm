@@ -88,6 +88,8 @@ export interface TabBarCallbacks {
   /** + Coordinator on a project group's header in the left panel: a tab of this device in the group */
   startCoordinator(tabId: string): void
   toggleNote(): void
+  /** the sheet header's Games button: the game window opens or closes */
+  toggleGames(): void
   switchPosition(): void
 }
 

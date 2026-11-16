@@ -27,6 +27,7 @@ import { SearchBar, type FindTarget } from './search'
 import { loadInter } from './dom'
 import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
 import { NoteOverlay } from './note-overlay'
+import { GamesWindow } from './games/games-window'
 import { RestoreBanner } from './restore-banner'
 import { ReviewPanel } from './review-panel'
 import { StatusBar } from './status-bar'
@@ -89,6 +90,7 @@ let sheetHeader: SheetHeader
 /** where each tab's folder is in git, as main last published it: null for a folder outside git; no entry until git has answered */
 const places = new Map<string, TabPlace | null>()
 let noteOverlay: NoteOverlay
+let gamesWindow: GamesWindow
 let searchBar: SearchBar
 let toggleImagePanel = (): void => {}
 let restoreInfo: RestoreInfo | null = null
@@ -362,6 +364,11 @@ function refreshPanelButtons(): void {
   const coordinator = mark?.role === 'coordinator' ? mark : null
   sheetHeader.setSessions(coordinator !== null, sidePanel.isShowing('sessions'), coordinator?.waiting ?? 0, activeId)
   sheetHeader.setNote(claude, claude && noteOverlay.isShown())
+  // the window is built after the sheet header's first draws: until then there is no toggle to light
+  if (gamesWindow) {
+    sheetHeader.setGames(gamesWindow.state() !== 'closed')
+    gamesWindow.place()
+  }
 }
 
 /** the MCP · Plugins panel is the chat's: a local Claude tab in its chat view. The terminal view keeps Claude Code's own /mcp, and a member's tab has its host's servers */
@@ -787,6 +794,11 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'toggleImages': toggleImagePanel(); break
     case 'toggleChanges': if (t?.info.kind === 'claude') sidePanel.toggle('changes'); break
     case 'toggleDocs': sidePanel.toggle('docs'); break
+    case 'toggleGames': {
+      gamesWindow.toggle()
+      if (gamesWindow.state() === 'closed' && activeId) focusTab(activeId)
+      break
+    }
     case 'toggleNote': {
       if (t?.info.kind !== 'claude') break
       // a note shown under the Changes panel expanded over the whole window would be unseen: the panel takes its width back first
@@ -988,7 +1000,10 @@ function applyView(t: TabState): void {
   // the MCP · Plugins panel is the chat view's: a switch of the view changes whether it is offered
   syncMcpPanel()
   if (t.info.id !== activeId) return
-  showTab(t, true, true)
+  // the view that comes takes the keyboard, unless the keyboard is in the game window or a field: a switch of the view does not take it from the game
+  const at = document.activeElement
+  const keep = !!at?.closest('#games') || at instanceof HTMLInputElement || at instanceof HTMLTextAreaElement
+  showTab(t, true, !keep)
   if (isChatView(t)) loadChat(t.info.id)
 }
 
@@ -1555,6 +1570,8 @@ async function boot(): Promise<void> {
     detachTab: (id) => void detachFromCoordinator(id),
     attachTab: (coordinatorId, id) => void ct.coordAttach(coordinatorId, id).then(toastFailure),
     startCoordinator: (id) => void ct.coordStartCoordinator(id).then((r) => { if (r !== null) toastFailure(r) }),
+    // the keyboard stays with the game window that opens, so no focusTab here
+    toggleGames: () => runAction({ type: 'toggleGames' }, activeId),
     toggleNote: () => {
       runAction({ type: 'toggleNote' }, activeId)
       // the keyboard goes back to the terminal, unless an empty note took it to be written in
@@ -1591,6 +1608,13 @@ async function boot(): Promise<void> {
     copyText: (text) => ct.writeClipboardText(text),
     changed: () => renderTabs()
   }, ct.platform)
+  gamesWindow = new GamesWindow(document.getElementById('games')!, {
+    load: () => ct.getGames(),
+    save: (save) => ct.saveGames(save),
+    focusTab: () => { if (activeId) focusTab(activeId) },
+    changed: () => refreshPanelButtons()
+  }, ct.platform)
+  void gamesWindow.init()
   ct.onTabSessionTitle((id, title) => {
     const t = tabs.get(id)
     if (!t) return
@@ -2112,7 +2136,7 @@ async function boot(): Promise<void> {
   ct.onSettings(applySettings)
   window.addEventListener('focus', () => {
     if (sessionsWindow.isOpen || folderDialog.isOpen) return
-    if (document.activeElement?.closest('#image-panel, #note')) return
+    if (document.activeElement?.closest('#image-panel, #note, #games')) return
     if (activeId) focusTab(activeId)
   })
   banner = new RestoreBanner(document.getElementById('banner')!, () => ct.runRestore())

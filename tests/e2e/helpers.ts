@@ -24,18 +24,18 @@ export const KEYS = MAC
   ? {
       newTab: 'Meta+KeyT', newClaudeTab: 'Meta+KeyL', closeTab: 'Meta+KeyW', nextTab: 'Control+Tab', copy: 'Meta+KeyC', paste: 'Meta+KeyV',
       images: 'Meta+KeyI', changes: 'Meta+KeyD', recentSessions: 'Meta+Shift+KeyH', settings: 'Meta+Comma', zoomIn: 'Meta+Equal',
-      panelFind: 'Meta+KeyF', star: 'Meta+KeyD', note: 'Meta+KeyN', docs: 'Meta+KeyO', nextWaiting: 'Meta+KeyJ', find: 'Meta+KeyF'
+      panelFind: 'Meta+KeyF', star: 'Meta+KeyD', note: 'Meta+KeyN', docs: 'Meta+KeyO', nextWaiting: 'Meta+KeyJ', find: 'Meta+KeyF', games: 'Meta+KeyG'
     }
   : {
       newTab: 'Control+Shift+KeyT', newClaudeTab: 'Control+Shift+KeyL', closeTab: 'Control+Shift+KeyW', nextTab: 'Control+Tab', copy: 'Control+Shift+KeyC', paste: 'Control+KeyV',
       images: 'Control+Shift+KeyI', changes: 'Control+Shift+KeyD', recentSessions: 'Control+Shift+KeyH', settings: 'Control+Comma', zoomIn: 'Control+Equal',
-      panelFind: 'Control+KeyF', star: 'Control+KeyD', note: 'Control+Shift+KeyN', docs: 'Control+Shift+KeyO', nextWaiting: 'Control+Shift+KeyJ', find: 'Control+Shift+KeyF'
+      panelFind: 'Control+KeyF', star: 'Control+KeyD', note: 'Control+Shift+KeyN', docs: 'Control+Shift+KeyO', nextWaiting: 'Control+Shift+KeyJ', find: 'Control+Shift+KeyF', games: 'Control+Shift+KeyG'
     }
 
 /** the shortcuts as the window's tooltips write them */
 export const KEY_LABELS = MAC
-  ? { images: '⌘I', changes: '⌘D', panelFind: '⌘F', star: '⌘D', note: '⌘N', docs: '⌘O' }
-  : { images: 'Ctrl+Shift+I', changes: 'Ctrl+Shift+D', panelFind: 'Ctrl+F', star: 'Ctrl+D', note: 'Ctrl+Shift+N', docs: 'Ctrl+Shift+O' }
+  ? { images: '⌘I', changes: '⌘D', panelFind: '⌘F', star: '⌘D', note: '⌘N', docs: '⌘O', games: '⌘G' }
+  : { images: 'Ctrl+Shift+I', changes: 'Ctrl+Shift+D', panelFind: 'Ctrl+F', star: 'Ctrl+D', note: 'Ctrl+Shift+N', docs: 'Ctrl+Shift+O', games: 'Ctrl+Shift+G' }
 
 // "claude" prints its arguments instead of starting (on Linux also the folder it runs in, as PowerShell's prompt shows it)
 export const FAKE_CLAUDE_SETTINGS = WIN

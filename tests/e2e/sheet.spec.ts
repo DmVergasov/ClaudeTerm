@@ -37,6 +37,7 @@ for (const position of ['top', 'left'] as const) {
     const header = page.locator('#sheet-header')
     await expect(header.locator('.tab-images-toggle')).toBeVisible()
     await expect(header.locator('.tab-messages-toggle')).toBeVisible()
+    await expect(header.locator('.tab-games-toggle')).toBeVisible()
     await expect(page.locator('#tabbar .tab-images-toggle')).toHaveCount(0)
     await expect(page.locator('#tabpanel .tab-images-toggle')).toHaveCount(0)
     await expect(page.locator('#tabpanel .tab-messages-toggle')).toHaveCount(0)
@@ -151,7 +152,7 @@ test('a long title and a narrow window keep every toggle inside the header', asy
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThan(600)
 
   const header = await box(page.locator('#sheet-header'))
-  const toggles = page.locator('#sheet-header .tab-changes-toggle:visible, #sheet-header .tab-images-toggle:visible, #sheet-header .tab-messages-toggle:visible, #sheet-header .tab-note-toggle:visible')
+  const toggles = page.locator('#sheet-header .tab-changes-toggle:visible, #sheet-header .tab-images-toggle:visible, #sheet-header .tab-messages-toggle:visible, #sheet-header .tab-note-toggle:visible, #sheet-header .tab-games-toggle:visible')
   expect(await toggles.count()).toBeGreaterThan(0)
   for (let i = 0; i < (await toggles.count()); i++) {
     const b = await box(toggles.nth(i))

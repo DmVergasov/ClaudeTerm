@@ -105,6 +105,8 @@ import { TaskListHub, shownPlan } from './task-list-hub'
 import { TaskListStore } from './task-list-store'
 import { TurnOrigins } from './turn-origins'
 import { TabLayoutStore } from './tab-layout'
+import { GamesStore } from './games-store'
+import { parseGamesSave, type GamesSave } from '../shared/games'
 import { MailHub } from './mail/mail-hub'
 import { MailStore } from './mail/mail-store'
 import { MailSync } from './mail/mail-sync'
@@ -152,7 +154,7 @@ import { McpHub } from './mcp/mcp-hub'
 import { ConfigWatch } from './mcp/config-watch'
 import { RestartCoordinator } from './mcp/restart-coordinator'
 import { ViewFollow } from './view-follow'
-import { isMcpAction, isMcpAddRequest, isPluginAction, isReloadAction } from './ipc-guards'
+import { isGamesSave, isMcpAction, isMcpAddRequest, isPluginAction, isReloadAction } from './ipc-guards'
 
 const dataDir = initDataDir()
 const log = createLogger(join(dataDir, 'logs'))
@@ -309,6 +311,7 @@ function bootstrap(): void {
   const history = new SessionHistory(() => transcriptRoots(), undefined, (id) => chatSessions.has(id))
   const starred = new StarredSessions(dataDir, toast)
   const tabLayout = new TabLayoutStore(dataDir, toast)
+  const games = new GamesStore(dataDir, (m) => log.warn(m))
   const notes = new SessionNotes(dataDir, { onError: (m) => log.warn(m), warn: toast })
   const noteHub = new NoteHub({
     store: notes,
@@ -2987,6 +2990,8 @@ function bootstrap(): void {
   ipcMain.handle(IPC.sessionsStarred, (): string[] => [...starred.ids()])
   ipcMain.handle(IPC.layoutGet, (): TabLayout => tabLayout.get())
   ipcMain.on(IPC.layoutSet, (_e, c: unknown) => { if (isTabLayoutChange(c)) tabLayout.set(c) })
+  ipcMain.handle(IPC.gamesGet, (): GamesSave => games.get())
+  ipcMain.on(IPC.gamesSet, (_e, v: unknown) => { if (isGamesSave(v)) games.set(parseGamesSave(v).save) })
   /** a listed session in a new Claude tab: Claude Code finds a conversation by its folder, and a folder that is gone cannot resume it */
   /** the conversation is carried to the account it opens on (rule B: its own copy there, else the newest copy carried in), then it opens in a new Claude tab on that account */
   const openOn = async (s: { id: string; cwd: string; account?: string | null }, activate: boolean): Promise<TabInfo | null> => {

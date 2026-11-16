@@ -1,5 +1,6 @@
 import type { AccountBegin, AccountFlowView, AccountResult, AccountsView, CarryPreview, FlowAction, PickedFolder, RemoveInfo, RemoveOptions, RemoveResult } from './accounts'
 import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
+import type { GamesSave } from './games'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { FileLink } from './chat-paths'
 import type { MailConversationView, MailUnread } from './mail'
@@ -90,6 +91,8 @@ export const IPC = {
   panelSet: 'panel:set',
   layoutGet: 'layout:get',
   layoutSet: 'layout:set',
+  gamesGet: 'games:get',
+  gamesSet: 'games:set',
   accountsList: 'accounts:list',
   accountsAdd: 'accounts:add',
   accountsRename: 'accounts:rename',
@@ -465,6 +468,10 @@ export interface CtApi {
   getTabLayout(): Promise<TabLayout>
   /** saves the part of the left tab panel's layout that is given; the width is kept within TAB_PANEL_WIDTH (110 to 480 px) */
   setTabLayout(change: Partial<TabLayout>): void
+  /** the mini-games' save: the last one kept, or a fresh start */
+  getGames(): Promise<GamesSave>
+  /** saves the mini-games' save, kept in games.json in the data folder */
+  saveGames(save: GamesSave): void
   /** the extra accounts, without their tokens */
   listAccounts(): Promise<AccountsView>
   addAccount(name: string, token: string): Promise<AccountResult>
