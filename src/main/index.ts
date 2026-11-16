@@ -128,7 +128,7 @@ import type { HelloMessage } from './sync/wire'
 import { DeviceGroup } from './sync/device-group'
 import { StoreBridge } from './sync/store-bridge'
 import { socketProblem } from './socket-file'
-import { createSoundPlayer, linuxSoundDeps, macSoundDeps, startPlayer, wavPlayer } from './sound'
+import { createSoundPlayer, linuxSoundDeps, macSoundDeps, startPlayer, testSoundSink, wavPlayer } from './sound'
 import { StatusHub } from './status-hub'
 import { PlanHub, readPlanFile } from './plan-hub'
 import { TabManager, type ConversationMove } from './tab-manager'
@@ -666,20 +666,17 @@ function bootstrap(): void {
   })
   setInterval(() => void planHub.refresh(), 1000)
 
-  // a test run can have each sound written to a file instead of played
-  const testSoundLog = isTest ? process.env.CLAUDETERM_TEST_SOUND_LOG : undefined
-  const playSound = testSoundLog
-    ? (sound: string): void => appendFileSync(testSoundLog, `${sound}\n`)
-    : createSoundPlayer({
-      ...(process.platform === 'win32'
-        ? { player: (f: string) => wavPlayer(f, process.env), systemSound: null }
-        : process.platform === 'darwin'
-          ? macSoundDeps(process.env, existsSync)
-          : linuxSoundDeps(process.env, (cmd) => findExecutable(cmd, process.env.PATH ?? '', isExecutableFile) !== null, existsSync)),
-      beep: () => shell.beep(),
-      spawn: startPlayer,
-      warn: toast
-    })
+  // a test run never plays a sound: each one goes to a file when CLAUDETERM_TEST_SOUND_LOG is set, otherwise nowhere
+  const playSound = testSoundSink(isTest, process.env.CLAUDETERM_TEST_SOUND_LOG, appendFileSync) ?? createSoundPlayer({
+    ...(process.platform === 'win32'
+      ? { player: (f: string) => wavPlayer(f, process.env), systemSound: null }
+      : process.platform === 'darwin'
+        ? macSoundDeps(process.env, existsSync)
+        : linuxSoundDeps(process.env, (cmd) => findExecutable(cmd, process.env.PATH ?? '', isExecutableFile) !== null, existsSync)),
+    beep: () => shell.beep(),
+    spawn: startPlayer,
+    warn: toast
+  })
 
   const stopTabStatus = (tabId: string): void => {
     const timer = statusTimers.get(tabId)

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
-import { createSoundPlayer, FREEDESKTOP_SOUND, linuxPlayer, linuxSoundDeps, MAC_SOUND, macSoundDeps, type ProcessSpec, wavPlayer } from '../../src/main/sound'
+import { createSoundPlayer, testSoundSink, FREEDESKTOP_SOUND, linuxPlayer, linuxSoundDeps, MAC_SOUND, macSoundDeps, type ProcessSpec, wavPlayer } from '../../src/main/sound'
 
 function setup(o: { spawnThrows?: boolean; systemSound?: string | null; noPlayer?: boolean } = {}) {
   const calls: string[] = []
@@ -141,5 +141,27 @@ describe('macSoundDeps', () => {
     expect(d.player('/Users/dev/My Sounds/ding.wav')).toEqual({ file: '/usr/bin/afplay', args: ['/Users/dev/My Sounds/ding.wav'], env })
     expect(d.systemSound).toBe('/System/Library/Sounds/Glass.aiff')
     expect(macSoundDeps(env, () => false).systemSound).toBeNull()
+  })
+})
+
+describe('testSoundSink', () => {
+  it('outside a test run there is no sink: the real player is used', () => {
+    expect(testSoundSink(false, '/tmp/sounds.log', () => {})).toBeNull()
+  })
+
+  it('a test run with a sound log writes each sound to it, one per line', () => {
+    const lines: string[] = []
+    const sink = testSoundSink(true, '/tmp/sounds.log', (path, text) => lines.push(`${path}|${text}`))
+    sink!('system')
+    sink!('ding.wav')
+    expect(lines).toEqual(['/tmp/sounds.log|system\n', '/tmp/sounds.log|ding.wav\n'])
+  })
+
+  it('a test run without a sound log is silent: a sink that writes nothing and plays nothing', () => {
+    const lines: string[] = []
+    const sink = testSoundSink(true, undefined, (_p, text) => lines.push(text))
+    expect(sink).not.toBeNull()
+    sink!('system')
+    expect(lines).toEqual([])
   })
 })

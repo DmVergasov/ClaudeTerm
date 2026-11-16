@@ -59,6 +59,16 @@ export function createSoundPlayer(d: SoundPlayerDeps): (sound: string) => void {
   }
 }
 
+/**
+ * What plays the sounds in a test run: each sound appended to the log file when there is one, otherwise nothing at all (no
+ * sound, no beep). Null outside a test run: the real player is used.
+ */
+export function testSoundSink(isTest: boolean, logPath: string | undefined, append: (path: string, text: string) => void): ((sound: string) => void) | null {
+  if (!isTest) return null
+  if (!logPath) return () => {}
+  return (sound) => append(logPath, `${sound}\n`)
+}
+
 /** Starts a sound player off the main thread (off-thread-spawn.ts): no window, no output */
 export function startPlayer(p: ProcessSpec): SoundChild {
   const child = new EventEmitter()
