@@ -282,6 +282,108 @@ test('a full board with no merge says No moves, and New game starts over keeping
   await app.close()
 })
 
+test('every Merge cell is the same square, whichever cells hold tiles', async () => {
+  const dataDir = mergeDataDir({ board: [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 2], score: 0, best: 0, won: false })
+  const { app, page } = await launchApp({ dataDir })
+  await toggle(page).click()
+  await pick(page, 'merge')
+  await expect(board(page)).toHaveAttribute('data-cells', '0,0,0,0,0,0,1,0,0,0,0,1,0,1,0,2')
+
+  const sizes = await page.evaluate(() =>
+    [...document.querySelectorAll('#games .merge-cell')].map((c) => {
+      const r = c.getBoundingClientRect()
+      return { w: r.width, h: r.height }
+    })
+  )
+  expect(sizes).toHaveLength(16)
+  for (const s of sizes) {
+    expect(Math.abs(s.w - sizes[0].w)).toBeLessThan(0.5)
+    expect(Math.abs(s.h - sizes[0].w)).toBeLessThan(0.5)
+  }
+  await app.close()
+})
+
+/** presses the arrows in one go on the game window and reads the board in the same call, before anything is drawn again */
+function pressAndRead(page: Page, codes: string[]): Promise<{ ghosts: string[]; cells: string; arriving: number }> {
+  return page.evaluate((keys) => {
+    const el = document.querySelector('#games .games-window')!
+    for (const code of keys) el.dispatchEvent(new KeyboardEvent('keydown', { code, key: code, bubbles: true }))
+    return {
+      ghosts: [...document.querySelectorAll('#games .merge-ghost')].map((g) => (g as HTMLElement).dataset.e!),
+      cells: (document.querySelector('#games .merge-board') as HTMLElement).dataset.cells!,
+      arriving: document.querySelectorAll('#games [data-arriving]').length
+    }
+  }, codes)
+}
+
+const ROW_OF_ONES = { board: [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], score: 0, best: 0, won: false }
+
+test('a Merge move slides its tiles: ghosts go from their cells to where the tiles end, then the board shows the result', async () => {
+  const { app, page } = await launchApp({ dataDir: mergeDataDir(ROW_OF_ONES) })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await toggle(page).click()
+  await pick(page, 'merge')
+
+  const seen = await pressAndRead(page, ['ArrowLeft'])
+  expect(seen.ghosts).toEqual(['1', '1'])
+  const cells = seen.cells.split(',').map(Number)
+  expect(cells[0]).toBe(2)
+  expect(cells.filter((c) => c !== 0)).toHaveLength(2)
+  expect(seen.arriving).toBeGreaterThan(0)
+
+  await expect.poll(() => page.locator('#games .merge-ghost').count()).toBe(0)
+  await expect.poll(() => page.locator('#games [data-arriving]').count()).toBe(0)
+  await expect(board(page)).toHaveAttribute('data-cells', seen.cells)
+  await app.close()
+})
+
+test('with reduced motion a Merge move draws the result with no ghosts', async () => {
+  const { app, page } = await launchApp({ dataDir: mergeDataDir(ROW_OF_ONES) })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await toggle(page).click()
+  await pick(page, 'merge')
+
+  const seen = await pressAndRead(page, ['ArrowLeft'])
+  expect(seen.ghosts).toEqual([])
+  expect(seen.arriving).toBe(0)
+  const cells = seen.cells.split(',').map(Number)
+  expect(cells[0]).toBe(2)
+  expect(cells.filter((c) => c !== 0)).toHaveLength(2)
+  await app.close()
+})
+
+test('a second move while the first still slides settles the first at once', async () => {
+  // Left merges the pair into cell 0; Right then moves the result (and the tile Left spawned) again
+  const { app, page } = await launchApp({ dataDir: mergeDataDir(ROW_OF_ONES) })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await toggle(page).click()
+  await pick(page, 'merge')
+
+  const seen = await page.evaluate(() => {
+    const el = document.querySelector('#games .games-window')!
+    const press = (code: string) => el.dispatchEvent(new KeyboardEvent('keydown', { code, key: code, bubbles: true }))
+    const read = () => {
+      const b = document.querySelector('#games .merge-board') as HTMLElement
+      const cells = b.dataset.cells!
+      return { cells, ghosts: b.querySelectorAll('.merge-ghost').length, tiles: cells.split(',').filter((c) => c !== '0').length }
+    }
+    press('ArrowLeft')
+    const first = read()
+    press('ArrowRight')
+    return { first, second: read() }
+  })
+  expect(seen.first.ghosts).toBe(2)
+  expect(seen.second.cells).not.toBe(seen.first.cells)
+  // the second move slid every tile the first one left (two of them), and only those ghosts exist
+  expect(seen.second.ghosts).toBe(seen.first.tiles)
+  expect(seen.second.cells.split(',').map(Number)[3]).toBeGreaterThan(0)
+
+  await expect.poll(() => page.locator('#games .merge-ghost').count()).toBe(0)
+  await expect.poll(() => page.locator('#games [data-arriving]').count()).toBe(0)
+  await expect(board(page)).toHaveAttribute('data-cells', seen.second.cells)
+  await app.close()
+})
+
 /** a data folder whose Clicker save is `clicker`: the game window opens on it */
 function clickerDataDir(clicker: object): string {
   const dir = makeDataDir()

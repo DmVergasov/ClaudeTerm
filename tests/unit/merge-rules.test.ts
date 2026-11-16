@@ -46,6 +46,51 @@ describe('merge rules', () => {
     expect(column0(slide(column([1, 1, 0, 0]), 'down').board)).toEqual([0, 0, 0, 2])
   })
 
+  it('slide reports where each tile ends and which cells merged', () => {
+    const sorted = (paths: { from: number; to: number }[]) => paths.slice().sort((a, b) => a.from - b.from)
+
+    const pair = slide(rows([1, 1, 0, 0], empty().slice(4)), 'left')
+    expect(sorted(pair.paths)).toEqual([{ from: 0, to: 0 }, { from: 1, to: 0 }])
+    expect(pair.merged).toEqual([0])
+
+    const gap = slide(rows([0, 1, 0, 1], empty().slice(4)), 'left')
+    expect(sorted(gap.paths)).toEqual([{ from: 1, to: 0 }, { from: 3, to: 0 }])
+    expect(gap.merged).toEqual([0])
+
+    const right = slide(rows([2, 1, 1, 0], empty().slice(4)), 'right')
+    expect(sorted(right.paths)).toEqual([{ from: 0, to: 2 }, { from: 1, to: 3 }, { from: 2, to: 3 }])
+    expect(right.merged).toEqual([3])
+
+    const column = empty()
+    column[1] = 1
+    column[5] = 1
+    column[13] = 3
+    const down = slide(column, 'down')
+    expect(sorted(down.paths)).toEqual([{ from: 1, to: 9 }, { from: 5, to: 9 }, { from: 13, to: 13 }])
+    expect(down.merged).toEqual([9])
+    expect(down.board[9]).toBe(2)
+  })
+
+  it('a move that changes nothing reports no paths, no merges and no spawn', () => {
+    const s: MergeSave = { board: rows([1, 0, 0, 0], empty().slice(4)), score: 0, best: 0, won: false }
+    const result = move(s, 'left', r(0, 0.5))
+    expect(result.moved).toBe(false)
+    expect(result.paths).toEqual([])
+    expect(result.merged).toEqual([])
+    expect(result.spawned).toBeNull()
+  })
+
+  it('move reports the cell the new tile went to, with the paths and merges of its slide', () => {
+    const s: MergeSave = { board: rows([1, 1, 0, 0], empty().slice(4)), score: 0, best: 0, won: false }
+    const result = move(s, 'left', r(0, 0.5))
+    expect(result.merged).toEqual([0])
+    expect(result.paths).toHaveLength(2)
+    const slid = slide(s.board, 'left').board
+    const fresh = result.save.board.map((c, i) => (c !== 0 && slid[i] === 0 ? i : -1)).filter((i) => i >= 0)
+    expect(fresh).toHaveLength(1)
+    expect(result.spawned).toBe(fresh[0])
+  })
+
   it('a move that changes nothing does not spawn', () => {
     const s: MergeSave = { board: rows([1, 0, 0, 0], empty().slice(4)), score: 0, best: 0, won: false }
     const result = move(s, 'left', r(0, 0.5))

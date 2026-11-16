@@ -4,6 +4,12 @@ export type Dir = 'left' | 'right' | 'up' | 'down'
 
 export const SIZE = 4
 
+/** a tile that slides from one cell to another; from === to for a tile that stays */
+export interface TilePath {
+  from: number
+  to: number
+}
+
 /** the exponent of a 1 MB tile */
 export const GOAL = 11
 
@@ -56,40 +62,55 @@ function line(n: number, dir: Dir): number[] {
  * Slides every tile toward dir and merges equal neighbours; the pair nearest the wall merges first and a tile merges
  * at most once per move. gained is the value of the new tiles in KB. Nothing is spawned; the input is not changed.
  */
-export function slide(board: number[], dir: Dir): { board: number[]; gained: number; moved: boolean } {
+export function slide(board: number[], dir: Dir): { board: number[]; gained: number; moved: boolean; paths: TilePath[]; merged: number[] } {
   const next = board.slice()
+  const paths: TilePath[] = []
+  const mergedCells: number[] = []
   let gained = 0
   for (let n = 0; n < SIZE; n++) {
     const cells = line(n, dir)
-    const tiles = cells.map((i) => board[i]).filter((c) => c !== 0)
-    const merged: number[] = []
+    const tiles = cells.filter((i) => board[i] !== 0)
+    const out: number[] = []
     for (let k = 0; k < tiles.length; k++) {
-      if (k + 1 < tiles.length && tiles[k] === tiles[k + 1]) {
-        merged.push(tiles[k] + 1)
-        gained += tileKB(tiles[k] + 1)
+      const to = cells[out.length]
+      if (k + 1 < tiles.length && board[tiles[k]] === board[tiles[k + 1]]) {
+        out.push(board[tiles[k]] + 1)
+        gained += tileKB(board[tiles[k]] + 1)
+        paths.push({ from: tiles[k], to }, { from: tiles[k + 1], to })
+        mergedCells.push(to)
         k++
       } else {
-        merged.push(tiles[k])
+        out.push(board[tiles[k]])
+        paths.push({ from: tiles[k], to })
       }
     }
-    cells.forEach((cell, k) => (next[cell] = merged[k] ?? 0))
+    cells.forEach((cell, k) => (next[cell] = out[k] ?? 0))
   }
-  return { board: next, gained, moved: next.some((c, i) => c !== board[i]) }
+  return { board: next, gained, moved: next.some((c, i) => c !== board[i]), paths, merged: mergedCells }
 }
 
-/** one move: slides, and spawns a tile only when the board moved; reachedGoal is set on the move that first makes a tile GOAL */
-export function move(s: MergeSave, dir: Dir, rand: () => number): { save: MergeSave; moved: boolean; reachedGoal: boolean } {
+/**
+ * one move: slides, and spawns a tile only when the board moved; reachedGoal is set on the move that first makes a tile GOAL.
+ * paths and merged are those of the slide, and spawned is the cell of the new tile; all empty or null when nothing moved
+ */
+export function move(
+  s: MergeSave,
+  dir: Dir,
+  rand: () => number
+): { save: MergeSave; moved: boolean; reachedGoal: boolean; paths: TilePath[]; merged: number[]; spawned: number | null } {
   const slid = slide(s.board, dir)
-  if (!slid.moved) return { save: s, moved: false, reachedGoal: false }
+  if (!slid.moved) return { save: s, moved: false, reachedGoal: false, paths: [], merged: [], spawned: null }
   const reachedGoal = !s.won && slid.board.some((c) => c >= GOAL)
   const score = s.score + slid.gained
+  const board = spawn(slid.board, rand)
   const save: MergeSave = {
-    board: spawn(slid.board, rand),
+    board,
     score,
     best: Math.max(s.best, score),
     won: s.won || reachedGoal
   }
-  return { save, moved: true, reachedGoal }
+  const spawned = board.findIndex((c, i) => c !== slid.board[i])
+  return { save, moved: true, reachedGoal, paths: slid.paths, merged: slid.merged, spawned: spawned < 0 ? null : spawned }
 }
 
 /** true when some move would change the board: an empty cell, or two equal neighbours */

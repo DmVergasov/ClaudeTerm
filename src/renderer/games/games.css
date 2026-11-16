@@ -177,7 +177,9 @@
 .merge-board {
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  position: relative;
   gap: 6px;
   width: 248px;
   height: 248px;
@@ -187,6 +189,8 @@
   background: var(--well);
 }
 .merge-cell {
+  min-width: 0;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -209,6 +213,10 @@
 .merge-cell[data-e="7"] { background: #de8d50; color: #1a1410; }
 .merge-cell[data-e="8"] { background: #e3a250; color: #1a1410; }
 .merge-cell[data-e="0"] { background: var(--raised-2); color: var(--text); }
+/* a cell a sliding tile is on its way to looks empty until the tile lands */
+.merge-board .merge-cell[data-arriving] { background: var(--raised-2); color: transparent; }
+/* a tile sliding over the board; the board's own cells already show the result below it */
+.merge-ghost { position: absolute; box-sizing: border-box; pointer-events: none; }
 .merge-note {
   display: flex;
   align-items: center;
