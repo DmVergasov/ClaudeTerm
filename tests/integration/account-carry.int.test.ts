@@ -298,7 +298,7 @@ describe('carry-over', () => {
     writeJson(join(target, 'fake-mcp-auth.json'), { api: true, docs: true })
 
     const line = await carryItem('mcp', deps())
-    expect(line).toMatchObject({ item: 'mcp', state: 'done', text: '2 added' })
+    expect(line).toMatchObject({ item: 'mcp', state: 'done', text: '1 added, 1 already there' })
 
     const calls = runs(() => readLog(log)).filter((run) => run.argv[0] === 'mcp')
     expect(calls.map((run) => run.argv)).toEqual([
@@ -316,7 +316,10 @@ describe('carry-over', () => {
     writeJson(join(target, '.credentials.json'), { mcpOAuthClientConfig: { 'api|fedcba9876543210': { clientSecret: APP_SECRET } } })
     writeJson(join(target, 'fake-mcp-auth.json'), { api: true, docs: true })
 
-    await carryLines('mcp', { ...deps(), secrets: true })
+    expect(await carryLines('mcp', { ...deps(), secrets: true })).toEqual([
+      { item: 'mcp', state: 'done', text: '0 added, 2 already there', subs: [] },
+      { item: 'mcp-secrets', state: 'done', text: '0 added, 1 already there', subs: [] }
+    ])
     expect(runs(() => readLog(log)).filter((run) => run.argv[0] === 'mcp')).toEqual([])
     expect(readJson(join(target, 'fake-mcp-auth.json'))).toEqual({ api: true, docs: true })
   })

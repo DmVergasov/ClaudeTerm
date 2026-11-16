@@ -1380,7 +1380,7 @@ async function mcpCommand(verb: string | undefined, args: string[], call: CliCal
       delete servers[name]
       saveScopeServers(from, servers)
       // as Claude Code does, removing a server deletes its sign-in
-      editJson(authFile(), value => { delete value[name] })
+      if (readJsonFile(authFile())[name] !== undefined) editJson(authFile(), value => { delete value[name] })
       return out(`Removed MCP server ${name} from ${from} config`)
     }
     case 'login': {

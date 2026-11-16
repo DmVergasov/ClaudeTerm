@@ -1,6 +1,7 @@
 import { win32 } from 'node:path'
 import type { McpLiveServer } from '../chat/chat-engine'
 import type { ChatHub } from '../chat/chat-hub'
+import { canonicalFolder } from '../chat/chat-files'
 import type { ChatLaunch } from '../chat/claude-spawn'
 import type { McpAction, McpAddRequest, McpEditScope, McpReload, McpResult, McpScope, McpServerView, McpServersView, McpStatus, McpTransport, PluginAction, PluginOffer, PluginOption, PluginsView } from '../../shared/mcp'
 import { hasOauthApp, marketplaceSource } from '../../shared/mcp'
@@ -27,6 +28,8 @@ const LIVE_STATUSES = new Set<string>(['connected', 'failed', 'needs-auth', 'pen
 const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse', 'ws']
 const LIST_TTL_MS = 30_000
 const NO_LIST = 'Claude Code printed no plugin list'
+/** how long a sign-in or sign-out waits for one other tab to reconnect the server */
+const SIBLING_TIMEOUT_MS = 15_000
 /** what `claude mcp login` prints for a claude.ai connector: "…the connector will be available the next time you start Claude Code." */
 const CLAUDE_AI_LOGIN = /available the next time you start Claude Code/i
 
@@ -230,39 +233,45 @@ export class McpHub {
     })
   }
 
-  private logout(tabId: string, tab: Tab, name: string): Promise<McpResult> {
-    return this.queued(tab, async () => {
-      const result = await this.cli(tab, ['mcp', 'logout', '--', name], { secrets: [] })
-      if ('error' in result) return fail(result.error)
+  private async logout(tabId: string, tab: Tab, name: string): Promise<McpResult> {
+    const result = await this.queued(tab, async (): Promise<McpResult> => {
+      const run = await this.cli(tab, ['mcp', 'logout', '--', name], { secrets: [] })
+      if ('error' in run) return fail(run.error)
       await this.reconnectQuietly(tabId, name)
       this.d.changed(tabId, false)
-      await this.reconnectSiblings(tabId, tab, name, 'out')
       return { ok: true }
     })
+    // the other tabs are reconnected once the queue is free: a slow one must not hold the folder's other commands
+    if (result.ok) await this.reconnectSiblings(tabId, tab, name, 'out')
+    return result
   }
 
   /**
    * The other tabs on the same config folder: a running session never reads the sign-in store again, so each one is told to
-   * reconnect the server. `signed`: 'in' is a sign-in, so the tabs that already have it connected are left alone;
-   * a sign-out is the other way round, only the tabs that have it connected need to drop its token.
+   * reconnect the server, all at once and each for SIBLING_TIMEOUT_MS at most. `signed`: a sign-in reconnects every tab, as
+   * the login revoked the tokens a connected one holds; a sign-out only the tabs that have the server connected.
    */
   private async reconnectSiblings(tabId: string, tab: Tab, name: string, signed: 'in' | 'out'): Promise<void> {
-    const key = this.folderKey(tab)
-    for (const id of this.d.tabs()) {
-      if (id === tabId) continue
-      try {
-        const other = await this.d.tab(id)
-        if (other === null || this.folderKey(other) !== key) continue
-        const statuses = await this.statuses(id)
-        if (statuses === null) continue
-        const status = statuses.find((s) => s.name === name)?.status
-        if (signed === 'in' ? status === 'connected' : status !== 'connected') continue
-        await this.d.session.reconnectMcp(id, name)
-        this.d.changed(id, false)
-      } catch {
-        // one tab that cannot reconnect does not fail the sign-in; its panel shows the server's state on its next read
-      }
+    const key = await this.resolvedKey(tab)
+    const one = async (id: string): Promise<void> => {
+      const other = await this.d.tab(id)
+      if (other === null || (await this.resolvedKey(other)) !== key) return
+      const statuses = await this.statuses(id)
+      if (statuses === null) return
+      if (signed === 'out' && statuses.find((s) => s.name === name)?.status !== 'connected') return
+      await this.d.session.reconnectMcp(id, name)
+      this.d.changed(id, false)
     }
+    // a tab that cannot reconnect, or does not answer in time, does not fail the sign-in: its panel shows the server's state on its next read
+    await Promise.allSettled(this.d.tabs().filter((id) => id !== tabId).map((id) => withLimit(one(id), SIBLING_TIMEOUT_MS)))
+  }
+
+  /** the config folder of a tab as one key for every way to write it: no trailing separator, links and short names resolved, then pathKey */
+  private async resolvedKey(tab: Tab): Promise<string> {
+    const dir = tab.env.CLAUDE_CONFIG_DIR || this.d.home
+    const bare = dir.replace(/[\\/]+$/, '')
+    const folder = bare === '' || /^[A-Za-z]:$/.test(bare) ? dir : bare
+    return pathKey(await canonicalFolder(folder), isWindowsPath(dir) ? win32 : nativePath)
   }
 
   /** a Cancel ends the sign-in running for the name; one that finds none is remembered for the next sign-in of that name */
@@ -485,6 +494,17 @@ export class McpHub {
       return { error: masked(errorText(error)) }
     }
   }
+}
+
+/** the promise's own result, or a rejection once the time is up; the timer never outlives the promise */
+function withLimit<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const limit = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('timed out')), ms)
+  })
+  // a promise that ends after its limit must not be an unhandled rejection
+  promise.catch(() => undefined)
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer))
 }
 
 function fail(error: string): McpResult {

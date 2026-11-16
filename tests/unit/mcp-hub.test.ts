@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { McpLiveServer } from '../../src/main/chat/chat-engine'
 import type { ChatLaunch } from '../../src/main/chat/claude-spawn'
@@ -34,7 +37,8 @@ function setup(o: Partial<{
   json: Record<string, unknown>   // more files, by their full path
   tabGate: Promise<void>          // the tab lookup waits for this (a realpath still running)
   reload: McpReload | null        // the changes the restart coordinator says the session has not loaded
-  others: Record<string, { env: Record<string, string>; live: McpLiveServer[] | null; reconnectError?: string }>   // more local Claude tabs, by id
+  env: Record<string, string>     // the first tab's environment (default ENV)
+  others: Record<string, { env: Record<string, string>; live: McpLiveServer[] | null; reconnectError?: string; reconnectHangs?: boolean }>   // more local Claude tabs, by id
 }> = {}) {
   const paths = configPaths(ENV, HOME, FOLDER)
   const files = new Map<string, unknown>()
@@ -57,7 +61,7 @@ function setup(o: Partial<{
     },
     tab: async (id) => {
       await o.tabGate
-      if (id === TAB) return { env: ENV, folder: FOLDER }
+      if (id === TAB) return { env: o.env ?? ENV, folder: FOLDER }
       const other = o.others?.[id]
       return other === undefined ? null : { env: other.env, folder: FOLDER }
     },
@@ -71,6 +75,7 @@ function setup(o: Partial<{
     session: {
       mcpStatus: async (id) => (id === TAB ? o.live : o.others?.[id]?.live) ?? null,
       reconnectMcp: async (id, name) => {
+        if (o.others?.[id]?.reconnectHangs) return new Promise<void>(() => {})
         const error = o.others?.[id]?.reconnectError
         if (error !== undefined) throw new Error(error)
         reconnects.push(name)
@@ -111,6 +116,10 @@ const live = (over: Partial<McpLiveServer>): McpLiveServer => ({
   name: 'github', status: 'connected', error: null, version: null, scope: 'user', source: null, transport: 'stdio', target: null, tools: [], ...over
 })
 
+/** lets the real I/O of the hub finish: waits for the condition in turns of the event loop */
+const until = async (done: () => boolean): Promise<void> => {
+  for (let i = 0; i < 2000 && !done(); i++) await new Promise<void>((resolve) => setImmediate(resolve))
+}
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const deferred = (): { promise: Promise<void>; resolve: () => void } => {
   let resolve: () => void = () => {}
@@ -292,7 +301,7 @@ describe('McpHub', () => {
     const B = 'tab-b'
     const C = 'tab-c'
 
-    it('a login reconnects the server in the other tabs of the same folder, not in a tab of another folder or one that is connected', async () => {
+    it('a login reconnects the server in every other tab of the same folder, connected or not, and in no tab of another folder', async () => {
       const { hub, reconnectsBy, changed } = setup({
         live: NEEDS,
         others: {
@@ -302,8 +311,9 @@ describe('McpHub', () => {
         }
       })
       expect(await hub.action(TAB, { kind: 'login', name: 'slack' })).toEqual({ ok: true })
-      expect(reconnectsBy).toEqual([[TAB, 'slack'], [A, 'slack']])
-      expect(changed).toEqual([[TAB, false], [A, false]])
+      // a new login revokes the tokens a connected tab holds: it is reconnected too
+      expect([...reconnectsBy].sort()).toEqual([[TAB, 'slack'], [A, 'slack'], [C, 'slack']])
+      expect([...changed].sort()).toEqual([[TAB, false], [A, false], [C, false]])
     })
 
     it('a login skips a tab with no running session, and a failed reconnect in one tab does not fail it', async () => {
@@ -316,7 +326,73 @@ describe('McpHub', () => {
         }
       })
       expect(await hub.action(TAB, { kind: 'login', name: 'slack' })).toEqual({ ok: true })
-      expect(reconnectsBy).toEqual([[TAB, 'slack'], [C, 'slack']])
+      expect([...reconnectsBy].sort()).toEqual([[TAB, 'slack'], [C, 'slack']])
+    })
+
+    it('a sibling whose reconnect never answers does not hold the login: the others are reconnected and the answer comes after 15 s', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const { hub, reconnectsBy } = setup({
+          live: NEEDS,
+          others: { [A]: { env: ENV, live: NEEDS, reconnectHangs: true }, [B]: { env: ENV, live: NEEDS }, [C]: { env: ENV, live: NEEDS } }
+        })
+        let answer: unknown = null
+        void hub.action(TAB, { kind: 'login', name: 'slack' }).then((r) => {
+          answer = r
+        })
+        await until(() => reconnectsBy.length === 3)
+        expect(answer).toBeNull()
+        for (let i = 0; i < 40 && answer === null; i++) await vi.advanceTimersByTimeAsync(1000)
+        expect(answer).toEqual({ ok: true })
+        expect([...reconnectsBy].sort()).toEqual([[TAB, 'slack'], [B, 'slack'], [C, 'slack']])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a logout whose sibling never answers still answers, and the folder\'s queue is not held by it', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const { hub, reconnectsBy, runs } = setup({
+          live: UP,
+          others: { [A]: { env: ENV, live: UP, reconnectHangs: true }, [B]: { env: ENV, live: UP } }
+        })
+        let answer: unknown = null
+        void hub.action(TAB, { kind: 'logout', name: 'slack' }).then((r) => {
+          answer = r
+        })
+        // the queue is free once the CLI has run: a command queued now runs while the sibling is still waited for
+        await until(() => runs.length === 1)
+        const next = hub.action(TAB, { kind: 'remove', name: 'github', scope: 'user' })
+        await until(() => runs.length === 2 && reconnectsBy.length === 2)
+        expect(runs.map((r) => r.args[1])).toEqual(['logout', 'remove'])
+        expect(answer).toBeNull()
+        for (let i = 0; i < 40 && answer === null; i++) await vi.advanceTimersByTimeAsync(1000)
+        expect(answer).toEqual({ ok: true })
+        await next
+        expect([...reconnectsBy].sort()).toEqual([[TAB, 'slack'], [B, 'slack']])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('tabs whose config folder is written with a trailing separator, or reached through a junction or symlink, are the same folder', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'ct-mcp-hub-'))
+      const real = join(root, 'config')
+      const link = join(root, 'link')
+      mkdirSync(real)
+      symlinkSync(real, link, 'junction')
+      const { hub, reconnectsBy } = setup({
+        live: NEEDS,
+        env: { CLAUDE_CONFIG_DIR: real },
+        others: {
+          [A]: { env: { CLAUDE_CONFIG_DIR: real + sep }, live: NEEDS },
+          [B]: { env: { CLAUDE_CONFIG_DIR: link }, live: NEEDS },
+          [C]: { env: { CLAUDE_CONFIG_DIR: join(root, 'elsewhere') }, live: NEEDS }
+        }
+      })
+      expect(await hub.action(TAB, { kind: 'login', name: 'slack' })).toEqual({ ok: true })
+      expect([...reconnectsBy].sort()).toEqual([[TAB, 'slack'], [A, 'slack'], [B, 'slack']])
     })
 
     it('a logout reconnects the server in the other tabs of the same folder that have it connected', async () => {

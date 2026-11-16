@@ -236,14 +236,17 @@ async function carryMcp(d: CarryDeps): Promise<{ servers: CarryLine; secrets: Ca
   const targetSecretOf = d.secrets ? clientSecrets(await readJsonOf(join(d.target.folder, '.credentials.json')), servers.map((server) => server.name)) : new Map<string, string>()
   let added = 0
   let withSecret = 0
+  /** the servers, and the ones with a secret, the account already had as they are */
+  let there = 0
+  let secretThere = 0
   let failure: { name: string; message: string } | null = null
   let secretFailure: { name: string; message: string } | null = null
   for (const server of servers) {
     const same = present.find((p) => p.name === server.name && sameConfig(p.config, server.config))
     const wantedSecret = secretOf.get(server.name)
     if (same !== undefined && (wantedSecret === undefined || wantedSecret === targetSecretOf.get(server.name))) {
-      added++
-      if (wantedSecret !== undefined) withSecret++
+      there++
+      if (wantedSecret !== undefined) secretThere++
       continue
     }
     await d.cli(['mcp', 'remove', '--scope', 'user', '--', server.name])
@@ -263,13 +266,18 @@ async function carryMcp(d: CarryDeps): Promise<{ servers: CarryLine; secrets: Ca
   }
   const serversLine =
     failure === null
-      ? line('mcp', 'done', `${added} added`)
-      : line('mcp', 'failed', `${added} of ${servers.length} · ${failure.name}: ${failure.message}`)
+      ? line('mcp', 'done', carriedText(added, there))
+      : line('mcp', 'failed', `${added + there} of ${servers.length} · ${failure.name}: ${failure.message}`)
   if (storeUnreadable) return { servers: serversLine, secrets: line('mcp-secrets', 'failed', `.credentials.json of ${d.sourceName} cannot be read`) }
   if (secretFailure !== null) {
-    return { servers: serversLine, secrets: line('mcp-secrets', 'failed', `${withSecret} of ${secretOf.size} · ${secretFailure.name}: ${secretFailure.message}`) }
+    return { servers: serversLine, secrets: line('mcp-secrets', 'failed', `${withSecret + secretThere} of ${secretOf.size} · ${secretFailure.name}: ${secretFailure.message}`) }
   }
-  return { servers: serversLine, secrets: line('mcp-secrets', 'done', `${withSecret} added`) }
+  return { servers: serversLine, secrets: line('mcp-secrets', 'done', carriedText(withSecret, secretThere)) }
+}
+
+/** "3 added", or "2 added, 1 already there" when the account had some as they are */
+function carriedText(added: number, there: number): string {
+  return there === 0 ? `${added} added` : `${added} added, ${there} already there`
 }
 
 /** two server configurations as `claude mcp add-json` stores them: the same JSON, whatever the order of the keys */

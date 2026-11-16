@@ -938,6 +938,16 @@ describe('the stand-in\'s claude mcp, claude plugin and the session\'s MCP reque
     expect(cli(['mcp', 'remove', '--', 'docs'])).toMatchObject({ code: 1, stderr: 'No MCP server found with name: docs\n' })
   })
 
+  it('claude mcp remove deletes the server\'s sign-in, and makes no sign-in file when there is none', () => {
+    cli(['mcp', 'add-json', '--scope', 'user', '--', 'docs', '{"type":"http","url":"https://docs.example/mcp"}'])
+    cli(['mcp', 'add-json', '--scope', 'user', '--', 'api', '{"type":"http","url":"https://api.example/mcp"}'])
+    expect(cli(['mcp', 'remove', '--scope', 'user', '--', 'docs'])).toMatchObject({ code: 0 })
+    expect(existsSync(join(config, 'fake-mcp-auth.json'))).toBe(false)
+    writeFileSync(join(config, 'fake-mcp-auth.json'), JSON.stringify({ api: true, other: true }))
+    expect(cli(['mcp', 'remove', '--scope', 'user', '--', 'api'])).toMatchObject({ code: 0 })
+    expect(readJson(join(config, 'fake-mcp-auth.json'))).toEqual({ other: true })
+  })
+
   it('claude mcp login in a terminal waits for its gate; a scripted failure exits 1 with the message', async () => {
     const script = writeScript({ turns: {}, mcpLogin: { sentry: { gate: 'release-login.txt' }, broken: { fail: 'Invalid client secret' } } })
     const login = cliInTerminal(['mcp', 'login', '--', 'sentry'], script)
