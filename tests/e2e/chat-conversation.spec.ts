@@ -1571,7 +1571,8 @@ test('a size change before the view hears of a scroll up keeps the reader where 
   const { app, page, tabId, pipeName } = await restoredLong()
   try {
     // the scroll event is held back, as in the test above, while the window still draws: its frame delivers a size change of
-    // the chat area (the window is resized) to the view's resize observer before the view has heard of the scroll
+    // the chat area (the window is made smaller: macOS keeps a window from growing past the screen) to the view's resize
+    // observer before the view has heard of the scroll
     await page.evaluate(() => {
       window.addEventListener('scroll', (e) => {
         if (e.target instanceof Element && e.target.classList.contains('chat-scroll')) e.stopImmediatePropagation()
@@ -1582,7 +1583,7 @@ test('a size change before the view hears of a scroll up keeps the reader where 
     await app.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]!
       const [w, h] = win.getContentSize()
-      win.setContentSize(w!, h! + 40)
+      win.setContentSize(w!, h! - 40)
     })
     await expect.poll(() => page.locator(SCROLL).evaluate((el) => el.clientHeight)).not.toBe(height)
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
