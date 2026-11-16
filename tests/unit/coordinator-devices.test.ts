@@ -1189,4 +1189,20 @@ describe('start on another device', () => {
     expect(records(c, 'task')).toEqual([expect.objectContaining({ from: expect.objectContaining({ session: S.two }), to: expect.objectContaining({ session: L.fresh }) })])
     expect(c.store.coordinator(S.two)!.attachments).toEqual([expect.objectContaining({ session: L.fresh })])
   })
+
+  it("start on Laptop with the person's words: an older Laptop is refused before a tab opens there; otherwise the task record carries them", async () => {
+    said(c, 'Write them now.')
+    c.peers = [peerOf(DEV_S, 'Laptop', { words: false })]
+    expect(await c.hub.start('tab-c', { ...START_LAPTOP, words: 'Write them now.' })).toEqual({ ok: false, error: HUB_TEXT.oldDeviceWords('Laptop') })
+    expect(c.openedRemote).toEqual([])
+    c.peers = [peerOf(DEV_S, 'Laptop')]
+    const answer = c.hub.start('tab-c', { ...START_LAPTOP, words: 'Write them now.' })
+    await tick()
+    await tick()
+    expect(c.toasts).toEqual(['Your words went to Release notes: «Write them now.»'])
+    c.remoteTabs.push(remoteTab({ tabId: 'rt-new', session: L.fresh, name: 'Release notes · Laptop' }))
+    c.hub.remoteChanged()
+    expect(await answer).toEqual({ ok: true, info: expect.stringMatching(/ The person's words go with its task\.$/) })
+    expect(records(c, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: L.fresh }), words: 'Write them now.' })])
+  })
 })

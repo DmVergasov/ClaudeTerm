@@ -210,7 +210,8 @@ export const HUB_TEXT = {
   wordsAgain: (name: string) => `This message of the person went to ${name} already. Put what it covers in one task, or send the follow-up without words.`,
   wordsOffline: (device: string) => `${device} is not connected, and the person's words go only to a session whose device is connected. Say it in that session, or send the task without words.`,
   oldDeviceWords: (device: string) => `${device} runs an older ClaudeTerm: your words cannot go there; say it in that session.`,
-  wordsToast: (name: string, line: string) => `Your words went to ${name}: «${line}»`
+  wordsToast: (name: string, line: string) => `Your words went to ${name}: «${line}»`,
+  withWords: "The person's words go with its task."
 }
 
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error })
@@ -241,6 +242,7 @@ interface PendingStart {
   text: string // the worktree instruction, if one was asked for, and the task
   startedAt: number
   remote: RemoteStart | null // a start on a paired device; null for one on this device
+  words: { words: string; context: string | null; id: string } | null // the person's words its task carries, checked when the start was asked for; null: none
   answer: ((r: PipeResponse) => void) | null // null once answered
   cancelWait: () => void // the START_WAIT_MS timer
 }
@@ -562,9 +564,15 @@ export class CoordinatorHub {
     // a folder named for this device is a path here: one that is not absolute here is no folder
     const isFolder = this.d.isAbsolute(folder) && (await this.d.isDirectory(folder))
     // the coordinator may have stopped while the folder was checked
+    const first = this.own(tabId)
+    if (!first) return fail(HUB_TEXT.notCoordinator)
+    if (!isFolder) return fail(HUB_TEXT.noFolder(folder))
+    // the words are checked before the caps, which are synchronous: no other start can slip in between them and the opening
+    const checked = req.words == null ? null : await this.verifyWords(tabId, req.words)
+    if (checked !== null && 'error' in checked) return fail(checked.error)
+    // the coordinator may have stopped while the transcript was read
     const c = this.own(tabId)
     if (!c) return fail(HUB_TEXT.notCoordinator)
-    if (!isFolder) return fail(HUB_TEXT.noFolder(folder))
     if (c.attachments.length + this.startsOf(c).length >= MAX_ATTACHMENTS) return fail(HUB_TEXT.fullAttached)
     if (this.d.store.allHosted().length + this.localStarts().length >= MAX_HOSTED) return fail(HUB_TEXT.fullHosted)
     const newTab = this.d.openTab({ kind: 'claude', cwd: folder, account: tab.account, title: req.name })
@@ -580,11 +588,13 @@ export class CoordinatorHub {
         text,
         startedAt: this.d.now(),
         remote: null,
+        words: checked,
         answer,
         cancelWait: () => {}
       }
       start.cancelWait = this.d.later(START_WAIT_MS, () => this.waitOver(newTab))
       this.starts.set(newTab, start)
+      if (checked !== null) this.wordsWent(start.name, checked.words, null)
       this.d.changed()
     })
   }
@@ -597,12 +607,19 @@ export class CoordinatorHub {
     if (!peer.online) return fail(HUB_TEXT.deviceOffline(peer.name))
     if (!peer.coord) return fail(HUB_TEXT.oldDevice(peer.name))
     if (!peer.mail) return fail(HUB_TEXT.noMail(peer.name))
+    if (req.words != null && !peer.words) return fail(HUB_TEXT.oldDeviceWords(peer.name))
     const tab = this.d.tabs().find((t) => t.tabId === tabId)
     const c = this.own(tabId)
     if (!tab || !c) return fail(HUB_TEXT.notCoordinator)
-    if (c.attachments.length + this.startsOf(c).length >= MAX_ATTACHMENTS) return fail(HUB_TEXT.fullAttached)
+    // the words are checked before the caps, which are synchronous
+    const checked = req.words == null ? null : await this.verifyWords(tabId, req.words)
+    if (checked !== null && 'error' in checked) return fail(checked.error)
+    // the coordinator may have stopped while the transcript was read
+    const current = this.own(tabId)
+    if (!current) return fail(HUB_TEXT.notCoordinator)
+    if (current.attachments.length + this.startsOf(current).length >= MAX_ATTACHMENTS) return fail(HUB_TEXT.fullAttached)
     // the folder asked for, else the folder of the device's first live tab of this project
-    const projectTab = req.folder === null ? (snap.tabs.find((t) => t.device === peer.id && !t.exited && t.project !== null && sameName(t.project, c.project.name)) ?? null) : null
+    const projectTab = req.folder === null ? (snap.tabs.find((t) => t.device === peer.id && !t.exited && t.project !== null && sameName(t.project, current.project.name)) ?? null) : null
     const folder = req.folder ?? projectTab?.folder ?? null
     const fromTab = req.folder === null && projectTab !== null
     const opened = await this.d.openRemoteTab(peer.id, { cwd: folder, email: this.d.accountEmail(tab.account), title: req.name })
@@ -623,12 +640,14 @@ export class CoordinatorHub {
         text: (req.worktree === null ? '' : worktreeInstruction(req.worktree)) + req.task,
         startedAt: this.d.now(),
         remote: { device: peer.id, deviceName: peer.name, place, account: opened.accountName, listed: false },
+        words: checked,
         answer,
         cancelWait: () => {}
       }
       // START_WAIT_MS counts from the call: the time the device took to open the tab comes off it, and it is at least a second
       start.cancelWait = this.d.later(Math.max(1000, START_WAIT_MS - (this.d.now() - began)), () => this.waitOver(opened.tabId))
       this.starts.set(opened.tabId, start)
+      if (checked !== null) this.wordsWent(start.name, checked.words, null)
       this.settleRemoteStarts()
       this.d.changed()
     })
@@ -842,6 +861,13 @@ export class CoordinatorHub {
   private wordsWent(name: string, words: string, taskId: string | null): void {
     this.d.toast(HUB_TEXT.wordsToast(name, oneLineText(words.split('\n')[0] ?? '', 60)))
     this.d.log.info(`coordinator: the person's words went to ${name}${taskId === null ? '' : ` with the task ${taskId}`}`)
+  }
+
+  /** a start's task carries the person's words: they are relayed to its session under the session's row key, so the same words do not go again, and the log says which task carries them */
+  private relayStartWords(s: PendingStart, key: string, name: string, task: MailRecord): void {
+    if (s.words === null) return
+    this.relayed.add(`${s.words.id}\n${key}`)
+    this.d.log.info(`coordinator: the person's words went to ${name} with the task ${task.id}`)
   }
 
   /** writes a task from the coordinator to one of its sessions, and un-resolves the attachment; the id of the record, or null when it cannot be written */
@@ -1319,7 +1345,8 @@ export class CoordinatorHub {
       text: s.text,
       project: c.project.name,
       delivered: false,
-      read: false
+      read: false,
+      ...(s.words === null ? {} : { words: s.words.words, ...(s.words.context === null ? {} : { context: s.words.context }) })
     })
     if (task === null) return this.answerStart(s, fail(HUB_TEXT.notSaved))
     const to: MailAddress = { device: null, session, name: this.nameOf(session) }
@@ -1327,6 +1354,7 @@ export class CoordinatorHub {
     if (!attached.ok) return this.answerStart(s, attached)
     // the record goes after the hosted entry exists: the mail listener takes the task into it
     this.d.mail.add(task)
+    this.relayStartWords(s, `local:${session}`, to.name, task)
     this.d.changed()
     this.answerStart(s, { ok: true, info: HUB_TEXT.started(to.name, refOf(session), s.folder, this.d.accountLabel(s.account)) })
   }
@@ -1362,7 +1390,17 @@ export class CoordinatorHub {
     const c = this.d.store.coordinator(s.coordinator)
     if (!c) return this.cancelStart(s.tabId, HUB_TEXT.startCancelled)
     const to = { device: r.device, session, name }
-    const taskInput: RecordInput = { kind: 'task', from: this.address(null, c.session), to, replyTo: null, text: s.text, project: c.project.name, delivered: false, read: false }
+    const taskInput: RecordInput = {
+      kind: 'task',
+      from: this.address(null, c.session),
+      to,
+      replyTo: null,
+      text: s.text,
+      project: c.project.name,
+      delivered: false,
+      read: false,
+      ...(s.words === null ? {} : { words: s.words.words, ...(s.words.context === null ? {} : { context: s.words.context }) })
+    }
     // the task's record is checked before anything is written, so a record the mail check refuses changes nothing
     if (this.record(taskInput) === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
     // the attach goes first: Laptop takes it before the task, and the task is stamped after the attach and the attachment
@@ -1370,6 +1408,7 @@ export class CoordinatorHub {
     const task = this.record(taskInput)
     if (task === null) return this.cancelStart(s.tabId, HUB_TEXT.notSaved)
     this.d.mail.add(task)
+    this.relayStartWords(s, remoteKey(r.device, session), name, task)
     this.dropStart(s.tabId)
     this.d.changed()
     this.answerStart(s, { ok: true, info: HUB_TEXT.startedThere(name, refOf(session), r.deviceName, r.place, r.account) })
@@ -1394,7 +1433,8 @@ export class CoordinatorHub {
   private answerStart(s: PendingStart, r: PipeResponse): void {
     const answer = s.answer
     s.answer = null
-    answer?.(r)
+    // a start whose task carries the person's words says they went with it
+    answer?.(r.ok && s.words !== null && r.info !== undefined ? { ...r, info: `${r.info} ${HUB_TEXT.withWords}` } : r)
   }
 
   /** the starts of a coordinator, oldest first */

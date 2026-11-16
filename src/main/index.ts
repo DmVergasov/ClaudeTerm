@@ -3124,7 +3124,8 @@ function bootstrap(): void {
   ipcMain.handle(IPC.coordDetach, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.detach(tabId, key) : coordRefused))
   ipcMain.handle(IPC.coordMessage, (_e, tabId: unknown, key: unknown, text: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) && isCoordTaskText(text) ? projectCoordinators.message(tabId, key, text) : coordRefused))
   ipcMain.handle(IPC.coordResolve, (_e, tabId: unknown, key: unknown): CoordResult => (isLocalClaudeTab(tabId) && isCoordKey(key) ? projectCoordinators.resolve(tabId, key) : coordRefused))
-  ipcMain.handle(IPC.coordNewSession, (_e, tabId: unknown, req: unknown): Promise<CoordResult> => (isLocalClaudeTab(tabId) && isCoordStartRequest(req) ? projectCoordinators.start(tabId, req) : Promise.resolve(coordRefused)))
+  // the window's New session never carries the person's words: only the coordinator's tool does, checked
+  ipcMain.handle(IPC.coordNewSession, (_e, tabId: unknown, req: unknown): Promise<CoordResult> => (isLocalClaudeTab(tabId) && isCoordStartRequest(req) ? projectCoordinators.start(tabId, { ...req, words: null }) : Promise.resolve(coordRefused)))
   // the chip's + Coordinator: a tab of this device in a git project names the project; its folder is where the coordinator opens,
   // and the folders of the project's other tabs of this device are the fallbacks when that folder is gone
   ipcMain.handle(IPC.coordStartCoordinator, (_e, tabId: unknown): Promise<CoordResult | null> => {

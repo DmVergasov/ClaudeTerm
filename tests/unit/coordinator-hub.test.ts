@@ -1437,6 +1437,33 @@ describe('CoordinatorHub start', () => {
     await tick()
     expect(w.opened).toHaveLength(1)
   })
+  it("with the person's words: they are checked before any tab opens; the toast names the new session, and its first task carries them", async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    TITLES['new-tab-1'] = 'Release notes'
+    said(w, 'Write them now.')
+    const answer = w.hub.start('tab-c', { ...START, words: 'Write them now.' })
+    await tick()
+    await tick()
+    expect(w.opened).toHaveLength(1)
+    expect(w.toasts).toEqual(['Your words went to Release notes: «Write them now.»'])
+    showSession(w, 'new-tab-1', S_NEW)
+    expect(await answer).toEqual({ ok: true, info: expect.stringMatching(/ The person's words go with its task\.$/) })
+    expect(records(w, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: S_NEW }), text: 'Write the release notes.', words: 'Write them now.', context: 'Shall I merge feat/x into master?' })])
+    // the same message cannot go to that session a second time
+    expect(await w.hub.tool('tab-c', { op: 'message', session: refOf(S_NEW), text: 'And publish them.', words: 'Write them now.' }))
+      .toEqual({ ok: false, error: HUB_TEXT.wordsAgain('Release notes · Desktop') })
+  })
+
+  it("words that are not the person's latest message refuse the start before any tab opens", async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    said(w, 'Write them now.')
+    expect(await w.hub.start('tab-c', { ...START, words: 'Write them later.' })).toEqual({ ok: false, error: HUB_TEXT.wordsNotPerson })
+    expect(w.opened).toEqual([])
+    expect(w.toasts).toEqual([])
+  })
+
 })
 
 describe('facts for other devices', () => {
