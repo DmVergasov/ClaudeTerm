@@ -66,13 +66,14 @@ jobs:
           retention-days: 7
 
   e2e:
-    # the end-to-end tests run one at a time, each against its own app: three jobs per system share them out
-    name: End-to-end tests (${{ matrix.os }}, ${{ matrix.shard }}/3)
+    # the end-to-end tests run one at a time, each against its own app: four jobs per system share them out, so that the
+    # longest one stays well inside its time limit (with three, a job on macOS and on Windows took 29.5 of its 30 minutes)
+    name: End-to-end tests (${{ matrix.os }}, ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -88,14 +89,14 @@ jobs:
 
       - name: End-to-end tests
         if: runner.os != 'Linux'
-        run: npx playwright test --shard=${{ matrix.shard }}/3
+        run: npx playwright test --shard=${{ matrix.shard }}/4
 
       - name: End-to-end tests
         if: runner.os == 'Linux'
         # no display and no setuid sandbox helper on the runner
         env:
           ELECTRON_DISABLE_SANDBOX: '1'
-        run: xvfb-run -a npx playwright test --shard=${{ matrix.shard }}/3
+        run: xvfb-run -a npx playwright test --shard=${{ matrix.shard }}/4
 
       - name: Keep end-to-end results when they fail
         if: failure()
