@@ -220,6 +220,15 @@ describe('AccountStore', () => {
     expect(JSON.parse(file.text!).accounts.find((a: { id: string }) => a.id === 'work')).not.toHaveProperty('remoteControl')
   })
 
+  it('a failed save of a Remote Control flag says why and leaves the flag as it was', () => {
+    const folder = resolve('work-account')
+    const file = memFile(JSON.stringify({ version: 2, accounts: [{ kind: 'login', id: 'work', name: 'Work', addedAt: '2026-10-01T00:00:00.000Z', folder, created: true }] }))
+    const store = newStore(file)
+    file.fail = true
+    expect(store.setRemoteControl('work', true)).toEqual({ ok: false, error: 'Cannot save accounts.json: disk full' })
+    expect(store.remoteControlOf('work')).toBe(false)
+  })
+
   it('addLogin refuses a folder that is not absolute, and a name that is taken', () => {
     const store = newStore()
     expect(store.addLogin({ id: 'a', name: 'Work', folder: 'accounts/work', created: true })).toEqual({ ok: false, error: 'The folder is not an absolute path' })

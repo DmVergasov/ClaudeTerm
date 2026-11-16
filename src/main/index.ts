@@ -3756,7 +3756,11 @@ function bootstrap(): void {
     if (account === null) {
       const r = editSetting('claude.remoteControl', on)
       if (!r.ok) toast(r.error)
-    } else if (accounts.setRemoteControl(account, on).ok) broadcast(IPC.evAccounts, accountsView())
+    } else {
+      const r = accounts.setRemoteControl(account, on)
+      if (r.ok) broadcast(IPC.evAccounts, accountsView())
+      else toast(r.error)
+    }
   }
   ipcMain.on(IPC.remoteControlAccount, (_e, tabId: unknown, on: unknown) => { if (isLocalClaudeTab(tabId) && isFlag(on)) setRemoteAccountFlag(tabs.get(tabId)!.account, on) })
   ipcMain.handle(IPC.settingsSet, (_e, key: unknown, value: unknown): SetSettingResult => {
