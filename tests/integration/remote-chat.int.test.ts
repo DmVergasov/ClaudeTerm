@@ -15,7 +15,7 @@ import { ScreenMirrors } from '../../src/main/sync/screen-mirror'
 import { TabHost } from '../../src/main/sync/tab-host'
 import { RemoteTabs, type ViewerEvents } from '../../src/main/sync/tab-viewer'
 import type { HelloMessage } from '../../src/main/sync/wire'
-import type { AgentPatch, AgentSnapshot, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch } from '../../src/shared/chat'
+import type { AgentPatch, AgentSnapshot, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatSend } from '../../src/shared/chat'
 import { MAX_CHAT_PUSH_BYTES } from '../../src/shared/remote'
 import type { DevicePlatform } from '../../src/shared/devices'
 import { B_ID, T1, T2, T3, T9, fakeHost, tabInfo, type FakeHost } from '../fixtures/host-context'
@@ -120,6 +120,8 @@ let agentPatches: { agentId: string; fromRev: number; toRev: number; patches: Ag
 let agentReloads: string[]
 /** the host's agent page calls a member makes (not the pushes), and a change the host makes to the page it answers with */
 let hostAgentCalls: number
+/** the messages the host's chat was sent, as the window's chat send gets them */
+let hostSends: ChatSend[]
 let agentSkew: Partial<AgentSnapshot> | null
 /** the pages made for pushes, and while a test holds `agentGate` they wait for it */
 let pushedPages: number
@@ -227,7 +229,10 @@ async function setUp(): Promise<void> {
   // what the host's window does for the chat calls of a remote member, as index.ts does: the terminal handoff is the real one
   a.ctx.chat = {
     snapshot: (tabId) => hub.remoteSnapshot(tabId),
-    send: (tabId, s) => hub.send(tabId, s),
+    send: (tabId, s) => {
+      hostSends.push(s)
+      return hub.send(tabId, s)
+    },
     answer: (tabId, cardId, answer) => hub.answer(tabId, cardId, answer),
     interrupt: (tabId) => hub.interrupt(tabId),
     setMode: (tabId, mode) => hub.setMode(tabId, mode),
@@ -271,6 +276,7 @@ async function setUp(): Promise<void> {
   agentPatches = []
   agentReloads = []
   hostAgentCalls = 0
+  hostSends = []
   agentSkew = null
   pushedPages = 0
   agentGate = null
@@ -622,6 +628,15 @@ describe('the calls a member makes about a chat', () => {
     await attach()
     await expect(actions.chatSend(T1, { text: 'hello from B', attachments: [] })).resolves.toBeNull()
     await until(() => engine!.sent.includes('hello from B'))
+  })
+
+  it("chat-send: the origin of a Send from the Changes or Doc panel reaches the host's chat; a Send without one arrives without it", async () => {
+    await attach()
+    await expect(actions.chatSend(T1, { text: 'panel note', attachments: [], from: 'review' })).resolves.toBeNull()
+    await expect(actions.chatSend(T1, { text: 'plain note', attachments: [] })).resolves.toBeNull()
+    await until(() => engine!.sent.includes('plain note'))
+    expect(hostSends.find((s) => s.text === 'panel note')?.from).toBe('review')
+    expect(hostSends.find((s) => s.text === 'plain note')?.from).toBeUndefined()
   })
 
   it('chat-send: an attachment the member copied to the host is accepted and reaches the engine', async () => {

@@ -451,7 +451,7 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
           const copied = copiedOf(ctx, device)
           if (!args.attachments.every((f) => copied.has(pathKey(f.path)))) throw new CallError(NOT_COPIED)
           const attachments = await chat.attach(args.id, args.attachments.map((f) => f.path))
-          const refused = await chat.send(args.id, { text: args.text, attachments })
+          const refused = await chat.send(args.id, { text: args.text, attachments, from: args.from })
           if (refused !== null) throw new CallError(refused)
           return {}
         })

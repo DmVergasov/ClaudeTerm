@@ -15,7 +15,7 @@ import type { MailStore } from '../mail/mail-store'
 import type { TabWaitsState } from '../tab-waits'
 import { LIMIT_ERROR } from '../auto-continue'
 import type { Submit } from './person-input'
-import { checkWords, type WordsPrompt } from './person-words'
+import { checkWords, WORDS_KEEP_MS, type WordsPrompt } from './person-words'
 import { findRow, rowState } from './session-state'
 import { listText, readText, roleBlock, roleNoteText, turnNoteText } from './session-text'
 import {
@@ -913,12 +913,18 @@ export class CoordinatorHub {
     return { info: wordsText(r, (a) => this.d.sender(a)) }
   }
 
-  /** the record of the session's next task when it carries the person's words, is not delivered, and its tab is idle; null otherwise */
+  /** the record of the session's next task when it carries the person's words, is not delivered, and its tab is idle; null otherwise. Agent messages off stop them; words no longer recent (checkWords' rule) fail their task, once, and are not typed */
   private wordsDue(tabId: string, session: string): MailRecord | null {
-    if (this.inTurn.has(tabId) || this.sessionOfTab(tabId) !== session) return null
+    if (this.d.problem() !== null || this.inTurn.has(tabId) || this.sessionOfTab(tabId) !== session) return null
     const next = this.nextQueuedTask(session)
     const r = next ? this.d.mail.get(next.id) : null
     if (!r || r.words === undefined || r.delivered) return null
+    if (this.d.now() - r.sentAt > WORDS_KEEP_MS || r.sentAt < this.d.startedAt()) {
+      const h = this.d.store.hosted(session)
+      const task = h?.tasks.find((t) => t.id === r.id)
+      if (h && task) this.report(h, task, 'failed', REASONS.wordsOld)
+      return null
+    }
     return r
   }
 
@@ -1354,7 +1360,7 @@ export class CoordinatorHub {
     this.d.mail.add(task)
     this.relayStartWords(s, `local:${session}`, task)
     this.d.changed()
-    this.answerStart(s, { ok: true, info: HUB_TEXT.started(to.name, refOf(session), s.folder, this.d.accountLabel(s.account)) })
+    this.answerStart(s, { ok: true, info: HUB_TEXT.started(to.name, refOf(session), s.folder, this.d.accountLabel(s.account)) }, true)
   }
 
   /** START_WAIT_MS passed without a session id: the start answers without one, and it goes on */
@@ -1409,7 +1415,7 @@ export class CoordinatorHub {
     this.relayStartWords(s, remoteKey(r.device, session), task)
     this.dropStart(s.tabId)
     this.d.changed()
-    this.answerStart(s, { ok: true, info: HUB_TEXT.startedThere(name, refOf(session), r.deviceName, r.place, r.account) })
+    this.answerStart(s, { ok: true, info: HUB_TEXT.startedThere(name, refOf(session), r.deviceName, r.place, r.account) }, true)
   }
 
   /** a pending start leaves the hub: its wait timer is cancelled, and the caller answers it */
@@ -1427,12 +1433,11 @@ export class CoordinatorHub {
     if (s) this.answerStart(s, fail(error))
   }
 
-  /** answers a start once: a later answer does nothing */
-  private answerStart(s: PendingStart, r: PipeResponse): void {
+  /** answers a start once: a later answer does nothing. A start whose task carries the person's words says they go with it only when its session has the task (started); an opening answer does not know that yet */
+  private answerStart(s: PendingStart, r: PipeResponse, started = false): void {
     const answer = s.answer
     s.answer = null
-    // a start whose task carries the person's words says they went with it
-    answer?.(r.ok && s.words !== null && r.info !== undefined ? { ...r, info: `${r.info} ${HUB_TEXT.withWords}` } : r)
+    answer?.(started && r.ok && s.words !== null && r.info !== undefined ? { ...r, info: `${r.info} ${HUB_TEXT.withWords}` } : r)
   }
 
   /** the starts of a coordinator, oldest first */

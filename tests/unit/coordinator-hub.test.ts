@@ -642,6 +642,21 @@ describe("message_session with the person's words", () => {
     expect(await give('Stop, do not merge.', 'Do not merge feat/x.')).toEqual({ ok: true, info: `${HUB_TEXT.queuedWords('parser · Desktop', 'a10000')} ${HUB_TEXT.wordsReplaced}` })
   })
 
+  it("after the coordinator's own session is cleared to a new id, newer words of the person still replace the words it queued before the clear", async () => {
+    said(w, 'Merge it into master.')
+    expect(await give('Merge it into master.')).toMatchObject({ ok: true })
+    const NEXT = uid(0x2005)
+    update(w, 'tab-c', { session: NEXT })
+    w.hub.sessionStarted('tab-c', S.coord, NEXT, 'clear')
+    w.now += 60_000
+    said(w, 'Stop, do not merge.')
+    expect(await w.hub.tool('tab-c', { op: 'message', session: 'a10000', text: 'Do not merge feat/x.', words: 'Stop, do not merge.' })).toEqual({
+      ok: true,
+      info: `${HUB_TEXT.queuedWords('parser · Desktop', 'a10000')} ${HUB_TEXT.wordsReplaced}`
+    })
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'stopped', reason: REASONS.replaced }])
+  })
+
   it('a task without words is given as before, with no toast', async () => {
     expect(await w.hub.tool('tab-c', { op: 'message', session: 'a10000', text: 'Fix the parser.' })).toEqual({ ok: true, info: HUB_TEXT.queued('parser · Desktop', 'a10000') })
     expect(records(w, 'task')[0]).not.toHaveProperty('words')
@@ -711,6 +726,44 @@ describe("a task with the person's words in its session's tab", () => {
     expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
     w.hub.turnEnded('tab-1', { background: false, lastMessage: null })
     expect(w.hub.canTakeWords('tab-1', S.one)).toBe(true)
+  })
+
+  it('waits while agent messages are off: nothing is typed, and once they are on again the words are typed', () => {
+    w.problem = PROBLEM
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    expect(w.hub.takeWords('tab-1', S.one)).toBeNull()
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ id: task.id, state: 'queued' }])
+    expect(records(w, 'report')).toEqual([])
+    w.problem = null
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(true)
+    expect(w.hub.takeWords('tab-1', S.one)!.info).toContain('> Merge it into master.')
+  })
+
+  it('words queued more than a day ago are not typed: the task fails with the reason, the coordinator is told once, and nothing is typed', () => {
+    w.now += WORDS_KEEP_MS + 1
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    expect(w.hub.takeWords('tab-1', S.one)).toBeNull()
+    expect(records(w, 'report')).toMatchObject([{ replyTo: task.id, outcome: 'failed', reason: REASONS.wordsOld }])
+    expect(w.store.hosted(S.one)!.tasks).toEqual([])
+    expect(w.mail.get(task.id)).toMatchObject({ delivered: true })
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    expect(w.hub.takeWords('tab-1', S.one)).toBeNull()
+    expect(records(w, 'report')).toHaveLength(1)
+    expect(w.toasts).toHaveLength(1)
+  })
+
+  it("words queued before this app run started are not typed either: the task fails with the reason", () => {
+    w.startedAt = w.now + 1
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    expect(w.hub.takeWords('tab-1', S.one)).toBeNull()
+    expect(records(w, 'report')).toMatchObject([{ replyTo: task.id, outcome: 'failed', reason: REASONS.wordsOld }])
+  })
+
+  it('words queued a minute ago are still typed', () => {
+    w.now += 60_000
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(true)
+    expect(w.hub.takeWords('tab-1', S.one)!.info).toContain('> Merge it into master.')
+    expect(records(w, 'report')).toEqual([])
   })
 
   it('a task without words given before it goes first, by its own way', async () => {
@@ -1328,6 +1381,30 @@ describe('CoordinatorHub start', () => {
     expect(await w.hub.tool('tab-c', { op: 'message', session: refOf(S_NEW), text: 'And publish them.', words: 'Write them now.' })).toMatchObject({ ok: true })
     expect(w.toasts).toHaveLength(1)
     expect(records(w, 'task').map((r) => r.words)).toEqual([undefined, 'Write them now.'])
+  })
+
+  it("a start with words whose wait runs out answers that it is opening, without saying the words went with its task", async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    TITLES['new-tab-1'] = 'Release notes'
+    said(w, 'Write them now.')
+    const waiting = w.hub.start('tab-c', { ...START, words: 'Write them now.' })
+    await tick()
+    fire(w)
+    const opening = await waiting
+    expect(opening).toMatchObject({ ok: true, info: expect.stringContaining('Opening Release notes') })
+    expect(opening.ok && opening.info).not.toContain(HUB_TEXT.withWords)
+  })
+
+  it('a start with words whose session comes in time says the words go with its task', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    TITLES['new-tab-1'] = 'Release notes'
+    said(w, 'Write them now.')
+    const answer = w.hub.start('tab-c', { ...START, words: 'Write them now.' })
+    await tick()
+    showSession(w, 'new-tab-1', S_NEW)
+    expect(await answer).toEqual({ ok: true, info: expect.stringContaining(HUB_TEXT.withWords) })
   })
 
   it('a worktree name puts the EnterWorktree instruction before the task', async () => {

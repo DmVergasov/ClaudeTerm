@@ -421,7 +421,7 @@ export class RemoteActions {
   /** a message to a remote chat: null when the device took it; else why not, the device's refusal or the failed call's words */
   async chatSend(tabId: string, s: ChatSend): Promise<string | null> {
     try {
-      await this.askTab(tabId, 'chat-send', { id: tabId, text: s.text, attachments: s.attachments })
+      await this.askTab(tabId, 'chat-send', { id: tabId, text: s.text, attachments: s.attachments, from: s.from })
       return null
     } catch (e) {
       return messageOf(e)

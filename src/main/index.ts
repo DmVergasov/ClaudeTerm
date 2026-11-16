@@ -5,7 +5,7 @@ import { homedir, hostname, release, tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { MAIN_ACCOUNT, type AccountFlowView, type AccountResult, type AccountView, type AccountsView, type CarryLine, type CarryPreview, type PickedFolder, type RemoveInfo, type RemoveResult } from '../shared/accounts'
-import { commandWord, isAgentId, isTabView, type AgentSnapshot, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSnapshot } from '../shared/chat'
+import { commandWord, isAgentId, isTabView, type AgentSnapshot, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot } from '../shared/chat'
 import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import type { DocRead } from '../shared/docs'
 import type { FileLink } from '../shared/chat-paths'
@@ -1330,6 +1330,14 @@ function bootstrap(): void {
   const tabInputs = new TabInputs()
   /** the window's prompt-like input into each tab, from this device or a paired one: what tells the person's prompts in a transcript from written ones */
   const personInput = new PersonInput()
+  /** a message sent to a chat: it is the person's words when its origin is none (the composer's Send) or the Changes or Doc panel's, and the chat took it; a refused message is no submit */
+  const sentToChat = (tabId: string, s: ChatSend): Promise<string | null> => {
+    const at = Date.now()
+    return chatHub.send(tabId, s).then((refused) => {
+      if (refused === null && (s.from === undefined || s.from === 'review')) personInput.sent(tabId, s.text, at)
+      return refused
+    })
+  }
   /** a tab starts waiting with a reason: the other devices show it pulsing too */
   const startAttention = (tabId: string, reason: NotificationCase): void => {
     tabAttention.start(tabId, reason)
@@ -1606,11 +1614,7 @@ function bootstrap(): void {
     // the chats of this device's tabs as the members' calls reach them: the hub's own calls, and what a message needs here
     chat: {
       snapshot: (tabId) => chatHub.remoteSnapshot(tabId),
-      send: (tabId, s) => {
-        // a paired device's Send is the person's too, unless it carries a from
-        if (s.from === undefined) personInput.sent(tabId, s.text, Date.now())
-        return chatHub.send(tabId, s)
-      },
+      send: sentToChat,
       answer: (tabId, cardId, a) => chatHub.answer(tabId, cardId, a),
       interrupt: (tabId) => interruptChat(tabId),
       setMode: (tabId, mode) => chatHub.setMode(tabId, mode),
@@ -3150,9 +3154,7 @@ function bootstrap(): void {
   ipcMain.handle(IPC.chatSend, (_e, tabId: unknown, s: unknown): Promise<string | null> => {
     if (!isId(tabId) || !isChatSend(s)) return Promise.resolve('Invalid message')
     if (remote?.viewer.has(tabId)) return remote.actions.chatSend(tabId, s)
-    // the composer's Send is the person's; the Changes panel's and ClaudeTerm's own carry a from
-    if (s.from === undefined) personInput.sent(tabId, s.text, Date.now())
-    return chatHub.send(tabId, s)
+    return sentToChat(tabId, s)
   })
   ipcMain.handle(IPC.chatAgentSend, (_e, tabId: unknown, agentId: unknown, text: unknown): Promise<string | null> => {
     if (!isId(tabId) || !isAgentId(agentId) || !isAgentText(text)) return Promise.resolve('Invalid message')
@@ -3810,8 +3812,11 @@ function bootstrap(): void {
         mailSync.announce()
         coordSoon.request()
       }
-      // messages off releases the held waits and on hands over waiting mail: the tabs are offered them again
-      if (agentsChanged) mailTabsChanged()
+      // messages off releases the held waits and on hands over waiting mail: the tabs are offered them again, and a session's words held for the messages are typed now
+      if (agentsChanged) {
+        mailTabsChanged()
+        for (const t of tabs.list()) if (t.kind === 'claude' && !t.exited) promptDelivery.poke(t.id)
+      }
       if (settings.claude.command !== commandBefore) probeVersion()
       if (settings.claude.view !== viewBefore) viewFollow.settingChanged()
       const computed = computeProfiles(settings)

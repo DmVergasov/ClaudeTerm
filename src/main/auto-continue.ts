@@ -52,8 +52,10 @@ export const CONTINUE_DELAY_MS = 5000
 export const ENTER_DELAY_MS = 50
 /** the person's words wait for a session that is not idle or has no prompt yet: they are tried again this often ... */
 export const WORDS_RETRY_MS = 500
-/** ... for this long from the first try that found the session not ready, then the retries stop */
+/** ... for this long from the first try that found the session not ready; then they are tried this often, for as long as they wait */
 export const WORDS_RETRY_FOR_MS = 30_000
+/** the slow tries of the person's words, after WORDS_RETRY_FOR_MS: a prompt that comes late (a dialog, a slow start) is still typed into */
+export const WORDS_SLOW_RETRY_MS = 5000
 
 export interface AutoContinueDeps {
   enabled(): boolean

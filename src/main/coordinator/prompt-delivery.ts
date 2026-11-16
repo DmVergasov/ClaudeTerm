@@ -1,6 +1,6 @@
 import type { PromptState } from '../../shared/ipc'
 import type { TabView } from '../../shared/chat'
-import { ENTER_DELAY_MS, WORDS_RETRY_FOR_MS, WORDS_RETRY_MS } from '../auto-continue'
+import { ENTER_DELAY_MS, WORDS_RETRY_FOR_MS, WORDS_RETRY_MS, WORDS_SLOW_RETRY_MS } from '../auto-continue'
 import type { Logger } from '../log'
 
 /*
@@ -49,8 +49,8 @@ interface TabState {
   run: number
   /** the person's words waiting for this tab: the tries retried since the first one that found the session not ready */
   retries: number
-  /** the retries of the words ran out, and that was logged */
-  gaveUp: boolean
+  /** the fast tries of the words ran out, and that was logged: they are tried every WORDS_SLOW_RETRY_MS from then on */
+  slow: boolean
 }
 
 /** a paste's text, with its line breaks as carriage returns, between the bracketed-paste markers */
@@ -85,7 +85,7 @@ export class PromptDelivery {
     this.disarm(s)
     s.again = false
     s.retries = 0
-    s.gaveUp = false
+    s.slow = false
     // a paste already written keeps its try until its Enter
     if (s.cancelEnter === null) s.busy = false
     this.prune(tabId, s)
@@ -132,12 +132,17 @@ export class PromptDelivery {
     }
     // no await from here to the write: what take marks delivered must be written
     const again = this.waitingSession(tabId)
+    // a session that went busy since the window answered is tried again, as a session that is not ready at the first try is
+    if (again === null) {
+      this.retryWords(tabId, s, 'the session is not idle')
+      return this.end(tabId, s, run)
+    }
     const view = this.d.view(tabId)
-    if (again === null || again.session !== waiting.session || again.words !== waiting.words || view === null) return this.end(tabId, s, run)
+    if (again.session !== waiting.session || again.words !== waiting.words || view === null) return this.end(tabId, s, run)
     const taken = waiting.words ? (this.d.takeWords?.(tabId, waiting.session) ?? null) : this.d.take(tabId, waiting.session)
     if (taken === null) return this.end(tabId, s, run)
     s.retries = 0
-    s.gaveUp = false
+    s.slow = false
     if (view === 'chat') {
       this.write(tabId, taken.info, 'as a message')
       return this.end(tabId, s, run)
@@ -198,21 +203,22 @@ export class PromptDelivery {
 
   /**
    * the person's words wait for the tab, but this try found the session not ready or no prompt on screen yet: the try is armed again
-   * every WORDS_RETRY_MS, until WORDS_RETRY_FOR_MS of tries have passed, then one line is logged and the retries stop. Other mail
-   * waits are not retried; a words wait that is gone resets the count
+   * every WORDS_RETRY_MS, until WORDS_RETRY_FOR_MS of tries have passed; then every WORDS_SLOW_RETRY_MS for as long as the words wait,
+   * and one line is logged when the fast tries end. Other mail waits are not retried; a words wait that is gone resets the count
    */
   private retryWords(tabId: string, s: TabState, why: string): void {
     const session = this.d.session(tabId)
     if (session === null || this.d.canTakeWords?.(tabId, session) !== true) {
       s.retries = 0
-      s.gaveUp = false
+      s.slow = false
       return
     }
     if (s.retries >= WORDS_RETRY_FOR_MS / WORDS_RETRY_MS) {
-      if (!s.gaveUp) {
-        s.gaveUp = true
-        this.d.log.info(`prompt delivery tab=${tabId}: the person's words are not typed, ${why}, after ${WORDS_RETRY_FOR_MS / 1000} s`)
+      if (!s.slow) {
+        s.slow = true
+        this.d.log.info(`prompt delivery tab=${tabId}: the person's words are not typed yet, ${why}; they are tried every ${WORDS_SLOW_RETRY_MS / 1000} s from now on`)
       }
+      this.arm(tabId, s, WORDS_SLOW_RETRY_MS)
       return
     }
     s.retries++
@@ -232,7 +238,7 @@ export class PromptDelivery {
   private state(tabId: string): TabState {
     let s = this.tabs.get(tabId)
     if (!s) {
-      s = { cancelTry: null, busy: false, again: false, cancelEnter: null, run: 0, retries: 0, gaveUp: false }
+      s = { cancelTry: null, busy: false, again: false, cancelEnter: null, run: 0, retries: 0, slow: false }
       this.tabs.set(tabId, s)
     }
     return s

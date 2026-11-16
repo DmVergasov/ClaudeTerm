@@ -195,6 +195,11 @@ describe('call arguments', () => {
     expect(CALL_ARGS.close({ id: T1, extra: 1 })).toEqual({ id: T1 })
   })
 
+  it("a chat-send keeps the origin of a Send from the Changes or Doc panel, and refuses an origin it does not know", () => {
+    expect(CALL_ARGS['chat-send']({ id: T1, text: 'Yes, merge it.', attachments: [], from: 'review' })).toEqual({ id: T1, text: 'Yes, merge it.', attachments: [], from: 'review' })
+    expect(CALL_ARGS['chat-send']({ id: T1, text: 'Yes, merge it.', attachments: [], from: 'x' })).toBeNull()
+  })
+
   it('a transfer of exactly the limit in all passes; one byte more is refused', () => {
     const half = MAX_TRANSFER_BYTES / 2
     expect(CALL_ARGS['recv-begin']({ id: T1, files: [{ name: 'a', size: half }, { name: 'b', size: half }] })).not.toBeNull()

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { PERSON_WORDS_ANSWER, PERSON_WORDS_CONTEXT, PERSON_WORDS_HEAD, PERSON_WORDS_NOTE } from '../../src/shared/report-wake'
-import { activate, hasMailWatcher, refOf, startSession, waitForMail } from './agent-mail'
+import { activate, hasMailWatcher, refOf, setSetting, startSession, waitForMail } from './agent-mail'
 import { CHAT_INPUT, launchChatTab, sendMessage, userMessages } from './chat-helpers'
 import { chatState, coord, coordinatorTranscript, done, makeCoordinator, personSays, stillWaiting, terminalStandInApp, turnOf, typedHas, typedLines, within } from './coordinator-helpers'
 import { gitRepo, seenToasts, watchToasts } from './helpers'
@@ -115,12 +115,33 @@ test("start_session with the person's words: the new session's first message is 
   }
 })
 
-test("the chat composer's Send is the person's words: a message sent from the window backs its prompt, with no keys typed", async () => {
+test("words given while agent messages are on, then turned off before they are typed, are typed once messages are on again", async () => {
   const t = await wordsApp()
   try {
-    await t.page.evaluate(([id, text]) => window.ct.chatSend(id, { text, attachments: [] }), [t.tab1, 'Merge it into master.'] as const)
-    await t.say('Merge it into master.', { keys: false })
+    await t.say('Merge it into master.')
+    // the session is in a turn, so the words queue and wait for it; the hub refuses words while messages are off, so they go in first
+    await turnOf(t.pipeName, t.tab2, t.sid2)
     expect(await give(t, 'Merge it into master.')).toMatchObject({ ok: true })
+    expect(await setSetting(t.page, 'agentMessages.enabled', false)).toEqual({ ok: true })
+    // the turn ends with messages off: the words are not typed
+    await done(t.pipeName, t.tab2, t.sid2)
+    await pause(3000)
+    expect(typedHas(t.standIn.log, '> Merge it into master.')).toBe(false)
+    // messages come back on: the words are typed without a new turn of the session
+    expect(await setSetting(t.page, 'agentMessages.enabled', true)).toEqual({ ok: true })
+    await expect.poll(() => typedHas(t.standIn.log, '> Merge it into master.'), { timeout: 15_000 }).toBe(true)
+  } finally {
+    await t.app.close()
+  }
+})
+
+test("a Send the chat refuses is not the person's: it backs no prompt", async () => {
+  const t = await wordsApp()
+  try {
+    // the coordinator's tab is a terminal tab, which the chat refuses to take a message for
+    expect(await t.page.evaluate(([id, text]) => window.ct.chatSend(id, { text, attachments: [] }), [t.tab1, 'Merge it into master.'] as const)).not.toBeNull()
+    await t.say('Merge it into master.', { keys: false })
+    expect(await give(t, 'Merge it into master.')).toEqual({ ok: false, error: HUB_TEXT.wordsNotPerson })
   } finally {
     await t.app.close()
   }
@@ -218,6 +239,35 @@ test("chat view: a draft in the session's composer is not typed over; the words 
     await expect(card.locator('.coord-words-context')).toHaveText('Shall I merge feat/x into master?')
     await expect(card.locator('.coord-words-words')).toHaveText('Yes, merge it.')
     await expect(card.locator('.coord-words-task')).toHaveText('Merge feat/x into master and push.')
+  } finally {
+    await l.app.close()
+  }
+})
+
+test("a Send from the Changes or Doc panel is the person's words in a chat tab too: the coordinator takes the words it sent", async () => {
+  const work = gitRepo()
+  const l = await launchChatTab({ turns: { 'Should we ship?': [{ text: 'Shall I merge feat/x into master?' }] }, fallback: [{ text: 'OK.' }] }, { work, env: { CLAUDETERM_TEST_PROMPT_DELAY_MS: '300' } })
+  const { page, pipeName } = l
+  const idle = (id: string) => expect.poll(async () => (await chatState(page, id))?.turn ?? null, { timeout: 30_000 }).toBe('idle')
+  try {
+    const a = l.tabId
+    const b = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'claude', cwd }), work))!.id
+    await activate(page, b)
+    await sendMessage(page, 'hello')
+    await idle(b)
+    await activate(page, a)
+    await sendMessage(page, 'Should we ship?')
+    await idle(a)
+    // the Changes or Doc panel's Send: a message with its origin, not the composer's
+    expect(await page.evaluate(([id, text]) => window.ct.chatSend(id, { text, attachments: [], from: 'review' }), [a, 'Yes, merge it.'] as const)).toBeNull()
+    await idle(a)
+    const sidA = (await chatState(page, a))!.sessionId!
+    const sidB = (await chatState(page, b))!.sessionId!
+    const transcript = join(l.config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'), `${sidA}.jsonl`)
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: a, sessionId: sidA, source: 'startup', transcriptPath: transcript })).toEqual({ ok: true })
+    expect(await makeCoordinator(page, a)).toMatchObject({ ok: true })
+    expect(await coord(pipeName, a, { op: 'attach', session: refOf(sidB) })).toMatchObject({ ok: true })
+    expect(await coord(pipeName, a, { op: 'message', session: refOf(sidB), text: 'Merge feat/x into master and push.', words: 'Yes, merge it.' })).toMatchObject({ ok: true })
   } finally {
     await l.app.close()
   }

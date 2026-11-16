@@ -393,7 +393,7 @@ export const CALL_ARGS: { [M in CallMethod]: (a: unknown) => CallArgs[M] | null 
   'chat-send': (a) => {
     if (!isPlainObject(a)) return null
     const { id } = a
-    const send: unknown = { text: a.text, attachments: a.attachments }
+    const send: unknown = { text: a.text, attachments: a.attachments, from: a.from }
     if (!isUuid(id) || !isChatSend(send)) return null
     return { id, ...send }
   },

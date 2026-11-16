@@ -8,6 +8,7 @@ export const REASONS = {
   interrupted: 'its turn was interrupted',
   clear: 'the session was cleared',
   replaced: "the person's newer words replaced it",
+  wordsOld: "the person's words are no longer recent: over a day old, or ClaudeTerm restarted before the session could take them",
   exit: 'Claude Code exited',
   closed: 'its tab was closed',
   error: (error: string) => `Claude Code stopped the turn on an error (${error})`

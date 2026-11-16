@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ENTER_DELAY_MS, WORDS_RETRY_FOR_MS, WORDS_RETRY_MS } from '../../src/main/auto-continue'
+import { ENTER_DELAY_MS, WORDS_RETRY_FOR_MS, WORDS_RETRY_MS, WORDS_SLOW_RETRY_MS } from '../../src/main/auto-continue'
 import { PromptDelivery, bracketedPaste, type PromptDeliveryDeps } from '../../src/main/coordinator/prompt-delivery'
 import type { PromptState } from '../../src/shared/ipc'
 import type { TabView } from '../../src/shared/chat'
@@ -366,7 +366,7 @@ describe("the person's words", () => {
     expect(w.writes).toEqual([['tab-1', 'WORDS']])
   })
 
-  it('stop being retried after 30 s, with one line in the log', async () => {
+  it('after 30 s of fast tries, go on every 5 s with one line in the log, and no line per slow try', async () => {
     const w = world({ view: 'chat', prompt: 'none', words: 'WORDS' })
     w.delivery.poke('tab-1')
     w.t.fire(DELAY)
@@ -376,9 +376,81 @@ describe("the person's words", () => {
       w.t.fire(WORDS_RETRY_MS)
       await flush()
     }
-    expect(w.t.pending()).toBe(0)
+    expect(w.t.pending()).toBe(1)
+    expect(w.logs.filter((l) => l.includes("the person's words are not typed"))).toHaveLength(1)
+    for (let i = 0; i < 5; i++) {
+      w.t.fire(WORDS_SLOW_RETRY_MS)
+      await flush()
+      expect(w.t.pending()).toBe(1)
+    }
     expect(w.writes).toEqual([])
     expect(w.logs.filter((l) => l.includes("the person's words are not typed"))).toHaveLength(1)
+  })
+
+  it("after the fast phase, the words' prompt that comes late is typed: a try runs every 5 s, and the first one that finds the prompt types them", async () => {
+    const w = world({ view: 'chat', prompt: 'manual', words: 'WORDS' })
+    const tryWith = async (state: PromptState, ms: number): Promise<void> => {
+      w.t.fire(ms)
+      await flush()
+      w.a.answer(state)
+      await flush()
+    }
+    w.delivery.poke('tab-1')
+    await tryWith('none', DELAY)
+    // the fast phase: a try every 500 ms, 60 of them after the first
+    for (let i = 0; i < WORDS_RETRY_FOR_MS / WORDS_RETRY_MS; i++) await tryWith('none', WORDS_RETRY_MS)
+    expect(w.writes).toEqual([])
+    expect(w.t.pending()).toBe(1)
+    // the slow phase: no try before 5 s have passed, then one; the prompt is still not on screen
+    w.t.fire(WORDS_SLOW_RETRY_MS - 1)
+    expect(w.a.count()).toBe(0)
+    await tryWith('none', 1)
+    expect(w.writes).toEqual([])
+    expect(w.t.pending()).toBe(1)
+    // the prompt comes up: the next slow try types the words
+    await tryWith('empty', WORDS_SLOW_RETRY_MS)
+    expect(w.writes).toEqual([['tab-1', 'WORDS']])
+    expect(w.t.pending()).toBe(0)
+  })
+
+  it('once the person\'s words are gone, no try is armed, fast or slow', async () => {
+    const w = world({ view: 'chat', prompt: 'manual', words: 'WORDS', canTake: false })
+    const tryWith = async (state: PromptState, ms: number): Promise<void> => {
+      w.t.fire(ms)
+      await flush()
+      w.a.answer(state)
+      await flush()
+    }
+    w.delivery.poke('tab-1')
+    await tryWith('none', DELAY)
+    for (let i = 0; i < WORDS_RETRY_FOR_MS / WORDS_RETRY_MS; i++) await tryWith('none', WORDS_RETRY_MS)
+    await tryWith('none', WORDS_SLOW_RETRY_MS)
+    expect(w.t.pending()).toBe(1)
+    w.state.words = null
+    w.t.fire(WORDS_SLOW_RETRY_MS)
+    await flush()
+    expect(w.t.pending()).toBe(0)
+    expect(w.a.count()).toBe(0)
+    expect(w.writes).toEqual([])
+  })
+
+  it('a session that turns busy between the window answering empty and the write is tried again, and the words are typed then', async () => {
+    const w = world({ view: 'chat', prompt: 'manual', words: 'WORDS' })
+    w.delivery.poke('tab-1')
+    w.t.fire(DELAY)
+    await flush()
+    w.state.idle = false
+    w.a.answer('empty')
+    await flush()
+    expect(w.writes).toEqual([])
+    expect(w.wordsTakes).toEqual([])
+    expect(w.t.pending()).toBe(1)
+    w.state.idle = true
+    w.t.fire(WORDS_RETRY_MS)
+    await flush()
+    w.a.answer('empty')
+    await flush()
+    expect(w.writes).toEqual([['tab-1', 'WORDS']])
   })
 
   it('a draft in the prompt is not retried: the person\'s text wins', async () => {
