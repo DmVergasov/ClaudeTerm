@@ -1,6 +1,7 @@
 import type { AccountBegin, AccountFlowView, AccountResult, AccountsView, CarryPreview, FlowAction, PickedFolder, RemoveInfo, RemoveOptions, RemoveResult } from './accounts'
 import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
 import type { GamesSave } from './games'
+import type { RemoteState } from './remote-control'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { FileLink } from './chat-paths'
 import type { MailConversationView, MailUnread } from './mail'
@@ -273,6 +274,8 @@ export interface StatusUpdate {
   continuesAt?: number | null
   /** when (ms) Claude goes on by itself after that reset, with its margin; set with continuesAt */
   goesOnAt?: number | null
+  /** the tab's Remote Control state; absent or null for a tab without the segment (a shell tab, another device's tab) */
+  remote?: RemoteState | null
 }
 
 export interface PlanUpdate {

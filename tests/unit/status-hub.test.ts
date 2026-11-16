@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { StatusHub } from '../../src/main/status-hub'
 import type { AgentMeta } from '../../src/main/transcript-agent-info'
 import type { StatusMessage, SubagentMessage } from '../../src/shared/protocol'
+import type { RemoteState } from '../../src/shared/remote-control'
 import type { BackgroundTask } from '../../src/shared/types'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
@@ -27,6 +28,65 @@ function makeHub(meta: Record<string, AgentMeta> = {}) {
 const meta = (description: string): AgentMeta => ({ description, toolUseId: null, background: false })
 
 const task = (id: string, description: string | null = 'build'): BackgroundTask => ({ id, type: 'shell', description, command: 'make' })
+
+/** a hub whose remoteChanged records [tabId, id, previous] and whose remoteState answers `state` */
+function rcHub() {
+  const told: [string, string | null, string | null][] = []
+  const changes: string[] = []
+  const box: { state: RemoteState | null } = { state: { kind: 'off' } }
+  const hub = new StatusHub({ now: () => 1000, readMeta: () => null, onChange: (t) => changes.push(t), remoteChanged: (t, id, prev) => told.push([t, id, prev]), remoteState: () => box.state })
+  return { hub, told, changes, box }
+}
+
+describe('StatusHub: the Remote Control id', () => {
+  it('a status and the hooks’ reports keep the last id; only a change is told, and the window hears of it', () => {
+    const { hub, told, changes } = rcHub()
+    hub.status(status({ remote: 'session_a' }))
+    hub.remote(TAB, SID, 'session_a')
+    changes.length = 0
+    hub.remote(TAB, SID, null)
+    expect(told).toEqual([[TAB, 'session_a', null], [TAB, null, 'session_a']])
+    expect(hub.remoteId(TAB)).toBeNull()
+    expect(changes).toEqual([TAB])
+  })
+  it('a status without the field (a chat tab, an older hook) leaves the id as it was', () => {
+    const { hub } = rcHub()
+    hub.remote(TAB, SID, 'session_a')
+    hub.status(status())
+    expect(hub.remoteId(TAB)).toBe('session_a')
+  })
+  it('a report of a retired session is dropped', () => {
+    const { hub } = rcHub()
+    hub.session(TAB, SID, 'startup')
+    hub.session(TAB, SID2, 'clear')
+    hub.remote(TAB, SID, 'session_old')
+    expect(hub.remoteId(TAB)).toBeNull()
+  })
+  it('a new session in the same process keeps the id; the end of the session, a reset and forgetRemote clear it without telling', () => {
+    const { hub, told } = rcHub()
+    hub.session(TAB, SID, 'startup')
+    hub.remote(TAB, SID, 'session_a')
+    hub.session(TAB, SID2, 'clear')
+    expect(hub.remoteId(TAB)).toBe('session_a')
+    hub.sessionEnd(TAB, SID2)
+    expect(hub.remoteId(TAB)).toBeNull()
+    hub.session(TAB, SID2, 'resume')
+    hub.remote(TAB, SID2, 'session_b')
+    hub.resetTab(TAB)
+    expect(hub.remoteId(TAB)).toBeNull()
+    hub.session(TAB, SID2, 'resume')
+    hub.remote(TAB, SID2, 'session_c')
+    hub.forgetRemote(TAB)
+    expect(hub.remoteId(TAB)).toBeNull()
+    expect(told.map((c) => c[1])).toEqual(['session_a', 'session_b', 'session_c'])
+  })
+  it('get carries the state remoteState gives, and nothing when it gives null', () => {
+    const { hub, box } = rcHub()
+    expect(hub.get(TAB).remote).toEqual({ kind: 'off' })
+    box.state = null
+    expect('remote' in hub.get(TAB)).toBe(false)
+  })
+})
 
 describe('StatusHub', () => {
   it('forgetting the limits of a tab clears both and keeps the rest of its status; a tab without limits hears of nothing', () => {

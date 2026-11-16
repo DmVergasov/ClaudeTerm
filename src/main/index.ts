@@ -18,6 +18,7 @@ import type { NotificationCase, OpenTabRequest, ProfileDef, RecentSession, Sessi
 import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteDeviceView } from '../shared/remote'
 import { remoteName } from '../shared/remote-control'
 import { remoteUnavailable, type RemoteAccountKind } from './remote-control/account-rules'
+import { RemoteControlHub } from './remote-control/remote-control-hub'
 import { AccountStore, accountLaunch, electronVault, loginEnv, nodeAccountFile } from './accounts'
 import { accountsRoot, canonical, identityOf, inAccountsRoot, NO_IDENTITY, parseAuthStatus, signInCommand, type AuthStatus, type Identity } from './account-login'
 import { AccountChecks, STATUS_TIMEOUT_MS } from './account-checks'
@@ -627,26 +628,29 @@ function bootstrap(): void {
   const turns = new TurnOrigins()
 
   const statusTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  const statusHub = new StatusHub({
+  // coalesce bursts (statusLine, hooks, subagent transcripts) into one update per tab
+  const statusSoon = (tabId: string): void => {
+    if (statusTimers.has(tabId)) return
+    statusTimers.set(tabId, setTimeout(() => {
+      statusTimers.delete(tabId)
+      const status = statusHub.get(tabId)
+      // past the end of a turn, the agents still running are the work Claude left in the background
+      tabs.setAgentsRunning(tabId, status.agents.length > 0)
+      // the session snapshot keeps it: a restore must wake a conversation whose background work stopped with ClaudeTerm
+      tabs.setBackgroundWork(tabId, status.background.length > 0)
+      send(IPC.evStatus, status)
+      pushToMembers(tabId, 'status', { main: status.main, agents: status.agents, background: status.background })
+    }, 50))
+  }
+  const statusHub: StatusHub = new StatusHub({
     now: () => Date.now(),
     readMeta: (tabId, agentId) => {
       const dir = sources.get(tabId)?.feed?.subagentDir
       return dir ? readAgentMeta(dir, agentId) : null
     },
-    // coalesce bursts (statusLine, hooks, subagent transcripts) into one update per tab
-    onChange: (tabId) => {
-      if (statusTimers.has(tabId)) return
-      statusTimers.set(tabId, setTimeout(() => {
-        statusTimers.delete(tabId)
-        const status = statusHub.get(tabId)
-        // past the end of a turn, the agents still running are the work Claude left in the background
-        tabs.setAgentsRunning(tabId, status.agents.length > 0)
-        // the session snapshot keeps it: a restore must wake a conversation whose background work stopped with ClaudeTerm
-        tabs.setBackgroundWork(tabId, status.background.length > 0)
-        send(IPC.evStatus, status)
-        pushToMembers(tabId, 'status', { main: status.main, agents: status.agents, background: status.background })
-      }, 50))
-    }
+    onChange: statusSoon,
+    remoteChanged: (tabId, id, previous) => remoteControl.reported(tabId, id, previous),
+    remoteState: (tabId) => remoteControl.state(tabId)
   })
 
   // what a tab waits for the person for: its open dialog and its usage limit; each change asks the coordinator views to go out
@@ -858,6 +862,7 @@ function bootstrap(): void {
   })
   const shownFallbacks = new Set<string>()
   const tabs = new TabManager({
+    onProcessStarted: (tab) => remoteControl.processStarted(tab.id),
     onTabStarted: (tab) => {
       startTabImages(tab)
       places.addTab(tab.id, tab.cwd)
@@ -919,6 +924,7 @@ function bootstrap(): void {
       // after the feed has stopped, so no late report brings the closed tab back
       planHub.removeTab(tabId)
       stopTabStatus(tabId)
+      remoteControl.removeTab(tabId)
       attention.removeTab(tabId)
       turns.removeTab(tabId)
       autoContinue.forget(tabId)
@@ -1116,6 +1122,20 @@ function bootstrap(): void {
         remote?.host.reset(id)
       }
     }
+  })
+  // each Claude tab's Remote Control state: its Claude Code's reported id and its account, computed here for the status
+  const remoteControl: RemoteControlHub = new RemoteControlHub({
+    tab: (id) => {
+      const t = tabs.get(id)
+      return t?.kind === 'claude' ? { view: t.view ?? 'terminal', account: t.account, exited: t.exited } : null
+    },
+    accountKind: accountKindOf,
+    env: (id) => tabs.claudeEnv(id) ?? {},
+    choice: (id) => tabs.remoteControl(id),
+    setChoice: (id, on) => tabs.setRemoteControl(id, on),
+    reportedId: (id) => statusHub.remoteId(id),
+    forgetReported: (id) => statusHub.forgetRemote(id),
+    onChange: statusSoon
   })
   const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
   const noteReplies: NoteReplyDeps = { isClaudeTab, session: noteHub, project: projectNotes }
@@ -2546,6 +2566,7 @@ function bootstrap(): void {
       // a conversation resumed under a new id keeps the mail it had: the old id reads as the new one from now on
       if (msg.source === 'resume' && before !== null && before !== msg.sessionId) mailHub.alias(before, msg.sessionId)
       statusHub.session(msg.tabId, msg.sessionId, msg.source)
+      if (msg.remote !== undefined) statusHub.remote(msg.tabId, msg.sessionId, msg.remote)
       planHub.session(msg.tabId, msg.sessionId)
       noteHub.session(msg.tabId, msg.sessionId)
       taskLists.session(msg.tabId, msg.sessionId, msg.source === 'fork' ? tabs.get(msg.tabId)?.fork?.from ?? null : null)
@@ -2596,6 +2617,7 @@ function bootstrap(): void {
     },
     attention: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      if (msg.remote !== undefined) statusHub.remote(msg.tabId, msg.sessionId, msg.remote)
       // a done ends the mail turn the tab was started for, if one was: taken on every done, so no later turn is taken for it
       const mailTurn = msg.reason === 'done' && mailHub.takeMailTurn(msg.tabId)
       wakeFeed(msg.tabId)
@@ -2649,6 +2671,7 @@ function bootstrap(): void {
     },
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
+      if (msg.remote !== undefined) statusHub.remote(msg.tabId, msg.sessionId, msg.remote)
       // a prompt of the user starts a turn that is the user's, not a mail turn
       mailHub.userTurn(msg.tabId)
       wakeFeed(msg.tabId)

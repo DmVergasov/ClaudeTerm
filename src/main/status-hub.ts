@@ -1,5 +1,6 @@
 import type { StatusUpdate } from '../shared/ipc'
 import type { StatusMessage, SubagentMessage } from '../shared/protocol'
+import type { RemoteState } from '../shared/remote-control'
 import type { AgentStatus, BackgroundTask, MainStatus } from '../shared/types'
 import type { LimitWait } from './auto-continue'
 import type { AgentMeta, AgentModelInfo } from './transcript-agent-info'
@@ -9,6 +10,10 @@ export interface StatusHubDeps {
   /** meta of a subagent of the tab's current session; null when it cannot be read (yet) */
   readMeta(tabId: string, agentId: string): AgentMeta | null
   onChange(tabId: string): void
+  /** the tab's Remote Control id changed (a report of its session, or a status): `previous` is what it was */
+  remoteChanged?(tabId: string, id: string | null, previous: string | null): void
+  /** the tab's Remote Control state, which the status carries; null for a tab without the segment */
+  remoteState?(tabId: string): RemoteState | null
 }
 
 interface TrackedAgent extends AgentStatus {
@@ -27,6 +32,8 @@ interface TabState {
   background: BackgroundTask[]
   /** the usage limit the tab's turn stopped on, while Claude waits to go on after its reset */
   wait: LimitWait | null
+  /** the Remote Control id the tab's Claude Code last reported; it lives through /clear and goes with the session's end */
+  remoteId: string | null
 }
 
 export class StatusHub {
@@ -77,7 +84,27 @@ export class StatusHub {
     if (t.retired.has(m.sessionId)) return
     if (t.sessionId !== m.sessionId) this.switchTo(t, m.sessionId)
     t.main = { model: m.model, effort: m.effort, context: m.context, fiveHour: m.fiveHour, sevenDay: m.sevenDay }
+    if (m.remote !== undefined) this.setRemote(t, m.tabId, m.remote)
     this.deps.onChange(m.tabId)
+  }
+
+  /** a Remote Control id from a hook (`remote`): null when the session has none; a report of a retired session is dropped */
+  remote(tabId: string, sessionId: string, id: string | null): void {
+    const t = this.tab(tabId)
+    if (t.retired.has(sessionId)) return
+    if (t.sessionId === null) t.sessionId = sessionId
+    else if (t.sessionId !== sessionId) return // a late hook of a previous session
+    this.setRemote(t, tabId, id)
+  }
+
+  remoteId(tabId: string): string | null {
+    return this.tabs.get(tabId)?.remoteId ?? null
+  }
+
+  /** the tab's Remote Control id is no longer known: its process is gone (silent, its owner has the state) */
+  forgetRemote(tabId: string): void {
+    const t = this.tabs.get(tabId)
+    if (t) t.remoteId = null
   }
 
   subagent(m: SubagentMessage): void {
@@ -125,6 +152,7 @@ export class StatusHub {
     const t = this.tab(tabId)
     t.retired.add(sessionId)
     if (t.sessionId !== sessionId) return
+    t.remoteId = null
     this.clear(t, null)
     this.deps.onChange(tabId)
   }
@@ -137,6 +165,7 @@ export class StatusHub {
     const t = this.tabs.get(tabId)
     if (!t) return
     if (t.sessionId !== null) t.retired.add(t.sessionId)
+    t.remoteId = null
     this.clear(t, null)
     this.deps.onChange(tabId)
   }
@@ -165,13 +194,14 @@ export class StatusHub {
     const t = this.tabs.get(tabId)
     const agents = t ? [...t.agents.values()].map(({ agentId, type, description, model, effort, startedAt }) => ({ agentId, type, description, model, effort, startedAt })) : []
     const waits = t?.wait ? { continuesAt: t.wait.resetsAt, goesOnAt: t.wait.goesOnAt } : {}
-    return { tabId, main: t?.main ?? null, agents, background: t ? [...t.background] : [], ...waits }
+    const state = this.deps.remoteState?.(tabId) ?? null
+    return { tabId, main: t?.main ?? null, agents, background: t ? [...t.background] : [], ...waits, ...(state ? { remote: state } : {}) }
   }
 
   private tab(tabId: string): TabState {
     let t = this.tabs.get(tabId)
     if (!t) {
-      t = { sessionId: null, main: null, agents: new Map(), early: new Map(), retired: new Set(), background: [], wait: null }
+      t = { sessionId: null, main: null, agents: new Map(), early: new Map(), retired: new Set(), background: [], wait: null, remoteId: null }
       this.tabs.set(tabId, t)
     }
     return t
@@ -188,6 +218,14 @@ export class StatusHub {
     t.agents.clear()
     t.early.clear()
     t.background = []
+  }
+
+  private setRemote(t: TabState, tabId: string, id: string | null): void {
+    if (t.remoteId === id) return
+    const previous = t.remoteId
+    t.remoteId = id
+    this.deps.remoteChanged?.(tabId, id, previous)
+    this.deps.onChange(tabId)
   }
 
   private loadMeta(tabId: string, a: TrackedAgent): void {
