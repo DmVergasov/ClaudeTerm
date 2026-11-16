@@ -96,7 +96,7 @@ test('the role note reaches the coordinator at its next typed turn and wakes not
     await stillWaiting(third, 1000)
     await turnOf(pipeName, t0, next)
     const again = (await within(third, 10_000)) as WaitAnswer
-    expect(again.info).toContain(`You coordinate ${after.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. 1 session (${attached.name} — ${attached.line}).`)
+    expect(again.info).toContain(`You coordinate ${after.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. 1 session (${cutText(attached.name, 40)} — ${attached.line}).`)
 
     // the note is no message: the coordinator's Agent messages panel holds none
     await activate(page, t0)
