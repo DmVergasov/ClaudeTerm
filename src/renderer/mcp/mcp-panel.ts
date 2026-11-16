@@ -490,7 +490,7 @@ export class McpPanel {
     this.list.replaceChildren(...nodes)
     if (this.wanted !== null) this.takeWanted()
     else if (kept !== null) this.focusKept(kept)
-    else if (focused instanceof HTMLElement && this.list.contains(focused)) focused.focus()
+    else if (focused instanceof HTMLElement && this.list.contains(focused)) focused.focus({ preventScroll: true })
   }
 
   /** the control with the focus, as the list finds it again; null when the focus is not on a row's control */
@@ -519,19 +519,19 @@ export class McpPanel {
     const control = findControl(row, want.key)
     if (control === null) {
       this.wanted = null
-      findControl(row, 'name')?.focus()
+      findControl(row, 'name')?.focus({ preventScroll: true })
       return
     }
     if (control.disabled) return
     this.wanted = null
-    control.focus()
+    control.focus({ preventScroll: true })
   }
 
   /** the control kept its focus over a redraw; once it is gone, its row's name has it */
   private focusKept(c: ControlKey): void {
     const control = this.controlNode(c)
-    if (control !== null) control.focus()
-    else findControl(this.rowNode(c.name), 'name')?.focus()
+    if (control !== null) control.focus({ preventScroll: true })
+    else findControl(this.rowNode(c.name), 'name')?.focus({ preventScroll: true })
   }
 
   /** the control of a row with this focus key gets the focus, once the list is drawn */

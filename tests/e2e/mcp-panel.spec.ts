@@ -757,3 +757,36 @@ test('a sign-in still waits after the list is loaded again', async () => {
     await app.close()
   }
 })
+
+test('a switch clicked in a long list keeps the list where it was scrolled to', async () => {
+  const names = Array.from({ length: 40 }, (_, i) => `srv${String(i).padStart(2, '0')}`)
+  const mcpServers = Object.fromEntries(names.map((n) => [n, { type: 'http', url: `https://example.com/${n}` }]))
+  const { app, page } = await launchChatTab({ turns: {} }, { claude: { mcpServers } })
+  try {
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const list = page.locator('.panel-mcp .mcp-list')
+    await expect(page.locator('.panel-mcp .mcp-item')).toHaveCount(40)
+    // the list is scrolled to the middle
+    const middle = await list.evaluate((el) => {
+      el.scrollTop = Math.floor((el.scrollHeight - el.clientHeight) / 2)
+      return el.scrollTop
+    })
+    expect(middle).toBeGreaterThan(100)
+    const toggle = page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(20)
+    const name = ((await toggle.getAttribute('aria-label')) ?? '').replace(/^Turn (\S+) off$/, '$1')
+    const before = await toggle.boundingBox()
+    await toggle.click()
+    // the server is off and its row has moved to the OFF group; wait for the answer, then the settled list
+    await expect(page.getByRole('switch', { name: `Turn ${name} on` })).toHaveAttribute('aria-checked', 'false')
+    await expect(page.locator(GROUP_HEAD)).toHaveText(['CONNECTED', 'OFF'])
+    await page.waitForTimeout(1500)
+    const after = await list.evaluate((el) => el.scrollTop)
+    expect(Math.abs(after - middle)).toBeLessThanOrEqual(4)
+    // the row that took the clicked one's place is still under the pointer
+    const next = await page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(20).boundingBox()
+    expect(Math.abs((next?.y ?? 0) - (before?.y ?? 0))).toBeLessThanOrEqual(4)
+  } finally {
+    await app.close()
+  }
+})
