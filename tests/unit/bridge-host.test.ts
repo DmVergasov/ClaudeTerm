@@ -23,22 +23,24 @@ const GIT = { gitRepoUrl: 'https://git.example.invalid/acme/app.git', branch: 'f
 /** a bridge handle that records what the host does with it */
 class FakeHandle {
   writes: Record<string, unknown>[] = []; results = 0; states: string[] = []; requests: Record<string, any>[] = []; cancels: string[] = []
-  closes = 0; flushes = 0; flushHangs = false; reconnects: Record<string, unknown>[] = []; seq = 7; failReconnects = 0
+  closes = 0; flushes = 0; flushHangs = false; reconnects: Record<string, unknown>[] = []; seq = 7; failReconnects = 0; dead = false
   constructor(readonly opts: AttachBridgeSessionOptions) {}
   get sessionId(): string { return this.opts.sessionId }
   getSequenceNum(): number { return this.seq }
   getEpoch(): number | undefined { return this.opts.epoch }
   isConnected(): boolean { return true }
-  write(m: unknown): void { this.writes.push(m as Record<string, unknown>) }
+  write(m: unknown): void { if (!this.dead) this.writes.push(m as Record<string, unknown>) }
   sendResult(): void { this.results++ }
   sendControlRequest(r: unknown): void { this.requests.push(r as Record<string, any>) }
   sendControlResponse(): void {}
   sendControlCancelRequest(id: string): void { this.cancels.push(id) }
+  /** a reconnect that fails closes the handle, as the SDK does: later calls on it do nothing */
   async reconnectTransport(o: Record<string, unknown>): Promise<void> {
+    if (this.dead) return
     this.reconnects.push(o)
-    if (this.failReconnects > 0) { this.failReconnects--; throw new Error('transport down') }
+    if (this.failReconnects > 0) { this.failReconnects--; this.dead = true; throw new Error('transport down') }
   }
-  reportState(s: string): void { this.states.push(s) }
+  reportState(s: string): void { if (!this.dead) this.states.push(s) }
   reportMetadata(): void {}
   reportDelivery(): void {}
   flush(): Promise<void> { this.flushes++; return this.flushHangs ? new Promise<void>(() => {}) : Promise.resolve() }
@@ -70,7 +72,7 @@ function host() {
     /** read in order before `creds`, one per read */
     credsQueue: [] as ClaudeCredentials[],
     bridgeOk: true, sent: [] as string[], answered: [] as [string, SdkPermissionResult][], answerOk: true, interrupts: 0,
-    history: [] as unknown[], historyThrows: null as Error | null, storeThrows: null as Error | null, seen: [] as (string | null)[], checks: 0, logs: [] as string[], timers: [] as { ms: number; run: () => void; on: boolean }[], changes: 0
+    history: [] as unknown[], historyGate: null as Promise<void> | null, historyThrows: null as Error | null, storeThrows: null as Error | null, seen: [] as (string | null)[], checks: 0, logs: [] as string[], timers: [] as { ms: number; run: () => void; on: boolean }[], changes: 0
   }
   const hostRef: { h?: BridgeHost } = {}
   const d: BridgeHostDeps = {
@@ -86,7 +88,7 @@ function host() {
       send: async (_t, text) => { w.sent.push(text); return null },
       answer: (_t, id, r) => { w.answered.push([id, r]); return w.answerOk },
       interrupt: () => { w.interrupts++ },
-      history: async () => { if (w.historyThrows) throw w.historyThrows; return w.history },
+      history: async () => { if (w.historyGate) await w.historyGate; if (w.historyThrows) throw w.historyThrows; return w.history },
       checkSignIn: async () => { w.checks++ }
     },
     claudeVersion: () => '2.1.323',
@@ -396,16 +398,49 @@ describe('BridgeHost: off and closes', () => {
     expect(calls.filter((c) => c[0] === 'credentials')).toHaveLength(6)
     expect(w.timers.filter((t) => t.on)).toEqual([])
   })
-  it('a reconnect that throws is tried again after 2 s, on the same handle', async () => {
+  it('a reconnect that throws leaves the handle closed: the session is attached again from its sequence number, with no history', async () => {
     const { h, handles, fire } = host()
     h.attach(target()); await settle()
     handles[0].failReconnects = 1
     handles[0].opts.onClose!(4092); await settle()
     expect(h.state(TAB)).toEqual({ kind: 'connecting' })
     fire(2_000); await settle()
-    expect(handles[0].reconnects).toHaveLength(2)
+    expect(handles[0].reconnects).toHaveLength(1)
+    expect(handles).toHaveLength(2)
+    expect(handles[1].opts).toMatchObject({ sessionId: 'cse_1', ingressToken: JWT, epoch: CREDS.worker_epoch, initialSequenceNum: 7 })
+    expect(handles[1].writes).toEqual([])
     expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
     expect(handles[0].closes).toBe(0)
+  })
+  it('a first attach detached while its history is read stores nothing: the next attach makes a new session and writes the history', async () => {
+    const { h, calls, answers, stored, w, handles } = host()
+    w.history = [userLine('u1', 'Fix the parser')]
+    let open!: () => void
+    w.historyGate = new Promise<void>((r) => { open = r })
+    h.attach(target()); await settle()
+    const off = h.detach(TAB)
+    open(); await settle(); await off
+    expect(stored.has(SID)).toBe(false)
+    w.historyGate = null
+    answers.create = ['cse_2']
+    h.attach(target()); await settle()
+    expect(calls.filter((c) => c[0] === 'create')).toHaveLength(2)
+    expect(handles[1].writes.map((m) => m.uuid)).toEqual(['u1'])
+    expect(stored.get(SID)!.entry).toEqual({ remoteId: 'cse_2', sequenceNum: 0 })
+  })
+  it('a connection that closes while the history is read is brought back once the entry is kept, and the history goes to the same handle', async () => {
+    const { h, handles, stored, w } = host()
+    w.history = [userLine('u1', 'Fix the parser')]
+    let open!: () => void
+    w.historyGate = new Promise<void>((r) => { open = r })
+    h.attach(target()); await settle()
+    handles[0].opts.onClose!(4092); await settle()
+    expect(stored.has(SID)).toBe(false)
+    open(); await settle()
+    expect(handles[0].writes.map((m) => m.uuid)).toEqual(['u1'])
+    expect(handles[0].reconnects).toHaveLength(1)
+    expect(stored.get(SID)!.entry.remoteId).toBe('cse_1')
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
   })
   it('a transient answer (null) at attach retries after 2 s from the step that failed: the new session keeps its history', async () => {
     const { h, answers, calls, handles, w, fire } = host()

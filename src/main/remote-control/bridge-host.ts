@@ -85,6 +85,10 @@ interface Tab {
   renewed: boolean
   /** Claude Code's sign-in was checked (accountInfo) in this attach */
   checkedSignIn: boolean
+  /** the attach's entry is kept: its history is written and stored, so a later attach may resume the session */
+  kept: boolean
+  /** a close that came before the entry was kept: taken once the attach has stored it */
+  pendingClose: { code: number | undefined } | null
   /** cancels the tab's pending wait (a retry, the renew wait, the attach's limit): a wait cancelled never goes on */
   cancelWait: () => void
   /** cancels the tab's sequence number timer, pending while it is on */
@@ -165,7 +169,7 @@ export class BridgeHost {
     if (cur && (cur.state.kind === 'connecting' || (cur.state.kind === 'on' && cur.target.sessionId === target.sessionId))) return
     if (cur) void this.detach(target.tabId)
     const t: Tab = {
-      gen: ++this.gens, target, state: { kind: 'connecting' }, handle: null, session: null, reconnecting: false, renewed: false, checkedSignIn: false,
+      gen: ++this.gens, target, state: { kind: 'connecting' }, handle: null, session: null, reconnecting: false, renewed: false, checkedSignIn: false, kept: false, pendingClose: null,
       cancelWait: NOOP, cancelSequence: NOOP, queue: [], openCards: new Map(), historyUuids: new Set(), secrets: []
     }
     this.tabs.set(target.tabId, t)
@@ -322,21 +326,7 @@ export class BridgeHost {
     }
 
     const remoteId = entry.remoteId
-    const version = this.d.claudeVersion()
-    const opts: AttachBridgeSessionOptions = {
-      sessionId: remoteId,
-      ingressToken: remote.worker_jwt,
-      apiBaseUrl: remote.api_base_url,
-      epoch: remote.worker_epoch,
-      ...(fresh ? {} : { initialSequenceNum: entry.sequenceNum }),
-      ...(version ? { claudeCodeVersion: version } : {}),
-      onInboundMessage: (msg) => this.inbound(t, msg as Msg),
-      onPermissionResponse: (res) => (this.answer(t, res as Msg) ? undefined : false),
-      onInterrupt: () => {
-        if (this.current(t)) this.d.chat.interrupt(target.tabId)
-      },
-      onClose: (code) => this.closed(t, code)
-    }
+    const opts = this.attachOptions(t, remoteId, remote, fresh ? null : entry.sequenceNum)
     let handle: Handle | null = null
     while (handle === null) {
       handle = await this.openSession(t, gen, bridge, opts)
@@ -348,6 +338,8 @@ export class BridgeHost {
     }
     t.handle = handle
     t.session = { bridge, folder, remoteId }
+    // a session made here is stored only once its history is written: until then a close waits for this attach to finish
+    t.kept = !fresh
 
     if (fresh) {
       let history: unknown[] = []
@@ -364,8 +356,15 @@ export class BridgeHost {
       }
       await this.d.sessions.put(target.sessionId, account, { remoteId, sequenceNum: 0 })
       if (!alive()) return
+      t.kept = true
     }
     handle.reportState('idle')
+    const pending = t.pendingClose
+    t.pendingClose = null
+    if (pending !== null) {
+      this.takeClose(t, pending.code)
+      return
+    }
     this.turnOn(t, handle, remoteId)
   }
 
@@ -399,12 +398,23 @@ export class BridgeHost {
     })
   }
 
-  /** the connection of a tab that is on closed: its sequence number is stored, and the connection is brought back on the same handle; claude.ai refusing it (403, 404) fails the tab */
+  /** the connection of a tab that is on closed. While the attach is still reading its history, the close waits for the attach to keep its entry; then it is taken as usual */
   private closed(t: Tab, code: number | undefined): void {
+    if (!this.current(t) || t.reconnecting || t.handle === null || t.session === null) return
+    if (!t.kept) {
+      t.pendingClose = { code }
+      return
+    }
+    this.takeClose(t, code)
+  }
+
+  /** the connection closed: its sequence number is stored, and it is brought back; claude.ai refusing it (403, 404) fails the tab */
+  private takeClose(t: Tab, code: number | undefined): void {
+    const handle = t.handle
     const session = t.session
-    if (!this.current(t) || t.reconnecting || t.handle === null || session === null) return
+    if (handle === null || session === null) return
     this.d.log.warn(`remote control: the connection closed for tab ${t.target.tabId} (${code ?? 'no code'})`)
-    void this.storeSequence(t, t.handle)
+    void this.storeSequence(t, handle)
     this.halt(t)
     if (code === 403 || code === 404) {
       this.stop(t, { kind: 'failed', reason: refusedReason(code) })
@@ -422,11 +432,12 @@ export class BridgeHost {
     })
   }
 
-  /** brings a dropped connection back on its handle: the sign-in is read again and a worker token fetched for the same remote session; the reconnect takes the epoch that fetch gave. A miss waits the backoff and goes on */
+  /** brings a dropped connection back: the sign-in is read again and a worker token fetched for the same remote session, and the reconnect takes the epoch that fetch gave. The transport is reconnected on the handle; when the SDK has closed the handle (its reconnect failed), the session is attached again from its sequence number, with no history. A miss waits the backoff and goes on */
   private async reconnect(t: Tab, session: Session, gen: number): Promise<void> {
-    const handle = t.handle
+    let handle = t.handle
     if (handle === null) return
     let misses = 0
+    let sequence: number | null = null
     let sign: Sign | null = null
     for (;;) {
       if (sign === null) {
@@ -457,19 +468,59 @@ export class BridgeHost {
         return
       }
       this.addSecrets(t, [got.worker_jwt])
-      try {
-        await handle.reconnectTransport({ ingressToken: got.worker_jwt, apiBaseUrl: got.api_base_url, epoch: got.worker_epoch })
-      } catch (e) {
+      if (handle !== null) {
+        try {
+          await handle.reconnectTransport({ ingressToken: got.worker_jwt, apiBaseUrl: got.api_base_url, epoch: got.worker_epoch })
+        } catch (e) {
+          if (!this.alive(t, gen)) return
+          this.d.log.warn(`remote control: the connection could not be restored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+          // a failed reconnect closes the handle: it is dropped, and the session is attached again from its sequence number
+          sequence = handle.getSequenceNum()
+          handle = null
+          t.handle = null
+          sign = null
+          if (!(await this.missed(t, ++misses))) return
+          continue
+        }
         if (!this.alive(t, gen)) return
-        this.d.log.warn(`remote control: the connection could not be restored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+        t.reconnecting = false
+        this.turnOn(t, handle, session.remoteId)
+        return
+      }
+      const attached = await this.openSession(t, gen, session.bridge, this.attachOptions(t, session.remoteId, got, sequence))
+      if (!this.alive(t, gen)) {
+        attached?.close()
+        return
+      }
+      if (attached === null) {
         sign = null
         if (!(await this.missed(t, ++misses))) return
         continue
       }
-      if (!this.alive(t, gen)) return
+      t.handle = attached
       t.reconnecting = false
-      this.turnOn(t, handle, session.remoteId)
+      this.turnOn(t, attached, session.remoteId)
       return
+    }
+  }
+
+  /** the options of an attach of the tab's remote session, with its worker token and epoch and the callbacks the tab serves; a sequence number resumes the session */
+  private attachOptions(t: Tab, remoteId: string, remote: RemoteCredentials, initialSequenceNum: number | null): AttachBridgeSessionOptions {
+    const version = this.d.claudeVersion()
+    const target = t.target
+    return {
+      sessionId: remoteId,
+      ingressToken: remote.worker_jwt,
+      apiBaseUrl: remote.api_base_url,
+      epoch: remote.worker_epoch,
+      ...(initialSequenceNum === null ? {} : { initialSequenceNum }),
+      ...(version ? { claudeCodeVersion: version } : {}),
+      onInboundMessage: (msg) => this.inbound(t, msg as Msg),
+      onPermissionResponse: (res) => (this.answer(t, res as Msg) ? undefined : false),
+      onInterrupt: () => {
+        if (this.current(t)) this.d.chat.interrupt(target.tabId)
+      },
+      onClose: (code) => this.closed(t, code)
     }
   }
 
@@ -557,7 +608,8 @@ export class BridgeHost {
   /** the handle's sequence number, stored with its remote session */
   private storeSequence(t: Tab, h: Handle): Promise<void> {
     const session = t.session
-    if (session === null) return Promise.resolve()
+    // nothing is stored for a session whose history is not written yet
+    if (session === null || !t.kept) return Promise.resolve()
     return this.d.sessions.put(t.target.sessionId, pathKey(session.folder), { remoteId: session.remoteId, sequenceNum: h.getSequenceNum() }).catch((e: unknown) => {
       this.d.log.warn(`remote control: the sequence number cannot be stored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
     })
