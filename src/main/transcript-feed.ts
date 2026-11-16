@@ -9,6 +9,7 @@ import { PeerMailParser, type PeerMail } from './transcript-mail'
 import { PlanWorkspaceFinder } from './transcript-plan'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
 import { oneLine } from './session-history'
+import { wordsLine, type WordsLine } from './coordinator/person-words'
 
 const CHUNK_BYTES = 4 * 1024 * 1024
 
@@ -138,6 +139,8 @@ export interface TranscriptFeedOptions {
   onTitle?(title: string): void
   /** a message the session sent or received with Claude Code's own messaging (SendMessage), from the main transcript, in order */
   onPeerMail?(mail: PeerMail): void
+  /** a prompt or an answer of the main transcript, as the person's-words check reads it (person-words.ts), in order */
+  onWords?(line: WordsLine): void
   /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
   locate?(): Promise<string | null>
   /** how often locate() may run while the transcript cannot be opened */
@@ -404,6 +407,7 @@ export class TranscriptFeed {
       this.reportTurn(src, line)
       this.reportTitle(src, line)
       this.reportMail(src, line)
+      this.reportWords(src, line)
       try {
         for (const img of src.parser.parseLine(line)) {
           if (this.stopped) return
@@ -443,6 +447,16 @@ export class TranscriptFeed {
     try {
       const mail = this.peerMail.parseLine(line)
       if (mail !== null) this.o.onPeerMail(mail)
+    } catch (e) {
+      this.report(e)
+    }
+  }
+
+  private reportWords(src: Source, line: string): void {
+    if (!this.o.onWords || src.agentId !== null) return
+    try {
+      const words = wordsLine(line)
+      if (words !== null) this.o.onWords(words)
     } catch (e) {
       this.report(e)
     }

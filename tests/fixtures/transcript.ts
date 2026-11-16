@@ -43,6 +43,17 @@ export function promptLine(text: string, o: { timestamp?: string; uuid?: string;
   })
 }
 
+/** An answer of the main conversation, as Claude Code writes it: an assistant entry with one text block. */
+export function answerLine(text: string, timestamp = '2026-10-08T10:00:01.000Z'): string {
+  return JSON.stringify({ type: 'assistant', timestamp, isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text }] } })
+}
+
+/** A message the person typed while a turn ran, as Claude Code writes it once the turn takes it: a queued_command attachment. */
+export function queuedLine(text: string, o: { timestamp?: string; uuid?: string } = {}): string {
+  const timestamp = o.timestamp ?? '2026-10-08T10:00:02.000Z'
+  return JSON.stringify({ type: 'attachment', uuid: o.uuid ?? `q-${text.length}`, timestamp, isSidechain: false, attachment: { type: 'queued_command', prompt: text, timestamp, isMeta: false } })
+}
+
 /** what Claude Code records as the origin of a message another root session sent */
 export const PEER_ORIGIN = { kind: 'peer', from: 'uds:build-session', msg_id: 'msg-7', name: 'Build session', fromMode: 'prompting' }
 /** the origin of a subagent's report to its parent: a peer entry, but not a message from another session */
