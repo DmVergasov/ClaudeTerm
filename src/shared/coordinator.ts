@@ -2,6 +2,10 @@ import { MAIL_MIN_CLAUDE, type ReportOutcome } from './mail'
 
 /** the longest task text a coordinator sends, in characters */
 export const COORD_TASK_MAX = 7000
+/** the longest message of the person a task carries, in characters: the mail text's own limit */
+export const COORD_WORDS_MAX = 8000
+/** the longest answer of the coordinator a task with the person's words carries, in characters, its leading … included */
+export const COORD_CONTEXT_MAX = 1500
 /** the longest name of a session or a worktree a coordinator sends, in characters */
 export const COORD_NAME_MAX = 100
 /** the longest key of a coordinator's project, in characters */

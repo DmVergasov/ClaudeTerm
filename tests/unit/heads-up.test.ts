@@ -123,6 +123,17 @@ describe('excerpt', () => {
     expect(excerpt(items)).toBe(`Person: Почини сборку\nClaudeTerm: ${note}`)
     expect(personWords(items)).toEqual(['Почини сборку'])
   })
+
+  it("a progress note and the person's words a coordinator passed on are ClaudeTerm's in the session's tab, not the person's", () => {
+    const relayed = "The person's words, through your coordinator coord · Studio (ClaudeTerm checked they are the person's own latest message):\nOnly the lines…"
+    const progress = 'Progress from a session attached to you, through ClaudeTerm: its task is still open, background work is running.\nfrom: parser [a10000]\nid: x\n\n> Waiting.'
+    const items: ChatItem[] = [
+      { kind: 'user', id: '1', text: 'Почини сборку', attachments: [], queued: false },
+      { kind: 'user', id: '2', text: relayed, attachments: [], queued: false },
+      { kind: 'user', id: '3', text: progress, attachments: [], queued: false }
+    ]
+    expect(personWords(items)).toEqual(['Почини сборку'])
+  })
 })
 
 describe('HeadsUp', () => {

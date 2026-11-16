@@ -13,8 +13,18 @@ export const REPORT_WAKE_HEAD = 'Report from a session attached to you, through 
 export const PROGRESS_WAKE_HEAD = 'Progress from a session attached to you, through ClaudeTerm: its task is still open, background work is running'
 /** the first line of a role note's block: what the coordinator is and how its sessions stand, from ClaudeTerm and not the user */
 export const ROLE_NOTE_HEAD = 'Note from ClaudeTerm, not from the user:'
+/** the first line of a block that relays the person's own latest message through the coordinator */
+export const PERSON_WORDS_HEAD = "The person's words, through your coordinator"
+/** the line after the head: ClaudeTerm checked the words are the person's own latest message */
+export const PERSON_WORDS_CHECKED = "(ClaudeTerm checked they are the person's own latest message):"
+/** the line that says whose words are whose: the person's lines, and the task under them the coordinator's */
+export const PERSON_WORDS_NOTE = 'Only the lines under "The person answered" are the person\'s. The task under it is your coordinator\'s: do what the person\'s words cover, and ask the person in this tab before doing anything they do not cover.'
+/** the line before the coordinator's words the person answered */
+export const PERSON_WORDS_CONTEXT = 'The coordinator had written to the person, right before:'
+/** the line before the person's own words */
+export const PERSON_WORDS_ANSWER = 'The person answered:'
 /** the first lines of the kinds of wake blocks ClaudeTerm writes */
-export const WAKE_HEADS: readonly string[] = [MESSAGE_WAKE_HEAD, TASK_WAKE_HEAD, REPORT_WAKE_HEAD, PROGRESS_WAKE_HEAD, ROLE_NOTE_HEAD]
+export const WAKE_HEADS: readonly string[] = [MESSAGE_WAKE_HEAD, TASK_WAKE_HEAD, REPORT_WAKE_HEAD, PROGRESS_WAKE_HEAD, ROLE_NOTE_HEAD, PERSON_WORDS_HEAD]
 
 /** a report block as the chat reads it: the mail it came in, the session that sent it (its name and ref), and how its task ended */
 export interface ReportWake {
