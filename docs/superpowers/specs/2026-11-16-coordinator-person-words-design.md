@@ -1,6 +1,6 @@
 # The person's words through the coordinator
 
-Status: approach chosen by the person (the "checked quote"). This document is waiting for their approval.
+Status: approved by the person ("да делай", 2026-11-16).
 
 ## Why
 
