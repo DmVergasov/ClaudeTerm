@@ -37,6 +37,12 @@ describe('mail on the wire', () => {
     expect(parseMessage({ ...hello, coord: 2 })).not.toHaveProperty('coord')
   })
 
+  it('a hello with words: 1 keeps it; a hello without it, or with words: 2, has no words field', () => {
+    expect(parseMessage({ ...hello, words: 1 })).toMatchObject({ t: 'hello', words: 1 })
+    expect(parseMessage(hello)).not.toHaveProperty('words')
+    expect(parseMessage({ ...hello, words: 2 })).not.toHaveProperty('words')
+  })
+
   it('mail-have, mail-records and mail-accept parse; a malformed one is unknown, never a closed link', () => {
     expect(parseMessage({ t: 'mail-have', have: [[S1, 3]] })).toEqual({ t: 'mail-have', have: [[S1, 3]] })
     expect(parseMessage({ t: 'mail-have', have: 'x' })).toBe('unknown')

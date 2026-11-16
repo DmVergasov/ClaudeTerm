@@ -2213,6 +2213,7 @@ function bootstrap(): void {
       online: remote?.viewer.online(d.id) ?? false,
       listed: remote?.viewer.listedOf(d.id) ?? false,
       coord: mailSync.knowsCoordinator(d.id),
+      words: mailSync.knowsWords(d.id),
       mail: accept?.on === true && accept.wakes === true
     }
   })
@@ -2712,6 +2713,8 @@ function bootstrap(): void {
         appVersion: app.getVersion(),
         // a test that stands in for a device which predates coordinator records (CLAUDETERM_TEST_NO_COORD)
         knowsCoordinator: !(isTest && process.env.CLAUDETERM_TEST_NO_COORD === '1'),
+        // a test that stands in for a device which predates the person's words (CLAUDETERM_TEST_NO_WORDS)
+        knowsWords: !(isTest && process.env.CLAUDETERM_TEST_NO_WORDS === '1'),
         hostName: () => hostname().slice(0, MAX_DEVICE_NAME),
         addresses: testDeviceHost ? () => [testDeviceHost] : localAddresses,
         onData: (updates) => bridge?.applied(updates),

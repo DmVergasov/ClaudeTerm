@@ -51,6 +51,7 @@ export interface HubPeer {
   online: boolean // linked now
   listed: boolean // its tab list has come on the current link
   coord: boolean // its hello says it knows coordinator records
+  words: boolean // its hello says it knows progress notes and the person's words on a task
   mail: boolean // it takes agent mail and its mail watcher wakes a session
 }
 

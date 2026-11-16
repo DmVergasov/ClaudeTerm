@@ -32,11 +32,12 @@ interface HaveBuffer {
   dropped: boolean
 }
 
-/** a link that carries mail, with the device at its far end, the accept that device last sent, whether that device knows coordinator records, the digest being received and the listeners on the link */
+/** a link that carries mail, with the device at its far end, the accept that device last sent, whether that device knows coordinator records and the person's words, the digest being received and the listeners on the link */
 interface MailLink {
   device: string
   accept: MailAccept | null
   coord: boolean
+  words: boolean
   have: HaveBuffer
   /** the relays held back until this side has answered the peer's digest; null once they are sent */
   held: MailRecord[] | null
@@ -65,6 +66,7 @@ export class MailSync {
       device: hello.id,
       accept: null,
       coord: hello.coord === 1,
+      words: hello.words === 1,
       have: { entries: [], chunks: 0, dropped: false },
       held: [],
       onMessage: (m) => this.onMessage(link, m),
@@ -90,6 +92,14 @@ export class MailSync {
   knowsCoordinator(device: string): boolean {
     for (const entry of this.links.values()) {
       if (entry.device === device) return entry.coord
+    }
+    return false
+  }
+
+  /** true while the device is linked and its hello says it knows progress notes and the person's words */
+  knowsWords(device: string): boolean {
+    for (const entry of this.links.values()) {
+      if (entry.device === device) return entry.words
     }
     return false
   }
@@ -177,9 +187,10 @@ export class MailSync {
     }
   }
 
-  /** The records a link may carry: a peer that does not know coordinator records gets, and gives, only the messages (records with no kind). */
+  /** The records a link may carry: a peer that does not know coordinator records gets, and gives, only the messages (records with no kind); one that does not know the person's words gets no progress note and no task that carries words. */
   private forLink(entry: MailLink, records: MailRecord[]): MailRecord[] {
-    return entry.coord ? records : records.filter((r) => kindOf(r) === 'message')
+    if (!entry.coord) return records.filter((r) => kindOf(r) === 'message')
+    return entry.words ? records : records.filter((r) => kindOf(r) !== 'progress' && r.words === undefined)
   }
 
   private sendAccept(link: PeerLink): void {

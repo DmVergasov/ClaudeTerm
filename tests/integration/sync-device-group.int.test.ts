@@ -42,6 +42,8 @@ interface OpenOptions {
   onPeer?: DeviceGroupDeps['onPeer']
   /** false: the group's hello leaves coord out, as a device that predates coordinator records does */
   knowsCoordinator?: boolean
+  /** false: the group's hello leaves words out, as a device that predates the person's words does */
+  knowsWords?: boolean
 }
 
 const groups: DeviceGroup[] = []
@@ -87,7 +89,8 @@ async function openGroup(name: string, platform: DevicePlatform, opts: OpenOptio
     saveDebounceMs: opts.saveDebounceMs ?? 10,
     now: opts.now,
     onPeer: opts.onPeer,
-    knowsCoordinator: opts.knowsCoordinator
+    knowsCoordinator: opts.knowsCoordinator,
+    knowsWords: opts.knowsWords
   }
   const group = await DeviceGroup.open(deps)
   groups.push(group)
@@ -174,6 +177,27 @@ describe('DeviceGroup: pairing and records', () => {
     await until(() => connected(a, 1) && connected(b, 1))
     await until(() => peers.length > 0)
     expect(peers[0][1]).not.toHaveProperty('coord')
+  })
+
+  it("a device's hello says it knows progress notes and the person's words", async () => {
+    const peers: [PeerLink, HelloMessage][] = []
+    const a = await openGroup('Studio', 'linux', { onPeer: (link, hello) => peers.push([link, hello]) })
+    const b = await openGroup('Laptop', 'windows')
+    await pair(a, b)
+    await until(() => connected(a, 1) && connected(b, 1))
+    await until(() => peers.length > 0)
+    expect(peers[0][1].words).toBe(1)
+  })
+
+  it('a device opened with knowsWords false leaves words out of its hello, and keeps coord', async () => {
+    const peers: [PeerLink, HelloMessage][] = []
+    const a = await openGroup('Studio', 'linux', { onPeer: (link, hello) => peers.push([link, hello]) })
+    const b = await openGroup('Laptop', 'windows', { knowsWords: false })
+    await pair(a, b)
+    await until(() => connected(a, 1) && connected(b, 1))
+    await until(() => peers.length > 0)
+    expect(peers[0][1]).not.toHaveProperty('words')
+    expect(peers[0][1].coord).toBe(1)
   })
 
   it('an onPeer that throws is logged, not toasted, and the group goes on with the next member', async () => {

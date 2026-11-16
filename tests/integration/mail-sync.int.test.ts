@@ -38,8 +38,8 @@ function store(): MailStore {
   return MailStore.open({ dir: tempDir('mail-sync'), now: () => NOW, debounceMs: 100000 })
 }
 
-function helloOf(id: string, mail = true, coord = true): HelloMessage {
-  return { t: 'hello', v: 1, id, name: 'Device', platform: 'linux', port: 0, addresses: [], reachedYou: null, ...(mail ? { mail: 1 as const } : {}), ...(coord ? { coord: 1 as const } : {}) }
+function helloOf(id: string, mail = true, coord = true, words = true): HelloMessage {
+  return { t: 'hello', v: 1, id, name: 'Device', platform: 'linux', port: 0, addresses: [], reachedYou: null, ...(mail ? { mail: 1 as const } : {}), ...(coord ? { coord: 1 as const } : {}), ...(words ? { words: 1 as const } : {}) }
 }
 
 const syncs: MailSync[] = []
@@ -359,5 +359,45 @@ describe('coordinator records between devices', () => {
     expect(a.knowsCoordinator(DEV_C)).toBe(false)
     knows.client.close('test')
     expect(a.knowsCoordinator(DEV_B)).toBe(false)
+  })
+
+  it("a peer whose hello has no words gets no progress note and no task with the person's words; its other tasks still go", async () => {
+    const sa = store()
+    const sb = store()
+    const task = record({ kind: 'task', project: 'acme' })
+    const words = record({ kind: 'task', project: 'acme', words: 'Merge it into master.', context: 'Shall I merge feat/x?' })
+    const progress = record({ kind: 'progress', replyTo: newId(), text: 'Waiting for the tests.' })
+    sa.add(task)
+    sa.add(words)
+    sa.add(progress)
+    const a = sync(sa)
+    const b = sync(sb)
+    const { client, server } = await linkPair()
+    a.attach(client, helloOf(DEV_B, true, true, false))
+    b.attach(server, helloOf(DEV_A))
+    await until(() => sb.get(task.id) !== undefined)
+    await settle()
+    expect(sb.get(words.id)).toBeUndefined()
+    expect(sb.get(progress.id)).toBeUndefined()
+    // a record added later is relayed by the same rule
+    const later = record({ kind: 'progress', replyTo: newId(), text: 'Still waiting.' })
+    const plain = record({ kind: 'task', project: 'acme', text: 'Fix the parser.' })
+    sa.add(later)
+    sa.add(plain)
+    await until(() => sb.get(plain.id) !== undefined)
+    await settle()
+    expect(sb.get(later.id)).toBeUndefined()
+  })
+
+  it('knowsWords is true for a linked peer whose hello has words, false for one without, and false once the link closes', async () => {
+    const a = sync(store())
+    const knows = await linkPair()
+    const plain = await linkPair()
+    a.attach(knows.client, helloOf(DEV_B))
+    a.attach(plain.client, helloOf(DEV_C, true, true, false))
+    expect(a.knowsWords(DEV_B)).toBe(true)
+    expect(a.knowsWords(DEV_C)).toBe(false)
+    knows.client.close('test')
+    expect(a.knowsWords(DEV_B)).toBe(false)
   })
 })

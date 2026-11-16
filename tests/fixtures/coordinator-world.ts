@@ -34,8 +34,8 @@ export const L = { one: 'e1000000-0000-4000-8000-000000000011', two: 'e2000000-0
 export const NEW = { coord: 'f1000000-0000-4000-8000-000000000021', one: 'f2000000-0000-4000-8000-000000000022' }
 export const NO_FACTS: RemoteCoordFacts = { prompt: null, limit: null, progress: null, task: null, attachedTo: null, coordinator: false }
 
-/** a paired device as the coordinator's hub sees it: linked, listed, knowing coordinator records, its mail watcher waking a session */
-export const peerOf = (id: string, name: string, over: Partial<HubPeer> = {}): HubPeer => ({ id, name, online: true, listed: true, coord: true, mail: true, ...over })
+/** a paired device as the coordinator's hub sees it: linked, listed, knowing coordinator records and the person's words, its mail watcher waking a session */
+export const peerOf = (id: string, name: string, over: Partial<HubPeer> = {}): HubPeer => ({ id, name, online: true, listed: true, coord: true, words: true, mail: true, ...over })
 
 /** a tab of another device as this window lists it: Laptop's parser, in ACME_L's folder on the main account */
 export const remoteTab = (over: Partial<HubRemoteTab> = {}): HubRemoteTab =>
