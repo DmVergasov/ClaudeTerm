@@ -7,7 +7,7 @@ import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { activate, refOf, startSession, waitForMail } from './agent-mail'
 import { chatStandIn } from './chat-helpers'
-import { claudeTabIn, coord, coordDevices, coordViewOf, done, makeCoordinator, within } from './coordinator-helpers'
+import { claudeTabIn, coord, coordDevices, coordinatorTranscript, coordViewOf, done, makeCoordinator, personSays, stillWaiting, turnOf, typedHas, within } from './coordinator-helpers'
 import { dragOnto, LEFT, marksOf, menuItem, openSessions, sessionGroup, sessionRow, tpRow } from './coordinator-window'
 import { closeApp, closePaired, type Device, relaunch, SLOW } from './device-pair'
 import { gitRepo } from './helpers'
@@ -341,4 +341,39 @@ test('a paired device draws the coordinator\'s report card: the session\'s devic
   await expect(member.locator('.coord-report-title b')).toHaveText('acme · Laptop')
   await expect(member.locator('.coord-report-acts')).toHaveCount(1)
   await expect(member.locator('.coord-report-acts button')).toHaveCount(0)
+})
+
+test("the person's words to Laptop's session are typed into its prompt there, and the report comes back to Studio", async () => {
+  test.setTimeout(240_000)
+  // Laptop's Claude tab runs the stand-in in the terminal view: it draws Claude Code's empty prompt and logs what is typed
+  const laptop = chatStandIn({ turns: {} })
+  const terminal = { ...laptop.settings, claude: { ...(laptop.settings as { claude: object }).claude, view: 'terminal' } }
+  const { a, b, coordTab, coordSid, sessionTab, sessionSid } = await coordDevices({ b: { settings: terminal, env: { ...laptop.env, CLAUDETERM_TEST_PROMPT_DELAY_MS: '300' } } })
+  await attachLaptopSession(a, b, coordTab, sessionTab, sessionSid)
+  const transcript = await coordinatorTranscript(a.pipeName, coordTab, coordSid, 'Shall I merge feat/x into master?')
+  await personSays(a.page, coordTab, transcript, 'Merge it into master.')
+
+  // Laptop's watcher waits: the words go to its prompt all the same
+  const watcher = waitForMail(b.pipeName, sessionTab, sessionSid)
+  watcher.catch(() => {})
+  expect(await coord(a.pipeName, coordTab, { op: 'message', session: refOf(sessionSid), text: 'Merge feat/x into master and push.', words: 'Merge it into master.' }))
+    .toEqual({ ok: true, info: HUB_TEXT.queuedWords('acme · Laptop', refOf(sessionSid)) })
+  await expect.poll(() => typedHas(laptop.log, '> Merge it into master.'), SLOW).toBe(true)
+  expect(typedHas(laptop.log, '> Shall I merge feat/x into master?')).toBe(true)
+  expect(typedHas(laptop.log, '> Merge feat/x into master and push.')).toBe(true)
+  await stillWaiting(watcher, 1000)
+
+  const report = waitForMail(a.pipeName, coordTab, coordSid)
+  await turnOf(b.pipeName, sessionTab, sessionSid)
+  await done(b.pipeName, sessionTab, sessionSid, { lastMessage: 'Merged and pushed.' })
+  expect((await within(report, 30_000)).info).toContain('> Merged and pushed.')
+})
+
+test("Laptop on a ClaudeTerm that does not know the person's words: the task with them is refused with the older-device words, and nothing goes", async () => {
+  test.setTimeout(180_000)
+  const { a, b, coordTab, sessionTab, sessionSid } = await coordDevices({ b: { env: { CLAUDETERM_TEST_NO_WORDS: '1' } } })
+  await attachLaptopSession(a, b, coordTab, sessionTab, sessionSid)
+  expect(await coord(a.pipeName, coordTab, { op: 'message', session: refOf(sessionSid), text: 'Merge feat/x.', words: 'Merge it into master.' }))
+    .toEqual({ ok: false, error: HUB_TEXT.oldDeviceWords('Laptop') })
+  expect((await coordViewOf(a, coordTab))!.sessions[0]!.task).toBeNull()
 })
