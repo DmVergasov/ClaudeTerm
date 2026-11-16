@@ -350,6 +350,30 @@ describe('McpHub', () => {
       }
     })
 
+    it('a login whose sibling never answers does not hold the folder\'s queue: a command queued after it runs at once', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const { hub, reconnectsBy, runs } = setup({
+          live: NEEDS,
+          others: { [A]: { env: ENV, live: NEEDS, reconnectHangs: true }, [B]: { env: ENV, live: NEEDS } }
+        })
+        let answer: unknown = null
+        void hub.action(TAB, { kind: 'login', name: 'slack' }).then((r) => {
+          answer = r
+        })
+        await until(() => reconnectsBy.length === 2)
+        const next = hub.action(TAB, { kind: 'remove', name: 'github', scope: 'user' })
+        await until(() => runs.length === 2)
+        expect(runs.map((r) => r.args[1])).toEqual(['login', 'remove'])
+        await next
+        expect(answer).toBeNull()
+        for (let i = 0; i < 40 && answer === null; i++) await vi.advanceTimersByTimeAsync(1000)
+        expect(answer).toEqual({ ok: true })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('a logout whose sibling never answers still answers, and the folder\'s queue is not held by it', async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       try {
