@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AttachBridgeSessionOptions } from '@anthropic-ai/claude-agent-sdk/bridge'
 import { WIN } from '../fixtures/platform'
 import { pathKey } from '../../src/main/path-key'
-import { BridgeHost, type BridgeTarget, type BridgeHostDeps } from '../../src/main/remote-control/bridge-host'
+import { BridgeHost, refusalReason, type BridgeTarget, type BridgeHostDeps } from '../../src/main/remote-control/bridge-host'
 import type { BridgeModule } from '../../src/main/remote-control/bridge-loader'
 import type { RemoteSessionEntry } from '../../src/main/remote-control/remote-sessions'
 import type { ClaudeCredentials } from '../../src/main/remote-control/claude-credentials'
@@ -12,6 +12,7 @@ import { REMOTE_REASONS } from '../../src/shared/remote-control'
 const TAB = 'tab-1'
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 const TOKEN = 'fake-access-token-0001'
+const TOKEN2 = 'fake-access-token-0002'
 const DEVICE = 'fake-device-token-0001'
 const JWT = 'fake-worker-jwt-0001'
 const CREDS = { worker_jwt: JWT, api_base_url: 'https://worker.example.invalid', expires_in: 3600, worker_epoch: 3 }
@@ -22,7 +23,7 @@ const GIT = { gitRepoUrl: 'https://git.example.invalid/acme/app.git', branch: 'f
 /** a bridge handle that records what the host does with it */
 class FakeHandle {
   writes: Record<string, unknown>[] = []; results = 0; states: string[] = []; requests: Record<string, any>[] = []; cancels: string[] = []
-  closes = 0; flushes = 0; flushHangs = false; reconnects: Record<string, unknown>[] = []; seq = 7
+  closes = 0; flushes = 0; flushHangs = false; reconnects: Record<string, unknown>[] = []; seq = 7; failReconnects = 0
   constructor(readonly opts: AttachBridgeSessionOptions) {}
   get sessionId(): string { return this.opts.sessionId }
   getSequenceNum(): number { return this.seq }
@@ -33,7 +34,10 @@ class FakeHandle {
   sendControlRequest(r: unknown): void { this.requests.push(r as Record<string, any>) }
   sendControlResponse(): void {}
   sendControlCancelRequest(id: string): void { this.cancels.push(id) }
-  async reconnectTransport(o: Record<string, unknown>): Promise<void> { this.reconnects.push(o) }
+  async reconnectTransport(o: Record<string, unknown>): Promise<void> {
+    this.reconnects.push(o)
+    if (this.failReconnects > 0) { this.failReconnects--; throw new Error('transport down') }
+  }
   reportState(s: string): void { this.states.push(s) }
   reportMetadata(): void {}
   reportDelivery(): void {}
@@ -251,10 +255,11 @@ describe('BridgeHost: the edges of attach and detach', () => {
     expect(handles[0].writes.map((m) => m.uuid)).toEqual(['a1'])
   })
   it('a first attach that fails before its history is written stores nothing: the next attach makes a new session and writes the history', async () => {
-    const { h, calls, answers, stored, w, handles } = host()
+    const { h, calls, answers, stored, w, handles, fire } = host()
     w.history = [userLine('u1', 'Fix the parser')]
     answers.attachThrows = new Error('attach refused')
     h.attach(target()); await settle()
+    for (const ms of [2_000, 5_000, 15_000, 60_000]) { fire(ms); await settle() }
     expect(h.state(TAB)).toEqual({ kind: 'failed', reason: REMOTE_REASONS.unreachable })
     expect(stored.has(SID)).toBe(false)
     answers.attachThrows = null
@@ -284,26 +289,35 @@ describe('BridgeHost: the edges of attach and detach', () => {
     expect(w.logs.join('\n')).toContain('[token]')
     expect(w.logs.join('\n')).not.toContain(TOKEN)
   })
-  it('an attach that throws is failed as unreachable, and the worker token stays out of the log', async () => {
-    const { h, answers, w } = host()
+  it('an attach that throws is retried with the backoff, then failed as unreachable, and the worker token stays out of the log', async () => {
+    const { h, answers, w, fire } = host()
     answers.attachThrows = new Error(`attach refused ${JWT}`)
     h.attach(target()); await settle()
+    for (const ms of [2_000, 5_000, 15_000, 60_000]) {
+      expect(h.state(TAB)).toEqual({ kind: 'connecting' })
+      fire(ms); await settle()
+    }
     expect(h.state(TAB)).toEqual({ kind: 'failed', reason: REMOTE_REASONS.unreachable })
     expect(w.logs.join('\n')).not.toContain(JWT)
   })
-  it('an attach that does not open in 30 s is failed as unreachable', async () => {
+  it('an attach that does not open in 30 s is tried again after 2 s, and failed as unreachable when the backoff is spent', async () => {
     const { h, answers, fire } = host()
     answers.attachGate = new Promise<void>(() => {})
     h.attach(target()); await settle()
-    fire(30_000); await settle()
+    for (const ms of [30_000, 2_000, 30_000, 5_000, 30_000, 15_000, 30_000, 60_000, 30_000]) {
+      expect(h.state(TAB)).toEqual({ kind: 'connecting' })
+      fire(ms); await settle()
+    }
     expect(h.state(TAB)).toEqual({ kind: 'failed', reason: REMOTE_REASONS.unreachable })
   })
-  it('a connection that closes while on: failed as unreachable, and its handle is closed', async () => {
+  it('a connection that closes while on is brought back on the same handle, which is not closed', async () => {
     const { h, handles } = host()
     h.attach(target()); await settle()
-    handles[0].opts.onClose!(4090)
-    expect(h.state(TAB)).toEqual({ kind: 'failed', reason: REMOTE_REASONS.unreachable })
-    expect(handles[0].closes).toBe(1)
+    handles[0].opts.onClose!(4092)
+    await settle()
+    expect(handles[0].reconnects).toHaveLength(1)
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+    expect(handles[0].closes).toBe(0)
   })
   it('detach: the last writes get 2 s to reach claude.ai, then the handle closes and the tab is off', async () => {
     const { h, handles, fire } = host()
@@ -315,5 +329,168 @@ describe('BridgeHost: the edges of attach and detach', () => {
     await done
     expect(handles[0].flushes).toBe(1)
     expect(handles[0].closes).toBe(1)
+  })
+})
+
+describe('BridgeHost: off and closes', () => {
+  it('off flushes with a 2 s limit, then closes, stores the sequence number and goes off', async () => {
+    const { h, handles, stored, fire } = host()
+    h.attach(target()); await settle()
+    handles[0].flushHangs = true
+    handles[0].seq = 19
+    const off = h.detach(TAB)
+    await settle()
+    fire(2_000)
+    await off
+    expect([handles[0].flushes, handles[0].closes]).toEqual([1, 1])
+    expect(stored.get(SID)!.entry).toEqual({ remoteId: 'cse_1', sequenceNum: 19 })
+    expect(h.state(TAB)).toBeNull()
+  })
+  it('the sequence number is stored every minute while on', async () => {
+    const { h, handles, stored, fire } = host()
+    h.attach(target()); await settle()
+    handles[0].seq = 11
+    fire(60_000); await settle()
+    expect(stored.get(SID)!.entry.sequenceNum).toBe(11)
+  })
+  it('a 401 or a 4094 close reads the credentials again and reconnects with a fresh worker token and its epoch', async () => {
+    for (const code of [401, 4094]) {
+      const { h, handles, calls } = host()
+      h.attach(target()); await settle()
+      handles[0].opts.onClose!(code)
+      expect(h.state(TAB)).toEqual({ kind: 'connecting' })
+      await settle()
+      expect(calls.filter((c) => c[0] === 'credentials')).toHaveLength(2)
+      expect(handles[0].reconnects).toEqual([{ ingressToken: JWT, apiBaseUrl: CREDS.api_base_url, epoch: CREDS.worker_epoch }])
+      expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+    }
+  })
+  it('a 4090 close reconnects with the new epoch', async () => {
+    const { h, handles, answers } = host()
+    h.attach(target()); await settle()
+    answers.creds = [{ ...CREDS, worker_epoch: 4 }]
+    handles[0].opts.onClose!(4090); await settle()
+    expect(handles[0].reconnects).toEqual([{ ingressToken: JWT, apiBaseUrl: CREDS.api_base_url, epoch: 4 }])
+  })
+  it('a 403 or a 404 close fails with the refused reason, and nothing is retried', async () => {
+    for (const code of [403, 404]) {
+      const { h, handles, calls, w } = host()
+      h.attach(target()); await settle()
+      handles[0].opts.onClose!(code); await settle()
+      expect(h.state(TAB)).toEqual({ kind: 'failed', reason: `claude.ai refused Remote Control (${code})` })
+      expect(calls.filter((c) => c[0] === 'credentials')).toHaveLength(1)
+      expect(w.timers.filter((t) => t.on)).toEqual([])
+    }
+  })
+  it('another close retries after 2, 5, 15 and 60 s, then fails as unreachable', async () => {
+    const { h, handles, answers, calls, w, fire } = host()
+    h.attach(target()); await settle()
+    answers.creds = [null, null, null, null, null]
+    handles[0].opts.onClose!(4093); await settle()
+    for (const ms of [2_000, 5_000, 15_000, 60_000]) {
+      expect(h.state(TAB)).toEqual({ kind: 'connecting' })
+      expect(w.timers.filter((t) => t.on).map((t) => t.ms)).toEqual([ms])
+      fire(ms); await settle()
+    }
+    expect(h.state(TAB)).toEqual({ kind: 'failed', reason: 'claude.ai could not be reached' })
+    expect(calls.filter((c) => c[0] === 'credentials')).toHaveLength(6)
+    expect(w.timers.filter((t) => t.on)).toEqual([])
+  })
+  it('a reconnect that throws is tried again after 2 s, on the same handle', async () => {
+    const { h, handles, fire } = host()
+    h.attach(target()); await settle()
+    handles[0].failReconnects = 1
+    handles[0].opts.onClose!(4092); await settle()
+    expect(h.state(TAB)).toEqual({ kind: 'connecting' })
+    fire(2_000); await settle()
+    expect(handles[0].reconnects).toHaveLength(2)
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+    expect(handles[0].closes).toBe(0)
+  })
+  it('a transient answer (null) at attach retries after 2 s from the step that failed: the new session keeps its history', async () => {
+    const { h, answers, calls, handles, w, fire } = host()
+    w.history = [userLine('u1', 'Fix the parser')]
+    answers.creds = [null, CREDS]
+    h.attach(target()); await settle()
+    expect(h.state(TAB)).toEqual({ kind: 'connecting' })
+    fire(2_000); await settle()
+    expect(calls.map((c) => c[0])).toEqual(['create', 'credentials', 'credentials', 'attach'])
+    expect(handles[0].writes.map((m) => m.uuid)).toEqual(['u1'])
+    expect(h.state(TAB)).toMatchObject({ kind: 'on' })
+  })
+  it('detaching while attaching closes the handle that comes, and writes nothing to it', async () => {
+    const { h, answers, calls, handles } = host()
+    let open!: () => void
+    answers.attachGate = new Promise<void>((r) => { open = r })
+    h.attach(target()); await settle()
+    expect(calls.at(-1)![0]).toBe('attach')
+    const off = h.detach(TAB)
+    open(); await settle(); await off
+    expect(handles).toHaveLength(1)
+    expect(handles[0].closes).toBe(1)
+    expect(handles[0].writes).toEqual([])
+    expect(h.state(TAB)).toBeNull()
+  })
+})
+
+describe('BridgeHost: refusals and the sign-in', () => {
+  it('refusals map to their reasons', () => {
+    expect(refusalReason({ reason: 'untrusted_device' })).toBe('Turn Remote Control on once in a terminal tab of this account: Claude Code registers this computer then')
+    expect(refusalReason({ reason: 'session_stale_relogin' })).toBe('Sign in to this account again (claude auth login)')
+    expect(refusalReason({ reason: 'oauth_rejected' })).toBe('Sign in to this account again (claude auth login)')
+    expect(refusalReason({ reason: 'request_rejected', status: 403 })).toBe('claude.ai refused Remote Control (403)')
+    expect(refusalReason({ reason: 'malformed_response', status: 502 })).toBe('claude.ai refused Remote Control (502)')
+    expect(refusalReason({ reason: 'grouping_rejected', status: 400 })).toBe('claude.ai refused Remote Control (400)')
+  })
+  it('an untrusted device at attach fails with its reason; nothing is retried', async () => {
+    const { h, answers, w } = host()
+    answers.creds = [{ terminal: true, reason: 'untrusted_device' }]
+    h.attach(target()); await settle()
+    expect(h.state(TAB)).toEqual({ kind: 'failed', reason: 'Turn Remote Control on once in a terminal tab of this account: Claude Code registers this computer then' })
+    expect(w.timers.filter((t) => t.on)).toEqual([])
+  })
+  it('an expired stored token waits: connecting with the renew note, one sign-in check, a read every 60 s, and the attach goes on once it is fresh', async () => {
+    const { h, w, calls, fire } = host()
+    w.creds = { accessToken: null, deviceToken: null, state: 'expired' }
+    h.attach(target()); await settle()
+    expect(h.state(TAB)).toEqual({ kind: 'connecting', note: "Waiting for Claude Code to renew this account's sign-in" })
+    expect(w.checks).toBe(1)
+    fire(60_000); await settle()
+    expect(calls).toEqual([])
+    w.creds = { accessToken: TOKEN, deviceToken: null, state: 'fresh' }
+    fire(60_000); await settle()
+    expect(h.state(TAB)).toMatchObject({ kind: 'on' })
+    expect(w.checks).toBe(1)
+  })
+  it('an oauth rejection waits when the stored token has expired meanwhile, and fails as a relogin when it reads the same', async () => {
+    const renewed = host()
+    renewed.answers.creds = [{ terminal: false, reason: 'oauth_rejected' }]
+    renewed.w.credsQueue = [renewed.w.creds, { accessToken: null, deviceToken: null, state: 'expired' }]
+    renewed.h.attach(target()); await settle()
+    expect(renewed.h.state(TAB)).toEqual({ kind: 'connecting', note: "Waiting for Claude Code to renew this account's sign-in" })
+    const same = host()
+    same.answers.creds = [{ terminal: false, reason: 'oauth_rejected' }]
+    same.h.attach(target()); await settle()
+    expect(same.h.state(TAB)).toEqual({ kind: 'failed', reason: 'Sign in to this account again (claude auth login)' })
+  })
+  it('an oauth rejection with a renewed token is tried once more with that token, and goes on', async () => {
+    const { h, answers, w, calls } = host()
+    answers.creds = [{ terminal: false, reason: 'oauth_rejected' }, CREDS]
+    w.credsQueue = [w.creds, { accessToken: TOKEN2, deviceToken: DEVICE, state: 'fresh' }]
+    h.attach(target()); await settle()
+    expect(calls.map((c) => c[0])).toEqual(['create', 'credentials', 'credentials', 'attach'])
+    expect((calls[2] as unknown[])[3]).toBe(TOKEN2)
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+  })
+  it('no token in any log line or state: the access, device and worker tokens never appear in what the logger got', async () => {
+    const { h, answers, w, fire } = host()
+    answers.attachThrows = new Error(`attach failed for ${JWT} with ${TOKEN} and ${DEVICE}`)
+    h.attach(target()); await settle()
+    answers.attachThrows = null
+    fire(2_000); await settle()
+    expect(h.state(TAB)).toMatchObject({ kind: 'on' })
+    expect(w.logs.some((m) => m.includes('attach failed for [token] with [token] and [token]'))).toBe(true)
+    const seen = [...w.logs, JSON.stringify(h.state(TAB))].join('\n')
+    for (const secret of [TOKEN, DEVICE, JWT]) expect(seen).not.toContain(secret)
   })
 })

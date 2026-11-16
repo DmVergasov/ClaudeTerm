@@ -5,10 +5,10 @@
 import type { SDKControlRequest, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { BridgeSessionHandle, AttachBridgeSessionOptions, CredentialsFailure, RemoteCredentials } from '@anthropic-ai/claude-agent-sdk/bridge'
 import type { ChatSendOrigin } from '../../shared/chat'
-import { isBridgeId, REMOTE_REASONS, remoteLink, remoteName, type RemoteState } from '../../shared/remote-control'
+import { isBridgeId, REMOTE_REASONS, refusedReason, remoteLink, remoteName, RENEW_WAIT_NOTE, type RemoteState } from '../../shared/remote-control'
 import type { PermissionAsk, SdkPermissionResult } from '../chat/chat-cards'
 import { pathKey } from '../path-key'
-import type { BridgeLoad } from './bridge-loader'
+import type { BridgeLoad, BridgeModule } from './bridge-loader'
 import type { ClaudeCredentials } from './claude-credentials'
 import type { GitContext } from './git-context'
 import type { RemoteSessionEntry, RemoteSessionStore } from './remote-sessions'
@@ -18,7 +18,13 @@ export const CALL_TIMEOUT_MS = 20_000
 /** the time an attach may take to open its connection */
 const CONNECT_MS = 30_000
 /** the time the last writes of a session get to reach claude.ai before it closes */
-const FLUSH_MS = 2_000
+export const FLUSH_MS = 2_000
+/** the waits after a step's misses in a row: the step that misses one more time than these fails the tab as unreachable */
+export const BACKOFF_MS = [2_000, 5_000, 15_000, 60_000] as const
+/** while Claude Code renews an expired sign-in, the tab reads it again this often */
+export const RENEW_EVERY_MS = 60_000
+/** while a tab is on, its sequence number is stored this often */
+export const SEQUENCE_EVERY_MS = 60_000
 /** the messages and card events kept while a tab attaches; the oldest go first */
 const QUEUE_MAX = 1000
 /** the longest denial message sent back to claude.ai */
@@ -59,12 +65,30 @@ type Handle = BridgeSessionHandle
 type Msg = Record<string, unknown>
 type Run = (h: Handle) => void
 
+/** the bridge, the account's folder and the remote session of a connected tab: what brings its connection back */
+interface Session { bridge: BridgeModule; folder: string; remoteId: string }
+
+/** the token claude.ai is called with, and the device token that goes with it */
+interface Sign { token: string; device: string | null }
+
 /** one Claude tab's Remote Control: its state, its bridge handle, what waits for the handle and its open cards */
 interface Tab {
   gen: number
   target: BridgeTarget
   state: RemoteState
   handle: Handle | null
+  /** set once the handle is open: a dropped connection is brought back with it */
+  session: Session | null
+  /** a close was taken and the connection is being brought back: a further close of the same handle is not taken */
+  reconnecting: boolean
+  /** claude.ai's sign-in was read again in this attach or reconnect: a second rejection ends it */
+  renewed: boolean
+  /** Claude Code's sign-in was checked (accountInfo) in this attach */
+  checkedSignIn: boolean
+  /** cancels the tab's pending wait (a retry, the renew wait, the attach's limit): a wait cancelled never goes on */
+  cancelWait: () => void
+  /** cancels the tab's sequence number timer, pending while it is on */
+  cancelSequence: () => void
   /** what came while the tab connected, run in order once it is on */
   queue: Run[]
   openCards: Map<string, PermissionAsk>
@@ -73,6 +97,8 @@ interface Tab {
   /** the tokens read or received by this attach: they never reach a log or a state */
   secrets: string[]
 }
+
+const NOOP = (): void => {}
 
 const isRecord = (v: unknown): v is Msg => typeof v === 'object' && v !== null && !Array.isArray(v)
 
@@ -93,6 +119,13 @@ function textOf(content: unknown): string {
 /** the session is gone for good: its id is not valid, the org policy no longer takes it, or claude.ai says it is not there */
 const isGone = (f: CredentialsFailure): boolean =>
   f.reason === 'invalid_session_id' || f.reason === 'session_security_tier_below_org_policy' || (f.reason === 'request_rejected' && f.status === 404)
+
+/** why claude.ai refused Remote Control, in the words the user reads: an untrusted computer and a sign-in to renew have their own; any other refusal names its status */
+export function refusalReason(r: { reason: string; status?: number }): string {
+  if (r.reason === 'untrusted_device') return REMOTE_REASONS.untrustedDevice
+  if (r.reason === 'session_stale_relogin' || r.reason === 'oauth_rejected') return REMOTE_REASONS.relogin
+  return r.status === undefined ? REMOTE_REASONS.unreachable : refusedReason(r.status)
+}
 
 /** a permission card as claude.ai's can_use_tool request */
 function permissionRequest(cardId: string, ask: PermissionAsk): Msg {
@@ -131,7 +164,10 @@ export class BridgeHost {
     const cur = this.tabs.get(target.tabId)
     if (cur && (cur.state.kind === 'connecting' || (cur.state.kind === 'on' && cur.target.sessionId === target.sessionId))) return
     if (cur) void this.detach(target.tabId)
-    const t: Tab = { gen: ++this.gens, target, state: { kind: 'connecting' }, handle: null, queue: [], openCards: new Map(), historyUuids: new Set(), secrets: [] }
+    const t: Tab = {
+      gen: ++this.gens, target, state: { kind: 'connecting' }, handle: null, session: null, reconnecting: false, renewed: false, checkedSignIn: false,
+      cancelWait: NOOP, cancelSequence: NOOP, queue: [], openCards: new Map(), historyUuids: new Set(), secrets: []
+    }
     this.tabs.set(target.tabId, t)
     this.d.onChange(target.tabId)
     this.connect(t).catch((e: unknown) => {
@@ -146,12 +182,12 @@ export class BridgeHost {
     const t = this.tabs.get(tabId)
     if (!t) return
     this.tabs.delete(tabId)
-    t.gen = ++this.gens
+    this.halt(t)
     t.queue = []
     const h = t.handle
     t.handle = null
     this.d.onChange(tabId)
-    if (h) await this.flushAndClose(h)
+    if (h) await this.flushAndClose(t, h)
   }
 
   /** null: no bridge for the tab (off) */
@@ -200,7 +236,7 @@ export class BridgeHost {
 
   private async connect(t: Tab): Promise<void> {
     const gen = t.gen
-    const alive = (): boolean => this.current(t) && t.gen === gen
+    const alive = (): boolean => this.alive(t, gen)
     const { target } = t
     const load = await this.d.bridge()
     if (!alive()) return
@@ -214,59 +250,81 @@ export class BridgeHost {
       return
     }
     const folder = target.folder
-    const creds = await this.d.credentials(folder, target.env)
+    const creds = await this.signIn(t, gen, folder)
     if (!alive()) return
-    if (creds.state === 'none') {
-      this.stop(t, { kind: 'unavailable', reason: REMOTE_REASONS.noSignIn })
-      return
-    }
-    // expired: Claude Code renews the sign-in, which the renew wait handles; until then the tab fails
-    if (creds.state !== 'fresh' || creds.accessToken === null) {
-      this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.relogin })
-      return
-    }
-    const token = creds.accessToken
-    t.secrets = [token, creds.deviceToken].filter((s): s is string => typeof s === 'string' && s !== '')
+    let sign = this.signed(t, creds)
+    if (sign === null) return
     const account = pathKey(folder)
 
     let entry: RemoteSessionEntry | null = await this.d.sessions.get(target.sessionId, account)
     if (!alive()) return
+    // a session made here is kept only once its history is written: until then an attach that fails leaves nothing behind
     let fresh = entry === null
+    let misses = 0
     let remote: RemoteCredentials
-    // a stored session claude.ai no longer knows is forgotten and a new one made, once
     for (;;) {
+      // a stored session claude.ai no longer knows is forgotten and a new one made, once
       if (entry === null) {
         const gitContext = await this.d.git(target.cwd).catch(() => null)
         if (!alive()) return
-        const made = await bridge.createCodeSession(API_BASE, token, remoteName(target.title), CALL_TIMEOUT_MS, undefined, gitContext ?? undefined, target.cwd, target.model ?? undefined)
+        const made = await bridge.createCodeSession(API_BASE, sign.token, remoteName(target.title), CALL_TIMEOUT_MS, undefined, gitContext ?? undefined, target.cwd, target.model ?? undefined)
         if (!alive()) return
-        if (typeof made !== 'string' || !isBridgeId(made)) {
-          this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
+        if (bridge.isCreateSessionFailure(made)) {
+          this.stop(t, { kind: 'failed', reason: refusalReason(made) })
           return
+        }
+        if (bridge.isCredentialsRejection(made)) {
+          const again = await this.renewSignIn(t, gen, folder, sign.token)
+          if (!alive()) return
+          if (again === null) {
+            this.stop(t, { kind: 'failed', reason: refusalReason(made) })
+            return
+          }
+          sign = again
+          continue
+        }
+        if (!isBridgeId(made)) {
+          if (!(await this.missed(t, ++misses))) return
+          continue
         }
         entry = { remoteId: made, sequenceNum: 0 }
         fresh = true
       }
-      const got = await bridge.fetchRemoteCredentials(entry.remoteId, API_BASE, token, CALL_TIMEOUT_MS, creds.deviceToken ?? undefined)
+      const got = await bridge.fetchRemoteCredentials(entry.remoteId, API_BASE, sign.token, CALL_TIMEOUT_MS, sign.device ?? undefined)
       if (!alive()) return
-      if (got !== null && !bridge.isCredentialsFailure(got) && !bridge.isCredentialsRejection(got)) {
-        remote = got
-        break
-      }
-      if (!fresh && bridge.isCredentialsFailure(got) && isGone(got)) {
-        await this.d.sessions.forget(target.sessionId)
-        if (!alive()) return
-        entry = null
+      if (got === null) {
+        if (!(await this.missed(t, ++misses))) return
         continue
       }
-      this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
-      return
+      if (bridge.isCredentialsRejection(got)) {
+        const again = await this.renewSignIn(t, gen, folder, sign.token)
+        if (!alive()) return
+        if (again === null) {
+          this.stop(t, { kind: 'failed', reason: refusalReason(got) })
+          return
+        }
+        sign = again
+        continue
+      }
+      if (bridge.isCredentialsFailure(got)) {
+        if (!fresh && isGone(got)) {
+          await this.d.sessions.forget(target.sessionId)
+          if (!alive()) return
+          entry = null
+          continue
+        }
+        this.stop(t, { kind: 'failed', reason: refusalReason(got) })
+        return
+      }
+      this.addSecrets(t, [got.worker_jwt])
+      remote = got
+      break
     }
-    t.secrets.push(remote.worker_jwt)
 
+    const remoteId = entry.remoteId
     const version = this.d.claudeVersion()
     const opts: AttachBridgeSessionOptions = {
-      sessionId: entry.remoteId,
+      sessionId: remoteId,
       ingressToken: remote.worker_jwt,
       apiBaseUrl: remote.api_base_url,
       epoch: remote.worker_epoch,
@@ -277,40 +335,19 @@ export class BridgeHost {
       onInterrupt: () => {
         if (this.current(t)) this.d.chat.interrupt(target.tabId)
       },
-      onClose: (code) => {
-        if (!this.current(t)) return
-        this.d.log.warn(`remote control: the connection closed for tab ${target.tabId} (${code ?? 'no code'})`)
-        this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
-      }
+      onClose: (code) => this.closed(t, code)
     }
-    const opened = bridge.attachBridgeSession(opts).then(
-      (h): Handle | null => {
-        if (!alive()) {
-          h.close()
-          return null
-        }
-        return h
-      },
-      (e: unknown): null => {
-        this.d.log.warn(`remote control: the connection failed for tab ${target.tabId}: ${scrub(errorText(e), t.secrets)}`)
-        return null
+    let handle: Handle | null = null
+    while (handle === null) {
+      handle = await this.openSession(t, gen, bridge, opts)
+      if (!alive()) {
+        handle?.close()
+        return
       }
-    )
-    let cancel = (): void => {}
-    const limit = new Promise<null>((resolve) => {
-      cancel = this.d.later(CONNECT_MS, () => resolve(null))
-    })
-    const handle = await Promise.race([opened, limit])
-    cancel()
-    if (!alive()) {
-      handle?.close()
-      return
-    }
-    if (handle === null) {
-      this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
-      return
+      if (handle === null && !(await this.missed(t, ++misses))) return
     }
     t.handle = handle
+    t.session = { bridge, folder, remoteId }
 
     if (fresh) {
       let history: unknown[] = []
@@ -325,35 +362,232 @@ export class BridgeHost {
         if (typeof m.uuid === 'string') t.historyUuids.add(m.uuid)
         handle.write(m as SDKMessage)
       }
-    }
-
-    // a new session is kept only once its history is written: an attach that fails before this leaves nothing for the next one to reuse
-    if (fresh) {
-      await this.d.sessions.put(target.sessionId, account, { remoteId: entry.remoteId, sequenceNum: 0 })
+      await this.d.sessions.put(target.sessionId, account, { remoteId, sequenceNum: 0 })
       if (!alive()) return
     }
+    handle.reportState('idle')
+    this.turnOn(t, handle, remoteId)
+  }
+
+  /** attaches the remote session: null when the attach fails or does not open within CONNECT_MS; a handle that comes after that is closed */
+  private openSession(t: Tab, gen: number, bridge: BridgeModule, opts: AttachBridgeSessionOptions): Promise<Handle | null> {
+    let late = false
+    let cancel = NOOP
+    const opened = bridge.attachBridgeSession(opts).then(
+      (h): Handle | null => {
+        if (late || !this.alive(t, gen)) {
+          h.close()
+          return null
+        }
+        return h
+      },
+      (e: unknown): null => {
+        this.d.log.warn(`remote control: the connection failed for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+        return null
+      }
+    )
+    const limit = new Promise<null>((resolve) => {
+      cancel = this.d.later(CONNECT_MS, () => {
+        late = true
+        resolve(null)
+      })
+      t.cancelWait = cancel
+    })
+    return Promise.race([opened, limit]).then((h) => {
+      cancel()
+      return h
+    })
+  }
+
+  /** the connection of a tab that is on closed: its sequence number is stored, and the connection is brought back on the same handle; claude.ai refusing it (403, 404) fails the tab */
+  private closed(t: Tab, code: number | undefined): void {
+    const session = t.session
+    if (!this.current(t) || t.reconnecting || t.handle === null || session === null) return
+    this.d.log.warn(`remote control: the connection closed for tab ${t.target.tabId} (${code ?? 'no code'})`)
+    void this.storeSequence(t, t.handle)
+    this.halt(t)
+    if (code === 403 || code === 404) {
+      this.stop(t, { kind: 'failed', reason: refusedReason(code) })
+      return
+    }
+    t.reconnecting = true
+    t.renewed = false
+    t.state = { kind: 'connecting' }
+    this.d.onChange(t.target.tabId)
+    const gen = t.gen
+    this.reconnect(t, session, gen).catch((e: unknown) => {
+      if (!this.alive(t, gen)) return
+      this.d.log.warn(`remote control: the connection could not be restored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+      this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
+    })
+  }
+
+  /** brings a dropped connection back on its handle: the sign-in is read again and a worker token fetched for the same remote session; the reconnect takes the epoch that fetch gave. A miss waits the backoff and goes on */
+  private async reconnect(t: Tab, session: Session, gen: number): Promise<void> {
+    const handle = t.handle
+    if (handle === null) return
+    let misses = 0
+    let sign: Sign | null = null
+    for (;;) {
+      if (sign === null) {
+        const creds = await this.signIn(t, gen, session.folder)
+        if (!this.alive(t, gen)) return
+        sign = this.signed(t, creds)
+        if (sign === null) return
+      }
+      const got = await session.bridge.fetchRemoteCredentials(session.remoteId, API_BASE, sign.token, CALL_TIMEOUT_MS, sign.device ?? undefined)
+      if (!this.alive(t, gen)) return
+      if (got === null) {
+        sign = null
+        if (!(await this.missed(t, ++misses))) return
+        continue
+      }
+      if (session.bridge.isCredentialsRejection(got)) {
+        const again = await this.renewSignIn(t, gen, session.folder, sign.token)
+        if (!this.alive(t, gen)) return
+        if (again === null) {
+          this.stop(t, { kind: 'failed', reason: refusalReason(got) })
+          return
+        }
+        sign = again
+        continue
+      }
+      if (session.bridge.isCredentialsFailure(got)) {
+        this.stop(t, { kind: 'failed', reason: refusalReason(got) })
+        return
+      }
+      this.addSecrets(t, [got.worker_jwt])
+      try {
+        await handle.reconnectTransport({ ingressToken: got.worker_jwt, apiBaseUrl: got.api_base_url, epoch: got.worker_epoch })
+      } catch (e) {
+        if (!this.alive(t, gen)) return
+        this.d.log.warn(`remote control: the connection could not be restored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+        sign = null
+        if (!(await this.missed(t, ++misses))) return
+        continue
+      }
+      if (!this.alive(t, gen)) return
+      t.reconnecting = false
+      this.turnOn(t, handle, session.remoteId)
+      return
+    }
+  }
+
+  /** the sign-in Claude Code has now. While it is expired, Claude Code renews it: the tab waits and reads it again every RENEW_EVERY_MS. claude.ai is asked once per attach to check its sign-in */
+  private async signIn(t: Tab, gen: number, folder: string): Promise<ClaudeCredentials> {
+    let creds = await this.d.credentials(folder, t.target.env)
+    if (creds.state !== 'expired' || !this.alive(t, gen)) return creds
+    t.state = { kind: 'connecting', note: RENEW_WAIT_NOTE }
+    this.d.onChange(t.target.tabId)
+    if (!t.checkedSignIn) {
+      t.checkedSignIn = true
+      void this.d.chat.checkSignIn(t.target.tabId).catch(() => undefined)
+    }
+    do {
+      await this.wait(t, RENEW_EVERY_MS)
+      creds = await this.d.credentials(folder, t.target.env)
+    } while (creds.state === 'expired' && this.alive(t, gen))
+    if (!this.alive(t, gen)) return creds
+    t.state = { kind: 'connecting' }
+    this.d.onChange(t.target.tabId)
+    return creds
+  }
+
+  /** the sign-in as the token claude.ai is called with; no sign-in fails the tab as unavailable, a sign-in that cannot be used as a relogin */
+  private signed(t: Tab, c: ClaudeCredentials): Sign | null {
+    if (c.state === 'none') {
+      this.stop(t, { kind: 'unavailable', reason: REMOTE_REASONS.noSignIn })
+      return null
+    }
+    if (c.state !== 'fresh' || c.accessToken === null) {
+      this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.relogin })
+      return null
+    }
+    this.addSecrets(t, [c.accessToken, c.deviceToken])
+    return { token: c.accessToken, device: c.deviceToken }
+  }
+
+  /** claude.ai rejected the token: Claude Code's sign-in is read again, once per attach or reconnect. The sign-in goes on when it is fresh with another token; null when it is not, and the tab needs a relogin */
+  private async renewSignIn(t: Tab, gen: number, folder: string, rejected: string): Promise<Sign | null> {
+    if (t.renewed) return null
+    t.renewed = true
+    const again = await this.signIn(t, gen, folder)
+    if (!this.alive(t, gen)) return null
+    if (again.state !== 'fresh' || again.accessToken === null || again.accessToken === rejected) return null
+    this.addSecrets(t, [again.accessToken, again.deviceToken])
+    return { token: again.accessToken, device: again.deviceToken }
+  }
+
+  /** a step missed (claude.ai did not answer, or the connection did not open): waits the backoff for its misses-th miss in a row and returns true, so the step goes on. The backoff is spent: the tab fails as unreachable and this returns false */
+  private async missed(t: Tab, misses: number): Promise<boolean> {
+    if (misses > BACKOFF_MS.length) {
+      this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
+      return false
+    }
+    await this.wait(t, BACKOFF_MS[misses - 1])
+    return true
+  }
+
+  /** waits ms on the tab: a stop of the tab cancels the wait, and then what waited never goes on */
+  private wait(t: Tab, ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      t.cancelWait = this.d.later(ms, () => resolve())
+    })
+  }
+
+  /** the tab is on: its queued messages go to the handle, and its sequence number is stored every SEQUENCE_EVERY_MS */
+  private turnOn(t: Tab, handle: Handle, remoteId: string): void {
+    t.state = { kind: 'on', url: remoteLink(remoteId) }
+    this.d.onChange(t.target.tabId)
+    this.startSequence(t)
     const queue = t.queue
     t.queue = []
-    t.state = { kind: 'on', url: remoteLink(entry.remoteId) }
-    this.d.onChange(target.tabId)
-    handle.reportState('idle')
     for (const run of queue) run(handle)
+  }
+
+  /** while the tab is on, its sequence number is stored every SEQUENCE_EVERY_MS: an attach that resumes the session goes on from there */
+  private startSequence(t: Tab): void {
+    const tick = (): void => {
+      if (t.handle !== null) void this.storeSequence(t, t.handle)
+      t.cancelSequence = this.d.later(SEQUENCE_EVERY_MS, tick)
+    }
+    t.cancelSequence = this.d.later(SEQUENCE_EVERY_MS, tick)
+  }
+
+  /** the handle's sequence number, stored with its remote session */
+  private storeSequence(t: Tab, h: Handle): Promise<void> {
+    const session = t.session
+    if (session === null) return Promise.resolve()
+    return this.d.sessions.put(t.target.sessionId, pathKey(session.folder), { remoteId: session.remoteId, sequenceNum: h.getSequenceNum() }).catch((e: unknown) => {
+      this.d.log.warn(`remote control: the sequence number cannot be stored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+    })
   }
 
   /** a state the tab stops in: its handle closes, what waits is dropped, and an attach still running stops too */
   private stop(t: Tab, state: RemoteState): void {
-    t.gen = ++this.gens
+    this.halt(t)
     t.queue = []
+    t.reconnecting = false
     const h = t.handle
     t.handle = null
+    t.session = null
     h?.close()
     t.state = state
     this.d.onChange(t.target.tabId)
   }
 
-  /** closes a handle after its last writes have had FLUSH_MS to reach claude.ai */
-  private async flushAndClose(h: Handle): Promise<void> {
-    let cancel = (): void => {}
+  /** the tab's chain stops: its generation moves on, and its pending wait and sequence timer are cancelled */
+  private halt(t: Tab): void {
+    t.gen = ++this.gens
+    t.cancelWait()
+    t.cancelWait = NOOP
+    t.cancelSequence()
+    t.cancelSequence = NOOP
+  }
+
+  /** closes a handle after its last writes have had FLUSH_MS to reach claude.ai; its sequence number is stored once they have */
+  private async flushAndClose(t: Tab, h: Handle): Promise<void> {
+    let cancel = NOOP
     await Promise.race([
       h.flush().catch(() => undefined),
       new Promise<void>((resolve) => {
@@ -361,7 +595,18 @@ export class BridgeHost {
       })
     ])
     cancel()
+    await this.storeSequence(t, h)
     h.close()
+  }
+
+  /** the tokens a chain has read or received: a log line or a state never shows them */
+  private addSecrets(t: Tab, tokens: (string | null)[]): void {
+    for (const s of tokens) if (s !== null && s !== '' && !t.secrets.includes(s)) t.secrets.push(s)
+  }
+
+  /** the chain still serves the tab: not detached, not replaced by a new attach, and not stopped since it began */
+  private alive(t: Tab, gen: number): boolean {
+    return this.current(t) && t.gen === gen
   }
 
   /** the tab is still the one this record describes: not detached, not replaced by a new attach */
