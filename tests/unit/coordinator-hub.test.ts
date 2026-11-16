@@ -3,6 +3,8 @@ import { LIMIT_ERROR } from '../../src/main/auto-continue'
 import { HUB_TEXT, START_WAIT_MS, worktreeInstruction, type HubTab } from '../../src/main/coordinator/coordinator-hub'
 import { CoordinatorStore, MAX_ATTACHMENTS, MAX_COORDINATORS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
 import { WORDS_KEEP_MS } from '../../src/main/coordinator/person-words'
+import { REASONS } from '../../src/main/coordinator/report-text'
+import { wordsText } from '../../src/main/mail/wake-text'
 import { refOf } from '../../src/main/mail/agent-directory'
 import type { CoordOp } from '../../src/shared/coordinator'
 import type { MailRecord } from '../../src/shared/mail'
@@ -668,6 +670,94 @@ describe("message_session with the person's words", () => {
     expect(await give('Merge it into master.', 'Merge feat/x again.', refOf(NEW))).toEqual({ ok: false, error: HUB_TEXT.wordsAgain('parser · Desktop') })
     expect(records(w, 'task')).toHaveLength(1)
     expect(w.toasts).toHaveLength(1)
+  })
+})
+
+describe("a task with the person's words in its session's tab", () => {
+  let w: World
+  let task: MailRecord
+  const words = (text: string, said_: string) => w.hub.tool('tab-c', { op: 'message', session: 'a10000', text, words: said_ })
+
+  beforeEach(async () => {
+    w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    said(w, 'Merge it into master.')
+    await words('Merge feat/x into master and push.', 'Merge it into master.')
+    task = records(w, 'task')[0]
+  })
+
+  it("never goes to a mail watcher: it is typed, once, into the idle session's prompt, and its report comes as any task's", () => {
+    for (const into of ['idle', 'running', 'next', 'prompt'] as const) expect(w.hub.accepts(task, 'tab-1', into)).toBe(false)
+    expect(w.pokes).toContain('tab-1')
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(true)
+    expect(w.hub.canTakeWords('tab-2', S.two)).toBe(false)
+    const typed = w.hub.takeWords('tab-1', S.one)!
+    expect(typed.info).toBe(wordsText(w.mail.get(task.id)!, () => ({ folder: null, branch: null })))
+    expect(typed.info.startsWith("The person's words, through your coordinator coord · Desktop (ClaudeTerm checked they are the person's own latest message):\n")).toBe(true)
+    expect(w.mail.get(task.id)).toMatchObject({ delivered: true })
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ id: task.id, state: 'delivered' }])
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    expect(w.hub.takeWords('tab-1', S.one)).toBeNull()
+    w.hub.turnStarted('tab-1')
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('open')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Merged and pushed.' })
+    fire(w)
+    expect(records(w, 'report')).toMatchObject([{ replyTo: task.id, outcome: 'finished', text: 'Merged and pushed.' }])
+  })
+
+  it('waits while the tab is in a turn', () => {
+    w.hub.turnStarted('tab-1')
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: null })
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(true)
+  })
+
+  it('a task without words given before it goes first, by its own way', async () => {
+    const v = world()
+    v.hub.make('tab-c', false)
+    v.hub.attach('tab-c', 'a10000')
+    v.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    said(v, 'Merge it into master.')
+    await v.hub.tool('tab-c', { op: 'message', session: 'a10000', text: 'Merge.', words: 'Merge it into master.' })
+    const [plain] = records(v, 'task')
+    expect(v.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    expect(v.hub.accepts(plain, 'tab-1', 'idle')).toBe(true)
+  })
+
+  it('newer words of the person replace the queued task: it is reported stopped and never typed, and the new one is next', async () => {
+    w.now += 60_000
+    said(w, 'Stop, do not merge.')
+    await words('Do not merge feat/x.', 'Stop, do not merge.')
+    const [, newer] = records(w, 'task')
+    expect(w.store.hosted(S.one)!.tasks.map((t) => t.id)).toEqual([newer.id])
+    expect(records(w, 'report')).toMatchObject([{ replyTo: task.id, outcome: 'stopped', reason: "the person's newer words replaced it" }])
+    expect(w.mail.get(task.id)).toMatchObject({ delivered: true })
+    expect(w.hub.takeWords('tab-1', S.one)!.info).toContain('> Stop, do not merge.')
+  })
+
+  it('a task with words already typed is not replaced: the newer one waits behind it', async () => {
+    w.hub.takeWords('tab-1', S.one)
+    w.now += 60_000
+    said(w, 'Stop, do not merge.')
+    expect(await words('Do not merge feat/x.', 'Stop, do not merge.')).toEqual({ ok: true, info: HUB_TEXT.queuedWords('parser · Desktop', 'a10000') })
+    expect(w.store.hosted(S.one)!.tasks.map((t) => t.state)).toEqual(['delivered', 'queued'])
+    expect(records(w, 'report')).toEqual([])
+  })
+
+  it('after the session clears to a new id, newer words still replace the queued task, and the answer says so', async () => {
+    const NEW = uid(0x2004)
+    update(w, 'tab-1', { session: NEW })
+    w.hub.sessionStarted('tab-1', S.one, NEW, 'clear')
+    w.now += 60_000
+    said(w, 'Stop, do not merge.')
+    expect(await w.hub.tool('tab-c', { op: 'message', session: refOf(NEW), text: 'Do not merge feat/x.', words: 'Stop, do not merge.' })).toEqual({
+      ok: true,
+      info: `${HUB_TEXT.queuedWords('parser · Desktop', refOf(NEW))} ${HUB_TEXT.wordsReplaced}`
+    })
+    const [, newer] = records(w, 'task')
+    expect(w.store.hosted(NEW)!.tasks.map((t) => t.id)).toEqual([newer.id])
+    expect(records(w, 'report')).toMatchObject([{ replyTo: task.id, outcome: 'stopped', reason: REASONS.replaced }])
   })
 })
 

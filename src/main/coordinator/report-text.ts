@@ -7,6 +7,7 @@ export const CUT_NOTE = '[Cut: the answer is longer than ClaudeTerm passes on; t
 export const REASONS = {
   interrupted: 'its turn was interrupted',
   clear: 'the session was cleared',
+  replaced: "the person's newer words replaced it",
   exit: 'Claude Code exited',
   closed: 'its tab was closed',
   error: (error: string) => `Claude Code stopped the turn on an error (${error})`

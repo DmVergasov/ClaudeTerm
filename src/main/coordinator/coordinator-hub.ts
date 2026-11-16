@@ -9,6 +9,7 @@ import type { OpenTabRequest, PlanStatus } from '../../shared/types'
 import type { Logger } from '../log'
 import { refOf, replaceControls, resolveAgent, type Agent } from '../mail/agent-directory'
 import { checkMailRecord } from '../mail/mail-record'
+import { wordsText } from '../mail/wake-text'
 import type { HandOver } from '../mail/mail-hub'
 import type { MailStore } from '../mail/mail-store'
 import type { TabWaitsState } from '../tab-waits'
@@ -804,9 +805,31 @@ export class CoordinatorHub {
 
   /** whether this coordinator gave the session a task with the person's words that the session has not been given yet */
   private hasQueuedWords(c: StoredCoordinator, att: StoredAttachment): boolean {
+    if (att.device === null) {
+      // this device's session: the same queued tasks replaceQueuedWords replaces
+      const h = this.d.store.hosted(att.session)
+      return h !== null && this.queuedWordsOf(h, { device: null, session: c.session }).length > 0
+    }
+    // another device's session has no hosted entry here: the records this coordinator wrote to it, not yet delivered
     return this.d.mail
       .all()
       .some((r) => kindOf(r) === 'task' && r.words !== undefined && !r.delivered && this.wroteAs(r, c) && r.to.session === att.session && this.norm(r.to.device) === att.device)
+  }
+
+  /** the queued tasks of a session's hosted entry that carry the person's words from one coordinator: newer words replace them */
+  private queuedWordsOf(h: StoredHosted, from: Pick<MailAddress, 'device' | 'session'>): StoredTask[] {
+    return h.tasks.filter((t) => t.state === 'queued' && t.from.device === from.device && t.from.session === from.session && this.d.mail.get(t.id)?.words !== undefined)
+  }
+
+  /** newer words of the person replace the queued tasks with earlier words of the same coordinator: each is reported stopped, as it was never typed; the hosted entry after that */
+  private replaceQueuedWords(h: StoredHosted, from: MailAddress): StoredHosted {
+    for (const queued of this.queuedWordsOf(h, from)) {
+      // each replacement reads the entry afresh: a report changes it
+      const now = this.d.store.hosted(h.session)
+      const task = now?.tasks.find((t) => t.id === queued.id)
+      if (now && task) this.report(now, task, 'stopped', REASONS.replaced)
+    }
+    return this.d.store.hosted(h.session) ?? h
   }
 
   /** a session took a new row key (a clear, a rename): the messages relayed under the old key are relayed under the new one too, so the same words do not go again */
@@ -849,6 +872,30 @@ export class CoordinatorHub {
     this.patchAttachment(c, found.att.session, { resolved: true, failed: false })
     this.d.changed()
     return { ok: true, info: HUB_TEXT.resolved(found.row.name) }
+  }
+
+  /** whether the tab can take the person's words now: its session's next queued task carries them, and the tab is in no turn */
+  canTakeWords(tabId: string, session: string): boolean {
+    return this.wordsDue(tabId, session) !== null
+  }
+
+  /** the person's words of the session's next task, for its prompt: the task is delivered, and the text is what the prompt takes; null when the tab cannot take them now */
+  takeWords(tabId: string, session: string): { info: string } | null {
+    const r = this.wordsDue(tabId, session)
+    if (r === null) return null
+    this.d.mail.mark([r.id], 'delivered')
+    this.advance(session, r.id, { kind: 'handed', into: 'prompt', at: this.d.now() })
+    this.d.changed()
+    return { info: wordsText(r, (a) => this.d.sender(a)) }
+  }
+
+  /** the record of the session's next task when it carries the person's words, is not delivered, and its tab is idle; null otherwise */
+  private wordsDue(tabId: string, session: string): MailRecord | null {
+    if (this.inTurn.has(tabId) || this.sessionOfTab(tabId) !== session) return null
+    const next = this.nextQueuedTask(session)
+    const r = next ? this.d.mail.get(next.id) : null
+    if (!r || r.words === undefined || r.delivered) return null
+    return r
   }
 
   /** whether a mail record may be handed to the tab over this hand-over */
@@ -1940,7 +1987,9 @@ export class CoordinatorHub {
       if (this.norm(r.from.device) !== hosted.coordinator.device || r.from.session !== hosted.coordinator.session) continue
       if (hosted.tasks.length >= MAX_TASKS_PER_SESSION) continue
       const from: MailAddress = { device: this.norm(r.from.device), session: r.from.session, name: r.from.name }
-      this.d.store.putHosted({ ...hosted, tasks: [...hosted.tasks, { id: r.id, from, state: 'queued', queuedAt: r.sentAt, deliveredAt: null }] })
+      // newer words of the person replace a queued task with earlier words of the same coordinator: it was never typed
+      const current = r.words === undefined ? hosted : this.replaceQueuedWords(hosted, from)
+      this.d.store.putHosted({ ...current, tasks: [...current.tasks, { id: r.id, from, state: 'queued', queuedAt: r.sentAt, deliveredAt: null }] })
       taken = true
       const tab = this.tabOfSession(hosted.session)
       if (tab) pokes.push(tab.tabId)

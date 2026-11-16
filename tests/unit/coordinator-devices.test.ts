@@ -333,6 +333,28 @@ describe('attach, detach and tasks across devices', () => {
     expect(c.hub.view('tab-c')!.sessions[0].marker).toBeNull()
   })
 
+  it("Laptop types a task with the person's words, never hands it to its watcher, and Studio sees it delivered; newer words replace a queued one there", async () => {
+    c.hub.attach('tab-c', 'e10000')
+    sync(c, s)
+    said(c, 'Merge it into master.')
+    await c.hub.tool('tab-c', { op: 'message', session: 'e10000', text: 'Merge.', words: 'Merge it into master.' })
+    sync(c, s)
+    const [first] = records(s, 'task')
+    expect(s.hub.accepts(first, 'tab-l1', 'idle')).toBe(false)
+    expect(s.hub.canTakeWords('tab-l1', L.one)).toBe(true)
+    c.now += 60_000
+    said(c, 'Stop, do not merge.')
+    expect(await c.hub.tool('tab-c', { op: 'message', session: 'e10000', text: 'Do not merge.', words: 'Stop, do not merge.' }))
+      .toEqual({ ok: true, info: `${HUB_TEXT.queuedWords('parser · Laptop', 'e10000')} ${HUB_TEXT.wordsReplacedRemote}` })
+    sync(c, s)
+    const newer = records(s, 'task')[1]
+    expect(s.store.hosted(L.one)!.tasks.map((t) => t.id)).toEqual([newer.id])
+    expect(s.hub.takeWords('tab-l1', L.one)!.info).toContain('> Stop, do not merge.')
+    sync(c, s)
+    expect(c.mail.get(newer.id)).toMatchObject({ delivered: true })
+    expect(records(c, 'report')).toMatchObject([{ replyTo: first.id, outcome: 'stopped' }])
+  })
+
   it('a task to a Laptop session is held there as queued, and its report comes back to the coordinator', () => {
     c.hub.attach('tab-c', 'e10000')
     sync(c, s)
@@ -677,6 +699,7 @@ describe('new ids across devices', () => {
     const copy = records(s, 'task').find((r) => r.to.session === NEW.one)!
     expect(copy).toMatchObject({ words: 'Merge it into master.', context: 'Shall I merge feat/x into master?' })
     expect(s.hub.accepts(copy, 'tab-l1', 'idle')).toBe(false)
+    expect(s.hub.canTakeWords('tab-l1', NEW.one)).toBe(true)
   })
 
   it("the words given to Laptop's session before its clear are not relayed to it again after the clear: they went already", async () => {
