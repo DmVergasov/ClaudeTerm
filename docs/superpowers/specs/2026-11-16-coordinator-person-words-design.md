@@ -186,7 +186,8 @@ downgraded. The refusal reaches the coordinator in the words of the existing old
   A prompt queued while a turn ran was typed through the window too, so it counts. A prompt from a resumed conversation,
   from before this app run, does not. A digit typed into an empty prompt may have answered a menu. The submit then has two
   readings, with the digit and without it. This was revised after the Task 4 review: the first version kept only the times
-  of the input, and that let any key back a forged prompt.
+  of the input, and that let any key back a forged prompt. An input the record cannot follow, or one too long for it, also
+  blocks: it can only refuse words, never pass them.
 - **Equality.** The words are compared with the text blocks of the transcript entry, joined. An image in the message is not
   part of the words. A message with no text cannot be relayed.
 - **One task per message and session.** "Merge, then push" goes as one task. A second task to the same session with the same
@@ -197,6 +198,11 @@ downgraded. The refusal reaches the coordinator in the words of the existing old
   record skips the watcher and is typed on its own. Other pending mail for the session keeps its path.
 - **Paired devices.** A new capability flag next to `coord` in the peer's info. A peer without it refuses with its own text:
   "<device> runs an older ClaudeTerm: your words cannot go there; say it in that session".
+- **Old and offline devices.** `oldDeviceWords` and `wordsOffline` both stay: a paired device on an older ClaudeTerm refuses
+  the words with the older-device text, and an offline device refuses them too, since the toast that says the words went
+  must never be untrue. An offline paired session therefore gets no words until it is back. (Ruling F8.)
+- **The toast's moment.** The toast comes when the words are in a task record, not when a start_session is only kept: a
+  start cancelled before its session arrives shows no toast. (Task 11 review.)
 
 ## When a queued go meets the person's next message (the person's decision)
 
