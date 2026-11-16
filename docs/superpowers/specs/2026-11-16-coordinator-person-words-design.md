@@ -203,6 +203,13 @@ downgraded. The refusal reaches the coordinator in the words of the existing old
   must never be untrue. An offline paired session therefore gets no words until it is back. (Ruling F8.)
 - **The toast's moment.** The toast comes when the words are in a task record, not when a start_session is only kept: a
   start cancelled before its session arrives shows no toast. (Task 11 review.)
+- A queued go is typed only while it is still recent by the check's rule: within 24 hours of the coordinator's call and in
+  this app run. Otherwise the task fails with "the person's words are no longer recent…", and the coordinator asks again.
+  (Final review.)
+- A Send counts as the person's only once the chat took it. A Send from the Changes or Doc panel counts in every view and
+  from a paired device, as its paste into a terminal tab already did. (Final review.)
+- A residual: text the person types into one of Claude Code's own pickers (after /model, say) is recorded as a submit, so
+  a forged prompt with exactly that text would pass. The forger must know the text without seeing it. (Final review.)
 
 ## When a queued go meets the person's next message (the person's decision)
 
@@ -211,6 +218,8 @@ coordinator again. That does not withdraw the queued task. Only two things do:
 - The coordinator gives the same session a newer message of the person, such as "стоп, не мерджи". The newer words replace
   the queued task while it is not yet typed, and the coordinator is told that the earlier one was replaced.
 - The person stops the task in the Sessions panel, as they can stop any task.
+
+A go that is no longer recent is not typed either (see the calls above).
 
 The "latest message" rule applies when the coordinator calls the tool, not when the text is typed.
 
