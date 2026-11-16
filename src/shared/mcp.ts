@@ -32,8 +32,8 @@ export type PluginAction =
   | { kind: 'install' | 'uninstall' | 'enable' | 'disable' | 'update' | 'configure-later'; id: string }
   | { kind: 'configure'; id: string; values: Record<string, string> }
   | { kind: 'marketplace-add'; source: string } | { kind: 'marketplace-remove' | 'marketplace-update'; name: string }
-/** options: required plugin options still unset after an install; marketplace: the name a marketplace-add added */
-export type McpResult = { ok: true; options?: PluginOption[]; marketplace?: string } | { ok: false; error: string }
+/** options: required plugin options still unset after an install; marketplace: the name a marketplace-add added; notice: what Claude Code said of a sign-in it did not finish (a claude.ai connector) */
+export type McpResult = { ok: true; options?: PluginOption[]; marketplace?: string; notice?: string } | { ok: false; error: string }
 export type ReloadAction = 'not-now' | 'restart'
 /** a marketplace source as `claude plugin marketplace add` takes it: a GitHub repository link (https://github.com/o/r, with .git, /tree/…, or without the scheme) becomes `o/r`; anything else trimmed as typed; null for empty, multi-line, a control character or a leading '-' */
 export function marketplaceSource(text: string): string | null {

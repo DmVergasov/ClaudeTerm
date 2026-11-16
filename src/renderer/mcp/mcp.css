@@ -49,6 +49,7 @@
 .mcp-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .mcp-error { margin: 2px 8px 6px 46px; padding: 6px 9px; border: 1px solid #F2867E33; border-radius: 8px; background: #F2867E0D; color: var(--red); font: 11.5px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
+.mcp-notice { margin: 2px 8px 6px 46px; padding: 6px 9px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--raised); color: var(--text-2); font: 11.5px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; white-space: pre-line; }
 .mcp-tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 8px 6px 46px; }
 .mcp-chip { padding: 2px 7px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 6px; color: var(--text-2); font: 11px ui-monospace, monospace; }
 

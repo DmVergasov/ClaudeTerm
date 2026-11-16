@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHAT_INPUT, chatReady, launchChatTab, userMessages } from './chat-helpers'
@@ -786,6 +786,40 @@ test('a switch clicked in a long list keeps the list where it was scrolled to', 
     // the row that took the clicked one's place is still under the pointer
     const next = await page.getByRole('switch', { name: /^Turn srv\d+ off$/ }).nth(20).boundingBox()
     expect(Math.abs((next?.y ?? 0) - (before?.y ?? 0))).toBeLessThanOrEqual(4)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a sign-in in one chat reaches the other chat on the same config folder: its row is connected without a second sign-in', async () => {
+  const { app, page, tabId, config, log } = await launchChatTab(
+    { turns: {}, mcp: { sentry: { status: 'needs-auth' } }, ...LOGIN_GATE },
+    { claude: { mcpServers: { sentry: SENTRY } } }
+  )
+  try {
+    await chatReady(page)
+    const other = mkdtempSync(join(tmpdir(), 'ct-mcp-other-'))
+    const file = join(config, '.claude.json')
+    const value = JSON.parse(readFileSync(file, 'utf8')) as { projects?: object }
+    writeFileSync(file, JSON.stringify({ ...value, projects: { ...value.projects, [realpathSync.native(other)]: { hasTrustDialogAccepted: true } } }))
+    const second = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'claude', cwd }), other))!.id
+    await chatReady(page)
+    expect(chatStarts(log)).toBe(2)
+    await page.evaluate((id) => window.ct.activateTab(id), tabId)
+    await chatReady(page)
+    await page.locator(TOGGLE).click()
+    const row = page.locator(ROW('sentry'))
+    await expect(row.locator('.mcp-row')).toHaveAttribute('data-status', 'needs-auth')
+    await row.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(row).toContainText('Waiting for the browser…')
+    writeFileSync(join(config, 'sentry-ok'), '')
+    await expect(row.locator('.mcp-row')).toHaveAttribute('data-status', 'connected')
+    // the other chat's Claude Code never reads the sign-in again by itself: it was told to reconnect
+    await page.evaluate((id) => window.ct.activateTab(id), second)
+    await chatReady(page)
+    await expect(page.locator(ROW('sentry')).locator('.mcp-row')).toHaveAttribute('data-status', 'connected')
+    expect(cliCalls(log).filter((call) => call.argv[0] === 'mcp' && call.argv[1] === 'login')).toHaveLength(1)
+    expect(chatStarts(log)).toBe(2)
   } finally {
     await app.close()
   }

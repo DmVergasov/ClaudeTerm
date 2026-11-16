@@ -312,6 +312,7 @@ export class McpPanel {
     row.signingIn = true
     row.cancelled = false
     row.error = null
+    row.notice = null
     // Cancel replaces Sign in while the browser is waited for: Cancel takes the focus
     this.wanted = { name, key: 'cancel' }
     this.paint()
@@ -319,6 +320,7 @@ export class McpPanel {
       row.signingIn = false
       const error = result.ok || row.cancelled ? null : result.error
       row.error = error
+      row.notice = result.ok ? (result.notice ?? null) : null
       // a refused client secret opens the field under the row, where the secret is saved; a sign-in that works closes it and forgets the secret
       if (error !== null && needsClientSecret(error)) row.secretOpen = true
       if (result.ok) {
@@ -390,7 +392,7 @@ export class McpPanel {
     const key = JSON.stringify([this.tabId ?? '', name])
     const kept = this.rows.get(key)
     if (kept !== undefined) return kept
-    const row: RowState = { busy: false, signingIn: false, cancelled: false, asking: false, secretOpen: false, secret: '', error: null }
+    const row: RowState = { busy: false, signingIn: false, cancelled: false, asking: false, secretOpen: false, secret: '', error: null, notice: null }
     this.rows.set(key, row)
     return row
   }

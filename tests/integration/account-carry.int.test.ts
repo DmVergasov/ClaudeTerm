@@ -290,6 +290,37 @@ describe('carry-over', () => {
     expect(Object.keys(servers).sort()).toEqual(['api', 'docs'])
   })
 
+  it('a server the account already has configured the same way is left alone, so its sign-in stays; a changed one is added again', async () => {
+    const sourceServers = readJson(join(source, '.claude.json')).mcpServers as Record<string, Record<string, unknown>>
+    // api the same with its keys in another order; docs with other arguments
+    const { type, url, headers, oauth } = sourceServers.api
+    writeJson(join(target, '.claude.json'), { mcpServers: { api: { oauth, headers, url, type }, docs: { type: 'stdio', command: 'node', args: ['old-docs.js'] } } })
+    writeJson(join(target, 'fake-mcp-auth.json'), { api: true, docs: true })
+
+    const line = await carryItem('mcp', deps())
+    expect(line).toMatchObject({ item: 'mcp', state: 'done', text: '2 added' })
+
+    const calls = runs(() => readLog(log)).filter((run) => run.argv[0] === 'mcp')
+    expect(calls.map((run) => run.argv)).toEqual([
+      ['mcp', 'remove', '--scope', 'user', '--', 'docs'],
+      ['mcp', 'add-json', '--scope', 'user', '--', 'docs', JSON.stringify(sourceServers.docs)]
+    ])
+    expect(readJson(join(target, 'fake-mcp-auth.json'))).toEqual({ api: true })
+    expect((readJson(join(target, '.claude.json')).mcpServers as Record<string, unknown>).docs).toEqual(sourceServers.docs)
+  })
+
+  it('with the secrets ticked, a server whose configuration and secret the account already has is left alone', async () => {
+    seedAppSecret()
+    const sourceServers = readJson(join(source, '.claude.json')).mcpServers as Record<string, unknown>
+    writeJson(join(target, '.claude.json'), { mcpServers: { api: sourceServers.api, docs: sourceServers.docs } })
+    writeJson(join(target, '.credentials.json'), { mcpOAuthClientConfig: { 'api|fedcba9876543210': { clientSecret: APP_SECRET } } })
+    writeJson(join(target, 'fake-mcp-auth.json'), { api: true, docs: true })
+
+    await carryLines('mcp', { ...deps(), secrets: true })
+    expect(runs(() => readLog(log)).filter((run) => run.argv[0] === 'mcp')).toEqual([])
+    expect(readJson(join(target, 'fake-mcp-auth.json'))).toEqual({ api: true, docs: true })
+  })
+
   it("a failed add-json says Claude Code's message with the server's secrets masked and logs only its name and code", async () => {
     writeScript({ turns: {}, marketplaces: MARKETPLACE, cliFail: { 'mcp add-json': `Invalid JSON: {"headers":{"X-Key":"${SECRET_HEADER}"}}` } })
 
@@ -709,6 +740,8 @@ describe('carry-over', () => {
   it('carryItem of MCP app secrets adds the servers with their secrets and answers the secrets line; a command that cannot run fails both lines', async () => {
     seedAppSecret()
     expect(await carryItem('mcp-secrets', deps())).toEqual({ item: 'mcp-secrets', state: 'done', text: '1 added', subs: [] })
+    // the account has the servers now and a carry would leave them alone: it must have to run the command
+    writeJson(join(target, '.claude.json'), {})
     const failing: CarryDeps = { ...deps(), secrets: true, cli: () => Promise.reject(new CliError('timeout', 'Claude Code did not answer in 60 s')) }
     expect((await carryLines('mcp', failing)).map(({ item, state, text }) => ({ item, state, text }))).toEqual([
       { item: 'mcp', state: 'failed', text: 'Claude Code did not answer in 60 s' },

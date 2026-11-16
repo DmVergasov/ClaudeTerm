@@ -231,11 +231,21 @@ async function carryMcp(d: CarryDeps): Promise<{ servers: CarryLine; secrets: Ca
     if (store.state === 'unreadable') storeUnreadable = true
     else if (store.state === 'ok') secretOf = clientSecrets(store.value, servers.filter((server) => hasOauthApp(server.config)).map((server) => server.name))
   }
+  // a server the account already has configured the same way keeps its sign-in: `mcp remove` deletes it
+  const present = userServers(await readJsonOf(join(d.target.folder, '.claude.json')))
+  const targetSecretOf = d.secrets ? clientSecrets(await readJsonOf(join(d.target.folder, '.credentials.json')), servers.map((server) => server.name)) : new Map<string, string>()
   let added = 0
   let withSecret = 0
   let failure: { name: string; message: string } | null = null
   let secretFailure: { name: string; message: string } | null = null
   for (const server of servers) {
+    const same = present.find((p) => p.name === server.name && sameConfig(p.config, server.config))
+    const wantedSecret = secretOf.get(server.name)
+    if (same !== undefined && (wantedSecret === undefined || wantedSecret === targetSecretOf.get(server.name))) {
+      added++
+      if (wantedSecret !== undefined) withSecret++
+      continue
+    }
     await d.cli(['mcp', 'remove', '--scope', 'user', '--', server.name])
     const secret = secretOf.get(server.name)
     const args = secret === undefined ? ['mcp', 'add-json', '--scope', 'user'] : ['mcp', 'add-json', '--scope', 'user', '--client-secret']
@@ -260,6 +270,17 @@ async function carryMcp(d: CarryDeps): Promise<{ servers: CarryLine; secrets: Ca
     return { servers: serversLine, secrets: line('mcp-secrets', 'failed', `${withSecret} of ${secretOf.size} · ${secretFailure.name}: ${secretFailure.message}`) }
   }
   return { servers: serversLine, secrets: line('mcp-secrets', 'done', `${withSecret} added`) }
+}
+
+/** two server configurations as `claude mcp add-json` stores them: the same JSON, whatever the order of the keys */
+function sameConfig(a: unknown, b: unknown): boolean {
+  return canonicalJson(a) === canonicalJson(b)
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (isObject(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
+  return JSON.stringify(value) ?? 'null'
 }
 
 /** the names of the marketplaces `claude plugin marketplace list --json` answers; an entry without a name is skipped */

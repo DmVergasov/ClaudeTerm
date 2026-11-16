@@ -34,6 +34,7 @@ function setup(o: Partial<{
   json: Record<string, unknown>   // more files, by their full path
   tabGate: Promise<void>          // the tab lookup waits for this (a realpath still running)
   reload: McpReload | null        // the changes the restart coordinator says the session has not loaded
+  others: Record<string, { env: Record<string, string>; live: McpLiveServer[] | null; reconnectError?: string }>   // more local Claude tabs, by id
 }> = {}) {
   const paths = configPaths(ENV, HOME, FOLDER)
   const files = new Map<string, unknown>()
@@ -41,6 +42,7 @@ function setup(o: Partial<{
   for (const [file, value] of Object.entries(o.json ?? {})) files.set(file, value)
   const runs: Rec[] = []
   const reconnects: string[] = []
+  const reconnectsBy: [string, string][] = []   // [tab, server name]
   const toggles: [string, boolean][] = []
   const changed: [string, boolean][] = []
   const order: string[] = []   // the restart holds, releases and changes, in the order they happen
@@ -55,8 +57,11 @@ function setup(o: Partial<{
     },
     tab: async (id) => {
       await o.tabGate
-      return id === TAB ? { env: ENV, folder: FOLDER } : null
+      if (id === TAB) return { env: ENV, folder: FOLDER }
+      const other = o.others?.[id]
+      return other === undefined ? null : { env: other.env, folder: FOLDER }
     },
+    tabs: () => [TAB, ...Object.keys(o.others ?? {})],
     home: HOME,
     readJson: async (file) => files.get(file) ?? null,
     run: async (_launch, args, opts) => {
@@ -64,9 +69,12 @@ function setup(o: Partial<{
       return reply(args, opts)
     },
     session: {
-      mcpStatus: async () => o.live ?? null,
-      reconnectMcp: async (_tab, name) => {
+      mcpStatus: async (id) => (id === TAB ? o.live : o.others?.[id]?.live) ?? null,
+      reconnectMcp: async (id, name) => {
+        const error = o.others?.[id]?.reconnectError
+        if (error !== undefined) throw new Error(error)
         reconnects.push(name)
+        reconnectsBy.push([id, name])
       },
       toggleMcp: async (_tab, name, enabled) => {
         toggles.push([name, enabled])
@@ -96,7 +104,7 @@ function setup(o: Partial<{
       }
     }
   })
-  return { hub, runs, reconnects, toggles, changed, order, copied, opened, warns, paths }
+  return { hub, runs, reconnects, reconnectsBy, toggles, changed, order, copied, opened, warns, paths }
 }
 
 const live = (over: Partial<McpLiveServer>): McpLiveServer => ({
@@ -275,6 +283,66 @@ describe('McpHub', () => {
     running.hub.dispose()
     expect(await login).toEqual({ ok: false, error: 'Cancelled' })
     expect(running.reconnects).toEqual([])
+  })
+
+  describe('a sign-in or sign-out applies to every tab of the config folder', () => {
+    const NEEDS = [live({ name: 'slack', status: 'needs-auth', scope: 'user', transport: 'http' })]
+    const UP = [live({ name: 'slack', status: 'connected', scope: 'user', transport: 'http' })]
+    const A = 'tab-a'
+    const B = 'tab-b'
+    const C = 'tab-c'
+
+    it('a login reconnects the server in the other tabs of the same folder, not in a tab of another folder or one that is connected', async () => {
+      const { hub, reconnectsBy, changed } = setup({
+        live: NEEDS,
+        others: {
+          [A]: { env: { CLAUDE_CONFIG_DIR: 'c:/config' }, live: NEEDS },
+          [B]: { env: { CLAUDE_CONFIG_DIR: 'C:\\Other' }, live: NEEDS },
+          [C]: { env: { CLAUDE_CONFIG_DIR: 'C:\\Config' }, live: UP }
+        }
+      })
+      expect(await hub.action(TAB, { kind: 'login', name: 'slack' })).toEqual({ ok: true })
+      expect(reconnectsBy).toEqual([[TAB, 'slack'], [A, 'slack']])
+      expect(changed).toEqual([[TAB, false], [A, false]])
+    })
+
+    it('a login skips a tab with no running session, and a failed reconnect in one tab does not fail it', async () => {
+      const { hub, reconnectsBy } = setup({
+        live: NEEDS,
+        others: {
+          [A]: { env: ENV, live: null },
+          [B]: { env: ENV, live: NEEDS, reconnectError: 'gone' },
+          [C]: { env: ENV, live: NEEDS }
+        }
+      })
+      expect(await hub.action(TAB, { kind: 'login', name: 'slack' })).toEqual({ ok: true })
+      expect(reconnectsBy).toEqual([[TAB, 'slack'], [C, 'slack']])
+    })
+
+    it('a logout reconnects the server in the other tabs of the same folder that have it connected', async () => {
+      const { hub, reconnectsBy, changed } = setup({
+        live: UP,
+        others: {
+          [A]: { env: { CLAUDE_CONFIG_DIR: 'c:/config' }, live: UP },
+          [B]: { env: { CLAUDE_CONFIG_DIR: 'C:\\Other' }, live: UP },
+          [C]: { env: ENV, live: NEEDS }
+        }
+      })
+      expect(await hub.action(TAB, { kind: 'logout', name: 'slack' })).toEqual({ ok: true })
+      expect(reconnectsBy).toEqual([[TAB, 'slack'], [A, 'slack']])
+      expect(changed).toEqual([[TAB, false], [A, false]])
+    })
+
+    it('a login for a claude.ai connector shows the CLI message and reconnects nothing', async () => {
+      const message = 'Opening claude.ai to authorize...\nOnce authorized on claude.ai, the connector will be available the next time you start Claude Code.'
+      const { hub, reconnectsBy } = setup({
+        live: NEEDS,
+        others: { [A]: { env: ENV, live: NEEDS } },
+        reply: async () => ({ code: 0, stdout: message + '\n', stderr: '' })
+      })
+      expect(await hub.action(TAB, { kind: 'login', name: 'slack' })).toEqual({ ok: true, notice: message })
+      expect(reconnectsBy).toEqual([])
+    })
   })
 
   it('logout runs, then reconnects', async () => {

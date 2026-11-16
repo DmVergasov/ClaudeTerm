@@ -27,10 +27,13 @@ const LIVE_STATUSES = new Set<string>(['connected', 'failed', 'needs-auth', 'pen
 const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse', 'ws']
 const LIST_TTL_MS = 30_000
 const NO_LIST = 'Claude Code printed no plugin list'
+/** what `claude mcp login` prints for a claude.ai connector: "…the connector will be available the next time you start Claude Code." */
+const CLAUDE_AI_LOGIN = /available the next time you start Claude Code/i
 
 export interface McpHubDeps {
   launch(): Promise<ChatLaunch>                                   // resolveChatLaunch(settings.claude.command, …)
   tab(tabId: string): Promise<{ env: Record<string, string>; folder: string } | null>   // a local Claude tab: claudeEnv and its canonical folder
+  tabs(): string[]                                                // every local Claude tab: a sign-in reaches the ones on the same config folder
   home: string
   readJson(file: string): Promise<unknown>                        // the shared jsonFileCache
   run: typeof runClaudeCli
@@ -233,8 +236,33 @@ export class McpHub {
       if ('error' in result) return fail(result.error)
       await this.reconnectQuietly(tabId, name)
       this.d.changed(tabId, false)
+      await this.reconnectSiblings(tabId, tab, name, 'out')
       return { ok: true }
     })
+  }
+
+  /**
+   * The other tabs on the same config folder: a running session never reads the sign-in store again, so each one is told to
+   * reconnect the server. `signed`: 'in' is a sign-in, so the tabs that already have it connected are left alone;
+   * a sign-out is the other way round, only the tabs that have it connected need to drop its token.
+   */
+  private async reconnectSiblings(tabId: string, tab: Tab, name: string, signed: 'in' | 'out'): Promise<void> {
+    const key = this.folderKey(tab)
+    for (const id of this.d.tabs()) {
+      if (id === tabId) continue
+      try {
+        const other = await this.d.tab(id)
+        if (other === null || this.folderKey(other) !== key) continue
+        const statuses = await this.statuses(id)
+        if (statuses === null) continue
+        const status = statuses.find((s) => s.name === name)?.status
+        if (signed === 'in' ? status === 'connected' : status !== 'connected') continue
+        await this.d.session.reconnectMcp(id, name)
+        this.d.changed(id, false)
+      } catch {
+        // one tab that cannot reconnect does not fail the sign-in; its panel shows the server's state on its next read
+      }
+    }
   }
 
   /** a Cancel ends the sign-in running for the name; one that finds none is remembered for the next sign-in of that name */
@@ -264,8 +292,12 @@ export class McpHub {
       // Claude Code waits for the browser's sign-in only with a terminal on stdin: the login runs in a pseudo terminal
       const result = await this.cli(tab, ['mcp', 'login', '--', name], { secrets: [], timeoutMs: LOGIN_TIMEOUT_MS, signal: controller.signal, tty: true })
       if ('error' in result) return fail(result.error)
+      // a claude.ai connector is not signed in by the CLI: it opens claude.ai and exits at once, and the connector comes with the next start of Claude Code
+      const said = `${result.run.stdout}\n${result.run.stderr}`
+      if (CLAUDE_AI_LOGIN.test(said)) return { ok: true, notice: cliMessage({ code: 0, stdout: said, stderr: '' }) }
       await this.reconnectQuietly(tabId, name)
       this.d.changed(tabId, false)
+      await this.reconnectSiblings(tabId, tab, name, 'in')
       return { ok: true }
     } finally {
       if (mine.get(name) === controller) mine.delete(name)

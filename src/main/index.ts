@@ -1277,6 +1277,7 @@ function bootstrap(): void {
       const tab = tabs.get(id)
       return env && tab ? { env, folder: await canonicalFolder(tab.cwd) } : null
     },
+    tabs: () => tabs.list().filter((t) => t.kind === 'claude' && !t.exited).map((t) => t.id),
     home: homedir(),
     readJson,
     run: runClaudeCli,

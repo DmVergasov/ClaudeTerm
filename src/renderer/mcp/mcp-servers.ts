@@ -23,6 +23,8 @@ export interface RowState {
   /** what the field holds, kept across repaints: the panel never shows it as text */
   secret: string
   error: string | null
+  /** what Claude Code said of a sign-in it did not finish (a claude.ai connector): shown under the row until its next sign-in */
+  notice: string | null
 }
 
 export interface ServerListOptions {
@@ -99,6 +101,7 @@ function serverRow(s: McpServerView, o: ServerListOptions, live: boolean): HTMLE
   item.append(line)
   if (s.status === 'failed' && s.error !== null) item.append(el('div', { className: 'mcp-error', textContent: s.error }))
   if (row.error !== null) item.append(el('div', { className: 'mcp-error', textContent: row.error }))
+  if (row.notice !== null) item.append(el('div', { className: 'mcp-notice', textContent: row.notice }))
   if (row.secretOpen && editScope(s) !== null) item.append(secretField(s, o, row))
   if (row.asking) item.append(removeAsk(s, o))
   if (o.menu === s.name && actions.menu.length > 0) item.append(menuBox(s, o, actions.menu))
