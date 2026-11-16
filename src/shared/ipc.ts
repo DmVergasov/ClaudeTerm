@@ -11,7 +11,7 @@ import type { NoteOp } from './note-items'
 import type { ReviewScope, ReviewSendState, ReviewUpdate } from './review'
 import type { DeviceAnswer, DeviceChoices, FolderResult, RemoteDeviceView } from './remote'
 import type { SettingKey, SettingValue } from './settings-keys'
-import type { AgentStatus, BackgroundTask, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabKind, TabLayout, TabPlace, UpdateState } from './types'
+import type { AgentStatus, BackgroundTask, ImageCard, MainStatus, NotificationCase, OpenTabRequest, PanelAnswer, PanelMode, PlanStatus, RecentSession, Settings, TabInfo, TabKind, TabLayout, TabPlace, UpdateState } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
@@ -460,7 +460,7 @@ export interface CtApi {
    * The side panel opened at `width` px, closed (0) or switched to a panel of another width: main widens or narrows the window
    * for it and answers how the panel is to be shown. `resize` false: its edge was dragged, the window stays as it is.
    */
-  setPanel(width: number, resize: boolean): Promise<PanelMode>
+  setPanel(width: number, resize: boolean): Promise<PanelAnswer>
   /** the left tab panel's width and folded groups */
   getTabLayout(): Promise<TabLayout>
   /** saves the part of the left tab panel's layout that is given; the width is kept within TAB_PANEL_WIDTH (110 to 480 px) */

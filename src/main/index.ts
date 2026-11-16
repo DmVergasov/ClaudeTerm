@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, type Rectangle } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, promises as fsPromises, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, hostname, release, tmpdir } from 'node:os'
@@ -57,6 +57,7 @@ import { claudeTempRoot, realTempRoot, sessionTempDir, watchImages, type ImageWa
 import { handleImgProtocol, registerImgScheme, remoteCardSource } from './img-protocol'
 import { createLogger } from './log'
 import { PanelRoom } from './panel-room'
+import { resizeWindow } from './resize-window'
 import { findExecutable, isExecutableFile } from './login-env'
 import { migrateLook } from './look-migration'
 import { macMenuTemplate } from './mac-menu'
@@ -231,20 +232,6 @@ if (!app.requestSingleInstanceLock({ argv: process.argv })) {
 
 const MIN_WIDTH = 480
 
-/** Sets the window's bounds and waits for its resize, which may come after the call, or never when a window manager keeps the size. */
-function resizeWindow(win: BrowserWindow, r: Rectangle): Promise<void> {
-  return new Promise((resolve) => {
-    const done = (): void => {
-      clearTimeout(timer)
-      win.off('resize', done)
-      resolve()
-    }
-    const timer = setTimeout(done, 300)
-    win.on('resize', done)
-    win.setBounds(r)
-  })
-}
-
 function bootstrap(): void {
   // Windows and Linux: no menu bar; macOS gets its own below, once the settings window can open
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
@@ -265,7 +252,7 @@ function bootstrap(): void {
     bounds: () => liveWin()?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 },
     setBounds: (r) => {
       const w = liveWin()
-      return w ? resizeWindow(w, r) : Promise.resolve()
+      return w ? resizeWindow(w, r).then(() => undefined) : Promise.resolve()
     },
     workArea: () => screen.getDisplayMatching(liveWin()?.getBounds() ?? { x: 0, y: 0, width: 1, height: 1 }).workArea,
     pinned: () => Boolean(liveWin()?.isMaximized() || liveWin()?.isFullScreen()),
@@ -3391,7 +3378,7 @@ function bootstrap(): void {
     if (!isId(tabId) || remote?.viewer.has(tabId) || !isAbsPath(path) || !review.hasFile(tabId, path)) return
     revealInFolder(path, nodeRevealDeps((p) => shell.showItemInFolder(p), (d) => void shell.openPath(d)))
   })
-  ipcMain.handle(IPC.panelSet, (_e, width: unknown, resize: unknown) => (liveWin() && isPanelWidth(width) && isFlag(resize) ? panelRoom.set(Math.round(width), resize) : panelRoom.mode))
+  ipcMain.handle(IPC.panelSet, (_e, width: unknown, resize: unknown) => (liveWin() && isPanelWidth(width) && isFlag(resize) ? panelRoom.request(Math.round(width), resize) : { mode: panelRoom.mode, grew: false }))
   const accountsChanged = (r: AccountResult): AccountResult => {
     if (r.ok) broadcast(IPC.evAccounts, accountsView())
     return r

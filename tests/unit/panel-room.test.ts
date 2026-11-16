@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { grownBounds, PanelRoom, type PanelWindow, type Rect } from '../../src/main/panel-room'
 
 const AREA: Rect = { x: 0, y: 0, width: 1920, height: 1040 }
@@ -177,5 +177,72 @@ describe('PanelRoom', () => {
     const modes = await Promise.all([room.set(360, true), room.set(0, true), room.set(640, true)])
     expect(modes).toEqual(['beside', 'beside', 'beside'])
     expect(w.calls.map((r) => r.width)).toEqual([1360, 1000, 1640])
+  })
+
+  it('a shrink the window did not make leaves the width on the books, and the next close gives it back', async () => {
+    const w = fakeWindow()
+    const room = new PanelRoom(w, () => 'overlay')
+    await room.set(360, true)
+    w.refuse = true
+    await room.set(0, true)
+    expect(w.b.width).toBe(1360)
+    expect(room.added).toBe(360)
+    w.refuse = false
+    await room.set(0, true)
+    expect(w.b.width).toBe(1000)
+    expect(room.added).toBe(0)
+    expect(await room.set(360, true)).toBe('beside')
+    expect(w.b.width).toBe(1360)
+    await room.set(0, true)
+    expect(w.b.width).toBe(1000)
+  })
+
+  it('the answer says whether the window grew: a window that is already wide enough did not', async () => {
+    const w = fakeWindow()
+    const room = new PanelRoom(w, () => 'overlay')
+    expect(await room.request(360, true)).toEqual({ mode: 'beside', grew: true })
+    expect(await room.request(360, true)).toEqual({ mode: 'beside', grew: false })
+    expect(await room.request(0, true)).toEqual({ mode: 'beside', grew: true })
+    w.refuse = true
+    expect(await room.request(360, true)).toEqual({ mode: 'overlay', grew: false })
+  })
+
+  describe('a window that takes the bounds it is given 150 ms after setBounds returns', () => {
+    beforeEach(() => { vi.useFakeTimers() })
+    afterEach(() => { vi.useRealTimers() })
+
+    it('open, close and open again leave the width and the room right, and the last close gives the window its start width back', async () => {
+      const w = fakeWindow()
+      w.setBounds = async (r) => {
+        w.calls.push(r)
+        setTimeout(() => { w.b = { ...r } }, 150)
+      }
+      const room = new PanelRoom(w, () => 'overlay')
+      await room.set(360, true)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(w.b.width).toBe(1360)
+      await room.set(0, true)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(w.b.width).toBe(1000)
+      expect(room.added).toBe(0)
+      await room.set(360, true)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(w.b.width).toBe(1360)
+      await room.set(0, true)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(w.b.width).toBe(1000)
+      expect(room.added).toBe(0)
+    })
+
+    it('a window the person resized meanwhile is not counted as the late apply', async () => {
+      const w = fakeWindow()
+      w.setBounds = async (r) => { w.calls.push(r) }
+      const room = new PanelRoom(w, () => 'overlay')
+      await room.set(360, true)
+      w.b = { ...w.b, width: 1200 }
+      await room.set(0, true)
+      expect(room.added).toBe(0)
+      expect(w.b.width).toBe(1200)
+    })
   })
 })

@@ -147,6 +147,9 @@ export type PanelMode = 'beside' | 'overlay' | 'narrow'
 
 export type NoRoomMode = Exclude<PanelMode, 'beside'>
 
+/** main's answer to the side panel: how it is shown, and whether the window changed its size for it (if not, the page has no resize to wait for) */
+export interface PanelAnswer { mode: PanelMode; grew: boolean }
+
 /** where the tab bar sits: across the top, or as a column on the left */
 export type TabPosition = 'top' | 'left'
 

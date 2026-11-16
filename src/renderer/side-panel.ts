@@ -1,4 +1,4 @@
-import type { PanelMode } from '../shared/types'
+import type { PanelAnswer, PanelMode } from '../shared/types'
 import { icon } from './icons'
 
 export type PanelTab = 'images' | 'changes' | 'docs' | 'messages' | 'sessions' | 'mcp'
@@ -16,7 +16,7 @@ const MOTION_MS = 180
 const SETTLE_MS = 1000
 
 /** asks main to make room for the panel: its width, 0 when it closed; `resize` false after a drag of its edge */
-export type MakeRoom = (width: number, resize: boolean) => Promise<PanelMode>
+export type MakeRoom = (width: number, resize: boolean) => Promise<PanelAnswer>
 
 /**
  * The right-hand panel: Images and Changes, one shown at a time, each with its own width. It lies over the right of the
@@ -198,24 +198,29 @@ export class SidePanel {
     const box = this.terminals.getBoundingClientRect().width
     const marginFrom = parseFloat(getComputedStyle(this.terminals).marginRight) || 0
     let mode = this.mode
+    let grew = false
     if (want > from) {
       // the window grows first: the room exists before the panel takes it
       this.pin(box)
-      mode = await this.room(want)
+      const answer = await this.room(want)
+      mode = answer.mode
+      grew = answer.grew
       this.mode = mode
     }
     if (mode === 'beside') {
       this.pin(box)
       this.unhold()
       if (want > from) {
-        await this.settled(box + want, true)
+        // main says the window did not change its size: there is no resize to wait for
+        if (grew) await this.settled(box + want, true)
         this.terminals.style.marginRight = `${want}px`
         await this.slide(from, want, ms)
       } else {
         this.terminals.style.marginRight = `${want}px`
         await this.slide(from, want, ms)
-        this.mode = await this.room(want)
-        await this.settled(box + want, false)
+        const answer = await this.room(want)
+        this.mode = answer.mode
+        if (answer.grew) await this.settled(box + want, false)
       }
     } else {
       this.unpin()
@@ -228,7 +233,7 @@ export class SidePanel {
         : null
       if (margin) this.anims.push(margin)
       await Promise.all([this.slide(from, want, ms), margin?.finished.catch(() => undefined)])
-      if (want <= from) this.mode = await this.room(want)
+      if (want <= from) this.mode = (await this.room(want)).mode
     }
   }
 
@@ -272,11 +277,11 @@ export class SidePanel {
   }
 
   /** asks main for the room of a panel `width` wide */
-  private async room(width: number): Promise<PanelMode> {
+  private async room(width: number): Promise<PanelAnswer> {
     try {
       return await this.makeRoom(width, true)
     } catch {
-      return 'narrow'
+      return { mode: 'narrow', grew: false }
     }
   }
 

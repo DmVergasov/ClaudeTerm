@@ -521,3 +521,71 @@ test('the first open of a panel after launch starts to slide at once: it does no
   await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
   await app.close()
 })
+
+/** milliseconds from the click on the element at `sel` to the first frame the panel is fully slid in: shown, not sliding, no animation running */
+function msToSlidIn(page: Page, sel: string): Promise<number> {
+  return page.evaluate((sel) => new Promise<number>((resolve) => {
+    const t0 = performance.now()
+    document.querySelector<HTMLElement>(sel)!.click()
+    const frame = (): void => {
+      const p = document.getElementById('image-panel')!
+      const open = !p.classList.contains('collapsed') && !p.classList.contains('sliding') && p.getAnimations().length === 0 && p.getBoundingClientRect().width > 0
+      if (open) resolve(performance.now() - t0)
+      else requestAnimationFrame(frame)
+    }
+    requestAnimationFrame(frame)
+  }), sel)
+}
+
+for (const tab of ['messages', 'changes'] as const) {
+  test(`a window that ignores setBounds does not hold up a ${tab === 'messages' ? 'Agent messages' : 'Changes'} panel: it is slid in well before the old time limits would have ended`, { tag: '@alone' }, async () => {
+    const { app, page } = await launchClaudeTab({ ...FAKE_CLAUDE_SETTINGS, imagePanel: { autoOpen: false }, review: { width: 300 } })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+    await setWidth(app, page, roomyWidth(await place(app), 300))
+    // the OS does not take the new size and sends no resize event
+    await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find((x) => x.getParentWindow() === null)!
+      w.setBounds = () => undefined
+    })
+    const start = (await place(app)).bounds
+    const ms = await msToSlidIn(page, `#sheet-header .tab-${tab}-toggle`)
+    // the slide takes 180 ms; the waits for a resize that never comes were 300 ms in main and 1000 ms in the page
+    expect(ms).toBeLessThan(400)
+    expect((await place(app)).bounds.width).toBe(start.width)
+    await app.close()
+  })
+}
+
+test('main says the window did not grow for a panel opened beside the terminal: the panel starts to slide at once, not after the one second wait for the window', { tag: '@alone' }, async () => {
+  const { app, page } = await launchApp({ settings: { imagePanel: { width: 300, autoOpen: false } } })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  await setWidth(app, page, roomyWidth(await place(app), 300))
+  const start = (await place(app)).bounds
+  // a window that can be told to keep its size
+  await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find((x) => x.getParentWindow() === null)!
+    const set = w.setBounds.bind(w)
+    const flags = globalThis as unknown as { keepSize: boolean }
+    flags.keepSize = false
+    w.setBounds = (r, animate) => { if (!flags.keepSize) set(r, animate) }
+  })
+  await page.keyboard.press(KEYS.images)
+  await expect.poll(async () => (await place(app)).bounds.width).toBe(start.width + 300)
+  await panelSettled(page, true)
+  // closed while the window keeps its size: main still counts the 300 px it gave the panel
+  await app.evaluate(() => { (globalThis as unknown as { keepSize: boolean }).keepSize = true })
+  await page.keyboard.press(KEYS.images)
+  await expect(panel(page)).toHaveClass(/collapsed/)
+  await app.evaluate(() => { (globalThis as unknown as { keepSize: boolean }).keepSize = false })
+  // the person then makes the window narrower: it is no longer the width main counted for the panel
+  await setWidth(app, page, start.width - 100)
+
+  // main finds the width it counts is the panel's width: it answers beside, and that the window did not grow
+  const frames = await framesAfterClick(page, '#sheet-header .tab-images-toggle', 1500)
+  const log = timeline(frames)
+  const drawn = frames.find((f) => f.panel > 0)
+  expect(drawn && drawn.at <= 300, log).toBe(true)
+  await app.close()
+})
