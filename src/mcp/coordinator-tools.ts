@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { COORD_DELEGATE, COORD_PROGRESS, type CoordOp } from '../shared/coordinator'
+import { COORD_DELEGATE, COORD_PROGRESS, COORD_WORDS, type CoordOp } from '../shared/coordinator'
 import { PipeUnavailableError } from '../shared/pipe-client'
 import type { CoordMessage, PipeResponse } from '../shared/protocol'
 import type { ToolResult } from './show-image-tool'
@@ -26,7 +26,8 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
     'On a paired device: in folder (a path on that device) when given, else in the folder of a tab of the same project there, else that device\'s default folder; on its account with this coordinator\'s email, else its main account. ' +
     'Always in Claude Code\'s default permission mode. ' +
     'With worktree, the session first enters a new git worktree of that name with EnterWorktree; ClaudeTerm itself creates none. ' +
-    'It is attached to you at once, and its report comes to you by itself when its task ends.',
+    'It is attached to you at once, and its report comes to you by itself when its task ends. ' +
+    COORD_WORDS,
   attach_session:
     'Coordinator only: attach a running Claude session, by a ref or a name from list_sessions or list_agents; a session on a paired device is attached once that device confirms. ' +
     'Attaching sends the session nothing and does not interrupt it; give it work with message_session. A session attached to another coordinator is refused.',
@@ -35,7 +36,7 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
   message_session:
     'Coordinator only: give an attached session a task. It waits until the session is idle, then reaches it as the user\'s instruction given through you. ' +
     'When the session\'s turn on it ends, ClaudeTerm sends you its last answer as a report and wakes you: do not poll or wait for it. ' +
-    COORD_PROGRESS,
+    `${COORD_PROGRESS} ${COORD_WORDS}`,
   read_session:
     'Coordinator only: one session in detail: its state, a permission prompt or question waiting for the user, its open task, its last report in full and its task list.',
   resolve_session:
@@ -47,6 +48,8 @@ const START_WAIT_MS = 30_000
 /** how long attach_session waits for its answer: a session on a paired device is attached once that device confirms */
 export const COORD_ATTACH_TIMEOUT_MS = 15_000
 const OP_WAIT_MS = 3000
+/** message_session with the person's words: main reads the coordinator's transcript before it answers */
+const WORDS_WAIT_MS = 10_000
 
 export async function coordTool(name: (typeof COORD_TOOL_NAMES)[number], op: CoordOp, deps: CoordToolDeps): Promise<ToolResult> {
   if (!deps.tabId) return { text: `${name} works only in a ClaudeTerm Claude tab`, isError: true }
@@ -55,7 +58,7 @@ export async function coordTool(name: (typeof COORD_TOOL_NAMES)[number], op: Coo
     : { v: 1, type: 'coord', tabId: deps.tabId, ...op }
   let res: PipeResponse
   try {
-    res = await deps.send(deps.pipeName, msg, op.op === 'start' ? START_WAIT_MS : op.op === 'attach' ? COORD_ATTACH_TIMEOUT_MS : OP_WAIT_MS)
+    res = await deps.send(deps.pipeName, msg, op.op === 'start' ? START_WAIT_MS : op.op === 'attach' ? COORD_ATTACH_TIMEOUT_MS : op.op === 'message' && op.words != null ? WORDS_WAIT_MS : OP_WAIT_MS)
   } catch (e) {
     if (e instanceof PipeUnavailableError) return { text: 'ClaudeTerm is not running.', isError: true }
     return { text: `ClaudeTerm request failed: ${e instanceof Error ? e.message : String(e)}`, isError: true }

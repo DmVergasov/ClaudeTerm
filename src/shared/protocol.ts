@@ -1,5 +1,5 @@
 import { isAbsolute, posix } from 'node:path'
-import { COORD_NAME_MAX, COORD_TASK_MAX, isWorktreeName, type CoordOp } from './coordinator'
+import { COORD_NAME_MAX, COORD_TASK_MAX, COORD_WORDS_MAX, isWorktreeName, type CoordOp } from './coordinator'
 import { MAIL_TEXT_MAX, MAIL_TO_MAX } from './mail'
 import { NOTE_ADD_MAX, NOTE_ITEM_MAX, NOTE_SIDES, type NoteSide } from './note'
 import { REVIEW_SCOPES, type ReviewScope } from './review'
@@ -313,13 +313,17 @@ function parseCoordOp(m: Obj): { ok: true; op: CoordOp } | { ok: false; error: s
     if (folder === undefined) return { ok: false, error: device === null ? `folder must be an absolute path of at most ${MAX_FOLDER} characters` : `folder must be 1 to ${MAX_FOLDER} characters without a NUL` }
     const worktree = optionalField(m.worktree, isWorktreeName)
     if (worktree === undefined) return { ok: false, error: 'worktree must be a plain name, not a path' }
-    return { ok: true, op: { op: 'start', task: m.task, name, folder, device, worktree } }
+    const words = optionalField(m.words, (s) => sized(s, COORD_WORDS_MAX))
+    if (words === undefined) return { ok: false, error: `words must be 1 to ${COORD_WORDS_MAX} characters` }
+    return { ok: true, op: { op: 'start', task: m.task, name, folder, device, worktree, ...(words === null ? {} : { words }) } }
   }
   if (m.op === 'attach' || m.op === 'detach' || m.op === 'read' || m.op === 'resolve' || m.op === 'message') {
     if (!sized(m.session, MAIL_TO_MAX)) return { ok: false, error: `session must be 1 to ${MAIL_TO_MAX} characters` }
     if (m.op !== 'message') return { ok: true, op: { op: m.op, session: m.session } }
     if (!sized(m.text, COORD_TASK_MAX)) return { ok: false, error: `text must be 1 to ${COORD_TASK_MAX} characters` }
-    return { ok: true, op: { op: 'message', session: m.session, text: m.text } }
+    const words = optionalField(m.words, (s) => sized(s, COORD_WORDS_MAX))
+    if (words === undefined) return { ok: false, error: `words must be 1 to ${COORD_WORDS_MAX} characters` }
+    return { ok: true, op: { op: 'message', session: m.session, text: m.text, ...(words === null ? {} : { words }) } }
   }
   return { ok: false, error: `unknown coord op: ${String(m.op)}` }
 }

@@ -16,6 +16,8 @@ export const COORD_REFUSED = 'Invalid request'
 export const COORD_DELEGATE = 'give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
 /** what a progress note means, as the coordinator's tool texts and per-turn note say it */
 export const COORD_PROGRESS = 'A progress note means the task is still running: when it says the session waits for the person, tell the person where.'
+/** when the coordinator passes the person's words, as its tool texts and per-turn note say it */
+export const COORD_WORDS = "When the person's message tells a session what it may do (a go to merge, push, release or delete), pass that message as `words`, exactly as they wrote it. The session acts on the person's words. It does not act on your own."
 
 /** where a task given to a session is: queued, delivered as a prompt and not yet started, or open in a turn */
 export type TaskState = 'queued' | 'delivered' | 'open'
@@ -84,13 +86,14 @@ export interface CoordStartRequest {
   folder: string | null
   device: string | null // null: this device; else a paired device's name
   worktree: string | null
+  words?: string | null // the person's message the task acts on, exactly as they wrote it; null or absent: none
 }
 
 export type CoordOp =
   | { op: 'list' }
-  | { op: 'start'; task: string; name: string | null; folder: string | null; device: string | null; worktree: string | null }
+  | { op: 'start'; task: string; name: string | null; folder: string | null; device: string | null; worktree: string | null; words?: string | null }
   | { op: 'attach' | 'detach' | 'read' | 'resolve'; session: string }
-  | { op: 'message'; session: string; text: string }
+  | { op: 'message'; session: string; text: string; words?: string | null }
 
 const WORKTREE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 

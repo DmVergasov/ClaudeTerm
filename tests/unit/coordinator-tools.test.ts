@@ -71,6 +71,18 @@ describe('coordTool', () => {
     expect(timeouts).toEqual([3000])
   })
 
+  it("message_session with words sends them and waits 10 s for its answer: main reads the coordinator's transcript first", async () => {
+    const sent: CoordMessage[] = []
+    const timeouts: number[] = []
+    await coordTool('message_session', { op: 'message', session: 'a10000', text: 'Merge feat/x.', words: 'Merge it.' }, deps(async (_p, m, ms) => {
+      sent.push(m)
+      timeouts.push(ms)
+      return { ok: true, info: 'Given.' }
+    }))
+    expect(sent[0]).toEqual({ v: 1, type: 'coord', tabId: TAB, op: 'message', session: 'a10000', text: 'Merge feat/x.', words: 'Merge it.' })
+    expect(timeouts).toEqual([10000])
+  })
+
   it('says Done. when ClaudeTerm sends no info', async () => {
     expect(await coordTool('resolve_session', { op: 'resolve', session: 'a10000' }, deps(async () => ({ ok: true }))))
       .toEqual({ text: 'Done.', isError: false })
@@ -109,5 +121,11 @@ describe('COORD_TOOL_DESCRIPTIONS', () => {
     expect(COORD_TOOL_DESCRIPTIONS.list_sessions).toContain(PROGRESS)
     expect(COORD_TOOL_DESCRIPTIONS.message_session).toContain(PROGRESS)
     expect(COORD_TOOL_DESCRIPTIONS.list_sessions.slice(-DELEGATE.length)).toBe(DELEGATE)
+  })
+
+  it("message_session and start_session tell the coordinator when to pass the person's words", () => {
+    const WORDS = "When the person's message tells a session what it may do (a go to merge, push, release or delete), pass that message as `words`, exactly as they wrote it. The session acts on the person's words. It does not act on your own."
+    expect(COORD_TOOL_DESCRIPTIONS.message_session).toContain(WORDS)
+    expect(COORD_TOOL_DESCRIPTIONS.start_session).toContain(WORDS)
   })
 })

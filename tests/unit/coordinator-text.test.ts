@@ -265,7 +265,7 @@ describe('roleNoteText', () => {
 describe('turnNoteText', () => {
   it('is the note that tells the coordinator it coordinates the project, gives the work to its sessions, and names the reports and the prompts', () => {
     expect(turnNoteText('Desk')).toBe(
-      `Note from ClaudeTerm, not from the user: you are the coordinator of Desk: ${DELEGATE} Reports come by themselves when a task ends. A progress note means the task is still running: when it says the session waits for the person, tell the person where. A session's permission prompts and questions are the person's to answer, in that session.`
+      `Note from ClaudeTerm, not from the user: you are the coordinator of Desk: ${DELEGATE} Reports come by themselves when a task ends. A progress note means the task is still running: when it says the session waits for the person, tell the person where. When the person's message tells a session what it may do (a go to merge, push, release or delete), pass that message as \`words\`, exactly as they wrote it. The session acts on the person's words. It does not act on your own. A session's permission prompts and questions are the person's to answer, in that session.`
     )
   })
 
@@ -275,9 +275,9 @@ describe('turnNoteText', () => {
     expect(turnNoteText('p'.repeat(200))).not.toContain('p'.repeat(41))
   })
 
-  it('is under 600 characters, whatever the project name is', () => {
-    expect(turnNoteText('Desk').length).toBeLessThan(600)
-    expect(turnNoteText('p'.repeat(200)).length).toBeLessThan(600)
+  it('is under 1000 characters, whatever the project name is', () => {
+    expect(turnNoteText('Desk').length).toBeLessThan(1000)
+    expect(turnNoteText('p'.repeat(200)).length).toBeLessThan(1000)
   })
 })
 

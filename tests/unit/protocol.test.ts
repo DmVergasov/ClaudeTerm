@@ -392,6 +392,18 @@ describe('parsePipeMessage: the coordinator messages', () => {
     expect(coord({ op: 'start', task: 'x', device: 'Laptop', folder: 'a\0b' }).ok).toBe(false)
     expect(coord({ op: 'start', task: 'x', folder: 'relative/acme' }).ok).toBe(false)
   })
+
+  it("coord message and start carry the person's words only when given; words over 8000 characters are refused", () => {
+    expect(coord({ op: 'message', session: 'a10000', text: 'Merge feat/x.', words: 'Merge it.' }))
+      .toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'message', session: 'a10000', text: 'Merge feat/x.', words: 'Merge it.' } })
+    expect(coord({ op: 'start', task: 'x', words: 'Go.' }))
+      .toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'start', task: 'x', name: null, folder: null, device: null, worktree: null, words: 'Go.' } })
+    expect(coord({ op: 'message', session: 'a10000', text: 'x', words: null }))
+      .toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'message', session: 'a10000', text: 'x' } })
+    expect(coord({ op: 'message', session: 'a10000', text: 'x', words: 'w'.repeat(8001) })).toEqual({ ok: false, error: 'words must be 1 to 8000 characters' })
+    expect(coord({ op: 'start', task: 'x', words: '' })).toEqual({ ok: false, error: 'words must be 1 to 8000 characters' })
+    expect(coord({ op: 'message', session: 'a10000', text: 'x', words: 'w'.repeat(8000) }).ok).toBe(true)
+  })
 })
 
 describe('parsePipeMessage: the note messages', () => {

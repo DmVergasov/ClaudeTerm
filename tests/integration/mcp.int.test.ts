@@ -203,4 +203,19 @@ describe('show_image MCP server', () => {
     expect(coordMsgs).toEqual([{ v: 1, type: 'coord', tabId: TAB, op: 'message', session: 'a10000', text: 'Fix the parser.' }])
     await client.close()
   })
+
+  it("forwards message_session with the person's words as they are given", async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [bundle],
+      cwd: work,
+      env: { ...(process.env as Record<string, string>), CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }
+    })
+    const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
+    await client.connect(transport)
+    const before = coordMsgs.length
+    await client.callTool({ name: 'message_session', arguments: { session: 'a10000', text: 'Merge feat/x.', words: 'Merge it.' } })
+    expect(coordMsgs.slice(before)).toEqual([{ v: 1, type: 'coord', tabId: TAB, op: 'message', session: 'a10000', text: 'Merge feat/x.', words: 'Merge it.' }])
+    await client.close()
+  })
 })

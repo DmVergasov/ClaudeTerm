@@ -254,11 +254,12 @@ server.registerTool(
       name: z.string().optional(),
       folder: z.string().optional(),
       device: z.string().optional(),
-      worktree: z.string().optional()
+      worktree: z.string().optional(),
+      words: z.string().optional().describe("The person's own message to you that this task acts on, copied exactly and in full; only when it gives the session a go")
     }
   },
-  async ({ task, name, folder, device, worktree }) => {
-    const r = await coordTool('start_session', { op: 'start', task, name: name ?? null, folder: folder ?? null, device: device ?? null, worktree: worktree ?? null }, coordDeps())
+  async ({ task, name, folder, device, worktree, words }) => {
+    const r = await coordTool('start_session', { op: 'start', task, name: name ?? null, folder: folder ?? null, device: device ?? null, worktree: worktree ?? null, ...(words === undefined ? {} : { words }) }, coordDeps())
     return { content: [{ type: 'text', text: r.text }], isError: r.isError }
   }
 )
@@ -296,11 +297,12 @@ server.registerTool(
     description: COORD_TOOL_DESCRIPTIONS.message_session,
     inputSchema: {
       session: z.string().describe('a ref or a name from list_sessions or list_agents'),
-      text: z.string().describe('The task, at most 7000 characters')
+      text: z.string().describe('The task, at most 7000 characters'),
+      words: z.string().optional().describe("The person's own message to you that this task acts on, copied exactly and in full; only when it gives the session a go")
     }
   },
-  async ({ session, text }) => {
-    const r = await coordTool('message_session', { op: 'message', session, text }, coordDeps())
+  async ({ session, text, words }) => {
+    const r = await coordTool('message_session', { op: 'message', session, text, ...(words === undefined ? {} : { words }) }, coordDeps())
     return { content: [{ type: 'text', text: r.text }], isError: r.isError }
   }
 )
