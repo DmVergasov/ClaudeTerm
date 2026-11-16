@@ -312,6 +312,7 @@ export class MailHub {
       group.messages.push({
         id: r.id,
         from: this.endView(r.from),
+        side: this.endKey(r.from) === ends[0].key ? 'a' : 'b',
         sentAt: r.sentAt,
         text: r.text,
         delivered: r.delivered,

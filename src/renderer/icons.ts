@@ -3,7 +3,8 @@
 export const ICON_NAMES = [
   'search', 'plus', 'chevron-down', 'chevron-right', 'branch', 'terminal', 'image', 'file-diff',
   'file-text', 'note', 'mail', 'history', 'settings', 'panel-left', 'panel-top', 'x', 'bell',
-  'check', 'play', 'volume', 'music', 'message-square', 'paperclip', 'arrow-up', 'users', 'plug', 'arrow-left'
+  'check', 'play', 'volume', 'music', 'message-square', 'paperclip', 'arrow-up', 'users', 'plug', 'arrow-left',
+  'move-horizontal'
 ] as const
 
 export type IconName = (typeof ICON_NAMES)[number]
@@ -36,7 +37,8 @@ const SHAPES: Record<IconName, string> = {
   paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>',
   'arrow-up': '<path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>',
-  'arrow-left': '<path d="m12 19-7-7 7-7"></path><path d="M19 12H5"></path>'
+  'arrow-left': '<path d="m12 19-7-7 7-7"></path><path d="M19 12H5"></path>',
+  'move-horizontal': '<path d="m18 8 4 4-4 4"></path><path d="M2 12h20"></path><path d="m6 8-4 4 4 4"></path>'
 }
 
 /** an inline SVG of the icon, `size` px square; hidden from screen readers, the caller names the control */

@@ -62,6 +62,8 @@ export interface MailEndView {
 export interface MailMessageView {
   id: string
   from: MailEndView
+  /** the end of the conversation the message came from */
+  side: 'a' | 'b'
   sentAt: number
   text: string
   delivered: boolean

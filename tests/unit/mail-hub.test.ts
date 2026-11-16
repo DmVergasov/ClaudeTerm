@@ -795,6 +795,21 @@ describe('MailHub unread and conversations', () => {
     expect(hub.conversations(null).map(c => c.mine)).toEqual([null])
   })
 
+  it('side is the end each message came from, though the end has another name now', () => {
+    const { hub, store } = setup()
+    store.add(record({ from: CALLER, to: MAC, text: 'from the caller' }))
+    store.add(record({ from: MAC, to: CALLER, text: 'from the mac', sentAt: NOW + 1000 }))
+    // the caller's tab was renamed since its first message: the conversation names its end by the newest name
+    store.add(record({ from: { ...CALLER, name: 'renamed · Desktop' }, to: MAC, text: 'renamed', sentAt: NOW + 2000 }))
+    const [conv] = hub.conversations(null)
+    const callerSide = conv.a.name === 'renamed · Desktop' ? 'a' : 'b'
+    const macSide = callerSide === 'a' ? 'b' : 'a'
+    expect(conv.messages.map(m => [m.text, m.side])).toEqual([['from the caller', callerSide], ['from the mac', macSide], ['renamed', callerSide]])
+    // asked for one end: mine is the side of that end's messages
+    const [asMac] = hub.conversations({ device: DEV_B, session: SES_MAC })
+    expect(asMac.messages.filter(m => m.side === asMac.mine).map(m => m.text)).toEqual(['from the mac'])
+  })
+
   it('names a device with no known name after the address, without its " #n"', () => {
     const { hub, store } = setup()
     const other: MailAddress = { device: DEV_C, session: SES_OFF, name: 'laptop-tab · Laptop #2' }

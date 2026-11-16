@@ -1860,7 +1860,9 @@ async function boot(): Promise<void> {
   )
   mailPanel = new MailPanel(sidePanel.bodies.messages, sidePanel.tools.messages, sidePanel, {
     conversations: (tabId) => ct.getMailConversations(tabId),
-    markRead: (ids) => ct.markMailRead(ids)
+    markRead: (ids) => ct.markMailRead(ids),
+    openLink: (url) => ct.openExternal(url),
+    copyText: (text) => ct.writeClipboardText(text)
   })
   sessionsPanel = new SessionsPanel(sidePanel.bodies.sessions, sidePanel, {
     openSettings: () => ct.openSettingsWindow('agent-messages'),
