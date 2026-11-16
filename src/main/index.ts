@@ -83,7 +83,7 @@ import { claudeProjectsDir, SessionHistory } from './session-history'
 import { ChatHub, WINDOW_VIEWER } from './chat/chat-hub'
 import { reportItemOf } from './chat/report-item'
 import { ChatSessions } from './chat/chat-sessions'
-import { isHandoffLine, openInTerminal, type HandoffDeps } from './chat/terminal-handoff'
+import { isHandoffLine, openInTerminal, typeIntoPrompt, type HandoffDeps } from './chat/terminal-handoff'
 import { chatPromptState, planChatResume, routeChatResume, type ChatResumeDeps } from './chat/chat-routing'
 import { scaleChatImage } from './chat/chat-image'
 import { isAgentText, isChatAnswer, isChatSend, isHeadsUpAction, isHeadsUpAskText, isPermissionMode } from './chat/chat-guards'
@@ -642,6 +642,11 @@ function bootstrap(): void {
       pushToMembers(tabId, 'status', { main: status.main, agents: status.agents, background: status.background })
     }, 50))
   }
+  /** a timer the hub cancels when the person's answer comes first */
+  const later = (ms: number, run: () => void): (() => void) => {
+    const t = setTimeout(run, ms)
+    return () => clearTimeout(t)
+  }
   const statusHub: StatusHub = new StatusHub({
     now: () => Date.now(),
     readMeta: (tabId, agentId) => {
@@ -1135,7 +1140,12 @@ function bootstrap(): void {
     setChoice: (id, on) => tabs.setRemoteControl(id, on),
     reportedId: (id) => statusHub.remoteId(id),
     forgetReported: (id) => statusHub.forgetRemote(id),
-    onChange: statusSoon
+    onChange: statusSoon,
+    type: (id, line, onWait, cancelled) => typeIntoPrompt(id, line, commandWord(line), handoffDeps, onWait, cancelled),
+    name: (id) => remoteName(tabTitleOf(tabs.get(id)!)),
+    title: (id) => tabTitleOf(tabs.get(id)!),
+    toast: (text) => toast(text),
+    later
   })
   const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
   const noteReplies: NoteReplyDeps = { isClaudeTab, session: noteHub, project: projectNotes }
@@ -3163,6 +3173,7 @@ function bootstrap(): void {
   // ---- chats: a call for a tab without a chat does nothing; chatSend answers with the hub's reason, as a tab without one has no conversation
   /** a local Claude tab: the only kind that has a chat */
   const isLocalClaudeTab = (tabId: unknown): tabId is string => isId(tabId) && tabs.get(tabId)?.kind === 'claude'
+  ipcMain.on(IPC.remoteControlSet, (_e, tabId: unknown, on: unknown) => { if (isLocalClaudeTab(tabId) && isFlag(on)) remoteControl.set(tabId, on) })
   // ---- project coordinators: the window's calls; each checks its tab (and the session's tab) is a local Claude tab
   /** the answer to a call whose request does not pass its check */
   const coordRefused: CoordResult = { ok: false, error: COORD_REFUSED }

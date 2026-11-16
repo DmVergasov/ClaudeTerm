@@ -13,7 +13,11 @@ function world(o: { view?: 'terminal' | 'chat'; kind?: RemoteAccountKind; env?: 
     env: o.env ?? {},
     choice: o.choice ?? false,
     reported: null as string | null,
-    changes: 0
+    changes: 0,
+    typed: [] as string[],
+    toasts: [] as string[],
+    timers: [] as { ms: number; run: () => void; on: boolean }[],
+    typing: null as null | { wait: (waiting: boolean) => void; done: (ok: boolean) => void; cancelled: () => boolean }
   }
   const deps: RemoteControlDeps = {
     tab: (id) => (id === TAB ? w.tab : null),
@@ -23,7 +27,12 @@ function world(o: { view?: 'terminal' | 'chat'; kind?: RemoteAccountKind; env?: 
     setChoice: (_id, on) => { w.choice = on },
     reportedId: () => w.reported,
     forgetReported: () => { w.reported = null },
-    onChange: () => { w.changes++ }
+    onChange: () => { w.changes++ },
+    type: (_id, line, onWait, cancelled) => new Promise<boolean>((done) => { w.typed.push(line); w.typing = { wait: onWait, done, cancelled } }),
+    name: () => 'work',
+    title: () => 'work',
+    toast: (text) => { w.toasts.push(text) },
+    later: (ms, run) => { const t = { ms, run, on: true }; w.timers.push(t); return () => { t.on = false } }
   }
   const hub = new RemoteControlHub(deps)
   const report = (id: string | null): void => {
@@ -31,7 +40,16 @@ function world(o: { view?: 'terminal' | 'chat'; kind?: RemoteAccountKind; env?: 
     w.reported = id
     if (previous !== id) hub.reported(TAB, id, previous)
   }
-  return { hub, w, report }
+  /** the typed line's answer, then the microtasks that carry it into the hub */
+  const typedOk = async (ok = true): Promise<void> => {
+    w.typing!.done(ok)
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+  }
+  /** the connect timers that were started and not cancelled run now */
+  const fire = (): void => {
+    for (const t of w.timers.splice(0)) if (t.on) t.run()
+  }
+  return { hub, w, report, typedOk, fire }
 }
 
 describe('RemoteControlHub: terminal reports', () => {
@@ -81,7 +99,142 @@ describe('RemoteControlHub: terminal reports', () => {
     const before = w.changes
     hub.processStarted(TAB)
     expect(w.reported).toBeNull()
-    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+    expect(hub.state(TAB)).toEqual({ kind: 'connecting' })
     expect(w.changes).toBeGreaterThan(before)
+  })
+})
+
+describe('RemoteControlHub: the terminal switch', () => {
+  it('on types /remote-control with the name and connects until the id comes', async () => {
+    const { hub, w, report, typedOk, fire } = world()
+    hub.set(TAB, true)
+    expect(w.typed).toEqual(['/remote-control work'])
+    expect(w.choice).toBe(true)
+    expect(hub.state(TAB)).toEqual({ kind: 'connecting' })
+    await typedOk()
+    report(ID)
+    expect(hub.state(TAB)).toEqual({ kind: 'on', url: `https://claude.ai/code/${ID}` })
+    fire()
+    expect(w.toasts).toEqual([])
+  })
+  it('while the prompt holds a draft, the state says it waits for an empty prompt', () => {
+    const { hub, w } = world()
+    hub.set(TAB, true)
+    w.typing!.wait(true)
+    expect(hub.state(TAB)).toEqual({ kind: 'connecting', waits: true })
+    w.typing!.wait(false)
+    expect(hub.state(TAB)).toEqual({ kind: 'connecting' })
+  })
+  it('30 s after the line is typed without an id: off, the toast, and the choice cleared', async () => {
+    const { hub, w, typedOk, fire } = world()
+    hub.set(TAB, true)
+    await typedOk()
+    expect(w.timers.map((t) => t.ms)).toEqual([30_000])
+    fire()
+    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+    expect(w.choice).toBe(false)
+    expect(w.toasts).toEqual(['Remote Control did not connect in work: see the terminal'])
+  })
+  it('an id that comes after the timeout turns the tab on and sets the choice again', async () => {
+    const { hub, w, report, typedOk, fire } = world()
+    hub.set(TAB, true)
+    await typedOk()
+    fire()
+    report(ID)
+    expect(hub.state(TAB)).toMatchObject({ kind: 'on' })
+    expect(w.choice).toBe(true)
+  })
+  it('a prompt that never came up: off and the choice cleared, with no toast of the hub’s own', async () => {
+    const { hub, w, typedOk } = world()
+    hub.set(TAB, true)
+    await typedOk(false)
+    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+    expect(w.choice).toBe(false)
+    expect(w.toasts).toEqual([])
+  })
+  it('a second on while one waits types nothing more', () => {
+    const { hub, w } = world()
+    hub.set(TAB, true)
+    hub.set(TAB, true)
+    expect(w.typed).toEqual(['/remote-control work'])
+  })
+  it('off on a connected tab types /remote-control and stays on, leaving, until the report without an id', async () => {
+    const { hub, w, report, typedOk } = world()
+    report(ID)
+    hub.set(TAB, false)
+    expect(w.typed).toEqual(['/remote-control'])
+    expect(w.choice).toBe(false)
+    expect(hub.state(TAB)).toEqual({ kind: 'on', url: `https://claude.ai/code/${ID}`, leaving: true })
+    await typedOk()
+    report(null)
+    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+    expect(w.choice).toBe(false)
+  })
+  it('30 s after the off line, an id still there means the person kept Remote Control: the choice is set again', async () => {
+    const { hub, w, report, typedOk, fire } = world()
+    report(ID)
+    hub.set(TAB, false)
+    await typedOk()
+    fire()
+    expect(w.choice).toBe(true)
+    expect(hub.state(TAB)).toEqual({ kind: 'on', url: `https://claude.ai/code/${ID}` })
+  })
+  it('off while connecting types nothing and stops connecting', () => {
+    const { hub, w } = world()
+    hub.set(TAB, true)
+    hub.set(TAB, false)
+    expect(w.typed).toEqual(['/remote-control work'])
+    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+    expect(w.choice).toBe(false)
+  })
+  it('off while the on line still waits for an empty prompt: the hub tells the typing to stop', () => {
+    const { hub, w } = world()
+    hub.set(TAB, true)
+    expect(w.typing!.cancelled()).toBe(false)
+    hub.set(TAB, false)
+    expect(w.typing!.cancelled()).toBe(true)
+    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+  })
+  it('on while the id is reported drops an off line that is still open: leaving goes at once, its timer stops', async () => {
+    const { hub, w, report, typedOk } = world()
+    report(ID)
+    hub.set(TAB, false)
+    await typedOk()
+    expect(hub.state(TAB)).toMatchObject({ kind: 'on', leaving: true })
+    hub.set(TAB, true)
+    expect(hub.state(TAB)).toEqual({ kind: 'on', url: `https://claude.ai/code/${ID}` })
+    expect(w.timers.map((t) => t.on)).toEqual([false])
+    expect(w.choice).toBe(true)
+  })
+  it('a tab started with its choice on connects: a report without an id meanwhile keeps it connecting and keeps the choice', () => {
+    const { hub, w, report } = world({ choice: true })
+    w.reported = 'session_old' // what the old process reported
+    hub.processStarted(TAB)
+    expect(w.reported).toBeNull()
+    expect(hub.state(TAB)).toEqual({ kind: 'connecting' })
+    expect(w.timers.map((t) => t.ms)).toEqual([30_000])
+    hub.reported(TAB, null, 'session_old') // a late report of the old id going away
+    report(null)
+    expect(hub.state(TAB)).toEqual({ kind: 'connecting' })
+    expect(w.choice).toBe(true)
+    report(ID)
+    expect(hub.state(TAB)).toMatchObject({ kind: 'on' })
+  })
+  it('a launch that does not connect in 30 s: off, the toast, the choice cleared', () => {
+    const { hub, w, fire } = world({ choice: true })
+    hub.processStarted(TAB)
+    fire()
+    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+    expect(w.choice).toBe(false)
+    expect(w.toasts).toEqual(['Remote Control did not connect in work: see the terminal'])
+  })
+  it('on in a chat-view tab, or in an unavailable one, types nothing', () => {
+    const chat = world({ view: 'chat' })
+    chat.hub.set(TAB, true)
+    expect(chat.w.typed).toEqual([])
+    expect(chat.w.choice).toBe(true)
+    const token = world({ kind: 'token' })
+    token.hub.set(TAB, true)
+    expect([token.w.typed, token.w.choice]).toEqual([[], false])
   })
 })

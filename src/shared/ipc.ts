@@ -29,6 +29,8 @@ export const IPC = {
   /** how many tabs need the user: the app icon shows it */
   attentionCount: 'attention:count',
   tabsRename: 'tabs:rename',
+  /** the person's Remote Control switch of a local Claude tab: on or off */
+  remoteControlSet: 'remote-control:set',
   tabsReorder: 'tabs:reorder',
   tabsRestart: 'tabs:restart',
   tabsSwitchAccount: 'tabs:switch-account',
@@ -331,6 +333,8 @@ export interface CtApi {
   /** how many tabs need the user now: the Dock icon, the launcher or the taskbar button shows it */
   setAttentionCount(count: number): void
   renameTab(tabId: string, title: string | null): void
+  /** the Remote Control switch of a local Claude tab: on types /remote-control, off leaves it */
+  remoteControlSet(tabId: string, on: boolean): void
   reorderTabs(ids: string[]): void
   /** `live` also restarts a tab whose process is still running */
   restartTab(tabId: string, live?: boolean): void

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isHandoffLine, openInTerminal, type HandoffDeps } from '../../src/main/chat/terminal-handoff'
+import { isHandoffLine, openInTerminal, typeIntoPrompt, type HandoffDeps } from '../../src/main/chat/terminal-handoff'
 import type { TabView } from '../../src/shared/chat'
 import type { PromptState } from '../../src/shared/ipc'
 
@@ -39,6 +39,41 @@ function fakeDeps(states: PromptState[], switched = true) {
 }
 
 const writes = (calls: string[]): string[] => calls.filter((c) => c.startsWith('write:'))
+
+describe('typeIntoPrompt', () => {
+  it('types once the prompt is empty, without switching the view, and notes nothing', async () => {
+    const { deps, calls, notes, views } = fakeDeps(['draft', 'empty'])
+    const waits: boolean[] = []
+    expect(await typeIntoPrompt(TAB, '/remote-control work', '/remote-control', deps, (w) => waits.push(w))).toBe(true)
+    expect(views).toEqual([])
+    expect(writes(calls)).toEqual(['write:/remote-control work', 'write:\r'])
+    expect(notes).toEqual([])
+    expect(waits).toEqual([true, false])
+  })
+  it('a prompt that never comes up: false after 30 s, with the handoff’s note and toast', async () => {
+    const { deps, notes, toasts } = fakeDeps(['none'])
+    expect(await typeIntoPrompt(TAB, '/remote-control', '/remote-control', deps)).toBe(false)
+    expect(notes).toEqual(["Could not run /remote-control: Claude Code's prompt did not come up"])
+    expect(toasts).toEqual(["Could not run /remote-control: Claude Code's prompt did not come up"])
+  })
+  it('one line at a time per tab, whichever function types it', async () => {
+    const slow = fakeDeps(['draft', 'draft', 'empty'])
+    const first = openInTerminal(TAB, '/config', '/config', slow.deps)
+    expect(await typeIntoPrompt(TAB, '/remote-control', '/remote-control', fakeDeps(['empty']).deps)).toBe(false)
+    await first
+  })
+  it('cancelled before the prompt empties: nothing is written, and it resolves false', async () => {
+    const { deps, calls, notes } = fakeDeps(['draft', 'empty'])
+    let cancelled = false
+    deps.sleep = async (ms) => {
+      calls.push(`sleep:${ms}`)
+      cancelled = true
+    }
+    expect(await typeIntoPrompt(TAB, '/remote-control work', '/remote-control', deps, undefined, () => cancelled)).toBe(false)
+    expect(writes(calls)).toEqual([])
+    expect(notes).toEqual([])
+  })
+})
 
 describe('openInTerminal', () => {
   it('switches to the terminal, waits through a prompt that is not empty, then types the line and Enter', async () => {
