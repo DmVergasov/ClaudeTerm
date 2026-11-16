@@ -42,7 +42,7 @@ import { autoUpdater } from 'electron-updater'
 import { statusRefreshInterval, writeClaudeTabFiles } from './claude-tab-settings'
 import { applyEnvPatch, buildChildEnv } from './child-env'
 import { initDataDir, resolvePipeName } from './data-dir'
-import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isFileLinkPaths, isOptionalLineNo, isCoordKey, isCoordStartRequest, isCoordTaskText } from './ipc-guards'
+import { isAbsPath, isAccountRef, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isDropPaths, isFolderInput, isGeneration, isHash, isId, isIdList, isFlag, isImageAction, isLineNo, isLineSpan, isLocalDropPaths, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isLineEditKey, isPromptInput, isProjectKeyArg, isPtyData, isPtySize, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabCount, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isFileLinkPaths, isOptionalLineNo, isCoordKey, isCoordStartRequest, isCoordTaskText } from './ipc-guards'
 import { NOT_RUNNING, type ReviewUpdate } from '../shared/review'
 import { EditLedger } from './edit-ledger'
 import { launchEditor, nodeRevealDeps, revealInFolder, spawnDetached } from './editor-launch'
@@ -1768,6 +1768,8 @@ function bootstrap(): void {
       }
       clearAttention(tabId)
     }
+    // Home or End moves the prompt's cursor: the words record cannot follow it, so it marks the draft unknown
+    else if (isLineEditKey(data) && tabs.get(tabId)) personInput.keys(tabId, data, Date.now(), tabWaits.get(tabId).prompt !== null)
     if (from === null) applySize(tabId, sizes.claim(tabId, null))
     if (tabId === autoTabId && isUserInput(data)) autoTabId = null
     // scrolling through the reply with the mouse or PgUp is reading it, it puts nothing in the prompt

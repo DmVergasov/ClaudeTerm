@@ -5,20 +5,23 @@ export const SUBMITS_KEPT = 64
 /** the readings one draft may have at most; past that only the longest and the empty one are kept */
 export const READINGS_MAX = 8
 
-/** one Enter (or composer Send) the window gave a tab: what the prompt held, in each reading of the keys, or null when a key the record does not follow changed it */
+/** one Enter (or composer Send) the window gave a tab: what the prompt held in each reading of the keys, without the command lines; null when a key the record does not follow changed it, or when no reading is left */
 export interface Submit {
   at: number
   texts: readonly string[] | null
-  /** the person wrote something: every reading holds text, or the draft grew past the longest message that can be relayed */
+  /** the person wrote something: a reading holds text, or the prompt was typed into (or pasted into) while its readings are unknown, or it grew past the longest message that can be relayed. A dialog answer the person wrote is texts null with wrote true */
   wrote: boolean
 }
 
-/** a prompt's draft: its readings (null when unknown), whether a bracketed paste is open, and whether it grew past the longest message;
- * and, while a dialog shows, whether the person wrote in it, and the keys of a split marker that the next call completes */
+/** a prompt's draft: its readings (null when unknown), whether a bracketed paste is open and whether it began in a dialog, whether it grew past the longest message,
+ * whether the person typed or pasted text into it since its last submit;
+ * and, while a dialog shows, whether the person wrote in it, and the keys of a split marker or a CR that the next call completes */
 interface Draft {
   readings: string[] | null
   pasting: boolean
+  pasteDialog: boolean
   overflow: boolean
+  typed: boolean
   dialogWrote: boolean
   carry: string
 }
@@ -76,14 +79,23 @@ export class PersonInput {
    */
   keys(tabId: string, data: string, at: number, dialog = false): void {
     const d = this.draftOf(tabId)
+    // a key of the draft ends the dialog's answer: an Enter in a later dialog pushes nothing for it
+    if (!dialog) d.dialogWrote = false
+    // a paste keeps the mode it began in: a piece of it in the other mode leaves the draft unknown
+    if (d.pasting && d.pasteDialog !== dialog) {
+      d.readings = null
+      d.dialogWrote = true
+      d.pasteDialog = dialog
+    }
     const input = d.carry + data
     d.carry = ''
     let i = 0
     while (i < input.length) {
       if (d.pasting) {
         const end = input.indexOf(PASTE_END, i)
-        // the end marker may be split across two calls: the piece that begins it waits for the next call
-        const stop = end === -1 ? input.length - trailingPrefix(input, i, PASTE_END, 1) : end
+        // the end marker may be split across two calls, and a CR at the end may be the first half of a CRLF: the piece that begins either waits for the next call
+        const held = end === -1 ? Math.max(trailingPrefix(input, i, PASTE_END, 1), input.endsWith('\r') ? 1 : 0) : 0
+        const stop = end === -1 ? input.length - held : end
         this.pasted(d, input.slice(i, stop).replace(/\r\n?/g, '\n'), dialog)
         if (end === -1) {
           d.carry = input.slice(stop)
@@ -96,6 +108,7 @@ export class PersonInput {
       }
       if (input.startsWith(PASTE_START, i)) {
         d.pasting = true
+        d.pasteDialog = dialog
         i += PASTE_START.length
         continue
       }
@@ -135,6 +148,8 @@ export class PersonInput {
         i++
       } else {
         const ch = String.fromCodePoint(input.codePointAt(i)!)
+        // a printable character other than a digit: a digit alone may only answer a menu
+        if (!/^[0-9]$/.test(ch)) d.typed = true
         this.typeChar(d, ch)
         i += ch.length
       }
@@ -169,6 +184,7 @@ export class PersonInput {
       if (text !== '') d.dialogWrote = true
       return
     }
+    if (text !== '') d.typed = true
     this.appendText(d, text)
     this.settle(d)
   }
@@ -193,7 +209,7 @@ export class PersonInput {
   private draftOf(tabId: string): Draft {
     let d = this.drafts.get(tabId)
     if (d === undefined) {
-      d = { readings: [''], pasting: false, overflow: false, dialogWrote: false, carry: '' }
+      d = { readings: [''], pasting: false, pasteDialog: false, overflow: false, typed: false, dialogWrote: false, carry: '' }
       this.drafts.set(tabId, d)
     }
     return d
@@ -251,13 +267,16 @@ export class PersonInput {
       }
     }
     if (r === null || !r.every((t) => t.trim() === '')) {
-      // a command line (Claude Code's bash mode, or a slash command) is not a message the coordinator can relay
-      const command = r !== null && r.every((t) => /^[!/]/.test(t.trimStart()))
-      this.push(tabId, { at, texts: command ? null : r, wrote: d.overflow || (r !== null && r.every((t) => t.trim() !== '')) })
+      // a command line (Claude Code's bash mode, or a slash command) is not a message the coordinator can relay: each reading that is one is dropped
+      const kept = r === null ? null : r.filter((t) => !/^[!/]/.test(t.trimStart()))
+      const texts = kept === null || kept.length === 0 ? null : kept
+      // with unknown readings, what was typed or pasted since the last submit says whether the person wrote
+      this.push(tabId, { at, texts, wrote: d.overflow || (r === null ? d.typed : r.every((t) => t.trim() !== '')) })
     }
     d.readings = ['']
     d.pasting = false
     d.overflow = false
+    d.typed = false
   }
 
   private push(tabId: string, s: Submit): void {

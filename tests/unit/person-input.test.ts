@@ -35,7 +35,7 @@ describe('PersonInput', () => {
     p.keys('t1', 'Merge\x1b[D\r', 1)
     p.keys('t1', 'ok\r', 2)
     expect(p.submits('t1')).toEqual([
-      { at: 1, texts: null, wrote: false },
+      { at: 1, texts: null, wrote: true },
       { at: 2, texts: ['ok'], wrote: true }
     ])
   })
@@ -50,8 +50,8 @@ describe('PersonInput', () => {
     p.keys('t2', '\r', 2)
     p.keys('t3', 'ab\x03', 1)
     p.keys('t3', '\r', 2)
-    expect(p.submits('t2')).toEqual([{ at: 2, texts: null, wrote: false }])
-    expect(p.submits('t3')).toEqual([{ at: 2, texts: null, wrote: false }])
+    expect(p.submits('t2')).toEqual([{ at: 2, texts: null, wrote: true }])
+    expect(p.submits('t3')).toEqual([{ at: 2, texts: null, wrote: true }])
   })
 
   it('a digit typed into an empty prompt has two readings, with it and without it', () => {
@@ -135,14 +135,14 @@ describe('PersonInput', () => {
     ])
   })
 
-  it('a command line (bash mode or a slash command) backs no prompt, and a line whose readings are not all commands keeps them', () => {
+  it('a command line (bash mode or a slash command) backs no prompt, and a line with readings that are not commands keeps those', () => {
     const p = new PersonInput()
     p.keys('t1', '!git push --force\r', 1)
     p.keys('t2', '/model\r', 2)
     p.keys('t3', '1/2 done\r', 3)
     expect(p.submits('t1')).toEqual([{ at: 1, texts: null, wrote: true }])
     expect(p.submits('t2')).toEqual([{ at: 2, texts: null, wrote: true }])
-    expect(p.submits('t3')).toEqual([{ at: 3, texts: ['1/2 done', '/2 done'], wrote: true }])
+    expect(p.submits('t3')).toEqual([{ at: 3, texts: ['1/2 done'], wrote: true }])
   })
 
   it('a paste whose end marker is split across two calls is one text', () => {
@@ -164,7 +164,7 @@ describe('PersonInput', () => {
     const p = new PersonInput()
     p.keys('t', 'a\x1b[2', 1)
     p.keys('t', 'Z\r', 2)
-    expect(p.submits('t')).toEqual([{ at: 2, texts: null, wrote: false }])
+    expect(p.submits('t')).toEqual([{ at: 2, texts: null, wrote: true }])
   })
 
   it('many leading digits: the readings keep the longest one and the one with every digit an answer, and the text is still known', () => {
@@ -173,5 +173,62 @@ describe('PersonInput', () => {
     const [s] = p.submits('t')
     expect(s!.texts).toEqual(expect.arrayContaining(['123456789 is the id', ' is the id']))
     expect(s!.wrote).toBe(true)
+  })
+
+  it('a command line is dropped reading by reading: the readings that are not commands are kept, and a line of only a command has no text', () => {
+    const p = new PersonInput()
+    p.keys('t1', '1!git push --force\r', 1)
+    p.keys('t2', '!git push\r', 2)
+    expect(p.submits('t1')).toEqual([{ at: 1, texts: ['1!git push --force'], wrote: true }])
+    expect(p.submits('t2')).toEqual([{ at: 2, texts: null, wrote: true }])
+  })
+
+  it('a typed prompt edited with an arrow key is a submit the person wrote; history recall alone is not, and a digit alone is not', () => {
+    const p = new PersonInput()
+    p.keys('t1', 'ab\x1b[Dc\r', 1)
+    p.keys('t2', '\x1b[A\r', 2)
+    p.keys('t3', '1\x1b[A\r', 3)
+    expect(p.submits('t1')).toEqual([{ at: 1, texts: null, wrote: true }])
+    expect(p.submits('t2')).toEqual([{ at: 2, texts: null, wrote: false }])
+    expect(p.submits('t3')).toEqual([{ at: 3, texts: null, wrote: false }])
+  })
+
+  it('a pasted text counts as typed: a paste edited with an arrow key is a submit the person wrote', () => {
+    const p = new PersonInput()
+    p.keys('t', '\x1b[200~Merge it\x1b[201~\x1b[D\r', 1)
+    expect(p.submits('t')).toEqual([{ at: 1, texts: null, wrote: true }])
+  })
+
+  it('a paste begun in the draft and ended in a dialog leaves the draft unknown', () => {
+    const p = new PersonInput()
+    p.keys('t', 'Merge it ', 1000)
+    p.keys('t', '\x1b[200~pas', 2000)
+    p.keys('t', 'ted\x1b[201~', 3000, true)
+    p.keys('t', '\r', 4000)
+    expect(p.submits('t')).toEqual([{ at: 4000, texts: null, wrote: true }])
+  })
+
+  it('a paste begun in a dialog and continued in the draft leaves the draft unknown', () => {
+    const p = new PersonInput()
+    p.keys('t', 'Merge it', 1000)
+    p.keys('t', '\x1b[200~pas', 2000, true)
+    p.keys('t', 'ted\x1b[201~\r', 3000)
+    expect(p.submits('t')).toEqual([{ at: 3000, texts: null, wrote: true }])
+  })
+
+  it('dialogWrote is reset by a draft key: a dialog Enter after "no wait", Esc, a draft key and a digit pushes nothing', () => {
+    const p = new PersonInput()
+    p.keys('t', 'no wait', 1000, true)
+    p.keys('t', '\x1b', 2000, true)
+    p.keys('t', 'ok', 3000)
+    p.keys('t', '1\r', 4000, true)
+    expect(p.submits('t')).toEqual([])
+  })
+
+  it('a CR at the end of a pasted piece waits for the next piece, so a CRLF split across two calls is one line break', () => {
+    const p = new PersonInput()
+    p.keys('t', '\x1b[200~Merge it.\r', 1)
+    p.keys('t', '\nThen push.\x1b[201~\r', 2)
+    expect(p.submits('t')).toEqual([{ at: 2, texts: ['Merge it.\nThen push.'], wrote: true }])
   })
 })

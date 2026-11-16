@@ -78,7 +78,7 @@ function optionalText(v: unknown, max: number): string | undefined | null {
   return typeof v === 'string' && v.length >= 1 && v.length <= max && !/\p{Cc}/u.test(v) ? v : null
 }
 
-/** a words or context field that may be absent: undefined when absent, null when present but not a string of 1 to max characters; lines and tabs are allowed, the typed text strips the other control characters */
+/** a words or context field that may be absent: undefined when absent, null when present but not a string of 1 to max characters; lines and tabs are allowed, the typed text strips the other control characters, and text made only of whitespace or control characters is refused */
 function optionalWords(v: unknown, max: number): string | undefined | null {
   if (v === undefined) return undefined
   if (typeof v !== 'string' || v.length < 1 || v.length > max) return null

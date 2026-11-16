@@ -214,6 +214,12 @@ const READING_INPUT = /^(?:\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3}|\x1b\[[1456](
 /** a key that can change what a prompt holds: text, editing keys, history (arrows), a paste */
 export const isPromptInput = (data: string): boolean => isUserInput(data) && !READING_INPUT.test(data)
 
+// Home and End: a reading key for the view, but in a prompt they move the cursor, so the input record must hear them
+const LINE_EDIT_KEYS = /^(?:\x1b\[(?:1;\d+)?[HF]|\x1b\[[14](?:;\d+)?~|\x1bO[HF])+$/
+
+/** Home or End, which move the prompt's cursor: the person's-words record follows them, the attention does not */
+export const isLineEditKey = (data: string): boolean => LINE_EDIT_KEYS.test(data)
+
 // the MCP · Plugins panel's requests: names and text bounded as the panel types them; the shapes are those of shared/mcp.ts
 const MAX_MCP_TEXT = 65_536
 const MAX_MCP_NAMES = 20

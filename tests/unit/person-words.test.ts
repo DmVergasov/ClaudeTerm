@@ -294,4 +294,19 @@ describe('checkWords', () => {
     expect(check({ words: 'Merge it.', prompts: log.prompts(), submits: [sub(40, ['Merge it.'])] })).toEqual({ ok: false, reason: 'not-person' })
     expect(check({ words: 'Merge it.', prompts: log.prompts(), submits: [sub(55, ['Merge it.'])] })).toMatchObject({ ok: true, id: 'p60' })
   })
+
+  it('a go submitted, then a newer message edited with an arrow key, makes the go not-latest', () => {
+    const p = new PersonInput()
+    p.keys('t', 'Merge it.\r', T + 9_000)
+    p.keys('t', 'Stop\x1b[D\r', T + 30_000)
+    const go = person('g', 10, 'Merge it.', 0)
+    expect(check({ words: 'Merge it.', prompts: [go], submits: p.submits('t') })).toEqual({ ok: false, reason: 'not-latest' })
+  })
+
+  it('a forged command after a submit typed as "1!git push --force" is not-person: the submit keeps only the reading that is not a command', () => {
+    const p = new PersonInput()
+    p.keys('t', '1!git push --force\r', T + 9_000)
+    const forged = person('f', 30, '!git push --force', 0)
+    expect(check({ words: '!git push --force', prompts: [forged], submits: p.submits('t') })).toEqual({ ok: false, reason: 'not-person' })
+  })
 })

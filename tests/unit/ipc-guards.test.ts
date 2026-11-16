@@ -4,7 +4,7 @@ import { MAX_ADDRESS_LENGTH, MAX_DEVICE_NAME } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
-import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isCoordKey, isCoordStartRequest } from '../../src/main/ipc-guards'
+import { isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isLineEditKey, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isCoordKey, isCoordStartRequest } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -34,6 +34,11 @@ describe('ipc guards', () => {
   it('isPanelWidth accepts finite px in 0..4000 only', () => {
     for (const v of [0, 320, 640.5, 4000]) expect(isPanelWidth(v)).toBe(true)
     for (const v of [-1, 4001, NaN, Infinity, '320', null, undefined]) expect(isPanelWidth(v)).toBe(false)
+  })
+
+  it('isLineEditKey is Home or End, the keys that move a prompt cursor: no PgUp, mouse report, text or arrow', () => {
+    for (const k of ['\x1b[H', '\x1b[F', '\x1b[1~', '\x1b[4~', '\x1b[1;5H', '\x1bOH']) expect(isLineEditKey(k)).toBe(true)
+    for (const k of ['\x1b[5~', '\x1b[<0;10;5M', 'a', '\x1b[D']) expect(isLineEditKey(k)).toBe(false)
   })
 
   it('isUserInput ignores terminal-generated reports', () => {
