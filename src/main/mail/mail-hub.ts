@@ -319,7 +319,8 @@ export class MailHub {
         read: r.read,
         kind: kindOf(r),
         outcome: r.outcome ?? null,
-        reason: r.reason ?? null
+        reason: r.reason ?? null,
+        words: r.words !== undefined
       })
     }
     const out: MailConversationView[] = []

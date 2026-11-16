@@ -1,6 +1,6 @@
 import { kindOf, type MailAddress, type MailRecord } from '../../shared/mail'
 import { refOf, replaceControls } from './agent-directory'
-import { MESSAGE_WAKE_HEAD, PROGRESS_WAKE_HEAD, REPORT_WAKE_HEAD, TASK_WAKE_HEAD } from '../../shared/report-wake'
+import { MESSAGE_WAKE_HEAD, PERSON_WORDS_ANSWER, PERSON_WORDS_CHECKED, PERSON_WORDS_CONTEXT, PERSON_WORDS_HEAD, PERSON_WORDS_NOTE, PROGRESS_WAKE_HEAD, REPORT_WAKE_HEAD, TASK_WAKE_HEAD } from '../../shared/report-wake'
 
 /** the blocks of a wake text are separated by a blank line */
 const SEPARATOR = '\n\n'
@@ -81,6 +81,18 @@ function outcomeOf(r: MailRecord): string {
   if (r.outcome === 'failed') return `its task failed${reason}`
   if (r.outcome === 'stopped') return `its task was stopped by the user${reason}`
   return 'its task finished'
+}
+
+/**
+ * The text typed into a session for a task with the person's words: the person's block first, with the coordinator's answer it
+ * replies to when there is one, then the task's own block. The lines of the answer and of the words are quoted, so none of them
+ * can read as a head: only the lines under PERSON_WORDS_ANSWER are the person's.
+ */
+export function wordsText(r: MailRecord, senders: (a: MailAddress) => { folder: string | null; branch: string | null }): string {
+  const lines = [`${PERSON_WORDS_HEAD} ${replaceControls(r.from.name)} ${PERSON_WORDS_CHECKED}`, PERSON_WORDS_NOTE]
+  if (r.context !== undefined) lines.push(PERSON_WORDS_CONTEXT, quoted(r.context))
+  lines.push(PERSON_WORDS_ANSWER, quoted(r.words ?? ''))
+  return lines.join('\n') + SEPARATOR + block(r, senders(r.from))
 }
 
 /** the text with each line prefixed by "> ", an empty line as ">": no line of it starts a line of the header */

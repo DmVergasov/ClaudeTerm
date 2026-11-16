@@ -111,6 +111,22 @@ describe('checkMailRecord kinds', () => {
   it('refuses a progress note without a task id', () => {
     expect(checkMailRecord({ ...base, kind: 'progress', replyTo: null })).toBeNull()
   })
+
+  it("keeps a task with the person's words and the coordinator's answer before them, lines and all; only a task carries them", () => {
+    const t = { ...base, kind: 'task', project: 'acme', words: 'Merge it\ninto master.', context: 'Shall I merge feat/x?\n\nThe tests pass.' }
+    expect(checkMailRecord(t)).toEqual(t)
+    expect(checkMailRecord({ ...base, kind: 'task', words: 'Merge it.' })).toEqual({ ...base, kind: 'task', words: 'Merge it.' })
+    expect(checkMailRecord({ ...base, words: 'Merge it.' })).toEqual(base)
+  })
+
+  it('refuses words that are empty, not text or over 8000 characters, a context over 1500, and a context without words', () => {
+    expect(checkMailRecord({ ...base, kind: 'task', words: '' })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'task', words: 42 })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'task', words: 'x'.repeat(8001) })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'task', words: 'x'.repeat(8000) })).not.toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'task', words: 'Go.', context: 'x'.repeat(1501) })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'task', context: 'Shall I?' })).toBeNull()
+  })
 })
 
 describe('mergeMail', () => {

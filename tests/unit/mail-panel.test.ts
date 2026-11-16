@@ -17,4 +17,9 @@ describe('kindLabel', () => {
   it('kindLabel names a progress note', () => {
     expect(kindLabel({ kind: 'progress', outcome: null, reason: null })).toBe('Progress')
   })
+
+  it("kindLabel names a task with the person's words", () => {
+    expect(kindLabel({ kind: 'task', outcome: null, reason: null, words: true })).toBe('Task · your words')
+    expect(kindLabel({ kind: 'task', outcome: null, reason: null, words: false })).toBe('Task')
+  })
 })

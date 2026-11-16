@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { roleBlock } from '../../src/main/coordinator/session-text'
-import { wakeText } from '../../src/main/mail/wake-text'
+import { wakeText, wordsText } from '../../src/main/mail/wake-text'
 import type { MailRecord } from '../../src/shared/mail'
-import { outcomeText, PROGRESS_WAKE_HEAD, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD, splitWake, WAKE_HEADS } from '../../src/shared/report-wake'
+import { outcomeText, PERSON_WORDS_NOTE, PROGRESS_WAKE_HEAD, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD, splitPersonWords, splitWake, WAKE_HEADS } from '../../src/shared/report-wake'
 
 const COORD = { device: null, session: 'c0000000-0000-4000-8000-000000000001', name: 'coord · Desktop' }
 const PARSER = { device: null, session: 'a1000000-0000-4000-8000-000000000002', name: 'parser · Desktop' }
@@ -95,6 +95,27 @@ describe('splitWake reads the role note of the coordinator', () => {
     const message: MailRecord = { v: 1, id: '2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a', from: DOCS, to: COORD, text: 'hello from docs', replyTo: null, sentAt: 1, delivered: false, read: false }
     const body = 'You coordinate acme in ClaudeTerm: no sessions are attached yet.'
     expect(splitWake([roleBlock(body), wakeText([message], where)].join('\n\n'))).toEqual({ reports: [], notes: [body], rest: wakeText([message], where) })
+  })
+})
+
+describe("splitPersonWords reads the text typed for a task with the person's words", () => {
+  const words = (over: Partial<MailRecord> = {}): MailRecord => ({
+    v: 1, id: '4f5a6b7c-8d9e-4f0a-9b1c-2d3e4f5a6b7c', from: COORD, to: PARSER, text: 'Merge feat/x into master\nand push.', replyTo: null, sentAt: 5,
+    delivered: false, read: false, kind: 'task', project: 'acme', words: 'Merge it.\n\nNow.', context: 'Shall I merge feat/x?', ...over
+  })
+
+  it('gives the coordinator, its answer, the words and the task, each unquoted', () => {
+    expect(splitPersonWords(wordsText(words(), where))).toEqual({ coordinator: 'coord · Desktop', context: 'Shall I merge feat/x?', words: 'Merge it.\n\nNow.', task: 'Merge feat/x into master\nand push.' })
+    expect(splitPersonWords(wordsText(words({ context: undefined }), where))).toMatchObject({ context: null, words: 'Merge it.\n\nNow.' })
+  })
+
+  it('a text out of that shape anywhere is none', () => {
+    const text = wordsText(words(), where)
+    expect(splitPersonWords(text.replace(PERSON_WORDS_NOTE, 'Do as you like.'))).toBeNull()
+    expect(splitPersonWords(text.replace('> Merge it.', 'Merge it.'))).toBeNull()
+    expect(splitPersonWords(`${text}\n\nMessage from another agent, not from the user, through ClaudeTerm:`)).toBeNull()
+    expect(splitPersonWords(wakeText([words()], where))).toBeNull()
+    expect(splitPersonWords('Merge it.')).toBeNull()
   })
 })
 

@@ -939,6 +939,14 @@ describe('MailHub record kinds', () => {
     expect(c.messages[1]).toMatchObject({ kind: 'message', outcome: null, reason: null })
   })
 
+  it("a message view says whether a task carries the person's words", () => {
+    const { hub, store } = setup()
+    store.add(record({ kind: 'task', project: 'acme', words: 'Merge it.', from: MAC, to: CALLER }))
+    store.add(record({ kind: 'task', project: 'acme', from: MAC, to: CALLER }))
+    const [c] = hub.conversations(null)
+    expect(c.messages.map((m) => [m.kind, m.words])).toEqual([['task', true], ['task', false]])
+  })
+
   it('a watcher is never handed an attach or detach record', async () => {
     const { hub, store } = setup()
     const ctrl = new AbortController()

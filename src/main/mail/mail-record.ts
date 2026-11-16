@@ -1,4 +1,5 @@
 import { isUuid } from '../../shared/protocol'
+import { COORD_CONTEXT_MAX, COORD_WORDS_MAX } from '../../shared/coordinator'
 import { MAIL_REASON_MAX, MAIL_TEXT_MAX, REPORT_OUTCOMES, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
 import { isDeviceId } from '../ipc-guards'
 
@@ -31,7 +32,7 @@ export function checkMailRecord(v: unknown): MailRecord | null {
   }
 }
 
-type KindFields = Partial<Pick<MailRecord, 'kind' | 'project' | 'outcome' | 'reason' | 'was' | 'replaces'>>
+type KindFields = Partial<Pick<MailRecord, 'kind' | 'project' | 'outcome' | 'reason' | 'was' | 'replaces' | 'words' | 'context'>>
 
 /** the kind of a record and the fields that kind keeps; null when the kind is unknown or one of its fields is not valid */
 function checkKind(v: Record<string, unknown>): KindFields | null {
@@ -41,7 +42,15 @@ function checkKind(v: Record<string, unknown>): KindFields | null {
     const project = optionalText(v.project, MAIL_NAME_MAX)
     if (project === null) return null
     const fields: KindFields = project === undefined ? { kind: v.kind } : { kind: v.kind, project }
-    if (v.kind === 'task') return fields
+    if (v.kind === 'task') {
+      // the person's words, checked on the coordinator's device, and the coordinator's answer they reply to: a context only comes with words
+      const words = optionalWords(v.words, COORD_WORDS_MAX)
+      const context = optionalWords(v.context, COORD_CONTEXT_MAX)
+      if (words === null || context === null || (context !== undefined && words === undefined)) return null
+      if (words !== undefined) fields.words = words
+      if (context !== undefined) fields.context = context
+      return fields
+    }
     // an attach may name the id its sender had before a clear, and the coordinator session it replaces
     const was = optionalId(v.was)
     const replaces = optionalId(v.replaces)
@@ -67,6 +76,12 @@ function checkKind(v: Record<string, unknown>): KindFields | null {
 function optionalText(v: unknown, max: number): string | undefined | null {
   if (v === undefined) return undefined
   return typeof v === 'string' && v.length >= 1 && v.length <= max && !/\p{Cc}/u.test(v) ? v : null
+}
+
+/** a words or context field that may be absent: undefined when absent, null when present but not a string of 1 to max characters; lines and tabs are allowed, the typed text strips the other control characters */
+function optionalWords(v: unknown, max: number): string | undefined | null {
+  if (v === undefined) return undefined
+  return typeof v === 'string' && v.length >= 1 && v.length <= max ? v : null
 }
 
 /** an id field that may be absent: undefined when absent, null when present but not a UUID */

@@ -140,6 +140,55 @@ function nameOf(from: string, ref: string): string {
   return paren >= 0 ? body.slice(0, paren) : body
 }
 
+/** the parts of a text typed for a task with the person's words: the coordinator, its answer when the words reply to one, the words, and the task */
+export interface PersonWordsWake {
+  coordinator: string
+  context: string | null
+  words: string
+  task: string
+}
+
+/**
+ * The reading of the text typed for a task with the person's words, unquoted line by line; null when a line is out of that shape
+ * anywhere, the task's block included. Only the lines under PERSON_WORDS_ANSWER are the person's, and the head names the coordinator.
+ */
+export function splitPersonWords(text: string): PersonWordsWake | null {
+  const lines = text.split('\n')
+  const headStart = `${PERSON_WORDS_HEAD} `
+  const headEnd = ` ${PERSON_WORDS_CHECKED}`
+  const head = lines[0] ?? ''
+  if (head.length <= headStart.length + headEnd.length || !head.startsWith(headStart) || !head.endsWith(headEnd)) return null
+  const coordinator = head.slice(headStart.length, head.length - headEnd.length)
+  if (lines[1] !== PERSON_WORDS_NOTE) return null
+  let i = 2
+  let context: string | null = null
+  if (lines[i] === PERSON_WORDS_CONTEXT) {
+    const run = quotedRun(lines, i + 1)
+    if (run === null || lines[run.next] !== PERSON_WORDS_ANSWER) return null
+    context = run.text
+    i = run.next
+  }
+  if (lines[i] !== PERSON_WORDS_ANSWER) return null
+  const words = quotedRun(lines, i + 1)
+  if (words === null || lines[words.next] !== '') return null
+  const blocks = blocksOf(lines.slice(words.next + 1).join('\n'))
+  if (blocks === null || blocks.length !== 1 || !blocks[0]!.head.startsWith(TASK_WAKE_HEAD)) return null
+  return { coordinator, context, words: words.text, task: blocks[0]!.quoted.join('\n') }
+}
+
+/** the quoted lines from line `from` on, unquoted and joined, with the index of the first line after them; null when none is quoted */
+function quotedRun(lines: string[], from: number): { text: string; next: number } | null {
+  const out: string[] = []
+  let j = from
+  for (; j < lines.length; j++) {
+    const line = lines[j]!
+    if (line === '>') out.push('')
+    else if (line.startsWith('> ')) out.push(line.slice(2))
+    else break
+  }
+  return out.length === 0 ? null : { text: out.join('\n'), next: j }
+}
+
 /** how a task ended, as a card says it: 'finished', 'failed: <reason>' ('failed' without one), 'stopped' */
 export function outcomeText(outcome: ReportOutcome, reason: string | null): string {
   if (outcome === 'finished') return 'finished'

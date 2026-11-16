@@ -45,6 +45,10 @@ export interface MailRecord {
   was?: string
   /** attach: the coordinator session the sender replaces on its device. The session moves to the sender; its tasks keep their giver */
   replaces?: string
+  /** task: the person's own message the coordinator passed on, checked on the coordinator's device; it is typed into the session's prompt, never handed to a watcher */
+  words?: string
+  /** task with words: the coordinator's answer the words reply to */
+  context?: string
 }
 
 export const kindOf = (r: Pick<MailRecord, 'kind'>): MailKind => r.kind ?? 'message'
@@ -74,6 +78,8 @@ export interface MailMessageView {
   outcome: ReportOutcome | null
   /** null when the record has no reason */
   reason: string | null
+  /** true for a task that carries the person's words */
+  words: boolean
 }
 
 export interface MailConversationView {
