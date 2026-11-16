@@ -633,6 +633,13 @@ describe('TabManager accounts', () => {
     expect(ptys[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
   })
 
+  it('a new claude tab takes its account’s flag; a restored tab is on when it was saved on or its account’s flag is on', () => {
+    const { tm } = setup({ remoteDefault: (account) => account === 'acc-1', resolveLaunch: accountLaunch })
+    expect(tm.remoteControl(tm.open({ kind: 'claude', cwd: 'C:\\w', account: 'acc-1' }).id)).toBe(true)
+    expect(tm.remoteControl(tm.open({ kind: 'claude', cwd: 'C:\\w', account: null }).id)).toBe(false)
+    expect(tm.remoteControl(tm.open({ kind: 'claude', cwd: 'C:\\w', account: null, remoteControl: true }).id)).toBe(true)
+  })
+
   it('switchAccount restarts the tab on the new account and resumes the current conversation', async () => {
     const resolveLaunch = accountLaunches()
     const { tm, ptys, log } = setup({ resolveLaunch })

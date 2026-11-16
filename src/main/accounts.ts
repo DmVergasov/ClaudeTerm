@@ -32,7 +32,7 @@ export interface AccountFile {
 /** an entry of accounts.json: a token account, or a sign-in account whose Claude Code config folder is its own */
 export type StoredAccount =
   | { kind: 'token'; id: string; name: string; addedAt: string; token: string; encrypted: boolean }
-  | { kind: 'login'; id: string; name: string; addedAt: string; folder: string; created: boolean }
+  | { kind: 'login'; id: string; name: string; addedAt: string; folder: string; created: boolean; remoteControl?: true }
 
 type TokenAccount = Extract<StoredAccount, { kind: 'token' }>
 
@@ -46,6 +46,8 @@ export interface AccountEntry {
   created: boolean
   /** token: its token decrypts here; login: always true */
   readable: boolean
+  /** login only: new Claude tabs of the account start with Remote Control on; absent when off */
+  remoteControl?: true
 }
 
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string }
@@ -100,7 +102,7 @@ export function parseAccounts(text: string): StoredAccount[] | null {
       accounts.push({ kind, id: x.id, name: x.name, addedAt: x.addedAt, token: x.token, encrypted: x.encrypted })
     } else if (kind === 'login') {
       if (!isFolder(x.folder) || typeof x.created !== 'boolean') continue
-      accounts.push({ kind, id: x.id, name: x.name, addedAt: x.addedAt, folder: x.folder, created: x.created })
+      accounts.push({ kind, id: x.id, name: x.name, addedAt: x.addedAt, folder: x.folder, created: x.created, ...(x.remoteControl === true ? { remoteControl: true as const } : {}) })
     }
   }
   return accounts
@@ -171,7 +173,7 @@ export class AccountStore {
   list(): AccountEntry[] {
     return this.accounts.map((a) =>
       a.kind === 'login'
-        ? { id: a.id, name: a.name, addedAt: a.addedAt, kind: a.kind, folder: a.folder, created: a.created, readable: true }
+        ? { id: a.id, name: a.name, addedAt: a.addedAt, kind: a.kind, folder: a.folder, created: a.created, readable: true, ...(a.remoteControl ? { remoteControl: true as const } : {}) }
         : { id: a.id, name: a.name, addedAt: a.addedAt, kind: a.kind, folder: null, created: false, readable: this.reveal(a) !== null }
     )
   }
@@ -240,6 +242,19 @@ export class AccountStore {
     const n = checkAccountName(name, this.accounts.filter((x) => x !== a).map((x) => x.name))
     if (!n.ok) return n
     return this.save(this.accounts.map((x) => (x === a ? { ...x, name: n.value } : x)))
+  }
+
+  /** a sign-in account's Remote Control flag: its new Claude tabs start with Remote Control on; a token account has none */
+  setRemoteControl(id: unknown, on: boolean): AccountResult {
+    const a = this.find(id)
+    if (a?.kind !== 'login') return NO_ACCOUNT
+    const login: StoredAccount = { kind: 'login', id: a.id, name: a.name, addedAt: a.addedAt, folder: a.folder, created: a.created, ...(on ? { remoteControl: true as const } : {}) }
+    return this.save(this.accounts.map((x) => (x === a ? login : x)))
+  }
+
+  remoteControlOf(id: string): boolean {
+    const a = this.find(id)
+    return a?.kind === 'login' && a.remoteControl === true
   }
 
   /** a token account's new token; a sign-in account has none to replace */

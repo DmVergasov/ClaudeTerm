@@ -170,9 +170,9 @@ export interface Settings {
    * the same for a restored tab Claude was working in when ClaudeTerm closed; continueAfterLimit: the same for a turn the usage
    * limit stopped, once the limit has reset; headsUp: while Claude works in a chat, a side agent reads the conversation and shows
    * a Heads up card above the message box when it finds something the person should know; limitPace: the title bar shows how fast each
-   * usage limit is spent, with a bar, a color and a forecast from the pace (off: the fixed 70% and 90% only)
+   * usage limit is spent, with a bar, a color and a forecast from the pace (off: the fixed 70% and 90% only); remoteControl: new Claude tabs of the main account start with Remote Control on (the popover's checkbox)
    */
-  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean; continueAfterLimit: boolean; headsUp: boolean; limitPace: boolean; view: TabView }
+  claude: { command: string; shellProfile: string | null; statusRefresh: boolean; statusRefreshInterval: number; autoContinue: boolean; continueAfterRestore: boolean; continueAfterLimit: boolean; headsUp: boolean; limitPace: boolean; remoteControl: boolean; view: TabView }
   /** copyOnSelect: text selected with the mouse in a chat goes to the clipboard, as in a terminal (Ctrl+C copies either way); fullWidth: the conversation and the message box take the whole width of the window, not a reading column; mcpAlerts: the MCP segment of the status bar turns red, amber or blue when a server failed, waits for a sign-in or an approval, or a change waits for a restart (off: it only counts the servers) */
   chat: { copyOnSelect: boolean; fullWidth: boolean; mcpAlerts: boolean }
   profiles: ProfileDef[]

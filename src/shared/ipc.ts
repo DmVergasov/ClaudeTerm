@@ -31,6 +31,7 @@ export const IPC = {
   tabsRename: 'tabs:rename',
   /** the person's Remote Control switch of a local Claude tab: on or off */
   remoteControlSet: 'remote-control:set',
+  remoteControlAccount: 'remote-control:account',
   tabsReorder: 'tabs:reorder',
   tabsRestart: 'tabs:restart',
   tabsSwitchAccount: 'tabs:switch-account',
@@ -335,6 +336,8 @@ export interface CtApi {
   renameTab(tabId: string, title: string | null): void
   /** the Remote Control switch of a local Claude tab: on types /remote-control, off leaves it */
   remoteControlSet(tabId: string, on: boolean): void
+  /** the Remote Control flag of a local Claude tab's account: new Claude tabs of that account start with Remote Control on (the main account: the setting) */
+  remoteControlAccount(tabId: string, on: boolean): void
   reorderTabs(ids: string[]): void
   /** `live` also restarts a tab whose process is still running */
   restartTab(tabId: string, live?: boolean): void

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import type { SettingsSection } from '../../src/shared/ipc'
 import type { FakeScript } from '../fixtures/fake-claude/install'
 import { FAKE_CLAUDE_SETTINGS, launchApp, makeDataDir, type Launched } from './helpers'
-import { MAIN_CREDENTIAL, MAIN_WHO, readLog, trust } from '../fixtures/accounts'
+import { MAIN_CREDENTIAL, MAIN_WHO, readLog, runs, trust } from '../fixtures/accounts'
 
 export * from '../fixtures/accounts'
 
@@ -92,6 +92,9 @@ export async function launchAccounts(
   await launched.page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   return { ...launched, work, config, root, log: () => readLog(logFile) }
 }
+
+/** the conversation runs of the stand-in: not the auth checks, nor the --version probe a new Claude tab starts */
+export const claudeRuns = (log: () => Record<string, unknown>[]) => runs(log).filter((r) => r.argv[0] !== 'auth' && r.argv[0] !== '--version')
 
 /** the Settings window, opened at `section` by the main window: its page, once it has loaded */
 export async function settingsWindow(app: ElectronApplication, page: Page, section?: SettingsSection): Promise<Page> {

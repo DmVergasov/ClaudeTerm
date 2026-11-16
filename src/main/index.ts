@@ -13,7 +13,7 @@ import { checkDocFile, docStamp, readDocText } from '../shared/doc-file'
 import { DEVICE_COPY, type ActiveDevicesView, type DeviceResult, type DevicePlatform, type DevicesView, isDeviceName, MAX_DEVICE_NAME } from '../shared/devices'
 import { socketDir } from '../shared/protocol'
 import { describeTaskList, taskListSummary } from '../shared/task-list'
-import { isSettingKey, isSettingValue } from '../shared/settings-keys'
+import { isSettingKey, isSettingValue, type SettingKey, type SettingValue } from '../shared/settings-keys'
 import type { NotificationCase, OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout, TabPlace } from '../shared/types'
 import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteDeviceView } from '../shared/remote'
 import { remoteName } from '../shared/remote-control'
@@ -421,7 +421,7 @@ function bootstrap(): void {
     accounts: accounts.list().map((a): AccountView => {
       if (a.kind !== 'login') return { id: a.id, name: a.name, addedAt: a.addedAt, kind: 'token', readable: a.readable, state: null, checking: false, email: null, plan: null, folder: null }
       const c = checks.get(a.id)
-      return { id: a.id, name: a.name, addedAt: a.addedAt, kind: 'login', readable: startable(a.id), state: c.state, checking: c.checking, email: c.identity.email, plan: c.identity.plan, folder: a.folder }
+      return { id: a.id, name: a.name, addedAt: a.addedAt, kind: 'login', readable: startable(a.id), state: c.state, checking: c.checking, email: c.identity.email, plan: c.identity.plan, folder: a.folder, ...(a.remoteControl ? { remoteControl: true } : {}) }
     }),
     keyring: accounts.keyring(),
     main: { email: mainWho.email, plan: mainWho.plan, folder: mainConfigDir }
@@ -977,6 +977,7 @@ function bootstrap(): void {
     baseEnv: childEnv,
     // the --rc name of a Claude tab whose Remote Control is on: null where Remote Control is not available on the account it starts on
     remoteName: (tab, account) => (remoteUnavailable(accountKindOf(account), launchEnvOf(account)) === null ? remoteName(tabTitleOf(tab)) : null),
+    remoteDefault: (account) => (account === null ? settings.claude.remoteControl : accounts.remoteControlOf(account)),
     resolveLaunch: (req) => {
       if (req.kind === 'claude' || req.setupToken || req.signIn) {
         msysAnchor?.ensure()
@@ -3730,8 +3731,8 @@ function bootstrap(): void {
   ipcMain.handle(IPC.settingsGet, () => settings)
   ipcMain.on(IPC.settingsOpen, () => { void shell.openPath(settingsPath) })
   ipcMain.handle(IPC.settingsView, () => settingsView())
-  ipcMain.handle(IPC.settingsSet, (_e, key: unknown, value: unknown): SetSettingResult => {
-    if (!isSettingKey(key) || !isSettingValue(value)) return { ok: false, error: 'Not a setting' }
+  /** writes one setting into settings.json and applies it now: the settings window's edit, and the Remote Control flag of the main account */
+  const editSetting = (key: SettingKey, value: SettingValue): SetSettingResult => {
     let text: string | null = null
     try {
       text = readFileSync(settingsPath, 'utf8')
@@ -3749,6 +3750,18 @@ function bootstrap(): void {
     // apply now; the watcher sees the same text a moment later and leaves it
     reloadSettings()
     return { ok: true }
+  }
+  /** a sign-in account's Remote Control flag is kept with the account; the main account's is the setting. Both windows learn of an account's flag from the accounts view */
+  const setRemoteAccountFlag = (account: string | null, on: boolean): void => {
+    if (account === null) {
+      const r = editSetting('claude.remoteControl', on)
+      if (!r.ok) toast(r.error)
+    } else if (accounts.setRemoteControl(account, on).ok) broadcast(IPC.evAccounts, accountsView())
+  }
+  ipcMain.on(IPC.remoteControlAccount, (_e, tabId: unknown, on: unknown) => { if (isLocalClaudeTab(tabId) && isFlag(on)) setRemoteAccountFlag(tabs.get(tabId)!.account, on) })
+  ipcMain.handle(IPC.settingsSet, (_e, key: unknown, value: unknown): SetSettingResult => {
+    if (!isSettingKey(key) || !isSettingValue(value)) return { ok: false, error: 'Not a setting' }
+    return editSetting(key, value)
   })
   ipcMain.handle(IPC.settingsPickSound, async (e): Promise<string | null> => {
     if (isTest && process.env.CLAUDETERM_TEST_PICK_SOUND) return process.env.CLAUDETERM_TEST_PICK_SOUND

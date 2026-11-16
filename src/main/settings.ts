@@ -9,7 +9,7 @@ import type { ConptyHost, NoRoomMode, NotificationSettings, ProfileDef, Settings
 export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: null,
   defaultFolder: null,
-  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, continueAfterLimit: true, headsUp: true, limitPace: true, view: 'chat' },
+  claude: { command: 'claude', shellProfile: null, statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, continueAfterLimit: true, headsUp: true, limitPace: true, remoteControl: false, view: 'chat' },
   chat: { copyOnSelect: true, fullWidth: false, mcpAlerts: false },
   profiles: [],
   font: { family: 'Cascadia Mono, Consolas, Menlo, monospace', size: 12 },
@@ -138,6 +138,7 @@ export function parseSettings(text: string | null): ParsedSettings {
       continueAfterLimit: take('claude.continueAfterLimit', claude.continueAfterLimit, isBool, d.claude.continueAfterLimit),
       headsUp: take('claude.headsUp', claude.headsUp, isBool, d.claude.headsUp),
       limitPace: take('claude.limitPace', claude.limitPace, isBool, d.claude.limitPace),
+      remoteControl: take('claude.remoteControl', claude.remoteControl, isBool, d.claude.remoteControl),
       view: take('claude.view', claude.view, isTabView, d.claude.view)
     },
     chat: {

@@ -115,6 +115,25 @@ describe('parseAccounts', () => {
     expect(parseAccounts(text)).toEqual([{ kind: 'token', id: 'a', name: 'Work', addedAt: '2026-10-01T00:00:00.000Z', token: TOKEN, encrypted: false }])
   })
 
+  it('parseAccounts keeps remoteControl only when it is true, on a sign-in account', () => {
+    const folder = resolve('work-account')
+    const base = { addedAt: '2026-10-01T00:00:00.000Z', folder, created: true }
+    const text = JSON.stringify({
+      version: 2,
+      accounts: [
+        { kind: 'login', id: 'on', name: 'On', ...base, remoteControl: true },
+        { kind: 'login', id: 'yes', name: 'Yes', ...base, remoteControl: 'yes' },
+        { kind: 'login', id: 'none', name: 'None', ...base },
+        { kind: 'token', id: 't', name: 'Token', addedAt: base.addedAt, token: TOKEN, encrypted: false, remoteControl: true }
+      ]
+    })
+    const [on, yes, none, token] = newStore(memFile(text)).list()
+    expect(on.remoteControl).toBe(true)
+    expect(yes).not.toHaveProperty('remoteControl')
+    expect(none).not.toHaveProperty('remoteControl')
+    expect(token).not.toHaveProperty('remoteControl')
+  })
+
   it('a version other than 1 or 2 is not an accounts file', () => {
     expect(parseAccounts('{')).toBeNull()
     expect(parseAccounts(JSON.stringify({ version: 3, accounts: [] }))).toBeNull()
@@ -177,6 +196,28 @@ describe('AccountStore', () => {
     expect(store.token('login-1')).toBeNull()
     expect(store.kindOf('login-1')).toBe('login')
     expect(store.folderOf('login-1')).toBe(folder)
+  })
+
+  it('a sign-in account keeps its Remote Control flag in accounts.json; a token account has none', () => {
+    const folder = resolve('work-account')
+    const addedAt = '2026-10-01T00:00:00.000Z'
+    const file = memFile(JSON.stringify({
+      version: 2,
+      accounts: [
+        { kind: 'login', id: 'work', name: 'Work', addedAt, folder, created: true },
+        { kind: 'token', id: 'ci', name: 'CI', addedAt, token: TOKEN, encrypted: false }
+      ]
+    }))
+    const store = newStore(file)
+    expect(store.setRemoteControl('work', true)).toEqual({ ok: true })
+    expect(store.remoteControlOf('work')).toBe(true)
+    expect(JSON.parse(file.text!).accounts.find((a: { id: string }) => a.id === 'work').remoteControl).toBe(true)
+    expect(store.setRemoteControl('ci', true)).toEqual({ ok: false, error: 'No such account' })
+    expect(store.remoteControlOf('ci')).toBe(false)
+    expect(store.rename('work', 'Office')).toEqual({ ok: true })
+    expect(store.remoteControlOf('work')).toBe(true)
+    expect(store.setRemoteControl('work', false)).toEqual({ ok: true })
+    expect(JSON.parse(file.text!).accounts.find((a: { id: string }) => a.id === 'work')).not.toHaveProperty('remoteControl')
   })
 
   it('addLogin refuses a folder that is not absolute, and a name that is taken', () => {

@@ -19,6 +19,7 @@ const api: CtApi = {
   setAttentionCount: (count) => ipcRenderer.send(IPC.attentionCount, count),
   renameTab: (id, title) => ipcRenderer.send(IPC.tabsRename, id, title),
   remoteControlSet: (tabId, on) => ipcRenderer.send(IPC.remoteControlSet, tabId, on),
+  remoteControlAccount: (tabId, on) => ipcRenderer.send(IPC.remoteControlAccount, tabId, on),
   reorderTabs: (ids) => ipcRenderer.send(IPC.tabsReorder, ids),
   restartTab: (id, live) => ipcRenderer.send(IPC.tabsRestart, id, live === true),
   switchAccount: (id, account) => ipcRenderer.send(IPC.tabsSwitchAccount, id, account),

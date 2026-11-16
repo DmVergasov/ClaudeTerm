@@ -3,8 +3,9 @@ import { isSettingKey, isSettingValue, SETTING_KEYS } from '../../src/shared/set
 
 describe('settings keys', () => {
   it('lists the 25 notification cells, the sound, doneWithBackgroundWork, autoUnread and the thirty plain settings', () => {
-    expect(SETTING_KEYS).toHaveLength(63)
+    expect(SETTING_KEYS).toHaveLength(64)
     expect(SETTING_KEYS).toContain('claude.view')
+    expect(SETTING_KEYS).toContain('claude.remoteControl')
     expect(SETTING_KEYS).toContain('chat.copyOnSelect')
     expect(SETTING_KEYS).toContain('chat.fullWidth')
     expect(SETTING_KEYS).toContain('chat.mcpAlerts')

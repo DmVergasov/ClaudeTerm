@@ -26,8 +26,16 @@ describe('parseSettings', () => {
     const { settings, errors } = parseSettings(JSON.stringify({ font: { size: 16 }, claude: { shellProfile: 'Git Bash' } }))
     expect(errors).toEqual([])
     expect(settings.font).toEqual({ family: DEFAULT_SETTINGS.font.family, size: 16 })
-    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, continueAfterLimit: true, headsUp: true, limitPace: true, view: 'chat' })
+    expect(settings.claude).toEqual({ command: 'claude', shellProfile: 'Git Bash', statusRefresh: true, statusRefreshInterval: 5, autoContinue: false, continueAfterRestore: true, continueAfterLimit: true, headsUp: true, limitPace: true, remoteControl: false, view: 'chat' })
     expect(settings.imageWatch).toEqual(DEFAULT_SETTINGS.imageWatch)
+  })
+
+  it('claude.remoteControl is off by default, read as a boolean, and a bad value is an error', () => {
+    expect(parseSettings('{}').settings.claude.remoteControl).toBe(false)
+    expect(parseSettings(JSON.stringify({ claude: { remoteControl: true } })).settings.claude.remoteControl).toBe(true)
+    const r = parseSettings(JSON.stringify({ claude: { remoteControl: 'yes' } }))
+    expect(r.settings.claude.remoteControl).toBe(false)
+    expect(r.errors).toEqual(['settings.json: invalid value for "claude.remoteControl", using default'])
   })
 
   it('claude.limitPace is on unless turned off, and a value that is not a boolean falls back with a notice', () => {

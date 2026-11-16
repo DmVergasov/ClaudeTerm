@@ -3,15 +3,12 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, 
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { chatReady, sendMessage } from './chat-helpers'
-import { launchAccounts, loginEntry, runs, signedIn, SID, STUDIO, tokenEntry, trust, WORK } from './account-helpers'
+import { claudeRuns, launchAccounts, loginEntry, runs, signedIn, SID, STUDIO, tokenEntry, trust, WORK } from './account-helpers'
 
 const KEY = 'e2e-api-key-0001'
 const ENV_TOKEN = 'e2e-env-token-0001'
 const TOKEN_ID = '2f9d1e7c-3b4a-4c5d-8e6f-7a8b9c0d1e2f'
 const TOKEN = 'e2e-token-token-0000001'
-
-/** the conversation runs of the stand-in: not the auth checks, nor the --version probe a new Claude tab starts */
-const claudeRuns = (log: () => Record<string, unknown>[]) => runs(log).filter((r) => r.argv[0] !== 'auth' && r.argv[0] !== '--version')
 
 /** the sign-in account Work: a folder under the accounts folder, signed in as Work, trusting the tests' work folder */
 function workAccount(root: string): object[] {

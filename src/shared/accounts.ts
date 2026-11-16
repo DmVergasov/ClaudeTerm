@@ -39,6 +39,8 @@ export interface AccountView {
   email: string | null
   plan: string | null
   folder: string | null
+  /** sign-in accounts only: new Claude tabs of the account start with Remote Control on; absent when off */
+  remoteControl?: boolean
 }
 
 /** Main account as the windows see it: who is signed in there, read without its token */

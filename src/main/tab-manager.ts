@@ -96,6 +96,8 @@ export interface TabManagerDeps {
   onProcessStarted?(tab: TabInfo): void
   /** the `--rc` name of a Claude tab whose Remote Control is on, starting on `account`; null when Remote Control is not available there */
   remoteName?(tab: { id: string; customTitle: string | null; folder: string; view: TabView | null }, account: string | null): string | null
+  /** the account's Remote Control flag (null: the main account): a new Claude tab on it starts with Remote Control on */
+  remoteDefault?(account: string | null): boolean
   /** the tab gets a new process (Restart session, another account): what waited on the old one must not reach the new one. A switch of account says the account it continues as */
   onTabRestarting?(tabId: string, continuedAs?: { account: string | null }): void
   /** a conversation moves to another account (see ConversationMove); true when it may move. With none, nothing moves */
@@ -179,7 +181,7 @@ export class TabManager {
   open(req: OpenTabRequest, opts: { activate?: boolean; setupToken?: boolean; signIn?: SignInLaunch; before?: string } = {}): TabInfo {
     const id = randomUUID()
     const account = this.accountFor(req)
-    const remoteControl = req.kind === 'claude' && req.remoteControl === true
+    const remoteControl = req.kind === 'claude' && (req.remoteControl === true || this.deps.remoteDefault?.(account) === true)
     // a setup-token tab is a shell tab; a Claude tab without a view named opens in the one the setting names
     const view = req.kind === 'claude' && !opts.setupToken ? req.view ?? this.deps.defaultView?.() ?? 'terminal' : null
     const launch = this.deps.resolveLaunch({
