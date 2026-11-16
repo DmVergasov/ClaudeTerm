@@ -7,6 +7,7 @@ import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { BackgroundTask } from '../../src/shared/types'
 import { DIM, promptBox } from './claude-screen'
 import { bufferText, FAKE_CLAUDE_SETTINGS, launchApp, launchClaudeTab, makeDataDir, TEST_SHELL, typeInTerminal } from './helpers'
+import { RC_CLEAN_ENV } from './remote-control-helpers'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -34,6 +35,21 @@ test('restores a claude tab with --resume and its title', async () => {
   expect(await page.evaluate(() => window.__ct!.restoreVisible!())).toBe(false)
   expect(existsSync(join(dataDir, 'previous-session.json'))).toBe(false)
   await app.close()
+})
+
+test('a restored tab keeps its Remote Control choice: it starts with --rc, and the next snapshot keeps it', async () => {
+  const dataDir = makeDataDir(FAKE_CLAUDE_SETTINGS)
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  writeFileSync(join(dataDir, 'session-state.json'), JSON.stringify({ version: 1, savedAt: new Date().toISOString(), tabs: [{ kind: 'claude', profile: TEST_SHELL, cwd: work, title: 'mine', claudeSessionId: SID, remoteControl: true }] }))
+  const { app, page } = await launchApp({ dataDir, env: RC_CLEAN_ENV })
+  await expect.poll(() => page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
+  await page.locator('.banner-restore').click()
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const id = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain('--rc mine')
+  await closeWindow(app)
+  const saved = JSON.parse(readFileSync(join(dataDir, 'session-state.json'), 'utf8')) as { tabs: { remoteControl?: boolean }[] }
+  expect(saved.tabs[0].remoteControl).toBe(true)
 })
 
 test('a muted tab is restored muted, and the next snapshot keeps which tabs are muted', async () => {

@@ -1500,3 +1500,62 @@ describe('TabManager claudeEnv', () => {
     expect(tm.claudeEnv('no-such-tab')).toBeNull()
   })
 })
+
+describe('TabManager: Remote Control', () => {
+  it('a tab opened with remoteControl starts with --rc and keeps the choice in the snapshot; a tab without has neither', () => {
+    const asked: string[] = []
+    const { tm, launches } = setup({ remoteName: (tab, account) => { asked.push(`${tab.customTitle}:${account}`); return 'mine' } })
+    const on = tm.open({ kind: 'claude', cwd: 'C:\\w', title: 'mine', remoteControl: true })
+    const off = tm.open({ kind: 'claude', cwd: 'C:\\w', title: 'other' })
+    expect(launches.map((l) => l.rc ?? null)).toEqual(['mine', null])
+    expect(asked).toEqual(['mine:null'])
+    expect([tm.remoteControl(on.id), tm.remoteControl(off.id)]).toEqual([true, false])
+    expect(tm.snapshot().map((t) => t.remoteControl)).toEqual([true, undefined])
+  })
+
+  it('every new process of a tab whose choice is on starts with --rc: a restart, a resume, an account switch', async () => {
+    const seen: LaunchRequest[] = []
+    const { tm, ptys } = setup({ remoteName: () => 'mine', restartWaitMs: 0, resolveLaunch: (req) => { seen.push(req); return accountLaunch(req) } }, { exitOnKill: true })
+    const tab = tm.open({ kind: 'claude', cwd: 'C:\\w', title: 'mine', remoteControl: true })
+    ptys[0].emitExit(0)
+    await tm.restart(tab.id)
+    expect(await tm.resumeSession(tab.id, '7f4e3d9c-0a6b-4c5d-b3e4-f5a6b7c8d9e0')).toBe(true)
+    expect(await tm.switchAccount(tab.id, 'acc-1')).toBe(true)
+    expect(seen.length).toBeGreaterThanOrEqual(4)
+    expect(seen.map((l) => l.rc)).toEqual(seen.map(() => 'mine'))
+  })
+
+  it('setRemoteControl changes the choice and saves the snapshot; a shell tab or an unknown id has none', () => {
+    const { tm, onStateChanged } = setup()
+    const claude = tm.open({ kind: 'claude', cwd: 'C:\\w' })
+    const shell = tm.open({ kind: 'shell', cwd: 'C:\\w' })
+    onStateChanged.mockClear()
+    tm.setRemoteControl(claude.id, true)
+    expect(tm.remoteControl(claude.id)).toBe(true)
+    expect(onStateChanged).toHaveBeenCalledTimes(1)
+    tm.setRemoteControl(claude.id, true)
+    expect(onStateChanged).toHaveBeenCalledTimes(1)
+    tm.setRemoteControl(shell.id, true)
+    tm.setRemoteControl('nope', true)
+    expect([tm.remoteControl(shell.id), tm.remoteControl('nope')]).toEqual([false, false])
+  })
+
+  it('remoteName answering null starts the tab without --rc and keeps its choice', () => {
+    const { tm, launches } = setup({ remoteName: () => null })
+    const tab = tm.open({ kind: 'claude', cwd: 'C:\\w', remoteControl: true })
+    expect(launches[0].rc ?? null).toBeNull()
+    expect(tm.remoteControl(tab.id)).toBe(true)
+  })
+
+  it('onProcessStarted hears of each start of a Claude tab before it spawns, and not of a shell tab', async () => {
+    const order: string[] = []
+    const spawned = trackedSpawn(order)
+    const { tm } = setup({ restartWaitMs: 0, onProcessStarted: (tab) => order.push(`started:${tab.id}`), spawn: spawned.spawn })
+    const tab = tm.open({ kind: 'claude', cwd: 'C:\\w' })
+    tm.open({ kind: 'shell', cwd: 'C:\\w' })
+    expect(order).toEqual([`started:${tab.id}`, 'spawn', 'spawn'])
+    spawned.ptys[0].emitExit(0)
+    await tm.restart(tab.id)
+    expect(order.slice(3)).toEqual([`started:${tab.id}`, 'spawn'])
+  })
+})

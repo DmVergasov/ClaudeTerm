@@ -203,3 +203,11 @@ describe('parseSnapshot views', () => {
     expect(parseSnapshot(withView({ ...claudeTab, view: 7 }))?.tabs[0].view).toBeNull()
   })
 })
+
+describe('parseSnapshot Remote Control', () => {
+  it('a Claude tab saved with remoteControl true comes back with it; any other value, and a shell tab, have none', () => {
+    const tab = (x: object) => ({ kind: 'claude', profile: 'p', cwd: 'C:\\w', ...x })
+    const snap = parseSnapshot(JSON.stringify({ version: 1, savedAt: 'x', tabs: [tab({ remoteControl: true }), tab({ remoteControl: 'yes' }), tab({}), { kind: 'shell', profile: 'p', cwd: 'C:\\w', remoteControl: true }] }))!
+    expect(snap.tabs.map((t) => t.remoteControl)).toEqual([true, undefined, undefined, undefined])
+  })
+})

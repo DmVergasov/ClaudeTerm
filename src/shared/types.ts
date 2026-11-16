@@ -66,6 +66,8 @@ export interface OpenTabRequest {
   account?: string | null
   /** start the tab muted, as it was when its session was saved */
   muted?: boolean
+  /** a Claude tab whose Remote Control is on: its processes start with --rc */
+  remoteControl?: boolean
   /** a fork of another tab's conversation (a Claude tab) */
   fork?: TabFork | null
   /** the view of a Claude tab; left out: the view the setting names */
@@ -109,6 +111,8 @@ export interface SessionSnapshotTab {
   fork: { of: number | null; from: string | null } | null
   /** the view a Claude tab was saved in; null: a shell tab, or a tab saved before views existed */
   view: TabView | null
+  /** a Claude tab with Remote Control on was saved so; left out otherwise */
+  remoteControl?: true
 }
 
 export interface SessionSnapshot {

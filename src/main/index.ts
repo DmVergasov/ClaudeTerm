@@ -5,7 +5,7 @@ import { homedir, hostname, release, tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { MAIN_ACCOUNT, type AccountFlowView, type AccountResult, type AccountView, type AccountsView, type CarryLine, type CarryPreview, type PickedFolder, type RemoveInfo, type RemoveResult } from '../shared/accounts'
-import { commandWord, isAgentId, isTabView, type AgentSnapshot, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot } from '../shared/chat'
+import { commandWord, isAgentId, isTabView, type AgentSnapshot, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type TabView } from '../shared/chat'
 import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
 import type { DocRead } from '../shared/docs'
 import type { FileLink } from '../shared/chat-paths'
@@ -16,6 +16,8 @@ import { describeTaskList, taskListSummary } from '../shared/task-list'
 import { isSettingKey, isSettingValue } from '../shared/settings-keys'
 import type { NotificationCase, OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout, TabPlace } from '../shared/types'
 import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteDeviceView } from '../shared/remote'
+import { remoteName } from '../shared/remote-control'
+import { remoteUnavailable, type RemoteAccountKind } from './remote-control/account-rules'
 import { AccountStore, accountLaunch, electronVault, loginEnv, nodeAccountFile } from './accounts'
 import { accountsRoot, canonical, identityOf, inAccountsRoot, NO_IDENTITY, parseAuthStatus, signInCommand, type AuthStatus, type Identity } from './account-login'
 import { AccountChecks, STATUS_TIMEOUT_MS } from './account-checks'
@@ -347,6 +349,8 @@ function bootstrap(): void {
   }
   /** an account as a message names it: Main account, or the name */
   const accountLabel = (id: string | null): string => (id === null ? 'Main account' : accounts.nameOf(id) ?? 'The account')
+  /** how Remote Control sees an account: Main account, a token account (no claude.ai sign-in), or a sign-in account */
+  const accountKindOf = (account: string | null): RemoteAccountKind => (account === null ? 'main' : accounts.kindOf(account) === 'token' ? 'token' : 'login')
   /** Main account's config folder: CLAUDE_CONFIG_DIR, else ~/.claude; null in a test run that sets no CLAUDE_CONFIG_DIR */
   const mainConfigDir: string | null = process.env.CLAUDE_CONFIG_DIR || (isTest ? null : join(homedir(), '.claude'))
   /** the `projects` folders conversations are kept in: Main account's, then each sign-in account's */
@@ -362,6 +366,11 @@ function bootstrap(): void {
   }
   /** the environment of a CLI run for a sign-in account: its folder, and none of the environment's token or key */
   const accountEnv = (folder: string): Record<string, string> => applyEnvPatch(childEnv(), loginEnv(folder))
+  /** the environment a tab on `account` starts Claude Code with, as far as Remote Control reads it */
+  const launchEnvOf = (account: string | null): Record<string, string> => {
+    const folder = account === null ? null : accounts.folderOf(account)
+    return folder === null ? childEnv() : accountEnv(folder)
+  }
   /** `claude <args>` for a sign-in account, started the way a chat starts Claude Code; rejects with a CliError when it cannot run */
   const accountCli = async (folder: string, args: string[], timeoutMs = CLI_TIMEOUT_MS, extraEnv: Record<string, string> = {}): Promise<CliRun> => {
     const launch = await resolveChatLaunch(settings.claude.command, chatLaunchDeps)
@@ -955,6 +964,8 @@ function bootstrap(): void {
       toast(reason)
     },
     baseEnv: childEnv,
+    // the --rc name of a Claude tab whose Remote Control is on: null where Remote Control is not available on the account it starts on
+    remoteName: (tab, account) => (remoteUnavailable(accountKindOf(account), launchEnvOf(account)) === null ? remoteName(tabTitleOf(tab)) : null),
     resolveLaunch: (req) => {
       if (req.kind === 'claude' || req.setupToken || req.signIn) {
         msysAnchor?.ensure()
@@ -979,7 +990,7 @@ function bootstrap(): void {
         if (acc.unavailable) toast(`${accountName(req.account!)} is not available; the tab started on the main account`)
         // a fork without a conversation of its own starts as a fork of its head's conversation
         const forkFrom = req.kind === 'claude' && !req.resumeSessionId && req.fork ? req.fork.from : null
-        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? forkFrom, forkSession: forkFrom !== null }
+        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? forkFrom, forkSession: forkFrom !== null, rc: req.rc ?? null }
         return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env, claude }
       }
       const profile = profiles.find((p) => p.name === req.profile) ?? pickProfile(profiles, settings.defaultProfile)
@@ -1356,6 +1367,12 @@ function bootstrap(): void {
   const titles = new Map<string, string>()
   /** the session title of each of this device's Claude tabs, from its transcript (see attachTranscript) */
   const sessionTitles = new Map<string, string>()
+  /** a tab's title as its Remote Control session names it: its own name, else its session's or program's title, else its folder's name */
+  const tabTitleOf = (tab: { id: string; customTitle: string | null; folder: string; view: TabView | null }): string => {
+    if (tab.customTitle) return tab.customTitle
+    const title = tab.view === 'chat' ? sessionTitles.get(tab.id) ?? titles.get(tab.id) : titles.get(tab.id) ?? sessionTitles.get(tab.id)
+    return title || basename(tab.folder)
+  }
   /** a chat tab has no terminal to title it: its session's title is its title for the other devices and the agents list */
   const syncChatTitle = (tabId: string): void => {
     if (tabs.get(tabId)?.view !== 'chat') return
@@ -2057,7 +2074,7 @@ function bootstrap(): void {
       // a fork opens where it was saved, and joins its head's family below, once the head is open too
       const fork = t.kind === 'claude' && t.fork ? { of: null, from: t.fork.from } : null
       const opened = openTab(
-        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId, account: t.kind === 'claude' ? t.account : null, muted: t.muted, fork, view: t.view ?? undefined },
+        { kind: t.kind, cwd, profile: t.kind === 'shell' ? t.profile : null, title: t.title, resumeSessionId, account: t.kind === 'claude' ? t.account : null, muted: t.muted, fork, view: t.view ?? undefined, ...(t.remoteControl ? { remoteControl: true } : {}) },
         false
       )
       // the note stored under the fork's own conversation goes with the tab to the conversation it gets

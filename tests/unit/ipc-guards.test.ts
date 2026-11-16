@@ -266,6 +266,12 @@ describe('open tab request fields', () => {
     const sent: OpenTabRequest = { kind: 'claude', cwd: FOLDER, profile: 'work', title: 'Shop', resumeSessionId: '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8', account: 'acc', muted: true }
     expect(openTabRequestFields(sent)).toEqual({ ...sent, fork: null })
   })
+
+  it('the window cannot open a tab with Remote Control on: openTabRequestFields leaves remoteControl out', () => {
+    const req = { kind: 'claude' as const, cwd: FOLDER, remoteControl: true }
+    expect(isOpenTabRequest(req)).toBe(true)
+    expect(openTabRequestFields(req)).not.toHaveProperty('remoteControl')
+  })
 })
 
 describe('device guards', () => {

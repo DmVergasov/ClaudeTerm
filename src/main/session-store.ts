@@ -36,7 +36,9 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       // written before forks existed: an ordinary tab
       fork: x.kind === 'claude' ? parseFork(x.fork) : null,
       // written before views existed, or by hand: null, and a shell tab has none
-      view: x.kind === 'claude' && isTabView(x.view) ? x.view : null
+      view: x.kind === 'claude' && isTabView(x.view) ? x.view : null,
+      // written before Remote Control existed, or with another value: off
+      ...(x.kind === 'claude' && x.remoteControl === true ? { remoteControl: true as const } : {})
     })
   }
   // a fork's head is another Claude tab of the list, before or after it (tabs on top are dragged freely), and is not

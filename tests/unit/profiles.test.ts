@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildClaudeCommandLine, buildLaunch, buildProbe, canHostClaude, detectPosixProfiles, detectProfiles, filterAvailable, mergeProfiles, parseWslList,
-  pickClaudeProfile, pickProfile, profileResolver, quoteForShell, shellFamily, type DetectDeps, type PosixDetectDeps, typedPaths
+  pickClaudeProfile, pickProfile, profileResolver, quoteForShell, shellFamily, type ClaudeLaunch, type DetectDeps, type PosixDetectDeps, typedPaths
 } from '../../src/main/profiles'
 import type { ProfileDef } from '../../src/shared/types'
 
@@ -109,6 +109,23 @@ describe('shell families and quoting', () => {
     expect(quoteForShell('cmd', p)).toBe(`"${p}"`)
     expect(quoteForShell('bash', p)).toBe("'C:/Users/Bob O'\\''Neil/AppData/Roaming/ClaudeTerm/claude-tab-settings.json'")
     expect(() => quoteForShell('wsl', p)).toThrow()
+  })
+})
+
+describe('buildClaudeCommandLine: --rc', () => {
+  const c: ClaudeLaunch = { command: 'claude', settingsPath: null, resumeSessionId: null, forkSession: false, rc: `it's a "tab" 100%` }
+  it('adds --rc with the name quoted for each shell family, after the resume', () => {
+    expect(buildClaudeCommandLine('powershell', c)).toBe(`claude --rc 'it''s a "tab" 100%'`)
+    expect(buildClaudeCommandLine('bash', c)).toBe(`claude --rc 'it'\\''s a "tab" 100%'`)
+    expect(buildClaudeCommandLine('zsh', c)).toBe(`claude --rc 'it'\\''s a "tab" 100%'`)
+    expect(buildClaudeCommandLine('fish', c)).toBe(`claude --rc 'it\\'s a "tab" 100%'`)
+    // cmd.exe has no escape for " and % inside double quotes: they are left out
+    expect(buildClaudeCommandLine('cmd', c)).toBe(`claude --rc "it's a tab 100"`)
+    expect(buildClaudeCommandLine('powershell', { ...c, resumeSessionId: SID })).toBe(`claude --resume ${SID} --rc 'it''s a "tab" 100%'`)
+  })
+  it('no name, no --rc', () => {
+    expect(buildClaudeCommandLine('bash', { ...c, rc: null })).toBe('claude')
+    expect(buildClaudeCommandLine('bash', { command: 'claude', settingsPath: null, resumeSessionId: null, forkSession: false })).toBe('claude')
   })
 })
 

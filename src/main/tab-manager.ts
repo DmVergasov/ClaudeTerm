@@ -35,6 +35,8 @@ export interface ChatStartRequest {
 /** what a launch is resolved from: the request with its account settled */
 export interface LaunchRequest extends OpenTabRequest {
   account: string | null
+  /** a Claude tab's Remote Control session name (--rc); null: the process starts without it */
+  rc?: string | null
   /** an account that cannot be used throws instead of falling back to the main account */
   strict?: boolean
   /** the Get a token tab: a shell tab running `claude setup-token` */
@@ -90,6 +92,10 @@ export interface TabManagerDeps {
   pipeName: string
   events: TabEvents
   onTabStarted?(tab: TabInfo): void
+  /** every process start of a Claude tab (open, restart, view switch, account switch, resume, fallback), before the process spawns */
+  onProcessStarted?(tab: TabInfo): void
+  /** the `--rc` name of a Claude tab whose Remote Control is on, starting on `account`; null when Remote Control is not available there */
+  remoteName?(tab: { id: string; customTitle: string | null; folder: string; view: TabView | null }, account: string | null): string | null
   /** the tab gets a new process (Restart session, another account): what waited on the old one must not reach the new one. A switch of account says the account it continues as */
   onTabRestarting?(tabId: string, continuedAs?: { account: string | null }): void
   /** a conversation moves to another account (see ConversationMove); true when it may move. With none, nothing moves */
@@ -154,6 +160,8 @@ interface TabRecord {
   agents: boolean
   /** work Claude left in the background when its last turn ended still runs, as the session snapshot keeps it */
   background: boolean
+  /** Remote Control is on for a Claude tab: every process it starts gets --rc, as the session snapshot keeps it */
+  remoteControl: boolean
   /** a tab of the app's own (the sign-in tab): left out of the session snapshot */
   transient: boolean
 }
@@ -169,14 +177,20 @@ export class TabManager {
   constructor(private readonly deps: TabManagerDeps) {}
 
   open(req: OpenTabRequest, opts: { activate?: boolean; setupToken?: boolean; signIn?: SignInLaunch; before?: string } = {}): TabInfo {
+    const id = randomUUID()
+    const account = this.accountFor(req)
+    const remoteControl = req.kind === 'claude' && req.remoteControl === true
+    // a setup-token tab is a shell tab; a Claude tab without a view named opens in the one the setting names
+    const view = req.kind === 'claude' && !opts.setupToken ? req.view ?? this.deps.defaultView?.() ?? 'terminal' : null
     const launch = this.deps.resolveLaunch({
       ...req,
-      account: this.accountFor(req),
+      account,
+      rc: this.rcOf({ id, customTitle: req.title ?? null, folder: req.cwd, view }, remoteControl, account),
       ...(opts.setupToken ? { setupToken: true } : {}),
       ...(opts.signIn ? { signIn: opts.signIn } : {})
     })
     const info: TabInfo = {
-      id: randomUUID(),
+      id,
       kind: req.kind,
       profile: launch.profileName,
       cwd: req.cwd,
@@ -188,10 +202,9 @@ export class TabManager {
       fork: req.kind === 'claude' ? this.forkFrom(req.fork) : null,
       exited: false,
       activity: null,
-      // a setup-token tab is a shell tab; a Claude tab without a view named opens in the one the setting names
-      view: req.kind === 'claude' && !opts.setupToken ? req.view ?? this.deps.defaultView?.() ?? 'terminal' : null
+      view
     }
-    const rec: TabRecord = { info, launch, pty: null, chat: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), proc: { exited: true }, restarting: false, preparing: false, working: false, agents: false, background: false, transient: opts.signIn !== undefined }
+    const rec: TabRecord = { info, launch, pty: null, chat: null, buffer: '', timer: null, cols: 120, rows: 30, gen: 0, stopped: Promise.resolve(), proc: { exited: true }, restarting: false, preparing: false, working: false, agents: false, background: false, remoteControl, transient: opts.signIn !== undefined }
     this.tabs.set(info.id, rec)
     const head = info.fork?.of ?? null
     // the new tab stands right before the tab named by `before`, when that tab is open; a tab that is not open is ignored
@@ -346,7 +359,7 @@ export class TabManager {
       let launch: ResolvedLaunch | null = null
       try {
         resumed = await this.resumeId(rec)
-        launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: resumed, account: rec.info.account, fork: rec.info.fork })
+        launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: resumed, account: rec.info.account, fork: rec.info.fork, rc: this.rcOf(rec.info, rec.remoteControl, rec.info.account) })
       } catch {
         // keep the previous launch
       } finally {
@@ -374,7 +387,7 @@ export class TabManager {
     let launch: ResolvedLaunch
     try {
       launch = info.kind === 'claude'
-        ? this.deps.resolveLaunch({ kind: 'claude', cwd, resumeSessionId: null, account: info.account })
+        ? this.deps.resolveLaunch({ kind: 'claude', cwd, resumeSessionId: null, account: info.account, rc: this.rcOf({ ...info, folder: cwd }, rec.remoteControl, info.account) })
         : this.deps.resolveLaunch({ kind: 'shell', cwd, profile: info.profile, account: null })
     } catch {
       return false
@@ -410,7 +423,7 @@ export class TabManager {
       resumeSessionId = await this.resumeId(rec)
       // the check waited on the disk: the tab may have closed or been restarted meanwhile
       if (this.tabs.get(tabId) !== rec || rec.restarting) return false
-      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account, strict: true, fork: rec.info.fork })
+      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account, strict: true, fork: rec.info.fork, rc: this.rcOf(rec.info, rec.remoteControl, account) })
       // the conversation may move to the new account only if it can: a refusal leaves everything as it is
       if (resumeSessionId !== null && !(await this.askMove({ tabId, sessionId: resumeSessionId, from, to: account, explicit: true, stage: 'check' }))) return false
       if (this.tabs.get(tabId) !== rec || rec.restarting) return false
@@ -428,7 +441,7 @@ export class TabManager {
         copied = await this.askMove({ tabId, sessionId: resumeSessionId, from, to: account, explicit: true, stage: 'copy' })
         if (copied) return
         // the copy failed: the tab starts again on the account it was on, as a launch that is not strict does
-        this.setLaunch(rec, this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account: from, fork: rec.info.fork }))
+        this.setLaunch(rec, this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId, account: from, fork: rec.info.fork, rc: this.rcOf(rec.info, rec.remoteControl, from) }))
       }
     })
     return copied
@@ -479,7 +492,7 @@ export class TabManager {
     let resumed: string | null = null
     try {
       resumed = await this.resumeId(rec)
-      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: resumed, account: rec.info.account, fork: rec.info.fork })
+      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: rec.info.cwd, resumeSessionId: resumed, account: rec.info.account, fork: rec.info.fork, rc: this.rcOf(rec.info, rec.remoteControl, rec.info.account) })
     } catch {
       // keep the previous launch
     } finally {
@@ -512,7 +525,7 @@ export class TabManager {
     const fork = info.fork ? { of: info.fork.of, from: null } : null
     let launch: ResolvedLaunch
     try {
-      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: info.cwd, resumeSessionId: sessionId, account: info.account, fork })
+      launch = this.deps.resolveLaunch({ kind: 'claude', cwd: info.cwd, resumeSessionId: sessionId, account: info.account, fork, rc: this.rcOf(info, rec.remoteControl, info.account) })
     } catch {
       return false
     }
@@ -612,15 +625,28 @@ export class TabManager {
     return this.tabs.get(tabId)?.working ?? false
   }
 
+  /** whether a Claude tab's Remote Control is on; false for a shell tab or an unknown id */
+  remoteControl(tabId: string): boolean {
+    return this.tabs.get(tabId)?.remoteControl ?? false
+  }
+
+  /** turns a Claude tab's Remote Control on or off: the processes it starts from now on get `--rc` (or not); a shell tab or an unknown id has none */
+  setRemoteControl(tabId: string, on: boolean): void {
+    const rec = this.tabs.get(tabId)
+    if (!rec || rec.info.kind !== 'claude' || rec.remoteControl === on) return
+    rec.remoteControl = on
+    this.changed()
+  }
+
   snapshot(): SessionSnapshotTab[] {
     // the app's own tabs (the sign-in tab) are not the session's: the forks' heads are found among the saved ones
     const kept = this.order.filter((id) => !this.tabs.get(id)!.transient)
     return kept.map((id) => {
-      const { info: i, working, background } = this.tabs.get(id)!
+      const { info: i, working, background, remoteControl } = this.tabs.get(id)!
       const head = i.fork?.of ?? null
       const headAt = head === null ? -1 : kept.indexOf(head)
       const fork = i.fork ? { of: headAt < 0 ? null : headAt, from: i.fork.from } : null
-      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, background, fork, view: i.view }
+      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, background, fork, view: i.view, ...(remoteControl ? { remoteControl: true as const } : {}) }
     })
   }
 
@@ -638,6 +664,11 @@ export class TabManager {
 
   private changed(): void {
     if (!this.disposed) this.deps.onStateChanged?.()
+  }
+
+  /** the `--rc` name of a Claude tab's process that starts on `account`: null when the choice is off, or Remote Control is not available there */
+  private rcOf(tab: { id: string; customTitle: string | null; folder: string; view: TabView | null }, remoteControl: boolean, account: string | null): string | null {
+    return remoteControl ? this.deps.remoteName?.(tab, account) ?? null : null
   }
 
   /** a new Claude tab's account: the one asked for, else the active Claude tab's */
@@ -791,6 +822,7 @@ export class TabManager {
   }
 
   private start(rec: TabRecord): void {
+    if (rec.info.kind === 'claude') this.deps.onProcessStarted?.({ ...rec.info })
     // a new process is in no turn yet, and runs none of the last one's agents
     if (rec.working) {
       rec.working = false

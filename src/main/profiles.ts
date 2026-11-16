@@ -197,6 +197,8 @@ export interface ClaudeLaunch {
   resumeSessionId: string | null
   /** with resumeSessionId: start a new session that begins from the resumed one */
   forkSession: boolean
+  /** the Remote Control session's name (--rc); null or empty: Remote Control is off for this start */
+  rc?: string | null
 }
 
 export function buildClaudeCommandLine(family: ShellFamily, c: ClaudeLaunch): string {
@@ -209,6 +211,8 @@ export function buildClaudeCommandLine(family: ShellFamily, c: ClaudeLaunch): st
     if (c.resumeSessionId === null) throw new Error('--fork-session needs a session to resume')
     line += ' --fork-session'
   }
+  // cmd.exe has no escape for " and % inside double quotes, so they are left out of its name
+  if (c.rc) line += ` --rc ${quoteForShell(family, family === 'cmd' ? c.rc.replace(/["%]/g, '') : c.rc)}`
   return line
 }
 
