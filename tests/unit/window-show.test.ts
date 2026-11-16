@@ -23,10 +23,11 @@ describe('showWindow', () => {
     expect(calls).toEqual(['show'])
   })
 
-  it('a test run shows it off the screen, inactive and out of the taskbar', () => {
+  it('a test run shows it off the screen, inactive and out of the taskbar; on Linux it keeps its opacity, so its page still draws', () => {
+    // Electron on Linux makes the window's layer transparent, and Chromium stops drawing a page nobody can see: no frames, no animations
     const { win, calls } = fakeWindow()
     showWindow(win, true, 'linux')
-    expect(calls).toEqual(['setSkipTaskbar true', 'setOpacity 0', 'setIgnoreMouseEvents true', 'setPosition -30000 -30000', 'showInactive'])
+    expect(calls).toEqual(['setSkipTaskbar true', 'setIgnoreMouseEvents true', 'setPosition -30000 -30000', 'showInactive'])
   })
 
   it('on Windows, where maximizing an inactive window activates it, a test window also cannot take the focus', () => {

@@ -89,13 +89,31 @@ test('maximized window: the last terminal row and column are not cut off', async
   await waitForViewport(app, page)
   const l = await termLayout(page)
   expect(overflows(l), JSON.stringify(l)).toEqual([])
-  // a test window the test maximized onto the display is still invisible to the person (Electron ignores the opacity on Linux)
+  // a test window the test maximized onto the display is still invisible to the person (on Windows and macOS: on Linux it
+  // stays opaque, since a transparent one draws no frames there)
   // and it did not take the machine's focus (Windows activates a maximized window unless it cannot be focused)
   if (WIN) expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused())).toBe(false)
   if (process.platform !== 'linux') {
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getOpacity())).toBe(0)
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(true)
   }
+  await app.close()
+})
+
+test('a test window draws its frames: animation frames come and an animation runs', async () => {
+  // a window the person cannot see must still draw: tests read animations, wait for frames and click only steady elements
+  const { app, page } = await launchApp()
+  await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
+  const frames = await page.evaluate(() => new Promise<boolean>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))
+    setTimeout(() => resolve(false), 3000)
+  }))
+  expect(frames).toBe(true)
+  const ran = await page.evaluate(() => new Promise<number>((resolve) => {
+    const a = document.body.animate([{ opacity: 1 }, { opacity: 1 }], { duration: 10_000 })
+    setTimeout(() => { resolve(Number(a.currentTime)); a.cancel() }, 700)
+  }))
+  expect(ran).toBeGreaterThan(300)
   await app.close()
 })
 
