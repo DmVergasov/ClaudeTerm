@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ChatHub, WINDOW_VIEWER, type ChatHubDeps } from '../../src/main/chat/chat-hub'
+import { ChatHub, WINDOW_VIEWER, type ChatHubDeps, type RemoteControlTap } from '../../src/main/chat/chat-hub'
+import type { PermissionAsk } from '../../src/main/chat/chat-cards'
 import { ChatMirror } from '../../src/main/chat/chat-mirror'
 import { reportItemOf } from '../../src/main/chat/report-item'
 import { attachmentOf } from '../../src/main/chat/chat-attachments'
@@ -143,7 +144,7 @@ function fakeAttach(files: Map<string, Buffer>): ChatHubDeps['attach'] {
 }
 
 /** a hub with fake dependencies: the engines it started, the window's batches, and what it told the tabs */
-function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessionReady' | 'transcript'>> & { attach?: (files: Map<string, Buffer>) => ChatHubDeps['attach'] } = {}) {
+function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessionReady' | 'transcript' | 'remoteControl'>> & { attach?: (files: Map<string, Buffer>) => ChatHubDeps['attach'] } = {}) {
   const clock = { t: 1000 }
   const engines: FakeEngine[] = []
   const windows: { tabId: string; fromRev: number; toRev: number; patches: ChatPatch[] }[] = []
@@ -200,6 +201,7 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessio
     now: () => clock.t,
     log: { warn: m => calls.warn.push(m) },
     ...(over.sessionReady ? { sessionReady: over.sessionReady } : {}),
+    ...(over.remoteControl ? { remoteControl: over.remoteControl } : {}),
   }
   return { hub: new ChatHub(deps), engines, windows, remotes, agentWindows, agentRemotes, watched, calls, env, cards, files, alive, clock }
 }
@@ -1844,6 +1846,129 @@ describe('ChatHub', () => {
     expect(dividerDrawn).toBeNull()
     h.engines[0].h.ready({ permissionMode: 'default' })
     expect(dividerDrawn).toBe(true)
+  })
+})
+
+/** a tap that records each call as [name, ...args]; `throws`: every call throws after recording */
+function recordingTap(throws = false): { tap: RemoteControlTap; heard: unknown[][] } {
+  const heard: unknown[][] = []
+  const rec = (name: string) => (...args: unknown[]): void => {
+    heard.push([name, ...args])
+    if (throws) throw new Error('tap broke')
+  }
+  return { heard, tap: { ready: rec('ready'), message: rec('message'), userSent: rec('userSent'), cardOpened: rec('cardOpened'), cardClosed: rec('cardClosed'), sessionChanged: rec('sessionChanged'), ended: rec('ended') } }
+}
+
+describe('ChatHub: the Remote Control tap', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('hears the chat ready, its session id once the init names it, each live message, each message sent with its origin, and each card with how it closed', async () => {
+    const { tap, heard } = recordingTap()
+    const { hub, engines } = harness({ remoteControl: tap })
+    hub.start(startReq().req)
+    await settle()
+    const sid0 = hub.snapshot(TAB)!.state.sessionId
+    expect(sid0).toMatch(/^[0-9a-f-]{36}$/)
+    engines[0].h.ready({ permissionMode: 'default' })
+    expect(heard.filter((c) => c[0] === 'ready')).toEqual([['ready', TAB, sid0]])
+    engines[0].h.message(init())
+    expect(heard.filter((c) => c[0] === 'sessionChanged')).toEqual([['sessionChanged', TAB, SID]])
+    expect(heard.some((c) => c[0] === 'message' && (c[2] as { type: string }).type === 'system')).toBe(true)
+    await hub.send(TAB, { text: 'hello', attachments: [] })
+    expect(heard.filter((c) => c[0] === 'userSent').map((c) => [c[3], c[4]])).toEqual([['hello', null]])
+    const ctl = new AbortController()
+    void engines[0].h.ask({ toolName: 'Bash', input: { command: 'ls' } }, ctl.signal)
+    const card = last(hub.snapshot(TAB)!.items)
+    expect(heard.filter((c) => c[0] === 'cardOpened').map((c) => [c[2], (c[3] as PermissionAsk).toolName])).toEqual([[card.id, 'Bash']])
+    hub.answer(TAB, card.id, { type: 'permission', choice: 'once', suggestion: null, message: null })
+    expect(heard.filter((c) => c[0] === 'cardClosed')).toEqual([['cardClosed', TAB, card.id, 'window']])
+  })
+  it('hears a new conversation in the tab, a resumed chat ready with its session, and the end of the chat', async () => {
+    const { tap, heard } = recordingTap()
+    const { hub, engines } = harness({ remoteControl: tap })
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    hub.sessionChanged(TAB, OTHER, 'clear')
+    expect(heard.filter((c) => c[0] === 'sessionChanged')).toEqual([['sessionChanged', TAB, SID], ['sessionChanged', TAB, OTHER]])
+    hub.removeTab(TAB)
+    expect(heard.filter((c) => c[0] === 'ended')).toEqual([['ended', TAB]])
+
+    const resumed = recordingTap()
+    const again = harness({ remoteControl: resumed.tap })
+    again.hub.start(startReq(SID).req)
+    await settle()
+    again.engines[0].h.ready({ permissionMode: 'default' })
+    expect(resumed.heard.filter((c) => c[0] === 'ready')).toEqual([['ready', TAB, SID]])
+  })
+  it('answerRemote settles an open card with claude.ai’s result and says so on the card; an unknown card is refused', async () => {
+    const { tap, heard } = recordingTap()
+    const { hub, engines } = harness({ remoteControl: tap })
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    const ctl = new AbortController()
+    const decided = engines[0].h.ask({ toolName: 'Bash', input: { command: 'ls' } }, ctl.signal)
+    const card = last(hub.snapshot(TAB)!.items)
+    expect(hub.answerRemote(TAB, 'nope', { behavior: 'allow', updatedInput: {} })).toBe(false)
+    expect(hub.answerRemote(TAB, card.id, { behavior: 'allow', updatedInput: { command: 'ls -a' } })).toBe(true)
+    await expect(decided).resolves.toEqual({ behavior: 'allow', updatedInput: { command: 'ls -a' } })
+    expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'card', answered: 'Allowed from claude.ai' })
+    expect(heard.filter((c) => c[0] === 'cardClosed')).toEqual([['cardClosed', TAB, card.id, 'remote']])
+    expect(hub.answerRemote(TAB, card.id, { behavior: 'deny', message: 'No' })).toBe(false)
+  })
+  it('a denial from claude.ai reads Denied from claude.ai; a question answered there reads Answered from claude.ai', async () => {
+    const { tap, heard } = recordingTap()
+    const { hub, engines } = harness({ remoteControl: tap })
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    const denied = engines[0].h.ask({ toolName: 'Bash', input: { command: 'ls' } }, new AbortController().signal)
+    const card = last(hub.snapshot(TAB)!.items)
+    expect(hub.answerRemote(TAB, card.id, { behavior: 'deny', message: 'No' })).toBe(true)
+    await expect(denied).resolves.toEqual({ behavior: 'deny', message: 'No' })
+    expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'card', answered: 'Denied from claude.ai' })
+    const asked = engines[0].h.ask({ toolName: 'AskUserQuestion', input: { questions: [{ question: 'Which?', header: 'Pick', multiSelect: false, options: [{ label: 'A', description: 'first' }] }] } }, new AbortController().signal)
+    const question = last(hub.snapshot(TAB)!.items)
+    expect(hub.answerRemote(TAB, question.id, { behavior: 'allow', updatedInput: { answers: { 'Which?': 'A' } } })).toBe(true)
+    await expect(asked).resolves.toMatchObject({ behavior: 'allow' })
+    expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'card', answered: 'Answered from claude.ai' })
+    expect(heard.filter((c) => c[0] === 'cardClosed').map((c) => c[3])).toEqual(['remote', 'remote'])
+  })
+  it('a message from claude.ai shows as the person’s, marked as from remote, and reaches Claude Code', async () => {
+    const { tap, heard } = recordingTap()
+    const { hub, engines } = harness({ remoteControl: tap })
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    expect(await hub.send(TAB, { text: 'from the phone', attachments: [], from: 'remote' })).toBeNull()
+    expect(hub.snapshot(TAB)!.items.find((i) => i.kind === 'user')).toMatchObject({ text: 'from the phone', from: 'remote' })
+    expect(engines[0].sent).toEqual(['from the phone'])
+    expect(heard.filter((c) => c[0] === 'userSent').map((c) => [c[3], c[4]])).toEqual([['from the phone', 'remote']])
+  })
+  it('a tap that throws leaves the chat as it is', async () => {
+    const { tap } = recordingTap(true)
+    const { hub, engines } = harness({ remoteControl: tap })
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    expect(await hub.send(TAB, { text: 'hello', attachments: [] })).toBeNull()
+    expect(engines[0].sent).toEqual(['hello'])
+    const decided = engines[0].h.ask({ toolName: 'Bash', input: { command: 'ls' } }, new AbortController().signal)
+    const card = last(hub.snapshot(TAB)!.items)
+    expect(hub.answer(TAB, card.id, { type: 'permission', choice: 'once', suggestion: null, message: null })).toBe(true)
+    await expect(decided).resolves.toMatchObject({ behavior: 'allow' })
   })
 })
 

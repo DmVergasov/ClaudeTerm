@@ -1,6 +1,7 @@
 import { connectTimeoutToast, remoteLink, type RemoteState } from '../../shared/remote-control'
 import type { TabView } from '../../shared/chat'
 import { remoteUnavailable, type RemoteAccountKind } from './account-rules'
+import type { BridgeHost, BridgeTarget } from './bridge-host'
 
 /** how long a typed /remote-control may take to bring the id up, and how long an off line may take to leave it */
 export const CONNECT_WAIT_MS = 30_000
@@ -33,6 +34,10 @@ export interface RemoteControlDeps {
   toast(text: string): void
   /** runs `run` after `ms`; the returned function cancels the run */
   later(ms: number, run: () => void): () => void
+  /** the bridge host: a chat tab's Remote Control is attached and detached through it, and its state is the tab's while it has one */
+  host: Pick<BridgeHost, 'attach' | 'detach' | 'state'>
+  /** the bridge target of a chat tab's session; null when the tab has none */
+  target(tabId: string, sessionId: string): BridgeTarget | null
 }
 
 /** the one switch a tab is doing: a typed line the hub waits on, or the id it waits for */
@@ -43,10 +48,20 @@ interface Ask {
   cancel: (() => void) | null
 }
 
+/** a chat tab's Remote Control: whether its chat runs, whether its Claude Code answered (ready), its session, and whether the host is attached to it */
+interface ChatLink {
+  live: boolean
+  ready: boolean
+  sessionId: string | null
+  attached: boolean
+}
+
 /** Computes what each Claude tab shows of Remote Control, from the id its Claude Code reports and the tab's account */
 export class RemoteControlHub {
   /** the tab's open switch: at most one per tab */
   private readonly asks = new Map<string, Ask>()
+  /** the chat tabs' Remote Control links, by tab */
+  private readonly chats = new Map<string, ChatLink>()
 
   constructor(private readonly deps: RemoteControlDeps) {}
 
@@ -56,7 +71,8 @@ export class RemoteControlHub {
     if (!tab) return null
     const reason = remoteUnavailable(this.deps.accountKind(tab.account), this.deps.env(tabId))
     if (reason !== null) return { kind: 'unavailable', reason }
-    if (tab.exited || tab.view !== 'terminal') return { kind: 'off' }
+    if (tab.exited) return { kind: 'off' }
+    if (tab.view === 'chat') return this.chatState(tabId)
     const id = this.deps.reportedId(tabId)
     const ask = this.asks.get(tabId)
     if (id !== null) {
@@ -71,8 +87,10 @@ export class RemoteControlHub {
   set(tabId: string, on: boolean): void {
     const tab = this.deps.tab(tabId)
     if (!tab || tab.exited || this.unavailable(tabId)) return
-    if (tab.view !== 'terminal') {
+    if (tab.view === 'chat') {
       this.deps.setChoice(tabId, on)
+      if (on) this.attachChat(tabId)
+      else this.detachChat(tabId)
       this.deps.onChange(tabId)
       return
     }
@@ -115,9 +133,19 @@ export class RemoteControlHub {
 
   /** a new Claude Code process starts in the tab: what the old one reported is no longer true; a tab whose choice is on connects */
   processStarted(tabId: string): void {
+    const tab = this.deps.tab(tabId)
+    // a chat's process: its Remote Control connects from here, once the chat is ready
+    if (tab?.view === 'chat') {
+      const link = this.chatOf(tabId)
+      link.live = true
+      link.ready = false
+      this.deps.onChange(tabId)
+      return
+    }
+    // a terminal's process: a chat that was on it leaves the claude.ai session to the terminal's Claude Code
+    this.dropChat(tabId)
     this.finish(tabId)
     this.deps.forgetReported(tabId)
-    const tab = this.deps.tab(tabId)
     if (tab && tab.view === 'terminal' && !tab.exited && this.deps.choice(tabId) && !this.unavailable(tabId)) {
       const ask: Ask = { dir: 'on', waits: false, cancel: null }
       this.asks.set(tabId, ask)
@@ -129,6 +157,38 @@ export class RemoteControlHub {
   /** the tab is closed: nothing is kept for it */
   removeTab(tabId: string): void {
     this.finish(tabId)
+    this.dropChat(tabId)
+  }
+
+  /** a chat tab's Claude Code answered: its session is known now (a new conversation has its id only from its init, or none yet); the choice on attaches it */
+  chatReady(tabId: string, sessionId: string | null): void {
+    const link = this.chatOf(tabId)
+    link.ready = true
+    if (sessionId !== null) link.sessionId = sessionId
+    this.attachChat(tabId)
+    this.deps.onChange(tabId)
+  }
+
+  /** the chat's session changed (a clear, a startup, a resume): an attached session is detached first, then the new one is attached when the choice is on */
+  chatSessionChanged(tabId: string, sessionId: string): void {
+    const link = this.chatOf(tabId)
+    link.sessionId = sessionId
+    if (link.attached) {
+      link.attached = false
+      void this.moveChat(tabId)
+    } else {
+      this.attachChat(tabId)
+    }
+    this.deps.onChange(tabId)
+  }
+
+  /** the chat ended: its Remote Control detaches and the choice stays */
+  chatEnded(tabId: string): void {
+    const link = this.chatOf(tabId)
+    link.live = false
+    link.ready = false
+    this.detachChat(tabId)
+    this.deps.onChange(tabId)
   }
 
   /** types /remote-control with the tab's name; the id must come within CONNECT_WAIT_MS of the line */
@@ -194,6 +254,54 @@ export class RemoteControlHub {
     if (!ask) return
     ask.cancel?.()
     this.asks.delete(tabId)
+  }
+
+  /** a chat tab's state while the host has none: connecting from the chat's start while the choice is on, else off */
+  private chatState(tabId: string): RemoteState {
+    const held = this.deps.host.state(tabId)
+    if (held !== null) return held
+    return this.deps.choice(tabId) && this.chats.get(tabId)?.live === true ? { kind: 'connecting' } : { kind: 'off' }
+  }
+
+  private chatOf(tabId: string): ChatLink {
+    let link = this.chats.get(tabId)
+    if (!link) {
+      link = { live: false, ready: false, sessionId: null, attached: false }
+      this.chats.set(tabId, link)
+    }
+    return link
+  }
+
+  /** attaches the chat's session when the choice is on, the account has Remote Control, the chat is ready and its session is known */
+  private attachChat(tabId: string): void {
+    const link = this.chats.get(tabId)
+    if (!link || !link.ready || link.attached || link.sessionId === null) return
+    if (!this.deps.choice(tabId) || this.unavailable(tabId)) return
+    const target = this.deps.target(tabId, link.sessionId)
+    if (target === null) return
+    link.attached = true
+    this.deps.host.attach(target)
+  }
+
+  /** detaches the chat's session when the host is attached to it */
+  private detachChat(tabId: string): void {
+    const link = this.chats.get(tabId)
+    if (!link?.attached) return
+    link.attached = false
+    void this.deps.host.detach(tabId)
+  }
+
+  /** the chat's session is replaced: the host returns early for a tab that is connecting, whatever its session, so the old one is detached first and the new one attaches after */
+  private async moveChat(tabId: string): Promise<void> {
+    await this.deps.host.detach(tabId)
+    this.attachChat(tabId)
+    this.deps.onChange(tabId)
+  }
+
+  /** the tab's chat link ends with its terminal or its close: the host lets go of the session, the choice stays */
+  private dropChat(tabId: string): void {
+    this.detachChat(tabId)
+    this.chats.delete(tabId)
   }
 
   private unavailable(tabId: string): boolean {

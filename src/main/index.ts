@@ -1,9 +1,10 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, promises as fsPromises, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
-import { homedir, hostname, release, tmpdir } from 'node:os'
+import { homedir, hostname, release, tmpdir, userInfo } from 'node:os'
 import { Worker } from 'node:worker_threads'
 import { basename, dirname, isAbsolute, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { MAIN_ACCOUNT, type AccountFlowView, type AccountResult, type AccountView, type AccountsView, type CarryLine, type CarryPreview, type PickedFolder, type RemoveInfo, type RemoveResult } from '../shared/accounts'
 import { commandWord, isAgentId, isTabView, type AgentSnapshot, type ChatAttachment, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot, type TabView } from '../shared/chat'
 import { IPC, isSettingsSection, type AppInfo, type ClipboardContent, type ImageAction, type ImagesUpdate, type PlanUpdate, type RestoreInfo, type SetSettingResult, type SettingsView } from '../shared/ipc'
@@ -19,6 +20,11 @@ import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer,
 import { remoteName } from '../shared/remote-control'
 import { remoteUnavailable, type RemoteAccountKind } from './remote-control/account-rules'
 import { RemoteControlHub } from './remote-control/remote-control-hub'
+import { BridgeHost } from './remote-control/bridge-host'
+import { bridgeLoader, importBridge } from './remote-control/bridge-loader'
+import { readClaudeCredentials, securityRunner } from './remote-control/claude-credentials'
+import { gitContextOf } from './remote-control/git-context'
+import { RemoteSessionStore } from './remote-control/remote-sessions'
 import { AccountStore, accountLaunch, electronVault, loginEnv, nodeAccountFile } from './accounts'
 import { accountsRoot, canonical, identityOf, inAccountsRoot, NO_IDENTITY, parseAuthStatus, signInCommand, type AuthStatus, type Identity } from './account-login'
 import { AccountChecks, STATUS_TIMEOUT_MS } from './account-checks'
@@ -1129,6 +1135,30 @@ function bootstrap(): void {
       }
     }
   })
+  // the stand-in bridge of the e2e tests replaces the Agent SDK's, when the test names it (CLAUDETERM_TEST_BRIDGE, test runs only)
+  const testBridge = isTest ? process.env.CLAUDETERM_TEST_BRIDGE : undefined
+  // a chat tab's Remote Control: the chat is hosted on claude.ai through the Agent SDK's bridge (imported on first use)
+  const bridgeHost = new BridgeHost({
+    bridge: bridgeLoader(testBridge ? () => import(/* @vite-ignore */ pathToFileURL(testBridge).href) : importBridge, log),
+    credentials: (folder, env) => readClaudeCredentials(folder, env, { platform: process.platform, home: homedir(), username: userInfo().username, now: Date.now, security: process.platform === 'darwin' && !isTest ? securityRunner() : null }),
+    sessions: new RemoteSessionStore(join(dataDir, 'remote-sessions.json'), Date.now, log),
+    git: (cwd) => gitContextOf(cwd, execGit),
+    chat: {
+      // a message typed on claude.ai goes through the chat's send, as the composer's Send does
+      send: (id, text) => sentToChat(id, { text, attachments: [], from: 'remote' }),
+      answer: (id, card, result) => chatHub.answerRemote(id, card, result),
+      interrupt: (id) => interruptChat(id),
+      history: (id, sessionId) => {
+        const t = tabs.get(id)
+        return t ? chatHistory(sessionId, t.cwd, t.account) : Promise.resolve([])
+      },
+      checkSignIn: (id) => chatHub.checkSignIn(id)
+    },
+    claudeVersion: localVersion,
+    later,
+    onChange: statusSoon,
+    log
+  })
   // each Claude tab's Remote Control state: its Claude Code's reported id and its account, computed here for the status
   const remoteControl: RemoteControlHub = new RemoteControlHub({
     tab: (id) => {
@@ -1146,7 +1176,12 @@ function bootstrap(): void {
     name: (id) => remoteName(tabTitleOf(tabs.get(id)!)),
     title: (id) => tabTitleOf(tabs.get(id)!),
     toast: (text) => toast(text),
-    later
+    later,
+    host: bridgeHost,
+    target: (id, sid) => {
+      const t = tabs.get(id)
+      return t ? { tabId: id, sessionId: sid, folder: t.account === null ? mainConfigDir : accounts.folderOf(t.account), env: tabs.claudeEnv(id) ?? {}, title: remoteName(tabTitleOf(t)), cwd: t.cwd, model: chatHub.modelOf(id) } : null
+    }
   })
   const isClaudeTab = (tabId: string): boolean => tabs.get(tabId)?.kind === 'claude'
   const noteReplies: NoteReplyDeps = { isClaudeTab, session: noteHub, project: projectNotes }
@@ -1187,6 +1222,13 @@ function bootstrap(): void {
     const now = tabs.get(tabId)?.folder
     if (now !== undefined && isDirectory(path) && !sameFolder(now, path)) tabs.setFolder(tabId, path)
   }
+  /** a chat's conversation so far, as the SDK's getSessionMessages gives it: a sign-in account's transcripts are in its own folder */
+  const chatHistory = async (sessionId: string, folder: string, account: string | null): Promise<unknown[]> => {
+    // a sign-in account's transcripts are in its own folder: the SDK reads them through a store over that folder
+    const accountFolder = account === null ? null : accounts.folderOf(account)
+    const sessionStore = accountFolder === null ? undefined : accountSessionStore(join(accountFolder, 'projects'))
+    return (await loadSdk()).getSessionMessages(sessionId, { dir: folder, includeSystemMessages: true, ...(sessionStore ? { sessionStore } : {}) })
+  }
   const chatHub: ChatHub = new ChatHub({
     engine: startSdkEngine,
     support: async (tab, env) => chatSupport(settings.claude.command, await canonicalFolder(tab.cwd), env, {
@@ -1196,12 +1238,7 @@ function bootstrap(): void {
       launch: (command) => resolveChatLaunch(command, chatLaunchDeps),
       home: homedir()
     }),
-    history: async (sessionId, folder, account) => {
-      // a sign-in account's transcripts are in its own folder: the SDK reads them through a store over that folder
-      const accountFolder = account === null ? null : accounts.folderOf(account)
-      const sessionStore = accountFolder === null ? undefined : accountSessionStore(join(accountFolder, 'projects'))
-      return (await loadSdk()).getSessionMessages(sessionId, { dir: folder, includeSystemMessages: true, ...(sessionStore ? { sessionStore } : {}) })
-    },
+    history: chatHistory,
     // the transcript of a session in a tab: the hook's path when it is that session's file, else the tab's project folder under the
     // tab's own Claude config (its environment: a sign-in account's folder for a tab on one)
     transcript: async (tabId, sessionId) => {
@@ -1257,6 +1294,16 @@ function bootstrap(): void {
       })
     },
     recordSession: (sessionId) => chatSessions.add(sessionId),
+    // the Remote Control hears the chat: its session and its messages go to claude.ai while the tab has it on
+    remoteControl: {
+      ready: (id, sid) => remoteControl.chatReady(id, sid),
+      sessionChanged: (id, sid) => remoteControl.chatSessionChanged(id, sid),
+      ended: (id) => remoteControl.chatEnded(id),
+      message: (id, m) => bridgeHost.message(id, m),
+      userSent: (id, u, text, from) => bridgeHost.userSent(id, u, text, from),
+      cardOpened: (id, c, ask) => bridgeHost.cardOpened(id, c, ask),
+      cardClosed: (id, c, by) => bridgeHost.cardClosed(id, c, by)
+    },
     // the session started in, entered or left a worktree (no statusLine runs for a chat): the tab follows it
     folder: followSessionFolder,
     now: () => Date.now(),
@@ -1379,7 +1426,8 @@ function bootstrap(): void {
   const sentToChat = (tabId: string, s: ChatSend): Promise<string | null> => {
     const at = Date.now()
     return chatHub.send(tabId, s).then((refused) => {
-      if (refused === null && (s.from === undefined || s.from === 'review')) personInput.sent(tabId, s.text, at)
+      // a message typed on claude.ai is the person's, as a paired device's Send is
+      if (refused === null && (s.from === undefined || s.from === 'review' || s.from === 'remote')) personInput.sent(tabId, s.text, at)
       return refused
     })
   }

@@ -1,9 +1,26 @@
-import type { Page } from '@playwright/test'
-import { mkdtempSync } from 'node:fs'
+import type { ElectronApplication, Page } from '@playwright/test'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { StatusMessage } from '../../src/shared/protocol'
+import type { FakeScript } from '../fixtures/fake-claude/install'
+import { chatReady, launchChatTab } from './chat-helpers'
 import { FAKE_CLAUDE_SETTINGS, launchApp, type Launched } from './helpers'
+
+/** the stand-in for the Agent SDK's bridge: the app loads it in place of the SDK's (CLAUDETERM_TEST_BRIDGE) */
+export const FAKE_BRIDGE = resolve(__dirname, '..', 'fixtures', 'fake-bridge', 'fake-bridge.mjs')
+/** the claude.ai sign-in the stand-in bridge is called with */
+export const RC_TOKEN = 'fake-rc-access-token-0001'
+/** what the stand-in bridge recorded */
+export const bridgeSeen = (app: ElectronApplication): Promise<{ calls: Record<string, unknown>[]; handles: Record<string, any>[] }> =>
+  app.evaluate(() => (globalThis as { ctTestBridge?: { snapshot(): any } }).ctTestBridge?.snapshot() ?? { calls: [], handles: [] })
+/** a chat tab on the stand-in, with the stand-in bridge and a fresh claude.ai sign-in in its config folder */
+export async function launchRcChat(script: FakeScript, o: { work?: string } = {}) {
+  const t = await launchChatTab(script, { ...o, env: { ...RC_CLEAN_ENV, CLAUDETERM_TEST_BRIDGE: FAKE_BRIDGE } })
+  writeFileSync(join(t.config, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: RC_TOKEN, expiresAt: Date.now() + 3_600_000 } }))
+  await chatReady(t.page)
+  return t
+}
 
 /** the tabs' own title: a terminal tab's title otherwise follows the shell's, which differs between machines */
 export const RC_TITLE = 'Fix the parser'

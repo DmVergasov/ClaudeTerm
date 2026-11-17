@@ -46,6 +46,8 @@ export interface ChatEngine {
   context(): Promise<ChatContext>
   /** the effort Claude Code applies to the next message (get_settings, applied.effort): a level, null for none, undefined when it cannot be read */
   effort(): Promise<string | null | undefined>
+  /** asks Claude Code for its account (accountInfo): the one call that makes it check its sign-in */
+  accountInfo?(): Promise<void>
   /** the MCP servers the session loads, as Claude Code reports them now */
   mcpStatus(): Promise<McpLiveServer[]>
   reconnectMcp(name: string): Promise<void>

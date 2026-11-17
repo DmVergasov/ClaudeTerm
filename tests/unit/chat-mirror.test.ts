@@ -642,3 +642,15 @@ describe('chat-older to an older member', () => {
     expect(hostHandlers(f.ctx, B_ID)['chat-older']!.run({ id: T1, beforeId: 'x' })).toEqual({ items: [forward], hasOlder: false })
   })
 })
+
+describe('a message from claude.ai reaches the members as a plain message', () => {
+  it("its origin is left out, so the members' check takes it", () => {
+    const item = userItem('remote')
+    // a member refuses an origin it does not know
+    expect(parseChatPush(snapshot([item]))).toBeNull()
+    const shown = itemForMembers(item)
+    expect(shown).not.toHaveProperty('from')
+    expect(shown).toMatchObject({ kind: 'user', text: (item as { text: string }).text })
+    expect(parseChatPush(snapshot([shown]))).not.toBeNull()
+  })
+})

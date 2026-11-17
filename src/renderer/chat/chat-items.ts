@@ -181,6 +181,7 @@ function userItem(item: Extract<ChatItem, { kind: 'user' }>, cb: ItemCallbacks):
 function userRow(item: Extract<ChatItem, { kind: 'user' }>, text: string, cb: ItemCallbacks): HTMLElement {
   const row = el('div', `chat-item chat-user-row${item.queued ? ' queued' : ''}`)
   if (text !== '') row.append(userBubble(text))
+  if (item.from === 'remote') row.append(el('div', 'chat-quiet chat-from-remote', 'from claude.ai'))
   if (item.attachments.length > 0) row.append(attachments(item.attachments, cb))
   if (item.queued) row.append(el('div', 'chat-quiet', 'Queued'))
   return row

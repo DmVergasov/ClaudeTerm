@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { RemoteAccountKind } from '../../src/main/remote-control/account-rules'
+import type { BridgeTarget } from '../../src/main/remote-control/bridge-host'
 import { RemoteControlHub, type RemoteControlDeps, type RemoteTab } from '../../src/main/remote-control/remote-control-hub'
+import type { RemoteState } from '../../src/shared/remote-control'
 
 const TAB = 'tab-1'
 const ID = 'session_01abc'
@@ -17,10 +19,17 @@ function world(o: { view?: 'terminal' | 'chat'; kind?: RemoteAccountKind; env?: 
     typed: [] as string[],
     toasts: [] as string[],
     timers: [] as { ms: number; run: () => void; on: boolean }[],
-    typing: null as null | { wait: (waiting: boolean) => void; done: (ok: boolean) => void; cancelled: () => boolean }
+    typing: null as null | { wait: (waiting: boolean) => void; done: (ok: boolean) => void; cancelled: () => boolean },
+    attached: [] as BridgeTarget[], detached: [] as string[], hostState: null as RemoteState | null
   }
   const deps: RemoteControlDeps = {
     tab: (id) => (id === TAB ? w.tab : null),
+    host: {
+      attach: (t) => { w.attached.push(t) },
+      detach: async (id) => { w.detached.push(id) },
+      state: () => w.hostState
+    },
+    target: (id, sid) => ({ tabId: id, sessionId: sid, folder: '/cfg', env: {}, title: 'work', cwd: '/w', model: null }),
     accountKind: () => w.kind,
     env: () => w.env,
     choice: () => w.choice,
@@ -236,5 +245,69 @@ describe('RemoteControlHub: the terminal switch', () => {
     const token = world({ kind: 'token' })
     token.hub.set(TAB, true)
     expect([token.w.typed, token.w.choice]).toEqual([[], false])
+  })
+})
+
+describe('RemoteControlHub: chat tabs', () => {
+  const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+  const SID_2 = '6e3d2c8b-9f5a-4b4c-a2d3-e4f5a6b7c8d9'
+  it('a chat whose choice is off never attaches: not when ready, not on a new session', () => {
+    const { hub, w } = world({ view: 'chat' })
+    hub.processStarted(TAB)
+    hub.chatReady(TAB, SID)
+    hub.chatSessionChanged(TAB, SID_2)
+    expect(w.attached).toEqual([])
+    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+  })
+  it('a chat whose choice is on shows connecting from its start, and attaches when its session is ready', () => {
+    const { hub, w } = world({ view: 'chat', choice: true })
+    hub.processStarted(TAB)
+    expect(hub.state(TAB)).toEqual({ kind: 'connecting' })
+    expect(w.attached).toEqual([])
+    hub.chatReady(TAB, SID)
+    expect(w.attached.map((t) => t.sessionId)).toEqual([SID])
+  })
+  it('the switch attaches a ready chat and detaches it', async () => {
+    const { hub, w } = world({ view: 'chat' })
+    hub.processStarted(TAB)
+    hub.chatReady(TAB, SID)
+    hub.set(TAB, true)
+    expect([w.choice, w.attached.map((t) => t.sessionId)]).toEqual([true, [SID]])
+    hub.set(TAB, false)
+    await Promise.resolve()
+    expect([w.choice, w.detached]).toEqual([false, [TAB]])
+  })
+  it('a new conversation in the tab (/clear) detaches, then attaches for the new session', async () => {
+    const { hub, w } = world({ view: 'chat', choice: true })
+    hub.processStarted(TAB)
+    hub.chatReady(TAB, SID)
+    hub.chatSessionChanged(TAB, SID_2)
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    expect(w.detached).toEqual([TAB])
+    expect(w.attached.map((t) => t.sessionId)).toEqual([SID, SID_2])
+  })
+  it('the host’s state is the tab’s state while it has one; the chat ending detaches and keeps the choice', async () => {
+    const { hub, w } = world({ view: 'chat', choice: true })
+    hub.processStarted(TAB)
+    hub.chatReady(TAB, SID)
+    w.hostState = { kind: 'on', url: 'https://claude.ai/code/cse_1' }
+    expect(hub.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+    hub.chatEnded(TAB)
+    w.hostState = null
+    expect(w.detached).toEqual([TAB])
+    expect(hub.state(TAB)).toEqual({ kind: 'off' })
+    expect(w.choice).toBe(true)
+  })
+  it('a chat that goes to the terminal detaches; a token account never attaches', () => {
+    const moved = world({ view: 'chat', choice: true })
+    moved.hub.processStarted(TAB)
+    moved.hub.chatReady(TAB, SID)
+    moved.w.tab = { ...moved.w.tab!, view: 'terminal' }
+    moved.hub.processStarted(TAB)
+    expect(moved.w.detached).toEqual([TAB])
+    const token = world({ view: 'chat', choice: true, kind: 'token' })
+    token.hub.processStarted(TAB)
+    token.hub.chatReady(TAB, SID)
+    expect(token.w.attached).toEqual([])
   })
 })

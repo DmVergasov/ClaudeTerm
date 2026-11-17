@@ -357,6 +357,10 @@ describe('chat guards', () => {
     expect(isChatSend({ text: 'hi', attachments: [], from: null })).toBe(false)
   })
 
+  it('isChatSend refuses from: remote: the window cannot send as claude.ai', () => {
+    expect(isChatSend({ text: 'hi', attachments: [], from: 'remote' })).toBe(false)
+  })
+
   it('isChatSend accepts a message with attachments and rejects bad fields', () => {
     const file = { kind: 'file', path: 'C:\\Work\\notes.txt', name: 'notes.txt', size: 12, cardId: null }
     const image = { kind: 'image', path: '/home/user/shot.png', name: 'shot.png', size: 0, cardId: 'card-1' }

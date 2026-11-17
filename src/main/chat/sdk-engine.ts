@@ -284,6 +284,7 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
             h.ask({
               toolName,
               input,
+              toolUseId: opts.toolUseID,
               title: opts.title,
               description: opts.description,
               displayName: opts.displayName,
@@ -361,6 +362,10 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
     // an interrupt ends the running turn only: the query goes on with the next message
     async interrupt() {
       await (await query).interrupt()
+    },
+
+    async accountInfo() {
+      await (await query).accountInfo()
     },
 
     async setPermissionMode(mode) {

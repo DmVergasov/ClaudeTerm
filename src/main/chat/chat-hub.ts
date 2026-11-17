@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { isAgentId, type AgentPatch, type AgentSnapshot, type ChatAnswer, type ChatAttachment, type ChatCard, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSnapshot } from '../../shared/chat'
+import { isAgentId, type AgentPatch, type AgentSnapshot, type ChatAnswer, type ChatAttachment, type ChatCard, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSendOrigin, type ChatSnapshot } from '../../shared/chat'
 import type { ReloadAction } from '../../shared/mcp'
 import { isUuid } from '../../shared/protocol'
 import { MAX_CHAT_PUSH_BYTES } from '../../shared/remote'
@@ -65,6 +65,17 @@ async function isProjectCommand(folder: string, name: string): Promise<boolean> 
 /** the first line of a stderr chunk that has text on it, capped; null when it has none */
 const firstLine = (text: string): string | null => text.split('\n').map(line => line.trim()).find(line => line !== '')?.slice(0, REASON_CAP) ?? null
 
+/** what the Remote Control hears of a chat: its ready and session, its messages, its sent messages and its cards, and its end */
+export interface RemoteControlTap {
+  ready(tabId: string, sessionId: string | null): void
+  message(tabId: string, msg: unknown): void
+  userSent(tabId: string, uuid: string, text: string, from: ChatSendOrigin | null): void
+  cardOpened(tabId: string, cardId: string, ask: PermissionAsk): void
+  cardClosed(tabId: string, cardId: string, by: 'window' | 'remote' | 'cancelled'): void
+  sessionChanged(tabId: string, sessionId: string): void
+  ended(tabId: string): void
+}
+
 export interface ChatHubDeps {
   engine: StartChatEngine
   support(tab: TabInfo, env: Record<string, string>): Promise<{ launch: Exclude<ChatLaunch, { how: 'none' }> } | { reason: string }>
@@ -96,6 +107,8 @@ export interface ChatHubDeps {
   observe?(tabId: string, msg: unknown): void
   /** Claude Code answered initialize (after the restart's divider is drawn): not Live.ready, not the engine's handler */
   sessionReady?(tabId: string): void
+  /** the Remote Control hears the chat through it (RemoteControlTap); a tap that throws leaves the chat as it is */
+  remoteControl?: RemoteControlTap
 }
 
 type Support = Awaited<ReturnType<ChatHubDeps['support']>>
@@ -122,7 +135,7 @@ interface Live {
   /** how the engine's Claude Code was started; null until the support check has passed */
   launch: Exclude<ChatLaunch, { how: 'none' }> | null
   /** messages sent while the engine starts: shown at once, sent to the engine when it runs, in the order typed; their files are read already */
-  waiting: { text: string; images: { mediaType: string; data: string }[]; id: string }[]
+  waiting: { text: string; images: { mediaType: string; data: string }[]; id: string; from?: ChatSendOrigin }[]
   /** the process ended or the start was cancelled: nothing more is started, sent or drawn */
   ended: boolean
   /** Claude Code has answered initialize: the start is over, and an exit now is not a failed start */
@@ -436,7 +449,7 @@ export class ChatHub {
         if (live.ended) return
         this.publish(live, live.model.userSent(shown, id))
       })
-      live.waiting.push({ text: prepared.text, images: prepared.images, id })
+      live.waiting.push({ text: prepared.text, images: prepared.images, id, ...(s.from === undefined ? {} : { from: s.from }) })
       live.unready += 1
       return null
     }
@@ -446,6 +459,7 @@ export class ChatHub {
       if (live.ended) return
       this.publish(live, live.model.userSent(shown, id))
       engine.send(prepared.text, prepared.images, id)
+      this.tap(t => t.userSent(tabId, id, prepared.text, s.from ?? null))
     })
     return null
   }
@@ -464,7 +478,32 @@ export class ChatHub {
     if (!live || !pending) return false
     const result = resultFor(pending.ask, pending.card, a)
     if (result === null) return false
-    return this.settle(live, cardId, result, answeredLine(pending.card, a))
+    return this.settle(live, cardId, result, answeredLine(pending.card, a), 'window')
+  }
+
+  /** claude.ai's answer to an open card: the card says it came from claude.ai; false when there is no such card waiting */
+  answerRemote(tabId: string, cardId: string, result: SdkPermissionResult): boolean {
+    const live = this.tabs.get(tabId)
+    const pending = live?.cards.get(cardId)
+    if (!live || !pending) return false
+    const line = pending.card.type !== 'permission' ? 'Answered from claude.ai' : result.behavior === 'allow' ? 'Allowed from claude.ai' : 'Denied from claude.ai'
+    return this.settle(live, cardId, result, line, 'remote')
+  }
+
+  /** the session the tab's chat holds; null when there is no chat or it has no session yet */
+  sessionIdOf(tabId: string): string | null {
+    return this.tabs.get(tabId)?.model.state().sessionId ?? null
+  }
+
+  /** the model the tab's chat runs, as its status reports it; null until the stream names it */
+  modelOf(tabId: string): string | null {
+    return this.tabs.get(tabId)?.model.status().model ?? null
+  }
+
+  /** makes the tab's Claude Code check its sign-in (the engine's accountInfo); nothing to check without a running chat */
+  async checkSignIn(tabId: string): Promise<void> {
+    const run = this.running(tabId)
+    if (run) await run.engine.accountInfo?.()
   }
 
   async setMode(tabId: string, mode: ChatPermissionMode): Promise<void> {
@@ -645,6 +684,7 @@ export class ChatHub {
       const text = source === 'clear' ? 'New conversation' : null
       const divider = text === null ? [] : live.model.divider(text)
       this.publish(live, [...divider, ...live.model.setState({ sessionId })])
+      this.tap(t => t.sessionChanged(tabId, sessionId))
     })
   }
 
@@ -710,8 +750,9 @@ export class ChatHub {
     this.clearRemote(live)
     if (live.ended) return
     live.ended = true
+    this.tap(t => t.ended(tabId))
     this.cancelQueued(live)
-    for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED)
+    for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
     if (how === 'close') live.engine?.close()
     else live.engine?.kill()
   }
@@ -761,7 +802,10 @@ export class ChatHub {
       // the messages sent while it started go out now, in the order they were typed
       const waiting = live.waiting
       live.waiting = []
-      for (const message of waiting) engine.send(message.text, message.images, message.id)
+      for (const message of waiting) {
+        engine.send(message.text, message.images, message.id)
+        this.tap(t => t.userSent(live.tabId, message.id, message.text, message.from ?? null))
+      }
     } catch (e) {
       this.finish(live, null, `Claude Code could not start: ${errorText(e)}`)
     }
@@ -780,6 +824,7 @@ export class ChatHub {
     this.publish(live, [...mode, ...this.restartEnded(live), { op: 'state', state: live.model.state() }])
     this.d.sessionReady?.(live.tabId)
     this.readEffort(live)
+    this.tap(t => t.ready(live.tabId, live.model.state().sessionId))
   }
 
   /** the effort Claude Code applies, as the settings report it: a known level or null goes to the state, anything else keeps the last */
@@ -813,6 +858,7 @@ export class ChatHub {
   /** the process has ended before it ran, or its start was cancelled: the tab gets its exit now */
   private finish(live: Live, code: number | null, fallback: string | null): void {
     live.ended = true
+    this.tap(t => t.ended(live.tabId))
     live.restarted = false
     this.dropStarting(live)
     // a compaction or a restart that never ends is over with the process
@@ -880,6 +926,7 @@ export class ChatHub {
   private apply(live: Live, msg: unknown): void {
     // a subagent's frame, or a task that starts or ends, changes its agent's page: those changes go out first; the main model reads the message too
     for (const change of live.agents.apply(msg, live.model.state().sessionId)) this.emitAgent(live, change)
+    const sessionBefore = live.model.state().sessionId
     const patches = live.model.apply(msg)
     this.publish(live, patches)
     // an image the chat shows may have its card already: the panel does not change again to bring it
@@ -911,6 +958,9 @@ export class ChatHub {
       // the main conversation grows while the turn runs; a subagent's messages are in its own context, not this one
       if (live.contextAt === null || this.d.now() - live.contextAt >= CONTEXT_EVERY_MS) this.readContext(live)
     }
+    const sessionAfter = live.model.state().sessionId
+    if (sessionAfter !== null && sessionAfter !== sessionBefore) this.tap(t => t.sessionChanged(live.tabId, sessionAfter))
+    this.tap(t => t.message(live.tabId, msg))
     this.d.observe?.(live.tabId, msg)
   }
 
@@ -1000,21 +1050,23 @@ export class ChatHub {
     const card = cardFor(full)
     const id = randomUUID()
     const onAbort = (): void => {
-      this.settle(live, id, cancelled(), CANCELLED)
+      this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
     }
     live.cards.set(id, { ask: full, card, resolve, signal, onAbort })
     signal.addEventListener('abort', onAbort, { once: true })
     this.publish(live, live.model.cardOpened(id, card))
+    this.tap(t => t.cardOpened(live.tabId, id, full))
   }
 
-  /** a card's answer, or its cancellation: the SDK gets the result, the card says how it was answered */
-  private settle(live: Live, cardId: string, result: SdkPermissionResult, line: string): boolean {
+  /** a card's answer, or its cancellation: the SDK gets the result, the card says how it was answered; `by` tells the Remote Control who closed it */
+  private settle(live: Live, cardId: string, result: SdkPermissionResult, line: string, by: 'window' | 'remote' | 'cancelled'): boolean {
     const pending = live.cards.get(cardId)
     if (!pending) return false
     live.cards.delete(cardId)
     pending.signal.removeEventListener('abort', pending.onAbort)
     pending.resolve(result)
     if (this.tabs.get(live.tabId) === live) this.publish(live, live.model.cardAnswered(cardId, line))
+    this.tap(t => t.cardClosed(live.tabId, cardId, by))
     return true
   }
 
@@ -1027,13 +1079,14 @@ export class ChatHub {
     // before ready, a command that cannot run is a failed start: the tab falls back to its terminal, as a failed support check does
     if (!live.ready && !live.stopping && code !== null && CANNOT_RUN.has(code)) {
       this.cancelQueued(live)
-      for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED)
+      for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
       this.finish(live, null, `Claude Code could not be started for the chat: ${live.firstStderr ?? `exit code ${code}`}`)
       return
     }
     live.ended = true
+    this.tap(t => t.ended(live.tabId))
     this.cancelQueued(live)
-    for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED)
+    for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
     this.dropStarting(live)
     live.req.exit(code, null)
     if (live.early === null) this.drawEnd(live)
@@ -1057,6 +1110,17 @@ export class ChatHub {
 
   private withStarting(live: Live, items: ChatItem[]): ChatItem[] {
     return live.starting === null ? items : [...items, live.starting]
+  }
+
+  /** calls the Remote Control's tap; a tap that throws is logged, and the chat goes on as it is */
+  private tap(run: (t: RemoteControlTap) => void): void {
+    const t = this.d.remoteControl
+    if (!t) return
+    try {
+      run(t)
+    } catch (e) {
+      this.d.log.warn(`the Remote Control tap failed: ${errorText(e)}`)
+    }
   }
 
   /** model patches: they go to the window and tell the tab whether a turn runs */

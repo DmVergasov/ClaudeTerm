@@ -336,11 +336,16 @@ function tailOf(s: string, room: number): string {
 
 /**
  * An item as a member's device gets it: a reload card is a plain notice (its title and text, no button), a divider loses its
- * highlighted part, and an open-mcp notice loses its action. Any other item is returned as it is.
+ * highlighted part, an open-mcp notice loses its action, and a message from claude.ai is a plain message (its origin is left
+ * out: a member refuses an origin it does not know). Any other item is returned as it is.
  */
 export function itemForMembers(item: ChatItem): ChatItem {
   if (item.kind === 'reload') return { kind: 'notice', id: item.id, tone: 'info', text: `${item.title} — ${item.text}`, action: null }
   if (item.kind === 'divider') return { kind: 'divider', id: item.id, text: item.text }
+  if (item.kind === 'user' && item.from === 'remote') {
+    const { from: _from, ...plain } = item
+    return plain
+  }
   if (item.kind === 'notice' && item.action === 'open-mcp') return { ...item, action: null }
   return item
 }
