@@ -239,6 +239,17 @@ export class MailHub {
     t.mailTurns = 0
   }
 
+  /**
+   * ClaudeTerm restarts the tab's Claude Code: the turn ends with the old process, as an interrupt ends it, and the watcher that
+   * process held is let go without mail. A wake handed to a Claude Code that is going is lost and its mail reads as delivered:
+   * the mail waits instead for the watcher of the new process, which its SessionStart brings
+   */
+  restarting(tabId: string): void {
+    this.interrupted(tabId)
+    const w = this.watchers.get(tabId)
+    if (w) this.finish(w, { ok: true })
+  }
+
   /** a wait of the tab is held now */
   hasWatcher(tabId: string): boolean {
     return this.watchers.has(tabId)

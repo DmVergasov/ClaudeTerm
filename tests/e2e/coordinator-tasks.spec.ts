@@ -1,10 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { CoordMarks } from '../../src/shared/coordinator'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import { gitRepo, launchApp, type Launched } from './helpers'
-import { activate, envelopeOf, refOf, sendText, startSession, waitForMail } from './agent-mail'
+import { bufferText, gitRepo, launchApp, makeDataDir, type Launched } from './helpers'
+import { activate, envelopeOf, refOf, sendText, startSession, VERSION_SETTINGS, waitForMail } from './agent-mail'
 import { launchChatTab, sendMessage, userMessages } from './chat-helpers'
 import { chatState, coord, coordApp, done, logHas, makeCoordinator, stillWaiting, terminalPair, turnOf, within } from './coordinator-helpers'
 
@@ -18,8 +19,8 @@ const marksOf = (page: Page): Promise<CoordMarks> => page.evaluate(() => window.
  * The app with a coordinator in tab 1 that has attached the session of tab 2 and given it a task, 'Fix the parser.'. The task
  * is open: the watcher of tab 2 took it. `c` is the coordinator's watcher, held for the report.
  */
-async function openTask(o: { count?: number; transcripts?: boolean; env?: Record<string, string> } = {}) {
-  const l = await coordApp(o.count ?? 2, { transcripts: o.transcripts, env: o.env })
+async function openTask(o: { count?: number; transcripts?: boolean; env?: Record<string, string>; dataDir?: string } = {}) {
+  const l = await coordApp(o.count ?? 2, { transcripts: o.transcripts, env: o.env, dataDir: o.dataDir })
   const { pipeName, page } = l
   const [tab1, tab2] = [l.tabs[0]!, l.tabs[1]!]
   const [sid1, sid2] = [l.sids[0]!, l.sids[1]!]
@@ -237,16 +238,70 @@ test('an open task survives a quit; the restored session\'s rest reports it', as
   }
 })
 
-test('a restart of the session\'s tab ends the turn a task woke: the task queued in that turn goes to the next watcher', async () => {
+/** the restarted Claude Code of a tab runs: the stand-in prints its arguments, and a restart resumes the tab's conversation */
+const restarted = (page: Page, tabId: string, sessionId: string): Promise<void> =>
+  expect.poll(() => bufferText(page, tabId), { timeout: 15_000 }).toContain(`--resume ${sessionId}`)
+
+test('a restart of the session\'s tab ends the turn it was in: a task queued in that turn goes to the next watcher', async () => {
+  const l = await coordApp(2)
+  const [tab1, tab2] = [l.tabs[0]!, l.tabs[1]!]
+  const sid2 = l.sids[1]!
+  try {
+    expect(await makeCoordinator(l.page, tab1)).toMatchObject({ ok: true })
+    expect(await coord(l.pipeName, tab1, { op: 'attach', session: refOf(sid2) })).toMatchObject({ ok: true })
+    // the task is queued while the person's own turn runs in the session: it waits for the turn to end
+    await turnOf(l.pipeName, tab2, sid2)
+    expect(await coord(l.pipeName, tab1, { op: 'message', session: refOf(sid2), text: 'Fix the parser.' })).toMatchObject({ ok: true })
+    await l.page.evaluate((id) => window.ct.restartTab(id, true), tab2)
+    // the restarted Claude Code says it starts, as its SessionStart hook does, and its new watcher takes the queued task
+    await restarted(l.page, tab2, sid2)
+    expect(await startSession(l.pipeName, tab2, sid2)).toEqual({ ok: true })
+    const next = waitForMail(l.pipeName, tab2, sid2)
+    expect((await within(next, 15_000)).info).toContain('> Fix the parser.')
+  } finally {
+    await l.app.close()
+  }
+})
+
+test('an account switch in the middle of the task\'s turn keeps the task open: the report is the answer the session goes on to give', async () => {
+  // the account the session's tab moves to
+  const work = '0b6f3c2e-4d5a-4e6f-8a7b-9c0d1e2f3a4b'
+  const dataDir = makeDataDir(VERSION_SETTINGS)
+  writeFileSync(join(dataDir, 'accounts.json'), JSON.stringify({
+    version: 1,
+    accounts: [{ id: work, name: 'Work', addedAt: '2026-10-01T09:00:00.000Z', token: 'e2e-token-work-0000000001', encrypted: false }]
+  }))
+  const t = await openTask({ dataDir })
+  try {
+    await turnOf(t.pipeName, t.tab2, t.sid2)
+    await t.page.evaluate(({ id, account }) => window.ct.switchAccount(id, account), { id: t.tab2, account: work })
+    // the tab restarts on the other account and resumes the conversation; the person tells it to go on, and its turn ends
+    await restarted(t.page, t.tab2, t.sid2)
+    expect(await sendPipeMessage(t.pipeName, { v: 1, type: 'session', tabId: t.tab2, sessionId: t.sid2, source: 'resume', transcriptPath: null })).toEqual({ ok: true })
+    await turnOf(t.pipeName, t.tab2, t.sid2)
+    await done(t.pipeName, t.tab2, t.sid2, { lastMessage: 'Parser fixed after the switch.' })
+    // ClaudeTerm's restart cut the turn, not the person: the coordinator hears that the task finished, with the answer
+    const report = await within(t.c, 15_000)
+    expect(report.info).toContain('its task finished.')
+    expect(report.info).toContain('> Parser fixed after the switch.')
+    expect(report.info).not.toContain('stopped')
+  } finally {
+    await t.app.close()
+  }
+})
+
+test('a report made while the coordinator\'s Claude Code restarts waits for the new one: the watcher of the old one is let go without it', async () => {
   const t = await openTask()
   try {
-    // the second task is queued while the first one's mail turn runs: the session is not at rest, so it waits
-    expect(await coord(t.pipeName, t.tab1, { op: 'message', session: refOf(t.sid2), text: 'Then the docs.' })).toMatchObject({ ok: true })
-    await t.page.evaluate((id) => window.ct.restartTab(id, true), t.tab2)
-    // the restarted Claude Code says it starts, as its SessionStart hook does, and its new watcher takes the queued task
-    expect(await startSession(t.pipeName, t.tab2, t.sid2)).toEqual({ ok: true })
-    const next = waitForMail(t.pipeName, t.tab2, t.sid2)
-    expect((await within(next, 15_000)).info).toContain('> Then the docs.')
+    await t.page.evaluate((id) => window.ct.restartTab(id, true), t.tab1)
+    // the session ends its task while the coordinator's Claude Code restarts
+    await done(t.pipeName, t.tab2, t.sid2, { lastMessage: 'Parser fixed during the restart.' })
+    // the old process's watcher gets no mail: the wake of a Claude Code that is going is lost, and the report would read as delivered
+    expect((await within(t.c, 15_000)).info).toBeUndefined()
+    await restarted(t.page, t.tab1, t.sid1)
+    expect(await startSession(t.pipeName, t.tab1, t.sid1)).toEqual({ ok: true })
+    const report = waitForMail(t.pipeName, t.tab1, t.sid1)
+    expect((await within(report, 15_000)).info).toContain('> Parser fixed during the restart.')
   } finally {
     await t.app.close()
   }

@@ -544,6 +544,23 @@ describe('MailHub held waits of a closed tab', () => {
   })
 })
 
+describe('MailHub restart of a tab', () => {
+  it("a restart lets the old process's held wait go without mail; mail that comes meanwhile waits for the new process's wait", async () => {
+    const { hub, store } = setup()
+    const old = hub.wait('tab-2', SES_LOCAL, new AbortController().signal)
+    hub.userTurn('tab-2')
+    hub.restarting('tab-2')
+    expect(await old).toEqual({ ok: true })
+    const mail = record({ from: MAC, to: LOCAL, text: 'Sent during the restart.' })
+    store.add(mail)
+    expect(store.get(mail.id)?.delivered).toBe(false)
+    // the turn ended with the old process: the new process's watcher is woken, as a tab at rest is
+    expect(await hub.wait('tab-2', SES_LOCAL, new AbortController().signal)).toMatchObject({ ok: true, info: expect.stringContaining('Sent during the restart.') })
+    expect(store.get(mail.id)?.delivered).toBe(true)
+    expect(hub.takeMailTurn('tab-2')).toBe(true)
+  })
+})
+
 describe('MailHub wake text size', () => {
   it('one wait gets the oldest messages that fit in 9500 characters; the next wait gets the rest', async () => {
     const { hub, store } = setup()

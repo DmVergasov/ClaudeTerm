@@ -13,11 +13,11 @@ import { chatStandIn } from './chat-helpers'
 import { hasMailWatcher, listAgents, refOf, startSession, VERSION_SETTINGS, type WaitAnswer } from './agent-mail'
 import { type AppOptions, type Device, pairedApps, SLOW } from './device-pair'
 
-/** the app with `count` Claude tabs in one git repository, each with a session, the mail watcher on */
-export async function coordApp(count: number, o: { settings?: object; env?: Record<string, string>; repo?: string; transcripts?: boolean } = {}): Promise<Launched & { repo: string; tabs: string[]; sids: string[]; transcripts: string[] }> {
+/** the app with `count` Claude tabs in one git repository, each with a session, the mail watcher on; `dataDir` already holds the settings */
+export async function coordApp(count: number, o: { settings?: object; env?: Record<string, string>; repo?: string; transcripts?: boolean; dataDir?: string } = {}): Promise<Launched & { repo: string; tabs: string[]; sids: string[]; transcripts: string[] }> {
   const repo = o.repo ?? gitRepo()
   const settings = o.settings ?? VERSION_SETTINGS
-  const launched = await launchApp({ settings, args: ['--claude', repo], env: o.env })
+  const launched = await launchApp({ dataDir: o.dataDir, settings, args: ['--claude', repo], env: o.env })
   const { page, pipeName, dataDir } = launched
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const tabs = [(await page.evaluate(() => window.__ct!.activeTabId()))!]

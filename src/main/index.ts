@@ -975,14 +975,18 @@ function bootstrap(): void {
     onTabRestarting: (tabId, continuedAs) => {
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
-      // the old process's turn ends with it: no Stop comes, so the mail turn and the coordinator's task in it are ended here
-      interrupted(tabId)
+      // the old process's turn ends with it: no Stop comes, so the mail turn and the coordinator's turn are ended here, and the
+      // watcher the old process held is let go. The task stays open: the restarted Claude Code goes on with the conversation
+      mailHub.restarting(tabId)
+      projectCoordinators.restarting(tabId)
       // the chat says at once that its Claude Code restarts, and keeps its conversation until the new one is ready
       chatHub.restarting(tabId, continuedAs ? `Continued as ${accountLabel(continuedAs.account)}` : undefined)
     },
     moveConversation,
-    // another conversation or folder is no restart: the chat says none, and starts new as it did before
+    // another conversation or folder is no restart: the chat says none, and starts new as it did before; the task whose turn the
+    // restart cut is stopped
     onTabNewConversation: (tabId) => {
+      projectCoordinators.newConversation(tabId)
       chatHub.newConversation(tabId)
     },
     onTabClosed: (tabId) => {

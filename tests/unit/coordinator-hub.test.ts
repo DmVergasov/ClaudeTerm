@@ -1142,6 +1142,40 @@ describe('CoordinatorHub task lifecycle', () => {
     expect(w.store.hosted(S.one)!.tasks).toEqual([])
   })
 
+  it("a restart in the task's turn keeps the task open: the restarted session's rest reports the answer it goes on to give", () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.restarting('tab-1')
+    expect(records(w, 'report')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('open')
+    w.hub.turnStarted('tab-1')
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Parser fixed after the restart.' })
+    fire(w)
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'finished', replyTo: task.id, text: 'Parser fixed after the restart.' }])
+    expect(w.store.hosted(S.one)!.tasks).toEqual([])
+  })
+
+  it('a restart ends the turn the tab was in: a queued task is taken at rest again', () => {
+    w.hub.turnStarted('tab-1')
+    expect(w.hub.accepts(task, 'tab-1', 'idle')).toBe(false)
+    w.hub.restarting('tab-1')
+    expect(w.hub.accepts(task, 'tab-1', 'idle')).toBe(true)
+  })
+
+  it('a restart that starts another conversation stops the task whose turn it cut; with no turn cut it stops nothing', () => {
+    w.hub.handedOver('tab-1', [task], 'idle')
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: null })
+    w.hub.restarting('tab-1')
+    w.hub.newConversation('tab-1')
+    expect(records(w, 'report')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks[0].state).toBe('open')
+
+    w.hub.turnStarted('tab-1')
+    w.hub.restarting('tab-1')
+    w.hub.newConversation('tab-1')
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'stopped', reason: 'its turn was interrupted', replyTo: task.id }])
+    expect(w.store.hosted(S.one)!.tasks).toEqual([])
+  })
+
   it("an interrupt read from the transcript stops the task only when it is not older than the task's delivery", () => {
     w.hub.handedOver('tab-1', [task], 'idle')
     w.hub.interrupted('tab-1', NOW - 1)

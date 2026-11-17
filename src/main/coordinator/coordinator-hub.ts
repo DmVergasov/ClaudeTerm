@@ -326,6 +326,8 @@ export class CoordinatorHub {
   private readonly seen = new Map<string, { group: CoordGroup; line: string; changedAt: number }>()
   /** the tabs that are in a turn now */
   private readonly inTurn = new Set<string>()
+  /** the tabs whose turn their last restart cut, while it may still say it starts another conversation (newConversation) */
+  private readonly cutByRestart = new Set<string>()
   /** the settle timer of each tab whose Stop came to rest: the function cancels it */
   private readonly settle = new Map<string, () => void>()
   /** the last answer of a task's session, by task id: the text of its report */
@@ -1047,6 +1049,27 @@ export class CoordinatorHub {
     this.d.changed()
   }
 
+  /**
+   * ClaudeTerm restarts the tab's Claude Code (Restart session, another account): the old process's turn ends with it, as no Stop
+   * comes. Its task stays open, as after a quit: the restarted Claude Code goes on with the same conversation, and the end of its
+   * next turn reports the task. Only the person's stop (interrupted) or another conversation (newConversation) stops it
+   */
+  restarting(tabId: string): void {
+    this.cutByRestart.delete(tabId)
+    if (!this.inTurn.delete(tabId)) return
+    this.cutByRestart.add(tabId)
+    this.d.poke(tabId)
+    this.d.changed()
+  }
+
+  /** the restart starts another conversation or folder in the tab: the task whose turn it cut is stopped, as an interrupt stops it */
+  newConversation(tabId: string): void {
+    if (!this.cutByRestart.delete(tabId)) return
+    this.onCurrent(tabId, { kind: 'stopped', reason: REASONS.interrupted })
+    this.d.poke(tabId)
+    this.d.changed()
+  }
+
   /** the tab's process exited: its turn is over and the task it held fails; the queued tasks stay */
   exited(tabId: string): void {
     this.endMake(tabId)
@@ -1100,6 +1123,7 @@ export class CoordinatorHub {
     this.endMake(tabId)
     this.renamedFrom.delete(tabId)
     this.inTurn.delete(tabId)
+    this.cutByRestart.delete(tabId)
     this.briefDue.delete(tabId)
     this.cancelSettle(tabId)
     this.cancelStart(tabId, HUB_TEXT.closedEarly)
