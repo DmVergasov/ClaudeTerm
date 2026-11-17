@@ -29,9 +29,10 @@ export async function settingsEnv(configDir: string): Promise<Record<string, str
   }
 }
 
-/** the environment an account's Claude Code process starts with: its settings.json env under the launch environment, which wins; names match without regard to case, as Windows reads them */
+/** the environment an account's Claude Code process starts with: its settings.json env under the launch environment, which wins; an empty launch value is unset (as remoteUnavailable reads it), so the settings value stands; names match without regard to case, as Windows reads them */
 export function accountLaunchEnv(settings: Readonly<Record<string, string>>, launch: Readonly<Record<string, string>>): Record<string, string> {
-  const named = new Set(Object.keys(launch).map((name) => name.toUpperCase()))
+  const set = Object.entries(launch).filter(([, value]) => value !== '')
+  const named = new Set(set.map(([name]) => name.toUpperCase()))
   const kept = Object.entries(settings).filter(([name]) => !named.has(name.toUpperCase()))
-  return { ...Object.fromEntries(kept), ...launch }
+  return { ...Object.fromEntries(kept), ...Object.fromEntries(set) }
 }

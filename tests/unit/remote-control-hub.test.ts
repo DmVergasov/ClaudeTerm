@@ -8,11 +8,12 @@ const TAB = 'tab-1'
 const ID = 'session_01abc'
 
 /** the hub with fake dependencies; `report` does what StatusHub does: keeps the id and tells the hub of a change */
-function world(o: { view?: 'terminal' | 'chat'; kind?: RemoteAccountKind; env?: Record<string, string>; choice?: boolean } = {}) {
+function world(o: { view?: 'terminal' | 'chat'; kind?: RemoteAccountKind; env?: Record<string, string>; settingsEnv?: Record<string, string>; choice?: boolean } = {}) {
   const w = {
     tab: { view: o.view ?? 'terminal', account: null, exited: false } as RemoteTab | null,
     kind: o.kind ?? ('main' as RemoteAccountKind),
     env: o.env ?? {},
+    settingsEnv: o.settingsEnv ?? {},
     choice: o.choice ?? false,
     reported: null as string | null,
     changes: 0,
@@ -31,7 +32,7 @@ function world(o: { view?: 'terminal' | 'chat'; kind?: RemoteAccountKind; env?: 
     },
     target: (id, sid) => ({ tabId: id, sessionId: sid, folder: '/cfg', env: {}, title: 'work', cwd: '/w', model: null }),
     accountKind: () => w.kind,
-    env: () => w.env,
+    envs: () => [w.env, w.settingsEnv],
     choice: () => w.choice,
     setChoice: (_id, on) => { w.choice = on },
     reportedId: () => w.reported,
@@ -82,6 +83,13 @@ describe('RemoteControlHub: terminal reports', () => {
     token.report(ID)
     expect(token.hub.state(TAB)).toEqual({ kind: 'unavailable', reason: 'This account signs in with a token: Remote Control needs a claude.ai sign-in' })
     expect(world({ env: { ANTHROPIC_BASE_URL: 'https://proxy.example.com' } }).hub.state(TAB)).toEqual({ kind: 'unavailable', reason: "Remote Control needs Anthropic's own service: this account uses ANTHROPIC_BASE_URL" })
+  })
+  it("an account folder's settings.json env that sets ANTHROPIC_BASE_URL makes Remote Control unavailable, though the launch environment does not, and a switch on types nothing", () => {
+    const { hub, w } = world({ settingsEnv: { ANTHROPIC_BASE_URL: 'https://proxy.example.com' } })
+    expect(hub.state(TAB)).toEqual({ kind: 'unavailable', reason: "Remote Control needs Anthropic's own service: this account uses ANTHROPIC_BASE_URL" })
+    hub.set(TAB, true)
+    expect(w.typed).toEqual([])
+    expect(w.choice).toBe(false)
   })
   it('a chat-view tab ignores the terminal reports', () => {
     const { hub, w, report } = world({ view: 'chat' })

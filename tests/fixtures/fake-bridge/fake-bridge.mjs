@@ -7,7 +7,8 @@ const handles = []
 
 /** the handle's record, as the test reads it; its callbacks stay out of the snapshot */
 function recordOf(sessionId) {
-  return { sessionId, writes: [], results: 0, requests: [], cancels: [], states: [], closes: 0 }
+  // cancelsAtClose: the cancels sent before the handle closed, so a test sees their order
+  return { sessionId, writes: [], results: 0, requests: [], cancels: [], states: [], closes: 0, cancelsAtClose: null }
 }
 
 const plain = (v) => JSON.parse(JSON.stringify(v))
@@ -86,6 +87,7 @@ export async function attachBridgeSession(opts) {
     },
     close() {
       rec.closes += 1
+      rec.cancelsAtClose = [...rec.cancels]
     }
   }
   handles.push(handle)

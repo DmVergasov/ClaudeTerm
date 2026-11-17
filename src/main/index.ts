@@ -374,25 +374,43 @@ function bootstrap(): void {
   }
   /** the environment of a CLI run for a sign-in account: its folder, and none of the environment's token or key */
   const accountEnv = (folder: string): Record<string, string> => applyEnvPatch(childEnv(), loginEnv(folder))
-  /** the env of each account folder's settings.json, as read last, with when: a read runs in the background and the tabs' status is said again when it lands */
+  /** the config folder whose settings.json a tab on `account` starts Claude Code with: the account's folder, else Main account's; null when unknown */
+  const settingsDirOf = (account: string | null): string | null => (account === null ? null : accounts.folderOf(account)) ?? mainConfigDir
+  /** the env of each config folder's settings.json, as read last: a read runs in the background, and the tabs on the folder get their status said again when a read changes it */
   const settingsEnvs = new Map<string, { env: Record<string, string>; at: number }>()
+  const settingsReads = new Map<string, Promise<Record<string, string>>>()
   const SETTINGS_ENV_MS = 10_000
+  const sameEnv = (a: Record<string, string> | undefined, b: Record<string, string>): boolean => JSON.stringify(a ?? null) === JSON.stringify(b)
+  /** reads a folder's settings.json env once at a time; a read that changes the env says the status again for the tabs on that folder */
+  const readSettingsEnv = (dir: string): Promise<Record<string, string>> => {
+    const running = settingsReads.get(dir)
+    if (running !== undefined) return running
+    const read = settingsEnv(dir).then((env) => {
+      const before = settingsEnvs.get(dir)?.env
+      settingsEnvs.set(dir, { env, at: Date.now() })
+      if (!sameEnv(before, env)) for (const t of tabs.list()) if (settingsDirOf(t.account) === dir) statusSoon(t.id)
+      return env
+    }).finally(() => settingsReads.delete(dir))
+    settingsReads.set(dir, read)
+    return read
+  }
+  /** the folder's settings.json env as read last; a stale or unread folder starts a read in the background */
   const settingsEnvOf = (dir: string): Record<string, string> => {
     const seen = settingsEnvs.get(dir)
-    if (seen === undefined || Date.now() - seen.at > SETTINGS_ENV_MS) {
-      settingsEnvs.set(dir, { env: seen?.env ?? {}, at: Date.now() })
-      void settingsEnv(dir).then((env) => {
-        settingsEnvs.set(dir, { env, at: Date.now() })
-        for (const t of tabs.list()) statusSoon(t.id)
-      })
-    }
+    if (seen === undefined || Date.now() - seen.at > SETTINGS_ENV_MS) void readSettingsEnv(dir)
     return seen?.env ?? {}
+  }
+  /** resolves once the folder of a tab on `account` has been read at least once: its first launch decides Remote Control with the env it reads */
+  const settingsReady = async (account: string | null): Promise<void> => {
+    const dir = settingsDirOf(account)
+    if (dir === null || settingsEnvs.has(dir)) return
+    await readSettingsEnv(dir)
   }
   /** the environment a tab on `account` starts Claude Code with, as far as Remote Control reads it: its folder's settings.json env under it */
   const launchEnvOf = (account: string | null): Record<string, string> => {
     const folder = account === null ? null : accounts.folderOf(account)
     const base = folder === null ? childEnv() : accountEnv(folder)
-    const dir = folder ?? mainConfigDir
+    const dir = settingsDirOf(account)
     return dir === null ? base : accountLaunchEnv(settingsEnvOf(dir), base)
   }
   /** `claude <args>` for a sign-in account, started the way a chat starts Claude Code; rejects with a CliError when it cannot run */
@@ -657,7 +675,7 @@ function bootstrap(): void {
     statusTimers.set(tabId, setTimeout(() => {
       statusTimers.delete(tabId)
       // a tab closed meanwhile has no status to say: one would bring back the entry the window dropped
-      if (tabs.get(tabId) === undefined) return
+      if (tabs.get(tabId) === null) return
       const status = statusHub.get(tabId)
       // past the end of a turn, the agents still running are the work Claude left in the background
       tabs.setAgentsRunning(tabId, status.agents.length > 0)
@@ -954,7 +972,6 @@ function bootstrap(): void {
       // after the feed has stopped, so no late report brings the closed tab back
       planHub.removeTab(tabId)
       stopTabStatus(tabId)
-      remoteControl.removeTab(tabId)
       attention.removeTab(tabId)
       turns.removeTab(tabId)
       autoContinue.forget(tabId)
@@ -969,6 +986,8 @@ function bootstrap(): void {
       taskLists.removeTab(tabId)
       newerSide.delete(tabId)
       chatHub.removeTab(tabId)
+      // after the chat settles its open cards: their cancels reach claude.ai before the host lets go of the session
+      remoteControl.removeTab(tabId)
       headsUp.forget(tabId)
       mcpHub.removeTab(tabId)
       // a closed chat's configuration files are no longer watched
@@ -1000,8 +1019,8 @@ function bootstrap(): void {
       toast(reason)
     },
     baseEnv: childEnv,
-    // the --rc name of a Claude tab whose Remote Control is on: null where Remote Control is not available on the account it starts on
-    remoteName: (tab, account) => (remoteUnavailable(accountKindOf(account), launchEnvOf(account)) === null ? remoteName(tabTitleOf(tab)) : null),
+    // the --rc name of a Claude tab whose Remote Control is on; whether the process starts with it is decided at the launch, for the account it starts on
+    remoteName: (tab) => remoteName(tabTitleOf(tab)),
     remoteDefault: (account) => (account === null ? settings.claude.remoteControl : accounts.remoteControlOf(account)),
     resolveLaunch: (req) => {
       if (req.kind === 'claude' || req.setupToken || req.signIn) {
@@ -1189,7 +1208,11 @@ function bootstrap(): void {
       return t?.kind === 'claude' ? { view: t.view ?? 'terminal', account: t.account, exited: t.exited } : null
     },
     accountKind: accountKindOf,
-    env: (id) => tabs.claudeEnv(id) ?? {},
+    envs: (id) => {
+      const dir = settingsDirOf(tabs.get(id)?.account ?? null)
+      const launch = tabs.claudeEnv(id) ?? {}
+      return dir === null ? [launch] : [launch, settingsEnvOf(dir)]
+    },
     choice: (id) => tabs.remoteControl(id),
     setChoice: (id, on) => tabs.setRemoteControl(id, on),
     reportedId: (id) => statusHub.remoteId(id),
@@ -2151,6 +2174,8 @@ function bootstrap(): void {
       log.warn(`cannot remove previous session: ${(e as Error).message}`)
     }
     send(IPC.evRestore, null)
+    // each restored tab's folder settings are read before any tab opens: a tab's first launch decides Remote Control with them
+    await Promise.all(snap.tabs.map((t) => settingsReady(t.kind === 'claude' ? t.account : null)))
     // a fork whose own conversation was never saved forks its head's again, rather than resuming nothing. The transcripts
     // are looked for together, before any tab opens, so the restored tabs then open in one go, in their saved order
     const unsaved = await Promise.all(snap.tabs.map(async (t) => {
@@ -3068,7 +3093,13 @@ function bootstrap(): void {
   })
   ipcMain.handle(IPC.mailRead, (_e, ids: unknown): void => { if (isIdList(ids)) mailHub.markRead(ids.slice(0, 1000)) })
   // a fork comes only from Fork session (tabs:fork), never from a request to open a tab
-  ipcMain.handle(IPC.tabsOpen, (_e, req: unknown) => (isOpenTabRequest(req) ? openTab(inDefaultFolder(openTabRequestFields(req))) : null))
+  ipcMain.handle(IPC.tabsOpen, async (_e, req: unknown) => {
+    if (!isOpenTabRequest(req)) return null
+    const fields = openTabRequestFields(req)
+    // a Claude tab's first launch on its folder decides Remote Control with the folder's settings: they are read first
+    if (fields.kind === 'claude') await settingsReady(fields.account ?? null)
+    return openTab(inDefaultFolder(fields))
+  })
   ipcMain.handle(IPC.sessionsList, listSessions)
   ipcMain.handle(IPC.sessionsStar, (_e, id: unknown, on: unknown): void => {
     if (isSessionId(id) && isFlag(on)) starred.set(id, on)

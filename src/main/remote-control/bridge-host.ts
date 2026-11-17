@@ -465,6 +465,15 @@ export class BridgeHost {
     this.takeClose(t, code)
   }
 
+  /** the tab's chain starts again from the sign-in, as a first attach does: with its entry forgotten, the session is made and its history written anew */
+  private restartFresh(t: Tab): void {
+    this.connect(t).catch((e: unknown) => {
+      if (!this.current(t)) return
+      this.d.log.warn(`remote control: the attach failed for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+      this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
+    })
+  }
+
   /** the connection closed: its sequence number is stored, and it is brought back; claude.ai refusing it (403, 404) fails the tab */
   private takeClose(t: Tab, code: number | undefined, unsent = false): void {
     const handle = t.handle
@@ -544,10 +553,14 @@ export class BridgeHost {
           t.handle = null
           sign = null
           if (mayBeUnsent) {
+            // the session's history never reached claude.ai: nothing of it is kept, and the tab starts a fresh session through the first attach's path
             mayBeUnsent = false
             t.kept = false
+            t.reconnecting = false
             await this.d.sessions.forget(t.target.sessionId)
             if (!this.alive(t, gen)) return
+            this.restartFresh(t)
+            return
           }
           if (!(await this.missed(t, ++misses))) return
           continue
@@ -678,13 +691,15 @@ export class BridgeHost {
   }
 
   /** the handle's sequence number, stored with its remote session */
-  private storeSequence(t: Tab, h: Handle): Promise<void> {
+  private async storeSequence(t: Tab, h: Handle): Promise<void> {
     const session = t.session
     // nothing is stored for a session whose history is not written yet
-    if (session === null || !t.kept) return Promise.resolve()
-    return this.d.sessions.put(t.target.sessionId, pathKey(session.folder), { remoteId: session.remoteId, sequenceNum: h.getSequenceNum() }).catch((e: unknown) => {
+    if (session === null || !t.kept) return
+    try {
+      await this.d.sessions.put(t.target.sessionId, pathKey(session.folder), { remoteId: session.remoteId, sequenceNum: h.getSequenceNum() })
+    } catch (e) {
       this.d.log.warn(`remote control: the sequence number cannot be stored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
-    })
+    }
   }
 
   /** a state the tab stops in: its handle closes, what waits is dropped, and an attach still running stops too */
@@ -724,7 +739,11 @@ export class BridgeHost {
     }
     cancel()
     await this.storeSequence(t, h)
-    h.close()
+    try {
+      h.close()
+    } catch (e) {
+      this.d.log.warn(`remote control: the connection cannot be closed for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
+    }
   }
 
   /** the tokens a chain has read or received: a log line or a state never shows them */

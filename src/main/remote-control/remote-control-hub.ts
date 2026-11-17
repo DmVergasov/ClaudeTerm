@@ -17,8 +17,8 @@ export interface RemoteControlDeps {
   /** a local Claude tab as main knows it; null for a shell tab, another device's tab, or an unknown id */
   tab(tabId: string): RemoteTab | null
   accountKind(account: string | null): RemoteAccountKind
-  /** the environment the tab's Claude Code starts with */
-  env(tabId: string): Record<string, string>
+  /** the environments the tab's Claude Code starts with, as Remote Control reads them: its launch environment, and its account folder's settings.json env */
+  envs(tabId: string): Record<string, string>[]
   choice(tabId: string): boolean
   setChoice(tabId: string, on: boolean): void
   /** the last id the tab's Claude Code reported (StatusHub.remoteId) */
@@ -71,7 +71,7 @@ export class RemoteControlHub {
   state(tabId: string): RemoteState | null {
     const tab = this.deps.tab(tabId)
     if (!tab) return null
-    const reason = remoteUnavailable(this.deps.accountKind(tab.account), this.deps.env(tabId))
+    const reason = this.unavailableReason(tabId)
     if (reason !== null) return { kind: 'unavailable', reason }
     if (tab.exited) return { kind: 'off' }
     if (tab.view === 'chat') return this.chatState(tabId)
@@ -323,7 +323,18 @@ export class RemoteControlHub {
   }
 
   private unavailable(tabId: string): boolean {
+    return this.unavailableReason(tabId) !== null
+  }
+
+  /** why Remote Control is unavailable on the tab: the first reason its account kind and any of its environments give; null when it is available */
+  private unavailableReason(tabId: string): string | null {
     const tab = this.deps.tab(tabId)
-    return tab !== null && remoteUnavailable(this.deps.accountKind(tab.account), this.deps.env(tabId)) !== null
+    if (!tab) return null
+    const kind = this.deps.accountKind(tab.account)
+    for (const env of this.deps.envs(tabId)) {
+      const reason = remoteUnavailable(kind, env)
+      if (reason !== null) return reason
+    }
+    return null
   }
 }

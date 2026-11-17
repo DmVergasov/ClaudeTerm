@@ -672,8 +672,8 @@ describe('BridgeHost: the final wave', () => {
     expect(handles[1].reconnects).toEqual([])
     expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
   })
-  it('a first attach whose connection closes while its history is read forgets its entry when the reconnect fails, so the next attach writes the history again', async () => {
-    const { h, handles, w, answers, calls, stored, fire } = host()
+  it('a first attach whose connection closes while its history is read starts a fresh session with the history when the reconnect fails', async () => {
+    const { h, handles, w, calls, stored, fire } = host()
     w.history = [userLine('u1', 'Fix the parser')]
     let open!: () => void
     w.historyGate = new Promise<void>((r) => { open = r })
@@ -682,14 +682,46 @@ describe('BridgeHost: the final wave', () => {
     handles[0].failReconnects = 1
     open(); await settle()
     fire(2_000); await settle()
-    expect(stored.has(SID)).toBe(false)
-    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
-    await h.detach(TAB)
-    w.historyGate = null
-    answers.create = ['cse_2']
-    h.attach(target()); await settle()
     expect(calls.filter((c) => c[0] === 'create')).toHaveLength(2)
-    expect(handles[2].writes.map((m) => m.uuid)).toEqual(['u1'])
+    expect(handles[handles.length - 1].writes.map((m) => m.uuid)).toEqual(['u1'])
+    expect(stored.get(SID)!.entry.remoteId).toBe('cse_x')
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_x' })
+    await h.detach(TAB)
+    expect(stored.get(SID)!.entry.remoteId).toBe('cse_x')
+  })
+  it('when the reconnect of a close during the history read fails, the tab starts a fresh session with the history, and a later close of that connection is brought back', async () => {
+    const { h, handles, w, answers, calls, stored, fire } = host()
+    w.history = [userLine('u1', 'Fix the parser')]
+    let open!: () => void
+    w.historyGate = new Promise<void>((r) => { open = r })
+    h.attach(target()); await settle()
+    handles[0].opts.onClose!(4092); await settle()
+    handles[0].failReconnects = 1
+    answers.create = ['cse_2']
+    w.historyGate = null
+    open(); await settle()
+    fire(2_000); await settle()
+    expect(calls.filter((c) => c[0] === 'create')).toHaveLength(2)
+    expect(handles[handles.length - 1].writes.map((m) => m.uuid)).toEqual(['u1'])
+    expect(stored.get(SID)!.entry.remoteId).toBe('cse_2')
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_2' })
+    const fresh = handles[handles.length - 1]
+    fresh.opts.onClose!(1006); await settle()
+    expect(fresh.reconnects).toHaveLength(1)
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_2' })
+  })
+  it('a detach never rejects, whatever its handle throws: a close that throws or a sequence number that cannot be read still leaves the tab off', async () => {
+    const closes = host()
+    closes.h.attach(target()); await settle()
+    closes.handles[0].close = () => { throw new Error('close broke') }
+    await expect(closes.h.detach(TAB)).resolves.toBeUndefined()
+    expect(closes.h.state(TAB)).toBeNull()
+    const sequence = host()
+    sequence.h.attach(target()); await settle()
+    sequence.handles[0].getSequenceNum = () => { throw new Error('sequence broke') }
+    await expect(sequence.h.detach(TAB)).resolves.toBeUndefined()
+    expect(sequence.h.state(TAB)).toBeNull()
+    expect(sequence.w.logs.join('\n')).toContain('sequence broke')
   })
   it('the tab reports the turn again when its connection comes back: running while a turn runs', async () => {
     const { h, handles, w, fire } = host()

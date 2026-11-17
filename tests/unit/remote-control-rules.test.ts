@@ -87,4 +87,8 @@ describe('accountLaunchEnv', () => {
   it('with no settings env, the launch environment is what it was', () => {
     expect(accountLaunchEnv({}, { PATH: '/usr/bin' })).toEqual({ PATH: '/usr/bin' })
   })
+  it('an empty launch value is unset, as the rules read it: the settings value stands', () => {
+    const merged = accountLaunchEnv({ ANTHROPIC_BASE_URL: 'https://settings.example.invalid' }, { ANTHROPIC_BASE_URL: '' })
+    expect(remoteUnavailable('main', merged)).toBe(BASE)
+  })
 })

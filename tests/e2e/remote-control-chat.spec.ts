@@ -7,7 +7,7 @@ import { chatState, coord, makeCoordinator } from './coordinator-helpers'
 import { controlResponses, sendMessage, userMessages } from './chat-helpers'
 import { runs } from './account-helpers'
 import { externalCalls, gitRepo, stubExternal } from './helpers'
-import { bridgeSeen, launchRcChat, RC_TOKEN, rcStatus } from './remote-control-helpers'
+import { bridgeSeen, launchRcChat, openRcTab, RC_TOKEN, rcStatus } from './remote-control-helpers'
 
 test('switching RC on in a chat shows connecting, then connected with its link; off closes the bridge; no token reaches the log', async () => {
   const t = await launchRcChat({ turns: {} })
@@ -127,6 +127,33 @@ test('a permission card already open when Remote Control turns on reaches claude
     const requestId = seen.handles[0].requests[0].request_id as string
     await t.app.evaluate((_electron, id) => (globalThis as any).ctTestBridge.answer(id, 'allow'), requestId)
     await expect(t.page.locator('.chat-host:visible .chat-card.answered')).toContainText('Allowed from claude.ai')
+  } finally {
+    await t.app.close()
+  }
+})
+
+test('closing a chat tab with an open card and Remote Control on cancels the card on claude.ai before the session closes, and no status for the tab follows', async () => {
+  const t = await launchRcChat({ turns: { run: [{ ask: { tool: 'Bash', input: { command: 'ls' } }, allowed: [{ text: 'Listed.' }], denied: [{ text: 'Not listed.' }] }] } })
+  try {
+    await sendMessage(t.page, 'run')
+    await expect(t.page.locator('.chat-host:visible .chat-card-permission')).toHaveCount(1)
+    await t.page.evaluate((id) => window.ct.remoteControlSet(id, true), t.tabId)
+    await expect(t.page.locator('#statusbar .status-remote')).toHaveAttribute('data-dot', 'on')
+    await expect.poll(async () => (await bridgeSeen(t.app)).handles[0]?.requests.length ?? 0).toBe(1)
+    const requestId = (await bridgeSeen(t.app)).handles[0].requests[0].request_id as string
+    // another tab stays open, so closing this one does not close the window
+    await openRcTab(t.page, gitRepo())
+    // the statuses the window hears from now on, the tab's among them
+    await t.page.evaluate(() => {
+      const heard: string[] = []
+      ;(window as any).__heardStatus = heard
+      window.ct.onStatus((u) => { heard.push(u.tabId) })
+    })
+    await t.page.evaluate((id) => { (window as any).__heardStatus.length = 0; return window.ct.closeTab(id) }, t.tabId)
+    await expect.poll(async () => (await bridgeSeen(t.app)).handles[0].closes).toBe(1)
+    expect((await bridgeSeen(t.app)).handles[0].cancelsAtClose).toEqual([requestId])
+    await t.page.waitForTimeout(500)
+    expect(await t.page.evaluate(() => (window as any).__heardStatus as string[])).not.toContain(t.tabId)
   } finally {
     await t.app.close()
   }
