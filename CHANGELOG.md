@@ -7,6 +7,12 @@ What changed in each ClaudeTerm release. The GitHub release of a version shows i
 ### New
 
 - **Three more mini-games.** **Lander**: fly Clawd's little craft down to the pad with **↑** or **Space** and turn it with **←** and **→** — slow, upright and with both feet on the pad, or it is a crash; each level has a narrower pad, rougher ground, less fuel and, from level 3, wind. **Pinball**: a small table with bug bumpers, bracket targets and three balls; **←** and **→** hold the flippers up, and the longer you hold **Space**, the harder the plunger launches. **Sand**: pieces fall, land and pour into sand; a band of one colour from wall to wall clears, and each clear set off by the one before it scores more. Each keeps its best score, and all three pause like Runner when you click away.
+- **A warning when a WorktreeCreate hook breaks worktrees.** A `WorktreeCreate` hook in Claude Code's settings takes over how `EnterWorktree` makes a worktree, and one that prints no path or fails — another app's hook registered for every event, say — makes `EnterWorktree` fail in every session that loads it. When that happens in a Claude tab, a toast now names the hook and the settings file that has it, once, however often Claude tries again, so you know what to fix or remove; ClaudeTerm never changes your settings. A session the coordinator starts in a worktree now stops and reports the error, instead of making the worktree some other way, in a folder its tab would not follow.
+
+### Fixes
+
+- A coordinator's task survives a restart of its session's Claude Code — **Restart session**, or **Continue as …** another account in the middle of the task: the session goes on with the same conversation, and the answer it goes on to give comes to the coordinator as the report, instead of being lost. Only a restart into another conversation stops the task.
+- A report that comes while the coordinator's own Claude Code restarts is no longer lost: it waits for the restarted coordinator.
 
 ## 0.23.0
 
