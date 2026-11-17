@@ -245,7 +245,8 @@ export class RemoteControlHub {
   private timedOut(tabId: string, ask: Ask): void {
     if (this.asks.get(tabId) !== ask) return
     this.asks.delete(tabId)
-    if (this.deps.reportedId(tabId) === null) {
+    // an account that became unavailable while the wait ran drops it: no toast, and the choice stays as it is
+    if (!this.unavailable(tabId) && this.deps.reportedId(tabId) === null) {
       this.deps.setChoice(tabId, false)
       this.deps.toast(connectTimeoutToast(this.deps.title(tabId)))
     }

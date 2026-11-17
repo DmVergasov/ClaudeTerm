@@ -710,6 +710,25 @@ describe('BridgeHost: the final wave', () => {
     expect(fresh.reconnects).toHaveLength(1)
     expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_2' })
   })
+  it('the fresh session that a lost history starts gets the cards open in the chat, as a first turn-on does', async () => {
+    const { h, handles, w, answers, fire } = host()
+    w.history = [userLine('u1', 'Fix the parser')]
+    const ask: PermissionAsk = { toolName: 'Bash', input: { command: 'ls' }, toolUseId: 'toolu_1', folder: CWD }
+    w.openCards = [['card-1', ask]]
+    let open!: () => void
+    w.historyGate = new Promise<void>((r) => { open = r })
+    h.attach(target()); await settle()
+    handles[0].opts.onClose!(4092); await settle()
+    handles[0].failReconnects = 1
+    answers.create = ['cse_2']
+    w.historyGate = null
+    open(); await settle()
+    fire(2_000); await settle()
+    const fresh = handles[handles.length - 1]
+    expect(fresh).not.toBe(handles[0])
+    expect(fresh.requests.map((r) => r.request_id)).toEqual(['card-1'])
+    expect(fresh.states.at(-1)).toBe('requires_action')
+  })
   it('a detach never rejects, whatever its handle throws: a close that throws or a sequence number that cannot be read still leaves the tab off', async () => {
     const closes = host()
     closes.h.attach(target()); await settle()

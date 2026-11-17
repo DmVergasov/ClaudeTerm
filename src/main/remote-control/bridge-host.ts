@@ -557,6 +557,8 @@ export class BridgeHost {
             mayBeUnsent = false
             t.kept = false
             t.reconnecting = false
+            // the cards open in the chat go to the fresh session too: resume sends each card the tab does not hold yet, and this session holds none
+            t.openCards.clear()
             await this.d.sessions.forget(t.target.sessionId)
             if (!this.alive(t, gen)) return
             this.restartFresh(t)

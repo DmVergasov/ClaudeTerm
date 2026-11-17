@@ -135,6 +135,16 @@ describe('RemoteControlHub: terminal reports', () => {
 })
 
 describe('RemoteControlHub: the terminal switch', () => {
+  it("a typed on whose wait runs while the account's settings.json turns Remote Control unavailable is dropped with no toast, and the choice stays", async () => {
+    const { hub, w, typedOk, fire } = world()
+    hub.set(TAB, true)
+    await typedOk()
+    w.settingsEnv = { ANTHROPIC_BASE_URL: 'https://proxy.example.com' }
+    fire()
+    expect(w.toasts).toEqual([])
+    expect(w.choice).toBe(true)
+    expect(hub.state(TAB)).toEqual({ kind: 'unavailable', reason: "Remote Control needs Anthropic's own service: this account uses ANTHROPIC_BASE_URL" })
+  })
   it('on types /remote-control with the name and connects until the id comes', async () => {
     const { hub, w, report, typedOk, fire } = world()
     hub.set(TAB, true)

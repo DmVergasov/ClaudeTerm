@@ -57,6 +57,55 @@ test('a sign-in account that cannot start, with Remote Control on, starts on Mai
   }
 })
 
+/** the sign-in account Work with Remote Control on for it, signed out, and no settings.json env of its own */
+function workFlagged(root: string): object[] {
+  const folder = join(root, 'accounts', 'work')
+  mkdirSync(folder, { recursive: true })
+  return [{ ...loginEntry(WORK, 'Work', folder), remoteControl: true }]
+}
+
+test('a launch whose environment sets ANTHROPIC_BASE_URL to the default, with a settings.json env that sets another, starts without --rc', async () => {
+  const t = await launchAccounts({ view: 'terminal', accounts: workWithBaseUrl(true), env: { ...RC_CLEAN_ENV, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' } })
+  try {
+    await openRcTab(t.page, t.work, WORK)
+    await expect.poll(() => claudeRuns(t.log).filter((r) => r.config?.endsWith('work')).length, { timeout: 20_000 }).toBe(1)
+    expect(claudeRuns(t.log).filter((r) => r.config?.endsWith('work'))[0].argv).not.toContain('--rc')
+  } finally {
+    await t.app.close()
+  }
+})
+
+test('a switch to a sign-in account whose settings.json sets ANTHROPIC_BASE_URL, right after startup, starts without --rc', async () => {
+  const t = await launchAccounts({ view: 'terminal', accounts: workWithBaseUrl(true), env: RC_CLEAN_ENV })
+  try {
+    const tabId = await openRcTab(t.page, t.work)
+    await t.page.evaluate((id) => window.ct.remoteControlSet(id, true), tabId)
+    await expect(t.page.locator('#statusbar .status-remote')).toHaveAttribute('data-dot', 'connecting')
+    await t.page.evaluate(({ id, account }) => window.ct.switchAccount(id, account), { id: tabId, account: WORK })
+    await expect.poll(() => claudeRuns(t.log).filter((r) => r.config?.endsWith('work')).length, { timeout: 20_000 }).toBe(1)
+    expect(claudeRuns(t.log).filter((r) => r.config?.endsWith('work'))[0].argv).not.toContain('--rc')
+  } finally {
+    await t.app.close()
+  }
+})
+
+test('a sign-in account that cannot start, with Remote Control on, falls back to Main account, and Main account’s settings.json sets ANTHROPIC_BASE_URL: the launch has no --rc', async () => {
+  const t = await launchAccounts({
+    view: 'terminal',
+    accounts: workFlagged,
+    env: RC_CLEAN_ENV,
+    main: (config) => writeFileSync(join(config, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://proxy.example.com' } }))
+  })
+  try {
+    await expect.poll(async () => (await t.page.evaluate(() => window.ct.listAccounts())).accounts.find((a) => a.name === 'Work')?.state, { timeout: 30_000 }).toBe('signed-out')
+    await openRcTab(t.page, t.work, WORK)
+    await expect.poll(() => claudeRuns(t.log).filter((r) => r.config?.endsWith('main')).length, { timeout: 20_000 }).toBe(1)
+    expect(claudeRuns(t.log).filter((r) => r.config?.endsWith('main'))[0].argv).not.toContain('--rc')
+  } finally {
+    await t.app.close()
+  }
+})
+
 test('a chat tab on an extra sign-in account attaches with that account’s own credentials, not the main ones', async () => {
   const t = await launchAccounts({ view: 'chat', accounts: workAccount, env: { ...RC_CLEAN_ENV, CLAUDETERM_TEST_BRIDGE: FAKE_BRIDGE } })
   try {

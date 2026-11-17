@@ -18,7 +18,7 @@ import { isSettingKey, isSettingValue, type SettingKey, type SettingValue } from
 import type { NotificationCase, OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout, TabPlace } from '../shared/types'
 import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteDeviceView } from '../shared/remote'
 import { remoteName } from '../shared/remote-control'
-import { accountLaunchEnv, settingsEnv } from './remote-control/account-env'
+import { settingsEnv } from './remote-control/account-env'
 import { remoteUnavailable, type RemoteAccountKind } from './remote-control/account-rules'
 import { RemoteControlHub } from './remote-control/remote-control-hub'
 import { BridgeHost } from './remote-control/bridge-host'
@@ -406,12 +406,19 @@ function bootstrap(): void {
     if (dir === null || settingsEnvs.has(dir)) return
     await readSettingsEnv(dir)
   }
-  /** the environment a tab on `account` starts Claude Code with, as far as Remote Control reads it: its folder's settings.json env under it */
-  const launchEnvOf = (account: string | null): Record<string, string> => {
+  /** reads the settings.json env of Main account's folder and of every sign-in account's, once each (a read that is done is kept): the launches after it decide Remote Control with them */
+  const warmSettings = async (): Promise<void> => {
+    const ids: (string | null)[] = [null, ...accounts.list().filter((a) => a.kind === 'login').map((a) => a.id)]
+    await Promise.all(ids.map((id) => settingsReady(id)))
+  }
+  /** why Remote Control is unavailable for a launch on `account`: the account kind with the launch environment, or with the account's settings.json env; each env decides on its own, the first reason wins */
+  const unavailableFor = (account: string | null): string | null => {
     const folder = account === null ? null : accounts.folderOf(account)
-    const base = folder === null ? childEnv() : accountEnv(folder)
+    const kind = accountKindOf(account)
+    const fromLaunch = remoteUnavailable(kind, folder === null ? childEnv() : accountEnv(folder))
+    if (fromLaunch !== null) return fromLaunch
     const dir = settingsDirOf(account)
-    return dir === null ? base : accountLaunchEnv(settingsEnvOf(dir), base)
+    return dir === null ? null : remoteUnavailable(kind, settingsEnvOf(dir))
   }
   /** `claude <args>` for a sign-in account, started the way a chat starts Claude Code; rejects with a CliError when it cannot run */
   const accountCli = async (folder: string, args: string[], timeoutMs = CLI_TIMEOUT_MS, extraEnv: Record<string, string> = {}): Promise<CliRun> => {
@@ -1047,7 +1054,7 @@ function bootstrap(): void {
         // a fork without a conversation of its own starts as a fork of its head's conversation
         const forkFrom = req.kind === 'claude' && !req.resumeSessionId && req.fork ? req.fork.from : null
         // the name is for the account the process starts on: a fallback to another account passes --rc only when Remote Control is available there
-        const rcHere = remoteUnavailable(accountKindOf(acc.account), launchEnvOf(acc.account)) === null ? req.rc ?? null : null
+        const rcHere = unavailableFor(acc.account) === null ? req.rc ?? null : null
         const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? forkFrom, forkSession: forkFrom !== null, rc: rcHere }
         return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env, claude }
       }
@@ -1786,6 +1793,7 @@ function bootstrap(): void {
       openInTerminal: (tabId, line) => openInTerminal(tabId, line, commandWord(line ?? ''), handoffDeps),
     },
     openTab: (r) => openTab({ kind: r.kind, cwd: r.cwd, profile: r.profile, account: r.account, resumeSessionId: r.resume, title: r.title }, false),
+    settleSettings: (account) => settingsReady(account),
     defaultFolder: () => defaultFolder(),
     isDirectory: isDirAsync,
     accountByEmail: (email) => accountForEmail(email, accountsView()),
@@ -2135,7 +2143,9 @@ function bootstrap(): void {
 
   /** a Claude tab in the default folder on the account (null: Main account), the main window brought forward */
   const openAccountTab = (id: string | null): void => {
-    if (openTab({ kind: 'claude', cwd: defaultFolder(), account: id }, true)) focusWindow()
+    void settingsReady(id).then(() => {
+      if (openTab({ kind: 'claude', cwd: defaultFolder(), account: id }, true)) focusWindow()
+    })
   }
 
   /** the folder new tabs open in: the defaultFolder setting, else (or when that folder is gone) the home folder */
@@ -2161,7 +2171,8 @@ function bootstrap(): void {
     }
     const { cwd, warning } = resolveLaunchDir(cmd.dir, homedir(), isDirectory)
     if (warning) toast(warning)
-    openTab(cmd.kind === 'claude' ? { kind: 'claude', cwd } : { kind: 'shell', cwd, profile: cmd.profile })
+    if (cmd.kind === 'claude') void settingsReady(null).then(() => openTab({ kind: 'claude', cwd }))
+    else openTab({ kind: 'shell', cwd, profile: cmd.profile })
   }
 
   const runRestore = async (): Promise<void> => {
@@ -3054,6 +3065,8 @@ function bootstrap(): void {
     const unread = unreadNow()
     lastMailSent = JSON.stringify(unread)
     send(IPC.evMail, unread)
+    // the settings of every folder are read before anything launches on one: a launch then decides Remote Control with them
+    void warmSettings()
     for (const cmd of pendingLaunches.splice(0)) openFromLaunch(cmd)
     if (restoreAfterUpdate) void runRestore()
     // the window is ready: the open group's holder is built now, and its copies ask the window for their seeds
@@ -3150,6 +3163,7 @@ function bootstrap(): void {
   const openOn = async (s: { id: string; cwd: string; account?: string | null }, activate: boolean): Promise<TabInfo | null> => {
     const account = s.account ?? null
     await moveConversation({ tabId: '', sessionId: s.id, from: null, to: account !== null && startable(account) ? account : null, explicit: false, stage: 'copy' })
+    await settingsReady(account)
     return openTab({ kind: 'claude', cwd: s.cwd, resumeSessionId: s.id, account }, activate)
   }
   const openListedSession = async (s: { id: string; cwd: string; account?: string | null }): Promise<TabInfo | null> => {
@@ -3237,7 +3251,9 @@ function bootstrap(): void {
       void remote.actions.switchAccount(id, account)
       return
     }
-    tabs.switchAccount(id, account)
+    // the account's settings are read before the switch launches Claude Code on it
+    void settingsReady(account)
+      .then(() => tabs.switchAccount(id, account))
       // a refusal by the move or a failed copy says so itself: this toast is for an account that cannot be used
       .then((ok) => { if (!ok && account !== null && !startable(account)) toast(`${accountName(account)} is not available`) })
       .catch((e: Error) => log.warn(`cannot switch the account: ${e.message}`))
@@ -3591,6 +3607,8 @@ function bootstrap(): void {
   })
   ipcMain.handle(IPC.panelSet, (_e, width: unknown, resize: unknown) => (liveWin() && isPanelWidth(width) && isFlag(resize) ? panelRoom.request(Math.round(width), resize) : { mode: panelRoom.mode, grew: false }))
   const accountsChanged = (r: AccountResult): AccountResult => {
+    // an added account, or one whose folder changed, has its settings read before its first launch
+    if (r.ok) void warmSettings()
     if (r.ok) broadcast(IPC.evAccounts, accountsView())
     return r
   }
@@ -3643,7 +3661,8 @@ function bootstrap(): void {
       busy: (folder) => folderQueue.has(pathKey(folder)),
       logout: (folder) => logoutIn(folder).then((r) => (r.code === 0 ? null : cliMessage(r)), (e: Error) => e.message),
       remove: (x) => accounts.remove(x),
-      changed: () => broadcast(IPC.evAccounts, accountsView()),
+      // a sign-in that set an account's folder: the folder's settings are read before a launch on it
+      changed: () => { void warmSettings(); broadcast(IPC.evAccounts, accountsView()) },
       trash: trashFolder,
       others: async (except) => Promise.all([...(mainConfigDir === null ? [] : [mainConfigDir]), ...loginAccounts().filter((a) => a.id !== except).map((a) => a.folder)].map(canonical)),
       canonical

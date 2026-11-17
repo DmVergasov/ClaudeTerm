@@ -94,7 +94,7 @@ export interface TabManagerDeps {
   onTabStarted?(tab: TabInfo): void
   /** every process start of a Claude tab (open, restart, view switch, account switch, resume, fallback), before the process spawns */
   onProcessStarted?(tab: TabInfo): void
-  /** the `--rc` name of a Claude tab whose Remote Control is on, starting on `account`; null when Remote Control is not available there */
+  /** the `--rc` name of a Claude tab whose Remote Control is on; whether the process starts with it is decided at its launch, for the account it starts on */
   remoteName?(tab: { id: string; customTitle: string | null; folder: string; view: TabView | null }, account: string | null): string | null
   /** the account's Remote Control flag (null: the main account): a new Claude tab on it starts with Remote Control on */
   remoteDefault?(account: string | null): boolean
@@ -668,7 +668,7 @@ export class TabManager {
     if (!this.disposed) this.deps.onStateChanged?.()
   }
 
-  /** the `--rc` name of a Claude tab's process that starts on `account`: null when the choice is off, or Remote Control is not available there */
+  /** the `--rc` name of a Claude tab's process that starts on `account`: null when the choice is off; the launch drops it where Remote Control is not available */
   private rcOf(tab: { id: string; customTitle: string | null; folder: string; view: TabView | null }, remoteControl: boolean, account: string | null): string | null {
     return remoteControl ? this.deps.remoteName?.(tab, account) ?? null : null
   }

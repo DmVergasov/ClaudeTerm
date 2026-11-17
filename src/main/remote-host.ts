@@ -140,6 +140,8 @@ export interface HostContext {
   typedPaths(tabId: string, paths: string[]): string
   /** opens a tab in the folder asked for, else in the default folder, without bringing it to the front of this window */
   openTab(req: HostOpenTab): TabInfo | null
+  /** resolves once the account's settings.json env is read: a tab's launch decides Remote Control with it */
+  settleSettings(account: string | null): Promise<void>
   /** the folder new tabs open in on this device: the default folder setting, else the home folder */
   defaultFolder(): string
   /** whether a folder is an existing directory on this device; async, so a check never blocks main */
@@ -241,6 +243,7 @@ export function hostHandlers(ctx: HostContext, device: string): Record<string, C
         // the folder asked for is used when it is usable here and an existing directory; else the default folder, and the answer says so
         const cwd = req.cwd !== null && usableFolder(req.cwd) && (await ctx.isDirectory(req.cwd)) ? req.cwd : ctx.defaultFolder()
         const account = req.email !== null ? ctx.accountByEmail(req.email) : req.account
+        await ctx.settleSettings(account)
         const tab = ctx.openTab({ kind: req.kind, profile: req.profile, account, resume: req.resume, cwd, title: req.title })
         if (!tab) throw new CallError(REMOTE_COPY.openTabFailed)
         return {

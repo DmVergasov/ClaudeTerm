@@ -359,6 +359,7 @@ export function fakeHost(): FakeHost {
       const info = h.infos.get(id)
       return typedPaths(info?.profile === 'Bash' ? BASH_PROFILE : null, info?.kind ?? 'claude', paths)
     },
+    settleSettings: async () => {},
     openTab: (req) => {
       h.opened.push(req)
       return tabInfo(T3, { kind: req.kind, profile: req.profile ?? 'Bash', cwd: req.cwd, folder: req.cwd, account: req.account })
