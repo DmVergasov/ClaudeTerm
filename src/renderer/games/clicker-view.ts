@@ -21,6 +21,7 @@ export class ClickerView implements GameView {
   readonly title = 'Clicker'
   readonly el = document.createElement('div')
   readonly pausable = false
+  readonly realtime = false
   private save: ClickerSave
   /** the lines an absence earned, shown until the next click or purchase; null when there is no note to show */
   private awayEarned: number | null = null

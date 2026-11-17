@@ -7,6 +7,8 @@ export interface GameView {
   readonly el: HTMLElement
   /** false for a game that keeps running (Clicker): the window never pauses it */
   readonly pausable: boolean
+  /** true for a game that moves on its own while played (Runner, Lander, Pinball, Sand): the window pauses it when the keyboard leaves the window or the app loses focus */
+  readonly realtime: boolean
   /** whether the window's pause stops it now: a pausable game in play (Runner only during a run; a game with nothing to stop is not paused) */
   canPause(): boolean
   /** a key while the game has the keyboard (repeats already dropped); true when it is one of the game's keys */

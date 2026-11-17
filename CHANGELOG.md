@@ -2,6 +2,12 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.24.0
+
+### New
+
+- **Three more mini-games.** **Lander**: fly Clawd's little craft down to the pad with **↑** or **Space** and turn it with **←** and **→** — slow, upright and with both feet on the pad, or it is a crash; each level has a narrower pad, rougher ground, less fuel and, from level 3, wind. **Pinball**: a small table with bug bumpers, bracket targets and three balls; **←** and **→** hold the flippers up, and the longer you hold **Space**, the harder the plunger launches. **Sand**: pieces fall, land and pour into sand; a band of one colour from wall to wall clears, and each clear set off by the one before it scores more. Each keeps its best score, and all three pause like Runner when you click away.
+
 ## 0.23.0
 
 ### New

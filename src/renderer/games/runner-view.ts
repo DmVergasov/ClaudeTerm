@@ -1,14 +1,12 @@
 import type { GamesSave } from '../../shared/games'
 import { CLAWD, CLAWD_DUCK, CLAWD_STEP, paintSprite } from './clawd'
+import { BUG, paintPixels } from './bug'
 import type { GameView } from './game-view'
 import { hitBox, newRun, OBSTACLES, RUNNER, start, step, type ObstacleKind, type RunnerState } from './runner-rules'
 
 /** the canvas is the field's width and this many CSS px tall; the ground line is GROUND_Y px down */
 const CANVAS_H = 190
 const GROUND_Y = 170
-
-/** a frame of the bug: 7 × 5 cells, each cell 2 px */
-const BUG: readonly string[] = ['#.###.#', '.#####.', '#######', '.#####.', '#.#.#.#']
 
 /** what an obstacle shows: a bracket, braces or parens are monospace glyphs, a null is a label */
 const LABELS: Partial<Record<ObstacleKind, { text: string; size: number }>> = {
@@ -28,6 +26,7 @@ export class RunnerView implements GameView {
   readonly title = 'Runner'
   readonly el = document.createElement('div')
   readonly pausable = true
+  readonly realtime = true
   private state: RunnerState = newRun()
   private best: number
   /** shown, not paused, and the game has the keyboard */
@@ -195,14 +194,4 @@ export class RunnerView implements GameView {
       ctx.fillText(text, RUNNER.width / 2, 80)
     }
   }
-}
-
-/** paints a pixel-art sprite whose cells are 2 px, with its top-left at (x, y) */
-function paintPixels(ctx: CanvasRenderingContext2D, rows: readonly string[], x: number, y: number, color: string): void {
-  ctx.fillStyle = color
-  rows.forEach((row, r) => {
-    for (let c = 0; c < row.length; c++) {
-      if (row[c] === '#') ctx.fillRect(x + c * 2, y + r * 2, 2, 2)
-    }
-  })
 }

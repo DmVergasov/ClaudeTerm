@@ -527,11 +527,17 @@ describe('MCP guards', () => {
 
 describe('games guards', () => {
   it('isGamesSave takes a valid save and refuses a bad part or garbage', () => {
-    const save = { game: 'runner', runnerBest: 3, merge: null, clicker: null }
+    const save = { game: 'runner', runnerBest: 3, landerBest: 0, pinballBest: 7, sandBest: 0, merge: null, clicker: null }
     expect(isGamesSave(save)).toBe(true)
     expect(isGamesSave({ ...save, clicker: { lines: -1, helpers: [0, 0, 0, 0], at: 0 } })).toBe(false)
     expect(isGamesSave({ ...save, game: 'chess' })).toBe(false)
     expect(isGamesSave({ ...save, merge: undefined })).toBe(false)
+    const { landerBest, ...withoutLander } = save
+    expect(landerBest).toBe(0)
+    expect(isGamesSave(withoutLander)).toBe(false)
+    expect(isGamesSave({ ...save, landerBest: undefined })).toBe(false)
+    expect(isGamesSave({ ...save, pinballBest: -1 })).toBe(false)
+    expect(isGamesSave({ ...save, game: 'sand' })).toBe(true)
     expect(isGamesSave(null)).toBe(false)
     expect(isGamesSave('games')).toBe(false)
   })

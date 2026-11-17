@@ -3,8 +3,11 @@ import { icon } from '../icons'
 import { ClickerView } from './clicker-view'
 import type { GameView } from './game-view'
 import { gameKeyRoute } from './game-keys'
+import { LanderView } from './lander-view'
 import { MergeView } from './merge-view'
+import { PinballView } from './pinball-view'
 import { RunnerView } from './runner-view'
+import { SandView } from './sand-view'
 import './games.css'
 
 export type GamesWindowState = 'closed' | 'open' | 'folded'
@@ -117,7 +120,10 @@ export class GamesWindow {
     this.views = [
       new RunnerView(save.runnerBest, () => this.changed()),
       new MergeView(save.merge, () => this.changed()),
-      new ClickerView(save.clicker, () => this.changed())
+      new ClickerView(save.clicker, () => this.changed()),
+      new LanderView(save.landerBest, () => this.changed()),
+      new PinballView(save.pinballBest, () => this.changed()),
+      new SandView(save.sandBest, () => this.changed())
     ]
     this.current = this.views.find((v) => v.id === save.game) ?? this.views[0]
     this.draw()
@@ -220,7 +226,7 @@ export class GamesWindow {
   }
 
   private pauseOnLeave(): void {
-    if (this.current?.id === 'runner') this.setPaused(true)
+    if (this.current?.realtime) this.setPaused(true)
   }
 
   private openMenu(): void {

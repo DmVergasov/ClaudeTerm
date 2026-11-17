@@ -17,6 +17,7 @@ export class MergeView implements GameView {
   readonly title = 'Merge'
   readonly el = document.createElement('div')
   readonly pausable = true
+  readonly realtime = false
   private save: MergeSave
   /** shown, not paused, and the game has the keyboard */
   private live = false

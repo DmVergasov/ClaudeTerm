@@ -3,7 +3,7 @@ import { EMPTY_GAMES, parseGamesSave, type GamesSave, type MergeSave, type Click
 
 const merge: MergeSave = { board: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11], score: 120, best: 340, won: false }
 const clicker: ClickerSave = { lines: 12.5, helpers: [1, 0, 2, 0], at: 1_700_000_000_000 }
-const valid: GamesSave = { game: 'merge', runnerBest: 42, merge, clicker }
+const valid: GamesSave = { game: 'merge', runnerBest: 42, landerBest: 120, pinballBest: 4800, sandBest: 2140, merge, clicker }
 
 describe('games save', () => {
   it('a full valid save comes back equal, with nothing bad', () => {
@@ -13,10 +13,35 @@ describe('games save', () => {
   })
 
   it('null parts are valid', () => {
-    const save: GamesSave = { game: 'merge', runnerBest: 3, merge: null, clicker: null }
+    const save: GamesSave = { game: 'merge', runnerBest: 3, landerBest: 0, pinballBest: 0, sandBest: 0, merge: null, clicker: null }
     const result = parseGamesSave(save)
     expect(result.save).toEqual(save)
     expect(result.bad).toEqual([])
+  })
+
+  it('a save from before Lander, Pinball and Sand loads whole: their bests are 0 and nothing is bad', () => {
+    const old = { game: 'merge', runnerBest: 42, merge, clicker }
+    const result = parseGamesSave(old)
+    expect(result.save).toEqual({ ...old, landerBest: 0, pinballBest: 0, sandBest: 0 })
+    expect(result.bad).toEqual([])
+  })
+
+  it('Lander, Pinball and Sand can be the last game chosen', () => {
+    for (const game of ['lander', 'pinball', 'sand'] as const) {
+      const result = parseGamesSave({ ...valid, game })
+      expect(result.save.game).toBe(game)
+      expect(result.bad).toEqual([])
+    }
+  })
+
+  it('a new best that is out of range or not an integer is bad and 0; the rest is kept', () => {
+    for (const [key, value] of [['landerBest', -1], ['pinballBest', 1.5], ['sandBest', 1e13], ['sandBest', '5']] as const) {
+      const result = parseGamesSave({ ...valid, [key]: value })
+      expect(result.save[key]).toBe(0)
+      expect(result.bad).toEqual([key])
+      expect(result.save.merge).toEqual(merge)
+      expect(result.save.runnerBest).toBe(42)
+    }
   })
 
   it('one bad part is dropped, the others are kept', () => {

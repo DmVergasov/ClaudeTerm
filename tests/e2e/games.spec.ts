@@ -1,4 +1,4 @@
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chatReady, CHAT_INPUT, launchChatTab, sendMessage } from './chat-helpers'
@@ -18,7 +18,7 @@ const terminalInput = (page: Page) => page.locator('.terminal-host:visible .xter
 const ptyInput = (page: Page): Promise<string> => page.evaluate(() => window.__ct!.ptyInput!())
 
 /** opens the game menu and picks the game in it */
-async function pick(page: Page, game: 'runner' | 'merge' | 'clicker'): Promise<void> {
+async function pick(page: Page, game: 'runner' | 'merge' | 'clicker' | 'lander' | 'pinball' | 'sand'): Promise<void> {
   await page.locator('#games .games-name').click()
   await page.locator(`#games .games-menu-item[data-game="${game}"]`).click()
 }
@@ -629,5 +629,197 @@ test('a move survives a restart even when the app closes without closing the gam
   await second.page.keyboard.press(KEYS.games)
   await expect(win(second.page)).toBeVisible()
   await expect(board(second.page)).toHaveAttribute('data-cells', moved!)
+  await second.app.close()
+})
+
+/** the Lander, Pinball and Sand bests and the game shown, as the data folder's games.json holds them; null while there is no such save */
+function savedGames(dataDir: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(readFileSync(join(dataDir, 'games.json'), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+test('the game menu lists all six games; Lander, Pinball and Sand can be picked', async () => {
+  const { app, page } = await launchApp()
+  await toggle(page).click()
+  await page.locator('#games .games-name').click()
+  const ids = await page.locator('#games .games-menu-item').evaluateAll((items) => items.map((i) => (i as HTMLElement).dataset.game))
+  expect(ids).toEqual(['runner', 'merge', 'clicker', 'lander', 'pinball', 'sand'])
+  for (const game of ['lander', 'pinball', 'sand']) {
+    await expect(page.locator(`#games .games-menu-item[data-game="${game}"] .games-menu-note`)).toHaveText('best 0')
+  }
+
+  // the menu is open: its item is picked directly, as pick() would open it again
+  await page.locator('#games .games-menu-item[data-game="lander"]').click()
+  await expect(win(page)).toHaveAttribute('data-game', 'lander')
+  await expect(page.locator('#games .games-title')).toHaveText('Lander')
+
+  await pick(page, 'pinball')
+  await expect(win(page)).toHaveAttribute('data-game', 'pinball')
+  await expect(page.locator('#games .games-title')).toHaveText('Pinball')
+
+  await pick(page, 'sand')
+  await expect(win(page)).toHaveAttribute('data-game', 'sand')
+  await expect(page.locator('#games .games-title')).toHaveText('Sand')
+  await app.close()
+})
+
+test('in Lander, holding ↑ burns fuel and changes the speed; no key reaches the terminal', async () => {
+  const { app, page } = await launchApp()
+  const lander = page.locator('#games .lander')
+  await toggle(page).click()
+  await pick(page, 'lander')
+  await expect(lander).toHaveAttribute('data-phase', 'ready')
+  await expect(lander).toHaveAttribute('data-fuel', '100')
+
+  const before = await ptyInput(page)
+  await page.keyboard.down('ArrowUp')
+  await expect.poll(async () => Number(await lander.getAttribute('data-fuel'))).toBeLessThan(100)
+  await expect.poll(async () => Number(await lander.getAttribute('data-vy'))).toBeLessThan(0)
+  await page.keyboard.up('ArrowUp')
+
+  for (const key of ['ArrowLeft', 'ArrowRight', 'KeyX', 'Enter']) await page.keyboard.press(key)
+  expect(await ptyInput(page)).toBe(before)
+  await app.close()
+})
+
+test('in Pinball, Space launches the ball', async () => {
+  const { app, page } = await launchApp()
+  const pinball = page.locator('#games .pinball')
+  await toggle(page).click()
+  await pick(page, 'pinball')
+  await expect(pinball).toHaveAttribute('data-ball', 'plunger')
+
+  await page.keyboard.down('Space')
+  await expect.poll(async () => Number(await pinball.getAttribute('data-power'))).toBeGreaterThan(40)
+  await page.keyboard.up('Space')
+  await expect(pinball).toHaveAttribute('data-ball', 'loose')
+  await expect.poll(async () => Number(await pinball.getAttribute('data-ball-y'))).toBeLessThan(200)
+  await app.close()
+})
+
+test('in Sand, ←/→ move the piece; no key reaches the terminal', async () => {
+  const { app, page } = await launchApp()
+  const sand = page.locator('#games .sand')
+  await toggle(page).click()
+  await pick(page, 'sand')
+  await page.keyboard.press('Space')
+  await expect(sand).toHaveAttribute('data-phase', 'playing')
+
+  const before = await ptyInput(page)
+  await expect(sand).not.toHaveAttribute('data-piece-x', '')
+  const x0 = Number(await sand.getAttribute('data-piece-x'))
+  await page.keyboard.press('ArrowLeft')
+  await expect.poll(async () => Number(await sand.getAttribute('data-piece-x'))).toBe(x0 - 3)
+  // a frame takes a key once, so each tap waits for its move: two taps in one frame would make one move
+  await page.keyboard.press('ArrowRight')
+  await expect.poll(async () => Number(await sand.getAttribute('data-piece-x'))).toBe(x0)
+  await page.keyboard.press('ArrowRight')
+  await expect.poll(async () => Number(await sand.getAttribute('data-piece-x'))).toBe(x0 + 3)
+  expect(await ptyInput(page)).toBe(before)
+  await app.close()
+})
+
+test('pause stops Lander, Pinball and Sand, and so does a click in the terminal', async () => {
+  const { app, page } = await launchApp()
+  await toggle(page).click()
+
+  /** the game's moving attribute, read twice 100 ms apart: true when it changed in between */
+  const movesNow = async (locator: Locator, attr: string): Promise<boolean> => {
+    const a = await locator.getAttribute(attr)
+    await page.waitForTimeout(100)
+    return (await locator.getAttribute(attr)) !== a
+  }
+  /** the game's moving attribute stands still over 500 ms, and it is returned */
+  const frozen = async (locator: Locator, attr: string): Promise<string | null> => {
+    const still = await locator.getAttribute(attr)
+    await page.waitForTimeout(500)
+    expect(await locator.getAttribute(attr)).toBe(still)
+    return still
+  }
+  /** clicks Pause and checks that the game's moving attribute stands still: returns its value */
+  const pauseAndFreeze = async (locator: Locator, attr: string): Promise<string | null> => {
+    await page.locator('#games .games-pause').click()
+    await expect(win(page)).toHaveAttribute('data-paused', 'true')
+    return frozen(locator, attr)
+  }
+  /** Space resumes the paused game, and the attribute moves again */
+  const resumeAndMove = async (locator: Locator, attr: string, still: string | null): Promise<void> => {
+    await page.keyboard.press('Space')
+    await expect(win(page)).toHaveAttribute('data-paused', 'false')
+    await expect.poll(() => locator.getAttribute(attr)).not.toBe(still)
+  }
+  /** the game in front moves; a click in the terminal pauses it, and its moving attribute stands still */
+  const clickTerminal = async (locator: Locator, attr: string): Promise<void> => {
+    await expect.poll(() => movesNow(locator, attr)).toBe(true)
+    await page.locator('.terminal-host:visible .xterm').click()
+    await expect(win(page)).toHaveAttribute('data-paused', 'true')
+    await frozen(locator, attr)
+  }
+  /** a click in the window gives the keyboard back to the game */
+  const giveBack = (): Promise<void> => win(page).click({ position: { x: 150, y: 220 } })
+
+  const lander = page.locator('#games .lander')
+  await pick(page, 'lander')
+  await page.keyboard.press('Space')
+  const landerStill = await pauseAndFreeze(lander, 'data-vy')
+  await resumeAndMove(lander, 'data-vy', landerStill)
+  await clickTerminal(lander, 'data-vy')
+  await giveBack()
+
+  // a full pull: the launch is always the same, and the ball stays in play about 4 s
+  const pinball = page.locator('#games .pinball')
+  await pick(page, 'pinball')
+  await page.keyboard.down('Space')
+  await page.waitForTimeout(1100)
+  await page.keyboard.up('Space')
+  await expect(pinball).toHaveAttribute('data-ball', 'loose')
+  await expect.poll(() => movesNow(pinball, 'data-ball-y')).toBe(true)
+  const ballStill = await pauseAndFreeze(pinball, 'data-ball-y')
+  await resumeAndMove(pinball, 'data-ball-y', ballStill)
+  await clickTerminal(pinball, 'data-ball-y')
+  await giveBack()
+
+  const sand = page.locator('#games .sand')
+  await pick(page, 'sand')
+  await page.keyboard.press('Space')
+  const sandStill = await pauseAndFreeze(sand, 'data-piece-y')
+  await resumeAndMove(sand, 'data-piece-y', sandStill)
+  await clickTerminal(sand, 'data-piece-y')
+  await app.close()
+})
+
+test('the best scores of Lander, Pinball and Sand survive a restart', async () => {
+  const dataDir = makeDataDir()
+  // no pinballBest: a save from before Pinball
+  writeFileSync(join(dataDir, 'games.json'), JSON.stringify({ game: 'pinball', runnerBest: 0, landerBest: 120, sandBest: 340, merge: null, clicker: null }))
+
+  const first = await launchApp({ dataDir })
+  await toggle(first.page).click()
+  await expect(win(first.page)).toHaveAttribute('data-game', 'pinball')
+  const pinball = first.page.locator('#games .pinball')
+  // a full pull: the ball's path is the same every time and hits a bumper within a few seconds
+  await first.page.keyboard.down('Space')
+  await first.page.waitForTimeout(1100)
+  await first.page.keyboard.up('Space')
+  await expect.poll(async () => Number(await pinball.getAttribute('data-score')), { timeout: 15_000 }).toBeGreaterThan(0)
+
+  // paused first, so that the score read is the score saved
+  await first.page.locator('#games .games-pause').click()
+  await expect(win(first.page)).toHaveAttribute('data-paused', 'true')
+  const score = Number(await pinball.getAttribute('data-score'))
+  await first.page.locator('#games .games-close').click()
+  await expect.poll(() => savedGames(dataDir)).toMatchObject({ pinballBest: score, landerBest: 120, sandBest: 340 })
+  await closeWindow(first.app)
+
+  const second = await launchApp({ dataDir })
+  await toggle(second.page).click()
+  await expect(win(second.page)).toHaveAttribute('data-game', 'pinball')
+  await second.page.locator('#games .games-name').click()
+  await expect(second.page.locator('#games .games-menu-item[data-game="lander"] .games-menu-note')).toHaveText('best 120')
+  await expect(second.page.locator('#games .games-menu-item[data-game="pinball"] .games-menu-note')).toHaveText(`best ${score.toLocaleString('en-US')}`)
+  await expect(second.page.locator('#games .games-menu-item[data-game="sand"] .games-menu-note')).toHaveText('best 340')
   await second.app.close()
 })

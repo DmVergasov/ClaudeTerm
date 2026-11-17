@@ -10,6 +10,9 @@ const dir = (): string => mkdtempSync(join(tmpdir(), 'ct-games-'))
 const save: GamesSave = {
   game: 'merge',
   runnerBest: 42,
+  landerBest: 120,
+  pinballBest: 4800,
+  sandBest: 2140,
   merge: { board: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11], score: 120, best: 340, won: false },
   clicker: { lines: 12.5, helpers: [1, 0, 2, 0], at: 1_700_000_000_000 },
 }
@@ -56,5 +59,18 @@ describe('GamesStore', () => {
     expect(() => store.set(save)).not.toThrow()
     expect(errors).toHaveLength(1)
     expect(store.get()).toEqual(save)
+  })
+
+  it('a games.json from before Lander, Pinball and Sand loads with no error, their bests at 0', () => {
+    const d = dir()
+    const errors: string[] = []
+    const { landerBest, pinballBest, sandBest, ...old } = save
+    expect([landerBest, pinballBest, sandBest]).toEqual([120, 4800, 2140])
+    writeFileSync(join(d, 'games.json'), JSON.stringify(old))
+    const store = new GamesStore(d, (m) => errors.push(m))
+    expect(store.get()).toEqual({ ...old, landerBest: 0, pinballBest: 0, sandBest: 0 })
+    expect(errors).toEqual([])
+    store.set(save)
+    expect(new GamesStore(d).get()).toEqual(save)
   })
 })

@@ -1,4 +1,4 @@
-export const GAME_IDS = ['runner', 'merge', 'clicker'] as const
+export const GAME_IDS = ['runner', 'merge', 'clicker', 'lander', 'pinball', 'sand'] as const
 
 export type GameId = (typeof GAME_IDS)[number]
 
@@ -20,11 +20,18 @@ export interface ClickerSave {
 export interface GamesSave {
   game: GameId
   runnerBest: number
+  /** the best scores of the games added later; a save written before them has none */
+  landerBest: number
+  pinballBest: number
+  sandBest: number
   merge: MergeSave | null
   clicker: ClickerSave | null
 }
 
-export const EMPTY_GAMES: GamesSave = { game: 'runner', runnerBest: 0, merge: null, clicker: null }
+export const EMPTY_GAMES: GamesSave = { game: 'runner', runnerBest: 0, landerBest: 0, pinballBest: 0, sandBest: 0, merge: null, clicker: null }
+
+/** the best scores a save from before these games lacks: a missing one is 0, not a bad part */
+export const LATER_BESTS = ['landerBest', 'pinballBest', 'sandBest'] as const
 
 const MAX_SCORE = 1e12
 const MAX_LINES = 1e15
@@ -80,6 +87,14 @@ export function parseGamesSave(raw: unknown): { save: GamesSave; bad: string[] }
   const runnerBest = isScore(r.runnerBest) ? r.runnerBest : EMPTY_GAMES.runnerBest
   if (runnerBest !== r.runnerBest) bad.push('runnerBest')
 
+  const later: Record<(typeof LATER_BESTS)[number], number> = { landerBest: 0, pinballBest: 0, sandBest: 0 }
+  for (const key of LATER_BESTS) {
+    const v = r[key]
+    if (v === undefined) continue
+    if (isScore(v)) later[key] = v
+    else bad.push(key)
+  }
+
   let merge: MergeSave | null = null
   if (isMergeSave(r.merge)) merge = { board: [...r.merge.board], score: r.merge.score, best: r.merge.best, won: r.merge.won }
   else if (r.merge !== null) bad.push('merge')
@@ -88,5 +103,5 @@ export function parseGamesSave(raw: unknown): { save: GamesSave; bad: string[] }
   if (isClickerSave(r.clicker)) clicker = { lines: r.clicker.lines, helpers: [...r.clicker.helpers], at: r.clicker.at }
   else if (r.clicker !== null) bad.push('clicker')
 
-  return { save: { game, runnerBest, merge, clicker }, bad }
+  return { save: { game, runnerBest, ...later, merge, clicker }, bad }
 }

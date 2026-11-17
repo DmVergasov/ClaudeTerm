@@ -160,6 +160,39 @@
 .runner-canvas { display: block; width: 298px; height: 190px; margin: 0 -12px; }
 .runner-hint { text-align: center; font-size: 11px; color: var(--text-3); }
 
+/* Lander: the field is 300 x 200 units, drawn at the window's inside width like the Runner field */
+.lander { display: flex; flex-direction: column; gap: 8px; }
+.lander-head { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.lander-score { flex: 1; color: var(--text-3); font-family: ui-monospace, Consolas, monospace; }
+.lander-best { color: var(--text-3); font-family: ui-monospace, Consolas, monospace; }
+.lander-canvas { display: block; width: 298px; height: 200px; margin: 0 -12px; }
+.lander-hud { display: flex; gap: 8px; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--text-3); }
+.lander-hud .bad { color: var(--red); }
+.lander-hint { text-align: center; font-size: 11px; color: var(--text-3); }
+
+/* Pinball: the table is 190 x 250 units, drawn at its own size; the side column takes the 276 px inside width less the table and the gap */
+.pinball { display: flex; flex-direction: column; gap: 8px; }
+.pinball-main { display: flex; gap: 10px; }
+.pinball-canvas { display: block; width: 190px; height: 250px; border-radius: 6px; }
+.pinball-side { display: flex; flex-direction: column; gap: 10px; width: 76px; }
+.pinball-stat { display: flex; flex-direction: column; gap: 3px; }
+.pinball-label { font-size: 11px; color: var(--text-3); }
+.pinball-score, .pinball-best, .pinball-balls { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: var(--text); }
+.pinball-power { height: 6px; background: var(--raised-2); border-radius: 3px; overflow: hidden; }
+.pinball-power-fill { height: 100%; background: var(--accent); }
+.pinball-hint { text-align: center; font-size: 11px; color: var(--text-3); }
+
+/* Sand: the board is 42 × 60 grains of 4 px (168 × 240 px); the side column takes the 276 px inside width less the board and the gap */
+.sand { display: flex; flex-direction: column; gap: 8px; }
+.sand-main { display: flex; gap: 12px; }
+.sand-canvas { display: block; width: 168px; height: 240px; }
+.sand-side { display: flex; flex-direction: column; gap: 10px; width: 76px; }
+.sand-stat { display: flex; flex-direction: column; gap: 3px; }
+.sand-label { font-size: 11px; color: var(--text-3); }
+.sand-next { display: block; width: 48px; height: 48px; }
+.sand-score, .sand-best { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: var(--text); }
+.sand-hint { text-align: center; font-size: 11px; color: var(--text-3); }
+
 .merge { display: flex; flex-direction: column; gap: 10px; }
 .merge-head { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .merge-score { flex: 1; color: var(--text-3); font-family: ui-monospace, Consolas, monospace; }
