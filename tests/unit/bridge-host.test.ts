@@ -6,7 +6,7 @@ import { BridgeHost, refusalReason, type BridgeTarget, type BridgeHostDeps } fro
 import type { BridgeModule } from '../../src/main/remote-control/bridge-loader'
 import type { RemoteSessionEntry } from '../../src/main/remote-control/remote-sessions'
 import type { ClaudeCredentials } from '../../src/main/remote-control/claude-credentials'
-import type { SdkPermissionResult } from '../../src/main/chat/chat-cards'
+import type { PermissionAsk, SdkPermissionResult } from '../../src/main/chat/chat-cards'
 import { REMOTE_REASONS } from '../../src/shared/remote-control'
 
 const TAB = 'tab-1'
@@ -72,6 +72,8 @@ function host() {
     /** read in order before `creds`, one per read */
     credsQueue: [] as ClaudeCredentials[],
     bridgeOk: true, sent: [] as string[], answered: [] as [string, SdkPermissionResult][], answerOk: true, interrupts: 0,
+    /** the chat's open cards and whether its turn runs, as the window's chat has them */
+    openCards: [] as [string, PermissionAsk][], working: false, sendThrows: null as Error | null,
     history: [] as unknown[], historyGate: null as Promise<void> | null, historyThrows: null as Error | null, storeThrows: null as Error | null, seen: [] as (string | null)[], checks: 0, logs: [] as string[], timers: [] as { ms: number; run: () => void; on: boolean }[], changes: 0
   }
   const hostRef: { h?: BridgeHost } = {}
@@ -85,9 +87,11 @@ function host() {
     },
     git: async () => GIT,
     chat: {
-      send: async (_t, text) => { w.sent.push(text); return null },
+      send: async (_t, text) => { if (w.sendThrows) throw w.sendThrows; w.sent.push(text); return null },
       answer: (_t, id, r) => { w.answered.push([id, r]); return w.answerOk },
       interrupt: () => { w.interrupts++ },
+      openCards: () => w.openCards,
+      working: () => w.working,
       history: async () => { if (w.historyGate) await w.historyGate; if (w.historyThrows) throw w.historyThrows; return w.history },
       checkSignIn: async () => { w.checks++ }
     },
@@ -222,6 +226,39 @@ describe('BridgeHost: while it is on', () => {
     h.cardClosed(TAB, 'card-1', 'remote')
     expect(handles[0].cancels).toEqual([])
   })
+  it('a card already open when the tab turns on goes to claude.ai at once, and the tab requires action until it is answered', async () => {
+    const { h, handles, w } = host()
+    const ask: PermissionAsk = { toolName: 'Bash', input: { command: 'ls' }, toolUseId: 'toolu_1', folder: CWD }
+    w.openCards = [['card-1', ask]]
+    h.attach(target()); await settle()
+    expect(handles[0].requests).toEqual([{ type: 'control_request', request_id: 'card-1', request: expect.objectContaining({ subtype: 'can_use_tool', tool_name: 'Bash', tool_use_id: 'toolu_1' }) }])
+    expect(handles[0].states.at(-1)).toBe('requires_action')
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+    handles[0].opts.onPermissionResponse!({ type: 'control_response', response: { subtype: 'success', request_id: 'card-1', response: { behavior: 'allow' } } } as never)
+    expect(w.answered).toEqual([['card-1', { behavior: 'allow', updatedInput: { command: 'ls' } }]])
+  })
+  it('a card that opens while the history is read is sent once: the replay and the queued card do not both send it', async () => {
+    const { h, handles, w } = host()
+    const ask: PermissionAsk = { toolName: 'Bash', input: {}, folder: CWD }
+    let release = (): void => {}
+    w.historyGate = new Promise<void>((resolve) => { release = resolve })
+    h.attach(target()); await settle()
+    w.openCards = [['card-1', ask]]
+    h.cardOpened(TAB, 'card-1', ask)
+    release()
+    await settle()
+    expect(handles[0].requests.map((r) => r.request_id)).toEqual(['card-1'])
+    expect(handles[0].states.at(-1)).toBe('requires_action')
+  })
+  it('a turn that runs when the tab turns on reports running, and idle when none runs', async () => {
+    const working = host()
+    working.w.working = true
+    working.h.attach(target()); await settle()
+    expect(working.handles[0].states.at(-1)).toBe('running')
+    const idle = host()
+    idle.h.attach(target()); await settle()
+    expect(idle.handles[0].states.at(-1)).toBe('idle')
+  })
   it('a card answered in the window, or cancelled, is cancelled on claude.ai', async () => {
     const { h, handles } = host()
     h.attach(target()); await settle()
@@ -230,6 +267,18 @@ describe('BridgeHost: while it is on', () => {
     h.cardClosed(TAB, 'card-1', 'window')
     h.cardClosed(TAB, 'card-2', 'cancelled')
     expect(handles[0].cancels).toEqual(['card-1', 'card-2'])
+  })
+  it('a card the chat cancels as it ends is cancelled on claude.ai before the handle closes', async () => {
+    const { h, handles } = host()
+    h.attach(target()); await settle()
+    h.cardOpened(TAB, 'card-1', { toolName: 'Bash', input: {}, folder: CWD })
+    const handle = handles[0]
+    const cancelsAtClose: string[][] = []
+    const close = handle.close.bind(handle)
+    handle.close = () => { cancelsAtClose.push([...handle.cancels]); close() }
+    h.cardClosed(TAB, 'card-1', 'cancelled')
+    await h.detach(TAB)
+    expect(cancelsAtClose).toEqual([['card-1']])
   })
   it('an interrupt from claude.ai interrupts the chat', async () => {
     const { h, handles, w } = host()
@@ -398,8 +447,9 @@ describe('BridgeHost: off and closes', () => {
     expect(calls.filter((c) => c[0] === 'credentials')).toHaveLength(6)
     expect(w.timers.filter((t) => t.on)).toEqual([])
   })
-  it('a reconnect that throws leaves the handle closed: the session is attached again from its sequence number, with no history', async () => {
-    const { h, handles, fire } = host()
+  it('a reconnect that throws closes the dropped handle: the session is attached again from its sequence number, with no history written again', async () => {
+    const { h, handles, w, fire } = host()
+    w.history = [userLine('u1', 'Fix the parser')]
     h.attach(target()); await settle()
     handles[0].failReconnects = 1
     handles[0].opts.onClose!(4092); await settle()
@@ -408,9 +458,10 @@ describe('BridgeHost: off and closes', () => {
     expect(handles[0].reconnects).toHaveLength(1)
     expect(handles).toHaveLength(2)
     expect(handles[1].opts).toMatchObject({ sessionId: 'cse_1', ingressToken: JWT, epoch: CREDS.worker_epoch, initialSequenceNum: 7 })
+    expect(handles[0].writes.map((m) => m.uuid)).toEqual(['u1'])
     expect(handles[1].writes).toEqual([])
     expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
-    expect(handles[0].closes).toBe(0)
+    expect(handles[0].closes).toBe(1)
   })
   it('a first attach detached while its history is read stores nothing: the next attach makes a new session and writes the history', async () => {
     const { h, calls, answers, stored, w, handles } = host()
@@ -527,5 +578,125 @@ describe('BridgeHost: refusals and the sign-in', () => {
     expect(w.logs.some((m) => m.includes('attach failed for [token] with [token] and [token]'))).toBe(true)
     const seen = [...w.logs, JSON.stringify(h.state(TAB))].join('\n')
     for (const secret of [TOKEN, DEVICE, JWT]) expect(seen).not.toContain(secret)
+  })
+})
+
+describe('BridgeHost: the final wave', () => {
+  const rule = { type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'session' }
+  const answerTo = (handles: FakeHandle[], requestId: string, response: unknown) =>
+    handles[0].opts.onPermissionResponse!({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } } as never)
+
+  it('an always-allow rule claude.ai picks is passed on when the card offered it; a rule it was not offered refuses the answer; a permission card runs the input it asked about', async () => {
+    const { h, handles, w } = host()
+    h.attach(target()); await settle()
+    h.cardOpened(TAB, 'card-1', { toolName: 'Bash', input: { command: 'ls' }, suggestions: [rule], folder: CWD })
+    expect(answerTo(handles, 'card-1', { behavior: 'allow', updatedInput: { command: 'rm -rf /' }, updatedPermissions: [{ type: 'setMode', mode: 'bypassPermissions', destination: 'session' }] })).toBe(false)
+    expect(answerTo(handles, 'card-1', { behavior: 'allow', updatedInput: { command: 'rm -rf /' }, updatedPermissions: [rule] })).not.toBe(false)
+    expect(w.answered).toEqual([['card-1', { behavior: 'allow', updatedInput: { command: 'ls' }, updatedPermissions: [rule] }]])
+  })
+  it('a card that suppresses the always-allow rule says so to claude.ai, with default to no, and takes no rule from it', async () => {
+    const { h, handles, w } = host()
+    h.attach(target()); await settle()
+    h.cardOpened(TAB, 'card-1', { toolName: 'Bash', input: {}, suggestions: [rule], suppressAlwaysAllowRule: true, defaultToNo: true, folder: CWD })
+    expect(handles[0].requests[0].request).toMatchObject({ suppress_always_allow_rule: true, default_to_no: true })
+    expect(answerTo(handles, 'card-1', { behavior: 'allow', updatedPermissions: [rule] })).toBe(false)
+    expect(w.answered).toEqual([])
+  })
+  it('a question card takes the answers claude.ai gives as its input', async () => {
+    const { h, handles, w } = host()
+    h.attach(target()); await settle()
+    const input = { questions: [{ question: 'Which?', header: 'Pick', multiSelect: false, options: [{ label: 'A', description: 'first' }] }] }
+    h.cardOpened(TAB, 'card-1', { toolName: 'AskUserQuestion', input, folder: CWD })
+    answerTo(handles, 'card-1', { behavior: 'allow', updatedInput: { answers: { 'Which?': 'A' } } })
+    expect(w.answered).toEqual([['card-1', { behavior: 'allow', updatedInput: { answers: { 'Which?': 'A' } } }]])
+  })
+  it('a message from claude.ai that is longer than a chat takes is not sent, and is logged without its text', async () => {
+    const { h, handles, w } = host()
+    h.attach(target()); await settle()
+    const huge = 'x'.repeat(1024 * 1024 + 1)
+    await (handles[0].opts.onInboundMessage!(userLine('u9', huge) as never) as Promise<void>)
+    expect(w.sent).toEqual([])
+    expect(w.logs.some((m) => m.includes('longer than a chat takes'))).toBe(true)
+    expect(w.logs.join('\n')).not.toContain('xxxxxxxx')
+  })
+  it('an image in a message from claude.ai is left out and counted in the log; the text of the message is sent', async () => {
+    const { h, handles, w } = host()
+    h.attach(target()); await settle()
+    const content = [{ type: 'text', text: 'look at this' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAABBBB' } }]
+    await (handles[0].opts.onInboundMessage!({ type: 'user', message: { role: 'user', content } } as never) as Promise<void>)
+    expect(w.sent).toEqual(['look at this'])
+    expect(w.logs.some((m) => m.includes('1 image'))).toBe(true)
+    expect(w.logs.join('\n')).not.toContain('AAAABBBB')
+  })
+  it('a message typed on claude.ai reports running, and is not written back to claude.ai', async () => {
+    const { h, handles } = host()
+    h.attach(target()); await settle()
+    h.userSent(TAB, 'u9', 'from the phone', 'remote')
+    expect(handles[0].states.at(-1)).toBe('running')
+    expect(handles[0].writes).toEqual([])
+  })
+  it('a message from claude.ai that is not an object, a send that rejects and a malformed answer do not throw into the SDK', async () => {
+    const { h, handles, w } = host()
+    h.attach(target()); await settle()
+    w.sendThrows = new Error('the chat refused')
+    await expect(handles[0].opts.onInboundMessage!(userLine('u9', 'hi') as never) as Promise<void>).resolves.toBeUndefined()
+    expect(w.logs.join('\n')).toContain('the chat refused')
+    await expect(handles[0].opts.onInboundMessage!(null as never) as Promise<void>).resolves.toBeUndefined()
+    expect(handles[0].opts.onPermissionResponse!(null as never)).toBe(false)
+  })
+  it('a history that does not come in 20 s counts as none: the tab turns on with a new session and writes no history', async () => {
+    const { h, handles, w, fire, stored } = host()
+    w.historyGate = new Promise<void>(() => {})
+    h.attach(target()); await settle()
+    expect(h.state(TAB)).toEqual({ kind: 'connecting' })
+    fire(20_000); await settle()
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+    expect(handles[0].writes).toEqual([])
+    expect(stored.get(SID)!.entry.remoteId).toBe('cse_1')
+  })
+  it('a flush that throws does not make the detach reject: the handle still closes', async () => {
+    const { h, handles } = host()
+    h.attach(target()); await settle()
+    handles[0].flush = () => { throw new Error('flush broke') }
+    await expect(h.detach(TAB)).resolves.toBeUndefined()
+    expect(handles[0].closes).toBe(1)
+  })
+  it('a close from a handle a failed reconnect dropped does not bring the new connection back', async () => {
+    const { h, handles, fire } = host()
+    h.attach(target()); await settle()
+    handles[0].failReconnects = 1
+    handles[0].opts.onClose!(4092); await settle()
+    fire(2_000); await settle()
+    expect(handles).toHaveLength(2)
+    handles[0].opts.onClose!(1006); await settle()
+    expect(handles[1].reconnects).toEqual([])
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+  })
+  it('a first attach whose connection closes while its history is read forgets its entry when the reconnect fails, so the next attach writes the history again', async () => {
+    const { h, handles, w, answers, calls, stored, fire } = host()
+    w.history = [userLine('u1', 'Fix the parser')]
+    let open!: () => void
+    w.historyGate = new Promise<void>((r) => { open = r })
+    h.attach(target()); await settle()
+    handles[0].opts.onClose!(4092); await settle()
+    handles[0].failReconnects = 1
+    open(); await settle()
+    fire(2_000); await settle()
+    expect(stored.has(SID)).toBe(false)
+    expect(h.state(TAB)).toEqual({ kind: 'on', url: 'https://claude.ai/code/cse_1' })
+    await h.detach(TAB)
+    w.historyGate = null
+    answers.create = ['cse_2']
+    h.attach(target()); await settle()
+    expect(calls.filter((c) => c[0] === 'create')).toHaveLength(2)
+    expect(handles[2].writes.map((m) => m.uuid)).toEqual(['u1'])
+  })
+  it('the tab reports the turn again when its connection comes back: running while a turn runs', async () => {
+    const { h, handles, w, fire } = host()
+    h.attach(target()); await settle()
+    w.working = true
+    handles[0].opts.onClose!(1006); await settle()
+    fire(2_000); await settle()
+    expect(handles[0].states.at(-1)).toBe('running')
   })
 })

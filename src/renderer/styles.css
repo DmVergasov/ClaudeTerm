@@ -708,10 +708,10 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .remote-account-note { margin-top: 4px; color: var(--text-3); font-size: 12px; }
 /* the settings window's switch, copied: an accent track with a knob */
 .remote-popover input.switch { appearance: none; flex: none; position: relative; width: 36px; height: 20px; margin: 0; border-radius: 10px; background: var(--line-2); cursor: pointer; }
-.remote-popover input.switch::before { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-2); box-shadow: 0 1px 2px #0006; transition: transform 0.12s ease; }
+.remote-popover input.switch::before { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-2); box-shadow: 0 1px 2px var(--scrim); transition: transform 0.12s ease; }
 .remote-popover input.switch:checked { background: var(--accent); }
-.remote-popover input.switch:checked::before { transform: translateX(16px); background: #FFFFFF; }
-.remote-popover input.switch:focus-visible { outline: 2px solid rgba(217, 119, 87, 0.6); outline-offset: 2px; }
+.remote-popover input.switch:checked::before { transform: translateX(16px); background: var(--text); }
+.remote-popover input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .remote-popover input.switch:disabled { opacity: 0.5; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .remote-popover input.switch::before { transition: none; } }
 

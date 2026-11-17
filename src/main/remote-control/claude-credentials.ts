@@ -16,8 +16,9 @@ export interface ClaudeCredentials {
 export interface CredentialSources {
   platform: NodeJS.Platform
   home: string
-  username: string
   now(): number
+  /** the user name the macOS Keychain item is looked up by; read only on macOS, where it can throw */
+  username(): string
   /** runs `security` with these arguments (no shell, 5 s limit): its stdout, or null when it failed; null on a test run, where the Keychain is never read */
   security: ((args: string[]) => Promise<string | null>) | null
 }
@@ -44,7 +45,7 @@ export function keychainService(folder: string, home: string): string {
 }
 
 /** runs a program with no shell and a 5 s limit; its stdout, or null when it failed */
-export function securityRunner(file = 'security'): (args: string[]) => Promise<string | null> {
+export function securityRunner(file = '/usr/bin/security'): (args: string[]) => Promise<string | null> {
   return args => new Promise(resolve => {
     execFile(file, args, { timeout: 5000, windowsHide: true, encoding: 'utf8' }, (error, stdout) => resolve(error ? null : stdout))
   })
@@ -70,7 +71,7 @@ async function loadRecord(folder: string, s: CredentialSources): Promise<JsonObj
   if (s.platform === 'darwin' && s.security) {
     let answer: string | null = null
     try {
-      answer = await s.security(['find-generic-password', '-s', keychainService(folder, s.home), '-a', s.username, '-w'])
+      answer = await s.security(['find-generic-password', '-s', keychainService(folder, s.home), '-a', s.username(), '-w'])
     } catch {
       answer = null
     }
@@ -91,14 +92,17 @@ function accountFile(folder: string, home: string): string {
   return pathKey(folder) === pathKey(join(home, '.claude')) ? join(home, '.claude.json') : join(folder, '.claude.json')
 }
 
+async function accountDeviceToken(folder: string, home: string): Promise<string | null> {
+  const accountJson = await readJsonObject(accountFile(folder, home))
+  return tokenText(isRecord(accountJson) ? accountJson.trustedDeviceToken : undefined)
+}
+
 /** the claude.ai sign-in of the account at `folder`, read without writing anything */
 export async function readClaudeCredentials(folder: string, env: Readonly<Record<string, string | undefined>>, s: CredentialSources): Promise<ClaudeCredentials> {
   const record = await loadRecord(folder, s)
   const stored = isRecord(record) ? record : {}
-  const accountJson = await readJsonObject(accountFile(folder, s.home))
-  const deviceToken = tokenText(env.CLAUDE_TRUSTED_DEVICE_TOKEN)
-    ?? tokenText(stored.trustedDeviceToken)
-    ?? tokenText(isRecord(accountJson) ? accountJson.trustedDeviceToken : undefined)
+  // the account's .claude.json is large: it is read only when the environment and the record give no device token
+  const deviceToken = tokenText(env.CLAUDE_TRUSTED_DEVICE_TOKEN) ?? tokenText(stored.trustedDeviceToken) ?? (await accountDeviceToken(folder, s.home))
 
   const none = { accessToken: null, deviceToken, state: 'none' as const }
   if (record === null) return none

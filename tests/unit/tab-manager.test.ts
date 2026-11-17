@@ -520,6 +520,14 @@ describe('TabManager', () => {
     expect(log).toContain(`reset:${t.id}`)
   })
 
+  it('changeFolder keeps Remote Control: the new folder\'s process starts with --rc, named for the tab', async () => {
+    const { tm, launches } = setup({ restartWaitMs: 0, remoteName: (tab) => `name-of-${tab.folder}` }, { exitOnKill: true })
+    const t = tm.open({ kind: 'claude', cwd: '/a', remoteControl: true })
+    expect(await tm.changeFolder(t.id, '/b')).toBe(true)
+    expect(launches.at(-1)).toMatchObject({ kind: 'claude', cwd: '/b', rc: 'name-of-/b' })
+    expect(tm.remoteControl(t.id)).toBe(true)
+  })
+
   it('changeFolder of a shell tab keeps its profile; of an unknown tab answers false, and so does a tab that is restarting', async () => {
     const { tm, ptys, launches } = setup({ restartWaitMs: 0 }, { exitOnKill: true })
     const t = tm.open({ kind: 'shell', cwd: '/a', profile: 'Bash' })
@@ -633,7 +641,7 @@ describe('TabManager accounts', () => {
     expect(ptys[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
   })
 
-  it('a new claude tab takes its account’s flag; a restored tab is on when it was saved on or its account’s flag is on', () => {
+  it('a new claude tab takes its account’s flag; a tab opened with Remote Control on is on whatever its account’s flag says', () => {
     const { tm } = setup({ remoteDefault: (account) => account === 'acc-1', resolveLaunch: accountLaunch })
     expect(tm.remoteControl(tm.open({ kind: 'claude', cwd: 'C:\\w', account: 'acc-1' }).id)).toBe(true)
     expect(tm.remoteControl(tm.open({ kind: 'claude', cwd: 'C:\\w', account: null }).id)).toBe(false)

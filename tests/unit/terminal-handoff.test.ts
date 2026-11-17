@@ -62,6 +62,28 @@ describe('typeIntoPrompt', () => {
     expect(await typeIntoPrompt(TAB, '/remote-control', '/remote-control', fakeDeps(['empty']).deps)).toBe(false)
     await first
   })
+  it('cancelled while the last wait runs: no note and no toast of the give-up, and it resolves false', async () => {
+    const { deps, notes, toasts } = fakeDeps(['none'])
+    let cancelled = false
+    let polls = 0
+    deps.promptState = async () => {
+      // the 101st poll (the end of the 30 s) finds the wait cancelled
+      if (++polls === 101) cancelled = true
+      return 'none'
+    }
+    expect(await typeIntoPrompt(TAB, '/remote-control', '/remote-control', deps, undefined, () => cancelled)).toBe(false)
+    expect([notes, toasts]).toEqual([[], []])
+  })
+  it('a new command takes over a tab whose waiting command was cancelled: on, off and on within one poll types the last line', async () => {
+    const { deps, calls } = fakeDeps(['draft', 'empty'])
+    let cancelA = false
+    const first = typeIntoPrompt(TAB, '/remote-control work', '/remote-control', deps, undefined, () => cancelA)
+    cancelA = true
+    const second = typeIntoPrompt(TAB, '/remote-control', '/remote-control', deps)
+    expect(await second).toBe(true)
+    expect(await first).toBe(false)
+    expect(writes(calls)).toEqual(['write:/remote-control', 'write:\r'])
+  })
   it('cancelled before the prompt empties: nothing is written, and it resolves false', async () => {
     const { deps, calls, notes } = fakeDeps(['draft', 'empty'])
     let cancelled = false

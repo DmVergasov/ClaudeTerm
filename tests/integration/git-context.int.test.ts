@@ -45,6 +45,14 @@ describe('git context', () => {
     expect((await gitContextOf(checkout, execGit))!.gitRepoUrl).toBe('https://git.example.invalid/acme/app.git')
   })
 
+  it('a remote URL that no URL parser reads, or whose scheme is not a web one, loses its credentials too', async () => {
+    const { checkout } = checkoutOfOrigin()
+    git(checkout, 'remote', 'set-url', 'origin', 'https://bot:fake-secret-0001@git.example.invalid:notaport/acme/app.git')
+    expect((await gitContextOf(checkout, execGit))!.gitRepoUrl).toBe('https://git.example.invalid:notaport/acme/app.git')
+    git(checkout, 'remote', 'set-url', 'origin', 'git+https://bot:fake-secret-0001@git.example.invalid/acme/app.git')
+    expect((await gitContextOf(checkout, execGit))!.gitRepoUrl).toBe('git+https://git.example.invalid/acme/app.git')
+  })
+
   it('an scp-like remote address is kept as git has it', async () => {
     const { checkout } = checkoutOfOrigin()
     git(checkout, 'remote', 'set-url', 'origin', 'git@git.example.invalid:acme/app.git')

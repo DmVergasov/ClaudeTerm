@@ -89,11 +89,24 @@ describe('RemoteControlHub: terminal reports', () => {
     expect(hub.state(TAB)).toEqual({ kind: 'off' })
     expect(w.choice).toBe(false)
   })
-  it('an exited tab is off; Claude Code ending keeps the choice for the next start', () => {
+  it('an exited tab is off; Claude Code ending keeps the choice, through its exit and a new start', () => {
     const { hub, w, report } = world()
     report(ID)
     w.tab = { ...w.tab!, exited: true }
     expect(hub.state(TAB)).toEqual({ kind: 'off' })
+    expect(w.choice).toBe(true)
+    w.tab = { ...w.tab!, exited: false }
+    hub.processStarted(TAB)
+    expect(w.choice).toBe(true)
+    expect(hub.state(TAB)).toEqual({ kind: 'connecting' })
+  })
+  it('a switch on an exited tab still tells the window, so the switch shows its state again', () => {
+    const { hub, w, report } = world()
+    report(ID)
+    w.tab = { ...w.tab!, exited: true }
+    const before = w.changes
+    hub.set(TAB, false)
+    expect(w.changes).toBeGreaterThan(before)
     expect(w.choice).toBe(true)
   })
   it('a shell tab, another device’s tab and an unknown id have no state', () => {
@@ -326,5 +339,41 @@ describe('RemoteControlHub: chat tabs', () => {
     hub.processStarted(TAB)
     fire()
     expect([w.choice, w.toasts]).toEqual([true, []])
+  })
+  it('a chat that comes up with no session after one with a session does not attach the previous conversation', () => {
+    const { hub, w } = world({ view: 'chat', choice: true })
+    hub.processStarted(TAB)
+    hub.chatReady(TAB, SID)
+    hub.processStarted(TAB)
+    hub.chatReady(TAB, null)
+    expect(w.attached.map((t) => t.sessionId)).toEqual([SID])
+  })
+  it('a chat that ends after its tab was removed says nothing and keeps no link', () => {
+    const { hub, w } = world({ view: 'chat', choice: true })
+    hub.removeTab(TAB)
+    const before = w.changes
+    hub.chatEnded(TAB)
+    expect(w.changes).toBe(before)
+  })
+  it('removing the tab detaches its chat from the host', () => {
+    const { hub, w } = world({ view: 'chat', choice: true })
+    hub.processStarted(TAB)
+    hub.chatReady(TAB, SID)
+    hub.removeTab(TAB)
+    expect(w.detached).toEqual([TAB])
+  })
+})
+
+describe('RemoteControlHub: an off that meets a line already typed', () => {
+  it('off after the on line was typed, then the id comes: the leave line goes, and the switch stays off', async () => {
+    const { hub, w, report, typedOk } = world()
+    hub.set(TAB, true)
+    await typedOk()
+    hub.set(TAB, false)
+    expect([w.choice, hub.state(TAB)]).toEqual([false, { kind: 'off' }])
+    report(ID)
+    expect(w.typed).toEqual(['/remote-control work', '/remote-control'])
+    expect(w.choice).toBe(false)
+    expect(hub.state(TAB)).toEqual({ kind: 'on', url: `https://claude.ai/code/${ID}`, leaving: true })
   })
 })

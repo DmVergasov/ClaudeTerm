@@ -536,6 +536,18 @@ export class ChatHub {
     this.readEffort(run.live)
   }
 
+  /** the permission cards the tab's chat holds open now */
+  openCards(tabId: string): [string, PermissionAsk][] {
+    const live = this.tabs.get(tabId)
+    return live ? [...live.cards].map(([id, card]) => [id, card.ask]) : []
+  }
+
+  /** whether the tab's chat turn runs now: working, or waiting on a card */
+  working(tabId: string): boolean {
+    const live = this.tabs.get(tabId)
+    return live !== undefined && live.model.state().turn !== 'idle'
+  }
+
   /** whether the tab has a chat that runs now: its process is up and has not ended */
   isRunning(tabId: string): boolean {
     return this.running(tabId) !== null
@@ -750,9 +762,9 @@ export class ChatHub {
     this.clearRemote(live)
     if (live.ended) return
     live.ended = true
-    this.tap(t => t.ended(tabId))
     this.cancelQueued(live)
     for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
+    this.tap(t => t.ended(tabId))
     if (how === 'close') live.engine?.close()
     else live.engine?.kill()
   }
@@ -858,6 +870,7 @@ export class ChatHub {
   /** the process has ended before it ran, or its start was cancelled: the tab gets its exit now */
   private finish(live: Live, code: number | null, fallback: string | null): void {
     live.ended = true
+    for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
     this.tap(t => t.ended(live.tabId))
     live.restarted = false
     this.dropStarting(live)
@@ -1084,9 +1097,9 @@ export class ChatHub {
       return
     }
     live.ended = true
-    this.tap(t => t.ended(live.tabId))
     this.cancelQueued(live)
     for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
+    this.tap(t => t.ended(live.tabId))
     this.dropStarting(live)
     live.req.exit(code, null)
     if (live.early === null) this.drawEnd(live)

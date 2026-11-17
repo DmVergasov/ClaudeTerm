@@ -26,7 +26,7 @@ export function remoteName(title: string): string {
     .replace(/^[✳◐◑] (?=\S)/, '')
     .replace(/\p{Cc}/gu, '')
     .trim()
-    .replace(/^-+/, '')
+    .replace(/^[-\s]+/, '')
     .trim()
   return Array.from(named).slice(0, REMOTE_NAME_MAX).join('').trim() || 'ClaudeTerm'
 }

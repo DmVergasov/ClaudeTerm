@@ -18,6 +18,7 @@ import { isSettingKey, isSettingValue, type SettingKey, type SettingValue } from
 import type { NotificationCase, OpenTabRequest, ProfileDef, RecentSession, SessionSummary, Settings, TabInfo, TabLayout, TabPlace } from '../shared/types'
 import { MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES, REMOTE_COPY, type DeviceAnswer, type DeviceChoices, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteDeviceView } from '../shared/remote'
 import { remoteName } from '../shared/remote-control'
+import { accountLaunchEnv, settingsEnv } from './remote-control/account-env'
 import { remoteUnavailable, type RemoteAccountKind } from './remote-control/account-rules'
 import { RemoteControlHub } from './remote-control/remote-control-hub'
 import { BridgeHost } from './remote-control/bridge-host'
@@ -373,10 +374,26 @@ function bootstrap(): void {
   }
   /** the environment of a CLI run for a sign-in account: its folder, and none of the environment's token or key */
   const accountEnv = (folder: string): Record<string, string> => applyEnvPatch(childEnv(), loginEnv(folder))
-  /** the environment a tab on `account` starts Claude Code with, as far as Remote Control reads it */
+  /** the env of each account folder's settings.json, as read last, with when: a read runs in the background and the tabs' status is said again when it lands */
+  const settingsEnvs = new Map<string, { env: Record<string, string>; at: number }>()
+  const SETTINGS_ENV_MS = 10_000
+  const settingsEnvOf = (dir: string): Record<string, string> => {
+    const seen = settingsEnvs.get(dir)
+    if (seen === undefined || Date.now() - seen.at > SETTINGS_ENV_MS) {
+      settingsEnvs.set(dir, { env: seen?.env ?? {}, at: Date.now() })
+      void settingsEnv(dir).then((env) => {
+        settingsEnvs.set(dir, { env, at: Date.now() })
+        for (const t of tabs.list()) statusSoon(t.id)
+      })
+    }
+    return seen?.env ?? {}
+  }
+  /** the environment a tab on `account` starts Claude Code with, as far as Remote Control reads it: its folder's settings.json env under it */
   const launchEnvOf = (account: string | null): Record<string, string> => {
     const folder = account === null ? null : accounts.folderOf(account)
-    return folder === null ? childEnv() : accountEnv(folder)
+    const base = folder === null ? childEnv() : accountEnv(folder)
+    const dir = folder ?? mainConfigDir
+    return dir === null ? base : accountLaunchEnv(settingsEnvOf(dir), base)
   }
   /** `claude <args>` for a sign-in account, started the way a chat starts Claude Code; rejects with a CliError when it cannot run */
   const accountCli = async (folder: string, args: string[], timeoutMs = CLI_TIMEOUT_MS, extraEnv: Record<string, string> = {}): Promise<CliRun> => {
@@ -639,6 +656,8 @@ function bootstrap(): void {
     if (statusTimers.has(tabId)) return
     statusTimers.set(tabId, setTimeout(() => {
       statusTimers.delete(tabId)
+      // a tab closed meanwhile has no status to say: one would bring back the entry the window dropped
+      if (tabs.get(tabId) === undefined) return
       const status = statusHub.get(tabId)
       // past the end of a turn, the agents still running are the work Claude left in the background
       tabs.setAgentsRunning(tabId, status.agents.length > 0)
@@ -1008,7 +1027,9 @@ function bootstrap(): void {
         if (acc.unavailable) toast(`${accountName(req.account!)} is not available; the tab started on the main account`)
         // a fork without a conversation of its own starts as a fork of its head's conversation
         const forkFrom = req.kind === 'claude' && !req.resumeSessionId && req.fork ? req.fork.from : null
-        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? forkFrom, forkSession: forkFrom !== null, rc: req.rc ?? null }
+        // the name is for the account the process starts on: a fallback to another account passes --rc only when Remote Control is available there
+        const rcHere = remoteUnavailable(accountKindOf(acc.account), launchEnvOf(acc.account)) === null ? req.rc ?? null : null
+        const claude = { command: settings.claude.command, settingsPath: claudeFiles.settingsPath, resumeSessionId: req.resumeSessionId ?? forkFrom, forkSession: forkFrom !== null, rc: rcHere }
         return { profileName: profile.name, spec: buildLaunch(profile, 'claude', claude), account: acc.account, env: acc.env, claude }
       }
       const profile = profiles.find((p) => p.name === req.profile) ?? pickProfile(profiles, settings.defaultProfile)
@@ -1140,7 +1161,7 @@ function bootstrap(): void {
   // a chat tab's Remote Control: the chat is hosted on claude.ai through the Agent SDK's bridge (imported on first use)
   const bridgeHost = new BridgeHost({
     bridge: bridgeLoader(testBridge ? () => import(/* @vite-ignore */ pathToFileURL(testBridge).href) : importBridge, log),
-    credentials: (folder, env) => readClaudeCredentials(folder, env, { platform: process.platform, home: homedir(), username: userInfo().username, now: Date.now, security: process.platform === 'darwin' && !isTest ? securityRunner() : null }),
+    credentials: (folder, env) => readClaudeCredentials(folder, env, { platform: process.platform, home: homedir(), username: () => userInfo().username, now: Date.now, security: process.platform === 'darwin' && !isTest ? securityRunner() : null }),
     sessions: new RemoteSessionStore(join(dataDir, 'remote-sessions.json'), Date.now, log),
     git: (cwd) => gitContextOf(cwd, execGit),
     chat: {
@@ -1148,6 +1169,8 @@ function bootstrap(): void {
       send: (id, text) => sentToChat(id, { text, attachments: [], from: 'remote' }),
       answer: (id, card, result) => chatHub.answerRemote(id, card, result),
       interrupt: (id) => interruptChat(id),
+      openCards: (id) => chatHub.openCards(id),
+      working: (id) => chatHub.working(id),
       history: (id, sessionId) => {
         const t = tabs.get(id)
         return t ? chatHistory(sessionId, t.cwd, t.account) : Promise.resolve([])

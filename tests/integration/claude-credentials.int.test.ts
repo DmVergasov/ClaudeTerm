@@ -14,7 +14,7 @@ let home: string
 let defaultFolder: string
 let work: string
 
-const sources = (over: Partial<CredentialSources> = {}): CredentialSources => ({ platform: 'linux', home, username: 'tester', now: () => NOW, security: null, ...over })
+const sources = (over: Partial<CredentialSources> = {}): CredentialSources => ({ platform: 'linux', home, username: () => 'tester', now: () => NOW, security: null, ...over })
 const store = (folder: string, record: object): void => { mkdirSync(folder, { recursive: true }); writeFileSync(join(folder, '.credentials.json'), JSON.stringify(record)) }
 
 beforeEach(() => {
@@ -73,6 +73,26 @@ describe('reading the claude.ai sign-in of an account', () => {
     expect(asked).toEqual([['find-generic-password', '-s', 'Claude Code-credentials', '-a', 'tester', '-w']])
     store(work, { claudeAiOauth: { accessToken: TOKEN } })
     expect((await readClaudeCredentials(work, {}, sources({ platform: 'darwin', security: async () => null }))).accessToken).toBe(TOKEN)
+  })
+
+  it('macOS reads a non-default folder’s Keychain item under that folder’s own service, never the plain one', async () => {
+    const asked: string[][] = []
+    const keychain = async (args: string[]): Promise<string | null> => { asked.push(args); return JSON.stringify({ claudeAiOauth: { accessToken: 'from-work-keychain-0001' } }) }
+    expect((await readClaudeCredentials(work, {}, sources({ platform: 'darwin', security: keychain }))).accessToken).toBe('from-work-keychain-0001')
+    expect(asked).toEqual([['find-generic-password', '-s', keychainService(work, home), '-a', 'tester', '-w']])
+    expect(keychainService(work, home)).not.toBe('Claude Code-credentials')
+  })
+
+  it('the user name is read only on macOS: on Linux a user name that cannot be read does not stop the read', async () => {
+    store(work, { claudeAiOauth: { accessToken: TOKEN } })
+    const noName = () => { throw new Error('no passwd entry') }
+    expect((await readClaudeCredentials(work, {}, sources({ username: noName }))).accessToken).toBe(TOKEN)
+  })
+
+  it('a macOS user name that cannot be read falls back to the file, as a failed Keychain read does', async () => {
+    store(work, { claudeAiOauth: { accessToken: TOKEN } })
+    const keychain = async (): Promise<string | null> => 'unused'
+    expect((await readClaudeCredentials(work, {}, sources({ platform: 'darwin', security: keychain, username: () => { throw new Error('no passwd entry') } }))).accessToken).toBe(TOKEN)
   })
 
   it('another folder’s Keychain service ends with the first 8 hex of the sha256 of its NFC path', () => {

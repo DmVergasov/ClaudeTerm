@@ -248,7 +248,9 @@ export class AccountStore {
   setRemoteControl(id: unknown, on: boolean): AccountResult {
     const a = this.find(id)
     if (a?.kind !== 'login') return NO_ACCOUNT
-    const login: StoredAccount = { kind: 'login', id: a.id, name: a.name, addedAt: a.addedAt, folder: a.folder, created: a.created, ...(on ? { remoteControl: true as const } : {}) }
+    // every stored field stays as it is; only the flag changes
+    const { remoteControl: _was, ...stored } = a
+    const login: StoredAccount = { ...stored, ...(on ? { remoteControl: true as const } : {}) }
     return this.save(this.accounts.map((x) => (x === a ? login : x)))
   }
 

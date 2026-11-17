@@ -6,7 +6,8 @@ import type { SDKControlRequest, SDKMessage } from '@anthropic-ai/claude-agent-s
 import type { BridgeSessionHandle, AttachBridgeSessionOptions, CredentialsFailure, RemoteCredentials } from '@anthropic-ai/claude-agent-sdk/bridge'
 import type { ChatSendOrigin } from '../../shared/chat'
 import { isBridgeId, REMOTE_REASONS, refusedReason, remoteLink, remoteName, RENEW_WAIT_NOTE, type RemoteState } from '../../shared/remote-control'
-import type { PermissionAsk, SdkPermissionResult } from '../chat/chat-cards'
+import { SEND_TEXT_CAP } from '../chat/chat-guards'
+import { cardFor, type PermissionAsk, type SdkPermissionResult } from '../chat/chat-cards'
 import { pathKey } from '../path-key'
 import type { BridgeLoad, BridgeModule } from './bridge-loader'
 import type { ClaudeCredentials } from './claude-credentials'
@@ -25,6 +26,8 @@ export const BACKOFF_MS = [2_000, 5_000, 15_000, 60_000] as const
 export const RENEW_EVERY_MS = 60_000
 /** while a tab is on, its sequence number is stored this often */
 export const SEQUENCE_EVERY_MS = 60_000
+/** the time the conversation's history may take to be read; a read that takes longer counts as none */
+const HISTORY_MS = 20_000
 /** the messages and card events kept while a tab attaches; the oldest go first */
 const QUEUE_MAX = 1000
 /** the longest denial message sent back to claude.ai */
@@ -36,6 +39,10 @@ export interface BridgeChat {
   /** settles an open card with claude.ai's answer (ChatHub.answerRemote); false: no such card, or the answer does not fit */
   answer(tabId: string, cardId: string, result: SdkPermissionResult): boolean
   interrupt(tabId: string): void
+  /** the chat's permission cards that are open now: claude.ai is sent each one when the tab turns on */
+  openCards(tabId: string): [string, PermissionAsk][]
+  /** whether the chat's turn runs now, working or waiting on a card */
+  working(tabId: string): boolean
   /** the conversation so far, as the SDK's getSessionMessages gives it */
   history(tabId: string, sessionId: string): Promise<unknown[]>
   /** one call that makes the chat's Claude Code check its sign-in (accountInfo) */
@@ -141,14 +148,29 @@ function permissionRequest(cardId: string, ask: PermissionAsk): Msg {
     title: ask.title,
     display_name: ask.displayName,
     description: ask.description,
-    permission_suggestions: ask.suggestions
+    permission_suggestions: ask.suggestions,
+    // the card's own rules: claude.ai offers no always-allow rule the card would not take, and no default approval
+    suppress_always_allow_rule: ask.suppressAlwaysAllowRule === true,
+    default_to_no: ask.defaultToNo === true
   }
+}
+
+/** the always-allow rules claude.ai picked: each must be one the card offered (none when the card offers none); null when one is not, or the list is malformed */
+function rulesOffered(v: unknown, ask: PermissionAsk): unknown[] | null {
+  if (v === undefined) return []
+  if (!Array.isArray(v)) return null
+  const offered = new Set((ask.suppressAlwaysAllowRule ? [] : (ask.suggestions ?? [])).map((s) => JSON.stringify(s)))
+  return v.every((rule) => offered.has(JSON.stringify(rule))) ? v : null
 }
 
 /** the answer claude.ai sent for a card as the SDK takes it back; null when the payload is malformed */
 function answerResult(payload: Msg, ask: PermissionAsk): SdkPermissionResult | null {
   if (payload.behavior === 'allow' && (payload.updatedInput === undefined || isRecord(payload.updatedInput))) {
-    return { behavior: 'allow', updatedInput: isRecord(payload.updatedInput) ? payload.updatedInput : ask.input }
+    const rules = rulesOffered(payload.updatedPermissions, ask)
+    if (rules === null) return null
+    // a permission card runs the input the person was asked about; only a question or a plan takes claude.ai's input back
+    const input = cardFor(ask).type !== 'permission' && isRecord(payload.updatedInput) ? payload.updatedInput : ask.input
+    return { behavior: 'allow', updatedInput: input, ...(rules.length > 0 ? { updatedPermissions: rules } : {}) }
   }
   if (payload.behavior === 'deny' && (payload.message === undefined || typeof payload.message === 'string')) {
     const message = typeof payload.message === 'string' ? Array.from(payload.message).slice(0, DENY_MAX).join('') : 'Denied on claude.ai'
@@ -209,7 +231,12 @@ export class BridgeHost {
   /** a message the person or a sender sent into the chat: the person's own typing goes to claude.ai, what claude.ai sent does not go back */
   userSent(tabId: string, uuid: string, text: string, from: ChatSendOrigin | null): void {
     const t = this.tabs.get(tabId)
-    if (!t || from === 'remote') return
+    if (!t) return
+    // a message claude.ai sent is not written back to it, but its turn runs
+    if (from === 'remote') {
+      this.send(t, (h) => h.reportState('running'))
+      return
+    }
     const msg: Msg = { type: 'user', uuid, session_id: '', message: { role: 'user', content: text }, parent_tool_use_id: null }
     this.send(t, (h) => {
       if (!t.historyUuids.has(uuid)) h.write(msg as SDKMessage)
@@ -223,9 +250,28 @@ export class BridgeHost {
     if (!t) return
     t.openCards.set(cardId, ask)
     this.send(t, (h) => {
-      h.sendControlRequest({ type: 'control_request', request_id: cardId, request: permissionRequest(cardId, ask) } as SDKControlRequest)
+      this.sendCard(h, cardId, ask)
       h.reportState('requires_action')
     })
+  }
+
+  private sendCard(h: Handle, cardId: string, ask: PermissionAsk): void {
+    h.sendControlRequest({ type: 'control_request', request_id: cardId, request: permissionRequest(cardId, ask) } as SDKControlRequest)
+  }
+
+  /** the state a tab reports to claude.ai: a card open requires action, a turn that runs is running, else idle */
+  private reportTurn(t: Tab, h: Handle): void {
+    h.reportState(t.openCards.size > 0 ? 'requires_action' : this.d.chat.working(t.target.tabId) ? 'running' : 'idle')
+  }
+
+  /** a tab that turns on sends claude.ai the cards the chat holds open and it does not know yet (a card opened while the tab connected is already known and queued), then reports its turn */
+  private resume(t: Tab, h: Handle): void {
+    for (const [cardId, ask] of this.d.chat.openCards(t.target.tabId)) {
+      if (t.openCards.has(cardId)) continue
+      t.openCards.set(cardId, ask)
+      this.sendCard(h, cardId, ask)
+    }
+    this.reportTurn(t, h)
   }
 
   /** a card closed in the chat: claude.ai's prompt is cancelled unless claude.ai answered it; the tab runs again once no card is open */
@@ -342,14 +388,20 @@ export class BridgeHost {
     t.kept = !fresh
 
     if (fresh) {
-      let history: unknown[] = []
+      let history: unknown[] | null = []
+      let cancelLimit = NOOP
+      const limit = new Promise<null>((resolve) => {
+        cancelLimit = this.d.later(HISTORY_MS, () => resolve(null))
+      })
       try {
-        history = await this.d.chat.history(target.tabId, target.sessionId)
+        history = await Promise.race([this.d.chat.history(target.tabId, target.sessionId), limit])
       } catch (e) {
         this.d.log.warn(`remote control: the conversation's history cannot be read for tab ${target.tabId}: ${scrub(errorText(e), t.secrets)}`)
       }
+      cancelLimit()
+      if (history === null) this.d.log.warn(`remote control: the conversation's history did not come in time for tab ${target.tabId}`)
       if (!alive()) return
-      for (const m of history) {
+      for (const m of history ?? []) {
         if (!isRecord(m) || (m.type !== 'user' && m.type !== 'assistant')) continue
         if (typeof m.uuid === 'string') t.historyUuids.add(m.uuid)
         handle.write(m as SDKMessage)
@@ -358,11 +410,12 @@ export class BridgeHost {
       if (!alive()) return
       t.kept = true
     }
-    handle.reportState('idle')
+    this.resume(t, handle)
     const pending = t.pendingClose
     t.pendingClose = null
     if (pending !== null) {
-      this.takeClose(t, pending.code)
+      // this entry's history went to a connection that closed meanwhile: when it cannot be brought back, the entry is forgotten
+      this.takeClose(t, pending.code, true)
       return
     }
     this.turnOn(t, handle, remoteId)
@@ -372,12 +425,16 @@ export class BridgeHost {
   private openSession(t: Tab, gen: number, bridge: BridgeModule, opts: AttachBridgeSessionOptions): Promise<Handle | null> {
     let late = false
     let cancel = NOOP
-    const opened = bridge.attachBridgeSession(opts).then(
+    // a close counts only from the handle the tab holds now: a handle that a failed reconnect dropped says nothing about the connection
+    const own: { handle: Handle | null } = { handle: null }
+    const owned: AttachBridgeSessionOptions = { ...opts, onClose: (code) => { if (own.handle !== null && own.handle === t.handle) this.closed(t, code) } }
+    const opened = bridge.attachBridgeSession(owned).then(
       (h): Handle | null => {
         if (late || !this.alive(t, gen)) {
           h.close()
           return null
         }
+        own.handle = h
         return h
       },
       (e: unknown): null => {
@@ -409,7 +466,7 @@ export class BridgeHost {
   }
 
   /** the connection closed: its sequence number is stored, and it is brought back; claude.ai refusing it (403, 404) fails the tab */
-  private takeClose(t: Tab, code: number | undefined): void {
+  private takeClose(t: Tab, code: number | undefined, unsent = false): void {
     const handle = t.handle
     const session = t.session
     if (handle === null || session === null) return
@@ -425,7 +482,7 @@ export class BridgeHost {
     t.state = { kind: 'connecting' }
     this.d.onChange(t.target.tabId)
     const gen = t.gen
-    this.reconnect(t, session, gen).catch((e: unknown) => {
+    this.reconnect(t, session, gen, unsent).catch((e: unknown) => {
       if (!this.alive(t, gen)) return
       this.d.log.warn(`remote control: the connection could not be restored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
       this.stop(t, { kind: 'failed', reason: REMOTE_REASONS.unreachable })
@@ -433,10 +490,12 @@ export class BridgeHost {
   }
 
   /** brings a dropped connection back: the sign-in is read again and a worker token fetched for the same remote session, and the reconnect takes the epoch that fetch gave. The transport is reconnected on the handle; when the SDK has closed the handle (its reconnect failed), the session is attached again from its sequence number, with no history. A miss waits the backoff and goes on */
-  private async reconnect(t: Tab, session: Session, gen: number): Promise<void> {
+  private async reconnect(t: Tab, session: Session, gen: number, unsent: boolean): Promise<void> {
     let handle = t.handle
     if (handle === null) return
     let misses = 0
+    // the history of a session made here may have gone to the closed connection: until a reconnect works, no entry stays for it
+    let mayBeUnsent = unsent
     let sequence: number | null = null
     let sign: Sign | null = null
     for (;;) {
@@ -474,16 +533,28 @@ export class BridgeHost {
         } catch (e) {
           if (!this.alive(t, gen)) return
           this.d.log.warn(`remote control: the connection could not be restored for tab ${t.target.tabId}: ${scrub(errorText(e), t.secrets)}`)
-          // a failed reconnect closes the handle: it is dropped, and the session is attached again from its sequence number
+          // a failed reconnect closes the handle: it is dropped (closed once more, which the SDK may have done already), and the session is attached again from its sequence number
           sequence = handle.getSequenceNum()
+          try {
+            handle.close()
+          } catch {
+            // already closed by the SDK
+          }
           handle = null
           t.handle = null
           sign = null
+          if (mayBeUnsent) {
+            mayBeUnsent = false
+            t.kept = false
+            await this.d.sessions.forget(t.target.sessionId)
+            if (!this.alive(t, gen)) return
+          }
           if (!(await this.missed(t, ++misses))) return
           continue
         }
         if (!this.alive(t, gen)) return
         t.reconnecting = false
+        this.reportTurn(t, handle)
         this.turnOn(t, handle, session.remoteId)
         return
       }
@@ -499,6 +570,7 @@ export class BridgeHost {
       }
       t.handle = attached
       t.reconnecting = false
+      this.reportTurn(t, attached)
       this.turnOn(t, attached, session.remoteId)
       return
     }
@@ -515,8 +587,8 @@ export class BridgeHost {
       epoch: remote.worker_epoch,
       ...(initialSequenceNum === null ? {} : { initialSequenceNum }),
       ...(version ? { claudeCodeVersion: version } : {}),
-      onInboundMessage: (msg) => this.inbound(t, msg as Msg),
-      onPermissionResponse: (res) => (this.answer(t, res as Msg) ? undefined : false),
+      onInboundMessage: (msg) => this.inbound(t, msg),
+      onPermissionResponse: (res) => (this.answer(t, res) ? undefined : false),
       onInterrupt: () => {
         if (this.current(t)) this.d.chat.interrupt(target.tabId)
       },
@@ -640,12 +712,16 @@ export class BridgeHost {
   /** closes a handle after its last writes have had FLUSH_MS to reach claude.ai; its sequence number is stored once they have */
   private async flushAndClose(t: Tab, h: Handle): Promise<void> {
     let cancel = NOOP
-    await Promise.race([
-      h.flush().catch(() => undefined),
-      new Promise<void>((resolve) => {
-        cancel = this.d.later(FLUSH_MS, resolve)
-      })
-    ])
+    try {
+      await Promise.race([
+        h.flush().catch(() => undefined),
+        new Promise<void>((resolve) => {
+          cancel = this.d.later(FLUSH_MS, resolve)
+        })
+      ])
+    } catch {
+      // a flush that throws gives its writes no more time: the handle closes all the same, and the detach does not reject
+    }
     cancel()
     await this.storeSequence(t, h)
     h.close()
@@ -687,18 +763,28 @@ export class BridgeHost {
     }
   }
 
-  /** a message typed on claude.ai goes into the chat as the person's; one with no text does not */
-  private async inbound(t: Tab, msg: Msg): Promise<void> {
-    if (!this.current(t) || msg.type !== 'user' || !isRecord(msg.message)) return
+  /** a message typed on claude.ai goes into the chat as the person's; one with no text does not. Images are not taken yet: their count is logged, not their content. A refusal is logged, and nothing is thrown into the SDK */
+  private async inbound(t: Tab, msg: unknown): Promise<void> {
+    if (!this.current(t) || !isRecord(msg) || msg.type !== 'user' || !isRecord(msg.message)) return
+    const images = Array.isArray(msg.message.content) ? msg.message.content.filter((b) => isRecord(b) && b.type === 'image').length : 0
+    if (images > 0) this.d.log.info(`a message from claude.ai had ${images} image(s): they are not sent to the chat`)
     const text = textOf(msg.message.content)
     if (text === '') return
-    const refused = await this.d.chat.send(t.target.tabId, text)
-    if (refused !== null) this.d.log.warn(`a message from claude.ai was not sent: ${refused}`)
+    if (text.length > SEND_TEXT_CAP) {
+      this.d.log.warn('a message from claude.ai was not sent: it is longer than a chat takes')
+      return
+    }
+    try {
+      const refused = await this.d.chat.send(t.target.tabId, text)
+      if (refused !== null) this.d.log.warn(`a message from claude.ai was not sent: ${refused}`)
+    } catch (e) {
+      this.d.log.warn(`a message from claude.ai was not sent: ${scrub(errorText(e), t.secrets)}`)
+    }
   }
 
   /** claude.ai's answer to an open card, as the chat takes it; false when it does not answer an open card or is malformed */
-  private answer(t: Tab, res: Msg): boolean {
-    if (!this.current(t)) return false
+  private answer(t: Tab, res: unknown): boolean {
+    if (!this.current(t) || !isRecord(res)) return false
     const body = res.response
     if (!isRecord(body) || body.subtype !== 'success' || typeof body.request_id !== 'string') return false
     const ask = t.openCards.get(body.request_id)

@@ -6,8 +6,19 @@ import type { PromptState } from '../../shared/ipc'
 
 const POLL_MS = 300
 const WAIT_MS = 30_000
-/** the tabs with a command waiting for their prompt: a second command for one of them is refused */
-const waiting = new Set<string>()
+/** the tabs with a command waiting for their prompt, by the check that tells whether its waiter was cancelled: a second command for one of them is refused while that check says no */
+const waiting = new Map<string, () => boolean>()
+
+/** whether a command holds the tab's prompt: one whose waiter was cancelled gives it up, and its loop ends before any write */
+function busy(tabId: string): boolean {
+  const holder = waiting.get(tabId)
+  return holder !== undefined && !holder()
+}
+
+/** frees the tab's slot, unless a command that took it over holds it now */
+function release(tabId: string, holder: () => boolean): void {
+  if (waiting.get(tabId) === holder) waiting.delete(tabId)
+}
 
 export interface HandoffDeps {
   setView(tabId: string, view: TabView): Promise<boolean>
@@ -30,12 +41,13 @@ export type TypeDeps = Omit<HandoffDeps, 'setView'>
 export async function openInTerminal(tabId: string, line: string | null, what: string, d: HandoffDeps): Promise<boolean> {
   if (line !== null && !isHandoffLine(line)) return false
   // one command at a time per tab: the first one types its line, a second one would type over it
-  if (waiting.has(tabId)) return false
-  waiting.add(tabId)
+  if (busy(tabId)) return false
+  const holder = (): boolean => false
+  waiting.set(tabId, holder)
   try {
     return await hand(tabId, line, what, d)
   } finally {
-    waiting.delete(tabId)
+    release(tabId, holder)
   }
 }
 
@@ -67,12 +79,12 @@ export async function typeIntoPrompt(
 ): Promise<boolean> {
   if (!isHandoffLine(line)) return false
   // one command at a time per tab, whichever function types it
-  if (waiting.has(tabId)) return false
-  waiting.add(tabId)
+  if (busy(tabId)) return false
+  waiting.set(tabId, cancelled)
   try {
     return (await typeLine(tabId, line, what, d, onWait, cancelled)) === 'typed'
   } finally {
-    waiting.delete(tabId)
+    release(tabId, cancelled)
   }
 }
 
@@ -109,6 +121,8 @@ async function typeLine(
   }
   // the switch happened: the tab is in its terminal, the command is not typed
   if (!d.exists(tabId)) return 'gone'
+  // a wait cancelled at its last poll says nothing: whoever cancelled it says what happened
+  if (cancelled()) return 'cancelled'
   // the chat says it, and a toast too: the user may be looking at the terminal, where the note is not
   const why = `Could not run ${what}: Claude Code's prompt did not come up`
   d.note(tabId, why)

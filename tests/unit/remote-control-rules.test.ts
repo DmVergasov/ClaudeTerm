@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { accountLaunchEnv } from '../../src/main/remote-control/account-env'
 import { remoteUnavailable } from '../../src/main/remote-control/account-rules'
 import { connectTimeoutToast, isBridgeId, REMOTE_REASONS, refusedReason, remoteLink, remoteName, RENEW_WAIT_NOTE } from '../../src/shared/remote-control'
 
@@ -14,6 +15,8 @@ describe('remoteName', () => {
   it("drops the spinner Claude Code puts before its title, and leading dashes, so --rc never reads the name as an option", () => {
     expect(remoteName('✳ Fix the parser')).toBe('Fix the parser')
     expect(remoteName('--force push')).toBe('force push')
+    // a name that starts with a dash after a space would read as an option after --rc
+    expect(remoteName('- -x')).toBe('x')
   })
   it('is ClaudeTerm when nothing is left: /remote-control without a name would disconnect instead', () => {
     expect(remoteName('')).toBe('ClaudeTerm')
@@ -72,5 +75,16 @@ describe('remoteUnavailable', () => {
   it('the main account and a sign-in account with a plain environment can use RC', () => {
     expect(remoteUnavailable('main', { PATH: '/usr/bin' })).toBeNull()
     expect(remoteUnavailable('login', { CLAUDE_CONFIG_DIR: '/accounts/work' })).toBeNull()
+  })
+})
+
+describe('accountLaunchEnv', () => {
+  it('an account’s settings.json env sits under the launch environment, which wins, names matched ignoring case', () => {
+    const merged = accountLaunchEnv({ ANTHROPIC_BASE_URL: 'https://settings.example.invalid', KEEP: 'yes' }, { anthropic_base_url: 'https://launch.example.invalid' })
+    expect(merged).toEqual({ KEEP: 'yes', anthropic_base_url: 'https://launch.example.invalid' })
+    expect(remoteUnavailable('main', merged)).toBe(BASE)
+  })
+  it('with no settings env, the launch environment is what it was', () => {
+    expect(accountLaunchEnv({}, { PATH: '/usr/bin' })).toEqual({ PATH: '/usr/bin' })
   })
 })

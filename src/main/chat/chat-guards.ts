@@ -4,7 +4,7 @@ import { HEADS_UP_ACTIONS, type ChatAnswer, type ChatAttachment, type ChatPermis
 
 const TEXT_CAP = 64 * 1024
 const PATH_CAP = 4096
-const SEND_TEXT_CAP = 1024 * 1024
+export const SEND_TEXT_CAP = 1024 * 1024
 const MAX_ATTACHMENTS = 20
 const MAX_QUESTIONS = 4
 const MAX_ANSWER_LIST = 8

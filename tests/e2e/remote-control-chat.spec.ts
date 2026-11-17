@@ -27,8 +27,11 @@ test('switching RC on in a chat shows connecting, then connected with its link; 
     await expect.poll(() => externalCalls(t.app)).toEqual(['https://claude.ai/code/cse_test1'])
     await t.page.locator('.remote-popover input.switch').click()
     await expect(seg).toHaveAttribute('data-dot', 'off')
-    expect((await bridgeSeen(t.app)).handles[0].closes).toBe(1)
-    expect(readFileSync(join(t.dataDir, 'logs', 'main.log'), 'utf8')).not.toContain(RC_TOKEN)
+    // close() runs after the sequence number is written: the count is polled
+    await expect.poll(async () => (await bridgeSeen(t.app)).handles[0].closes).toBe(1)
+    const log = readFileSync(join(t.dataDir, 'logs', 'main.log'), 'utf8')
+    expect(log).not.toContain(RC_TOKEN)
+    expect(log).not.toContain('fake-worker-jwt-0001')
   } finally {
     await t.app.close()
   }
@@ -106,6 +109,24 @@ test('a permission card answered from claude.ai closes in the window', async () 
     await t.app.evaluate((_electron, id) => (globalThis as any).ctTestBridge.answer(id, 'allow'), requestId)
     await expect(t.page.locator('.chat-host:visible .chat-card.answered')).toContainText('Allowed from claude.ai')
     await expect.poll(() => controlResponses(t.log).map((r) => r.behavior)).toEqual(['allow'])
+  } finally {
+    await t.app.close()
+  }
+})
+
+test('a permission card already open when Remote Control turns on reaches claude.ai, and the tab requires action until it is answered there', async () => {
+  const t = await launchRcChat({ turns: { run: [{ ask: { tool: 'Bash', input: { command: 'ls' } }, allowed: [{ text: 'Listed.' }], denied: [{ text: 'Not listed.' }] }] } })
+  try {
+    await sendMessage(t.page, 'run')
+    await expect(t.page.locator('.chat-host:visible .chat-card-permission')).toHaveCount(1)
+    await t.page.evaluate((id) => window.ct.remoteControlSet(id, true), t.tabId)
+    await expect(t.page.locator('#statusbar .status-remote')).toHaveAttribute('data-dot', 'on')
+    await expect.poll(async () => (await bridgeSeen(t.app)).handles[0]?.requests.length ?? 0).toBe(1)
+    const seen = await bridgeSeen(t.app)
+    expect(seen.handles[0].states.at(-1)).toBe('requires_action')
+    const requestId = seen.handles[0].requests[0].request_id as string
+    await t.app.evaluate((_electron, id) => (globalThis as any).ctTestBridge.answer(id, 'allow'), requestId)
+    await expect(t.page.locator('.chat-host:visible .chat-card.answered')).toContainText('Allowed from claude.ai')
   } finally {
     await t.app.close()
   }

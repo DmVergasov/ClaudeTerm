@@ -46,6 +46,8 @@ interface Ask {
   /** the typed line waits for Claude Code's empty prompt */
   waits: boolean
   cancel: (() => void) | null
+  /** an off that met an on line already typed: the id it waits for is gone once it comes, the leave line goes then */
+  pendingId?: boolean
 }
 
 /** a chat tab's Remote Control: whether its chat runs, whether its Claude Code answered (ready), its session, and whether the host is attached to it */
@@ -86,7 +88,12 @@ export class RemoteControlHub {
   /** the person's switch: on types /remote-control with the tab's name, off types /remote-control to leave */
   set(tabId: string, on: boolean): void {
     const tab = this.deps.tab(tabId)
-    if (!tab || tab.exited || this.unavailable(tabId)) return
+    if (!tab) return
+    // a switch that cannot move still tells the window, which shows the state again rather than the click
+    if (tab.exited || this.unavailable(tabId)) {
+      this.deps.onChange(tabId)
+      return
+    }
     if (tab.view === 'chat') {
       this.deps.setChoice(tabId, on)
       if (on) this.attachChat(tabId)
@@ -106,8 +113,11 @@ export class RemoteControlHub {
         this.typeOn(tabId)
       }
     } else if (id === null) {
+      // a line already typed still brings its id up: the off waits for it, and then leaves
+      const typed = ask?.dir === 'on' && ask.cancel !== null
       this.finish(tabId)
       this.deps.setChoice(tabId, false)
+      if (typed) this.asks.set(tabId, { dir: 'off', waits: false, cancel: null, pendingId: true })
     } else if (ask?.dir !== 'off') {
       this.finish(tabId)
       this.deps.setChoice(tabId, false)
@@ -122,7 +132,10 @@ export class RemoteControlHub {
       const ask = this.asks.get(tabId)
       if (id !== null) {
         if (ask?.dir === 'on') this.finish(tabId)
-        else if (previous === null) this.deps.setChoice(tabId, true)
+        else if (ask?.pendingId) {
+          this.finish(tabId)
+          this.typeOff(tabId)
+        } else if (previous === null) this.deps.setChoice(tabId, true)
       } else if (previous !== null) {
         if (ask?.dir === 'off') this.finish(tabId)
         else if (!ask) this.deps.setChoice(tabId, false)
@@ -142,6 +155,8 @@ export class RemoteControlHub {
       const link = this.chatOf(tabId)
       link.live = true
       link.ready = false
+      // the session of the old process is no longer this chat's: a ready without one attaches nothing
+      link.sessionId = null
       this.deps.onChange(tabId)
       return
     }
@@ -185,7 +200,9 @@ export class RemoteControlHub {
 
   /** the chat ended: its Remote Control detaches and the choice stays */
   chatEnded(tabId: string): void {
-    const link = this.chatOf(tabId)
+    // a tab already removed keeps no link: none is made for it, and nothing is reported for it
+    const link = this.chats.get(tabId)
+    if (!link) return
     link.live = false
     link.ready = false
     this.detachChat(tabId)

@@ -20,18 +20,9 @@ async function gitLine(git: GitRun, args: string[], cwd: string): Promise<string
   return r.code === 0 && out ? out : null
 }
 
-/** a web or ssh address loses the user and password it carries; an scp-like address (git@host:path) and a local path are git's own text */
+/** a URL loses the user and password it carries in its authority, whatever its scheme and whether or not a URL parser reads it; an scp-like address (git@host:path) and a local path have no `//` and are git's own text */
 function withoutCredentials(url: string): string {
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    return url
-  }
-  if (!['http:', 'https:', 'ssh:'].includes(parsed.protocol) || (parsed.username === '' && parsed.password === '')) return url
-  parsed.username = ''
-  parsed.password = ''
-  return parsed.toString()
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, '$1')
 }
 
 /** the checkout's origin, branch and default branch; null when cwd is not a repository or has no origin */
