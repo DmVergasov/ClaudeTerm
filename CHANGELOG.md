@@ -2,6 +2,18 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.23.0
+
+### New
+
+- **Remote Control for your Claude tabs.** **Remote** at the start of a Claude tab's status bar says whether you can continue the tab's session from your phone or claude.ai/code, and turns green, with a radio mark on the tab, while it is connected. Click it to turn Remote Control on or off for the tab, open the session on claude.ai or copy its link, and tick **Connect every new session of this account** to start every new Claude tab of that account connected. A tab keeps its choice when it restarts and when ClaudeTerm restores it.
+- **In a terminal tab** it is Claude Code's own Remote Control: ClaudeTerm types `/remote-control` for you and starts the account's new tabs with `--rc`. **In a chat tab** ClaudeTerm connects the session to claude.ai itself, with that account's Claude Code sign-in, which it only reads: while Remote Control is on, the chat — your messages, Claude's answers, tool results and file contents — goes to claude.ai, a message you type there comes into the chat marked **from claude.ai**, and a permission card can be answered from there too. Images sent from claude.ai do not reach the chat yet.
+- Remote Control needs a claude.ai sign-in. For a token account, an API key, Bedrock, Vertex, Foundry or a custom `ANTHROPIC_BASE_URL` — in the tab's environment or in the account's Claude Code settings — the Remote segment says why it is not available.
+
+### Fixes
+
+- A chat whose window changes size right after you scroll up keeps your place, instead of going back to the end.
+
 ## 0.22.0
 
 ### New
