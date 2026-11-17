@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
 import type { PeerMail } from '../../src/main/transcript-mail'
-import { assistantLine, bashResultLine, editResultLine, interruptLine, PEER_ORIGIN, peerMessageLine, PNG_B64, pastedLine, promptLine, sendMessageLines, textLine, toolResultLine, toolUseLine, turnPromptLine } from '../fixtures/transcript'
+import { assistantLine, bashResultLine, editResultLine, failedResultLine, interruptLine, PEER_ORIGIN, peerMessageLine, PNG_B64, pastedLine, promptLine, sendMessageLines, textLine, toolResultLine, toolUseLine, turnPromptLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -374,6 +374,32 @@ describe('TranscriptFeed session title', () => {
     appendFileSync(transcriptPath, titleLine('ai-title', 'Main title') + '\n')
     await feed.poll()
     expect(titles).toEqual(['Main title'])
+  })
+})
+
+describe('TranscriptFeed EnterWorktree', () => {
+  const NO_PATH = 'WorktreeCreate hook failed: hook succeeded but returned no worktree path (command: echo the path to stdout; http/callback: return hookSpecificOutput.worktreePath)'
+
+  it("reports an EnterWorktree a WorktreeCreate hook broke, with the time of its result; a call that worked, another failure or another tool's output is none", async () => {
+    const { transcriptPath, cacheRoot } = setup()
+    const failures: [string, number | null][] = []
+    const feed = new TranscriptFeed({
+      transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {},
+      onWorktreeHookFailure: (error, at) => failures.push([error, at])
+    })
+    writeFileSync(transcriptPath, [
+      toolUseLine('ok', 'EnterWorktree', { name: 'notes' }),
+      JSON.stringify({ type: 'user', timestamp: '2026-10-05T10:00:01.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'ok', content: 'Switched to worktree D:\\x' }] }, toolUseResult: { worktreePath: 'D:\\x' } }),
+      toolUseLine('git', 'EnterWorktree', { name: 'notes' }),
+      failedResultLine('git', 'Not in a git repository'),
+      toolUseLine('bash', 'Bash', { command: 'grep -r WorktreeCreate' }),
+      failedResultLine('bash', `Exit code 1\n${NO_PATH}`)
+    ].join('\n') + '\n')
+    await feed.poll()
+    expect(failures).toEqual([])
+    appendFileSync(transcriptPath, [toolUseLine('w1', 'EnterWorktree', { name: 'notes' }), failedResultLine('w1', NO_PATH, '2026-11-17T07:30:11.976Z')].join('\n') + '\n')
+    await feed.poll()
+    expect(failures).toEqual([[NO_PATH, Date.parse('2026-11-17T07:30:11.976Z')]])
   })
 })
 

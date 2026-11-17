@@ -26,6 +26,7 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
     'On a paired device: in folder (a path on that device) when given, else in the folder of a tab of the same project there, else that device\'s default folder; on its account with this coordinator\'s email, else its main account. ' +
     'Always in Claude Code\'s default permission mode. ' +
     'With worktree, the session first enters a new git worktree of that name with EnterWorktree; ClaudeTerm itself creates none. ' +
+    'If EnterWorktree fails, the session makes no worktree another way: it stops and reports the error as its result. ' +
     'It is attached to you at once, and its report comes to you by itself when its task ends. ' +
     COORD_WORDS,
   attach_session:

@@ -1417,6 +1417,19 @@ describe('CoordinatorHub start', () => {
     expect(records(w, 'task')).toEqual([expect.objectContaining({ text: worktreeInstruction('notes') + 'Write the release notes.' })])
   })
 
+  it('a session started with a worktree is told to stop and report when EnterWorktree fails, not to make the worktree some other way', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    const answer = w.hub.start('tab-c', { ...START, worktree: 'notes' })
+    await tick()
+    showSession(w, 'new-tab-1', S_NEW)
+    await answer
+    const text = records(w, 'task')[0].text
+    expect(text).toContain('If EnterWorktree fails, do not create a worktree any other way (`git worktree add`, `cd`, …)')
+    expect(text).toContain("stop and report the error as this task's result")
+    expect(text.indexOf('EnterWorktree fails')).toBeLessThan(text.indexOf('Write the release notes.'))
+  })
+
   it('without a session within 20 s it answers that the session is starting, and a later session is still attached and tasked', async () => {
     const w = world()
     w.hub.make('tab-c', false)

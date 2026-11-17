@@ -156,6 +156,7 @@ import { consumeFailedUpdate, consumeUpdateMarker, FAILED_UPDATE, writeUpdateMar
 import { Updater, type UpdaterBackend } from './updater'
 import { createUpdateBackend } from './update-backend'
 import { cleanupImageCache, findTranscript, TranscriptFeed } from './transcript-feed'
+import { tabSettingsFiles, WorktreeHookWarnings } from './worktree-hook'
 import { showWindow } from './window-show'
 import { loadWindowState, trackWindowState } from './window-state'
 import type { McpResult, McpServersView, PluginsView } from '../shared/mcp'
@@ -821,6 +822,16 @@ function bootstrap(): void {
   const wordsLogs = new Map<string, { session: string; log: WordsLog }>()
   // a test holds the transcript poll of a turn's end back, so an answer typed meanwhile is the one that counts
   const testDoneDelayMs = isTest ? Number(process.env.CLAUDETERM_TEST_DONE_DELAY_MS) || 0 : 0
+  // an EnterWorktree a WorktreeCreate hook broke, in a chat's stream or a transcript: the person learns which hook, once
+  const worktreeHooks = new WorktreeHookWarnings({
+    files: async (tabId) => {
+      const env = tabs.claudeEnv(tabId)
+      const tab = tabs.get(tabId)
+      return env && tab ? tabSettingsFiles(env, homedir(), await canonicalFolder(tab.cwd)) : null
+    },
+    readJson: (file) => readJson(file),
+    toast
+  })
   const attachTranscript = (tabId: string, sessionId: string, transcriptPath: string): void => {
     const s = sources.get(tabId)
     if (!s || (s.transcriptPath !== null && pathKey(s.transcriptPath) === pathKey(transcriptPath))) return
@@ -858,6 +869,8 @@ function bootstrap(): void {
       onTitle: (title) => setSessionTitle(tabId, title),
       onPeerMail: (mail) => mailHub.peerMail(tabId, { ...mail, read: mail.at !== null && mail.at < since }),
       onWords: (line) => words.add(line, Date.now()),
+      // a failure the transcript held before it was read is history: its hook may be gone since
+      onWorktreeHookFailure: (error, at) => { if (at !== null && at >= since) void worktreeHooks.failed(tabId, error) },
       pollMaxMs: testFeedMaxMs,
       subagentPollMaxMs: testFeedMaxMs,
       subagentScanMaxMs: testFeedMaxMs
@@ -996,6 +1009,7 @@ function bootstrap(): void {
       // after the chat settles its open cards: their cancels reach claude.ai before the host lets go of the session
       remoteControl.removeTab(tabId)
       headsUp.forget(tabId)
+      worktreeHooks.removeTab(tabId)
       mcpHub.removeTab(tabId)
       // a closed chat's configuration files are no longer watched
       coordinator.removeTab(tabId)
@@ -1361,7 +1375,10 @@ function bootstrap(): void {
     folder: followSessionFolder,
     now: () => Date.now(),
     log,
-    observe: (tabId, msg) => headsUp.message(tabId, msg)
+    observe: (tabId, msg) => {
+      headsUp.message(tabId, msg)
+      worktreeHooks.message(tabId, msg)
+    }
   })
   // the MCP · Plugins panel's servers: the configuration files are read once per version, and a CLI call runs as the tab's Claude Code starts
   const readJson = jsonFileCache({

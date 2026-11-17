@@ -135,8 +135,11 @@ export const START_WAIT_MS = 20_000
 /** how long attach_session waits for the answer of another device: past it, the attachment is still waiting for that device */
 export const REMOTE_ATTACH_WAIT_MS = 8000
 
+// a session that makes its worktree some other way works in a folder its tab does not follow (a Bash cd only looks around):
+// a failed EnterWorktree is the task's result, so the coordinator learns of it at once
 export const worktreeInstruction = (name: string): string =>
-  `First enter a new git worktree named "${name}" with your EnterWorktree tool, and do the task below there.\n\n`
+  `First enter a new git worktree named "${name}" with your EnterWorktree tool, and do the task below there. ` +
+  "If EnterWorktree fails, do not create a worktree any other way (`git worktree add`, `cd`, …): stop and report the error as this task's result.\n\n"
 
 /** a record the hub writes: its version, id, time and flags are set by write() */
 type RecordInput = Omit<MailRecord, 'v' | 'id' | 'sentAt' | 'delivered' | 'read'> & { delivered?: boolean; read?: boolean; sentAt?: number }

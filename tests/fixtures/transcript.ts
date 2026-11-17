@@ -16,6 +16,17 @@ export function toolResultLine(toolUseId: string, opts: { mediaType?: string; da
   })
 }
 
+/** a tool call that failed, as Claude Code writes its result: the error as the content, is_error, and the error again as toolUseResult */
+export function failedResultLine(toolUseId: string, error: string, timestamp = '2026-10-05T10:00:01.000Z'): string {
+  return JSON.stringify({
+    type: 'user',
+    timestamp,
+    isSidechain: false,
+    message: { role: 'user', content: [{ type: 'tool_result', content: error, is_error: true, tool_use_id: toolUseId }] },
+    toolUseResult: `Error: ${error}`
+  })
+}
+
 export function pastedLine(data = PNG_B64): string {
   return JSON.stringify({ type: 'user', timestamp: '2026-10-05T10:00:02.000Z', imagePasteIds: [1], message: { role: 'user', content: [{ type: 'text', text: 'look at this' }, image('image/png', data)] } })
 }

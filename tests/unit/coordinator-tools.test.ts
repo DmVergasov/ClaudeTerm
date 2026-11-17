@@ -128,4 +128,8 @@ describe('COORD_TOOL_DESCRIPTIONS', () => {
     expect(COORD_TOOL_DESCRIPTIONS.message_session).toContain(WORDS)
     expect(COORD_TOOL_DESCRIPTIONS.start_session).toContain(WORDS)
   })
+
+  it('start_session tells the coordinator that a session whose EnterWorktree fails stops and reports the error', () => {
+    expect(COORD_TOOL_DESCRIPTIONS.start_session).toContain('If EnterWorktree fails, the session makes no worktree another way: it stops and reports the error as its result.')
+  })
 })

@@ -10,6 +10,7 @@ import { PlanWorkspaceFinder } from './transcript-plan'
 import { extForMediaType, TranscriptParser, type ExtractedImage, type ExtractedKind } from './transcript-images'
 import { oneLine } from './session-history'
 import { wordsLine, type WordsLine } from './coordinator/person-words'
+import { EnterWorktreeWatch } from './worktree-hook'
 
 const CHUNK_BYTES = 4 * 1024 * 1024
 
@@ -141,6 +142,8 @@ export interface TranscriptFeedOptions {
   onPeerMail?(mail: PeerMail): void
   /** a prompt or an answer of the main transcript, as the person's-words check reads it (person-words.ts), in order */
   onWords?(line: WordsLine): void
+  /** an EnterWorktree call a WorktreeCreate hook broke, in any of the session's transcripts: the hook's error, and the time of the result (null when it has none) */
+  onWorktreeHookFailure?(error: string, at: number | null): void
   /** where the transcript is now, when it cannot be opened where it was (the session moved to another folder) */
   locate?(): Promise<string | null>
   /** how often locate() may run while the transcript cannot be opened */
@@ -199,6 +202,7 @@ interface Source {
   agentId: string | null
   lastInfo: string | null
   plan: PlanWorkspaceFinder
+  worktree: EnterWorktreeWatch
   /** a transcript nothing is written to any more is read rarely: a session keeps every agent's transcript it ever ran */
   schedule: Backoff
 }
@@ -369,7 +373,7 @@ export class TranscriptFeed {
     const maxMs = agentId === null ? (this.o.pollMaxMs ?? 5000) : (this.o.subagentPollMaxMs ?? 30_000)
     return {
       tailer: new LineTailer(file), parser: new TranscriptParser({ subagent: agentId !== null }), agentId, lastInfo: null,
-      plan: new PlanWorkspaceFinder(), schedule: new Backoff(1, this.inTicks(maxMs))
+      plan: new PlanWorkspaceFinder(), worktree: new EnterWorktreeWatch(), schedule: new Backoff(1, this.inTicks(maxMs))
     }
   }
 
@@ -408,6 +412,7 @@ export class TranscriptFeed {
       this.reportTitle(src, line)
       this.reportMail(src, line)
       this.reportWords(src, line)
+      this.reportWorktree(src, line)
       try {
         for (const img of src.parser.parseLine(line)) {
           if (this.stopped) return
@@ -459,6 +464,21 @@ export class TranscriptFeed {
       if (words !== null) this.o.onWords(words)
     } catch (e) {
       this.report(e)
+    }
+  }
+
+  /** an EnterWorktree call and its result: only a line that names the tool or the hook's error is parsed */
+  private reportWorktree(src: Source, line: string): void {
+    if (!this.o.onWorktreeHookFailure || (!line.includes('EnterWorktree') && !line.includes('WorktreeCreate hook'))) return
+    try {
+      const entry: unknown = JSON.parse(line)
+      const error = src.worktree.entry(entry)
+      if (error === null) return
+      const at = Date.parse(String((entry as { timestamp?: unknown }).timestamp))
+      this.o.onWorktreeHookFailure(error, Number.isFinite(at) ? at : null)
+    } catch (e) {
+      // a malformed line is none
+      if (!(e instanceof SyntaxError)) this.report(e)
     }
   }
 
