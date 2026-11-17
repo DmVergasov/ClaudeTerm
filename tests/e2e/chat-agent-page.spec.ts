@@ -1140,8 +1140,10 @@ test('the forward turn is quiet: no done sound and no mark', async () => {
     await sendMessage(page, 'again')
     await expect.poll(async () => (await page.evaluate((id) => window.ct.chatSnapshot(id), tabId))?.state.turn, { timeout: 30_000 }).toBe('idle')
     await page.evaluate((id) => window.ct.activateTab(id), shell.id)
+    // the shell must be in front before the done comes, or the done is for the tab in front and plays nothing
+    await page.waitForFunction((id) => window.__ct!.activeTabId() === id, shell.id)
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done' })).toEqual({ ok: true })
-    expect(played()).toBe('system\n')
+    await expect.poll(played).toBe('system\n')
   } finally {
     await app.close()
   }
