@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import { activate, refOf } from './agent-mail'
@@ -29,7 +29,9 @@ test('switching RC on in a chat shows connecting, then connected with its link; 
     await expect(seg).toHaveAttribute('data-dot', 'off')
     // close() runs after the sequence number is written: the count is polled
     await expect.poll(async () => (await bridgeSeen(t.app)).handles[0].closes).toBe(1)
-    const log = readFileSync(join(t.dataDir, 'logs', 'main.log'), 'utf8')
+    // the log file is made by its first line: on a run that logs nothing there is none, and nothing leaked
+    const logFile = join(t.dataDir, 'logs', 'main.log')
+    const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : ''
     expect(log).not.toContain(RC_TOKEN)
     expect(log).not.toContain('fake-worker-jwt-0001')
   } finally {
