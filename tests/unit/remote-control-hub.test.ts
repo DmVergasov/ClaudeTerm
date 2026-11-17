@@ -310,4 +310,21 @@ describe('RemoteControlHub: chat tabs', () => {
     token.hub.chatReady(TAB, SID)
     expect(token.w.attached).toEqual([])
   })
+  it('the switch attaches a chat again once its host failed: a failure is not a reason to refuse the click', () => {
+    const { hub, w } = world({ view: 'chat', choice: true })
+    hub.processStarted(TAB)
+    hub.chatReady(TAB, SID)
+    expect(w.attached.map((t) => t.sessionId)).toEqual([SID])
+    w.hostState = { kind: 'failed', reason: 'claude.ai could not be reached' }
+    hub.set(TAB, true)
+    expect(w.attached.map((t) => t.sessionId)).toEqual([SID, SID])
+  })
+  it('a terminal’s pending switch does not survive a switch to chat: the chat keeps the choice and says nothing', () => {
+    const { hub, w, fire } = world({ view: 'terminal', choice: true })
+    hub.processStarted(TAB)
+    w.tab = { ...w.tab!, view: 'chat' }
+    hub.processStarted(TAB)
+    fire()
+    expect([w.choice, w.toasts]).toEqual([true, []])
+  })
 })

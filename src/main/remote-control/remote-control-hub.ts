@@ -133,6 +133,9 @@ export class RemoteControlHub {
 
   /** a new Claude Code process starts in the tab: what the old one reported is no longer true; a tab whose choice is on connects */
   processStarted(tabId: string): void {
+    // in every view: a switch the old process left pending, and the id it reported, are no longer true
+    this.finish(tabId)
+    this.deps.forgetReported(tabId)
     const tab = this.deps.tab(tabId)
     // a chat's process: its Remote Control connects from here, once the chat is ready
     if (tab?.view === 'chat') {
@@ -144,8 +147,6 @@ export class RemoteControlHub {
     }
     // a terminal's process: a chat that was on it leaves the claude.ai session to the terminal's Claude Code
     this.dropChat(tabId)
-    this.finish(tabId)
-    this.deps.forgetReported(tabId)
     if (tab && tab.view === 'terminal' && !tab.exited && this.deps.choice(tabId) && !this.unavailable(tabId)) {
       const ask: Ask = { dir: 'on', waits: false, cancel: null }
       this.asks.set(tabId, ask)
@@ -272,10 +273,10 @@ export class RemoteControlHub {
     return link
   }
 
-  /** attaches the chat's session when the choice is on, the account has Remote Control, the chat is ready and its session is known */
+  /** attaches the chat's session when the choice is on, the account has Remote Control, the chat is ready and its session is known; the host itself ignores a tab that is connecting or on, and takes a failed one again */
   private attachChat(tabId: string): void {
     const link = this.chats.get(tabId)
-    if (!link || !link.ready || link.attached || link.sessionId === null) return
+    if (!link || !link.ready || link.sessionId === null) return
     if (!this.deps.choice(tabId) || this.unavailable(tabId)) return
     const target = this.deps.target(tabId, link.sessionId)
     if (target === null) return
