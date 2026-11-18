@@ -16,7 +16,7 @@ import { type DeviceIdentity, IdentityStore } from './identity'
 import type { PeerLink } from './peer-link'
 import { ReplicaFile } from './replica-file'
 import { type Collection, type Dot, emptyReplica, type KeyState, type RecordUpdate, Replica, type ReplicaData, type VersionVector } from './replica'
-import { admissionOf, isRemoved, type Removal, removalOf, type SelfDescription, memberOf } from './views'
+import { type Admission, admissionOf, isRemoved, type Removal, removalOf, type SelfDescription, memberOf } from './views'
 import { BULK_CHUNK_BYTES, type HelloMessage, type Message } from './wire'
 
 /** The most JSON one records message carries; more records go in the next message. The 1 KiB left in a chunk is for the envelope, so a full batch is one frame. */
@@ -253,16 +253,24 @@ export class DeviceGroup {
     return memberOf(this.replica.get('members', this.identity.id))?.addresses ?? []
   }
 
+  /** This device's name in the group, as view() gives it. Read from the replica alone, so it is cheap enough to ask for each message */
+  name(): string {
+    return this.selfName()
+  }
+
+  /**
+   * The other devices of the group with their names, in the order view() lists them. Read from the replica alone: view() also
+   * reads the network interfaces, which takes milliseconds on Windows, so a name is never looked up through it
+   */
+  members(): { id: string; name: string }[] {
+    return this.memberList().map(({ id, described }) => ({ id, name: described?.name ?? id }))
+  }
+
   view(): ActiveDevicesView {
     const net = this.net
-    const devices: DeviceView[] = []
-    for (const id of this.replica.keys('admitted')) {
-      if (!this.isMember(id)) continue
-      const admission = admissionOf(this.replica.get('admitted', id))
-      if (!admission) continue
-      const described = memberOf(this.replica.get('members', id))
+    const devices = this.memberList().map(({ id, admission, described }): DeviceView => {
       const typed: unknown = this.replica.local.addresses[id]
-      devices.push({
+      return {
         id,
         name: described?.name ?? id,
         platform: described?.platform ?? null,
@@ -270,9 +278,8 @@ export class DeviceGroup {
         addedBy: this.nameOf(admission.addedBy),
         addedAt: admission.addedAt,
         address: typeof typed === 'string' ? typed : null
-      })
-    }
-    devices.sort((x, y) => x.addedAt - y.addedAt || (x.id < y.id ? -1 : 1))
+      }
+    })
     const reports = [...this.reports].filter(([id]) => this.isMember(id)).map(([, reached]) => reached)
     return {
       enabled: true,
@@ -666,6 +673,17 @@ export class DeviceGroup {
   private selfName(): string {
     const name = (this.replica.local.name ?? this.deps.hostName()).trim().slice(0, MAX_DEVICE_NAME)
     return name.length > 0 ? name : this.identity.id
+  }
+
+  /** the admitted members, this device left out, each with its admission and its description, the earliest added first */
+  private memberList(): { id: string; admission: Admission; described: SelfDescription | null }[] {
+    const list: { id: string; admission: Admission; described: SelfDescription | null }[] = []
+    for (const id of this.replica.keys('admitted')) {
+      if (!this.isMember(id)) continue
+      const admission = admissionOf(this.replica.get('admitted', id))
+      if (admission) list.push({ id, admission, described: memberOf(this.replica.get('members', id)) })
+    }
+    return list.sort((x, y) => x.admission.addedAt - y.admission.addedAt || (x.id < y.id ? -1 : 1))
   }
 
   private nameOf(id: string): string {

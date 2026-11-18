@@ -69,6 +69,33 @@ test('two Claude tabs of one app that was never paired message each other', asyn
   }
 })
 
+test('a watcher gets 20 waiting messages at once, though the network interfaces are slow to read, as on Windows', async () => {
+  // each read of this device's addresses takes 50 ms: on Windows a read of the network interfaces takes milliseconds
+  const { app, page, pipeName, tab1, tab2, sid2 } = await twoClaudeTabs(VERSION_SETTINGS, {
+    CLAUDETERM_TEST_DEVICE_HOST: '127.0.0.1',
+    CLAUDETERM_TEST_DEVICE_PORT: '0',
+    CLAUDETERM_TEST_ADDRESSES_MS: '50'
+  })
+  try {
+    // the device group opens, as on a device that was paired once: the devices' names come from it
+    await page.evaluate(async () => {
+      await window.ct.startDevicePairing()
+      window.ct.cancelDevicePairing()
+    })
+    for (let i = 1; i <= 20; i++) expect(await sendText(pipeName, tab1, sid2, `letter ${i} of 20`)).toMatchObject({ ok: true })
+
+    const started = Date.now()
+    const answer = await waitForMail(pipeName, tab2, sid2)
+    const took = Date.now() - started
+
+    expect(answer.info).toContain('letter 1 of 20')
+    expect(answer.info).toContain('letter 20 of 20')
+    expect(took).toBeLessThan(1500)
+  } finally {
+    await app.close()
+  }
+})
+
 test('a second mail_wait of one tab ends the first with no info', async () => {
   const { app, pipeName, tab1, tab2, sid2 } = await twoClaudeTabs()
   try {
