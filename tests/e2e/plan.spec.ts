@@ -83,6 +83,25 @@ test('a click on the segment lists the tasks, and the open list follows the ledg
   await app.close()
 })
 
+test('a plan run out of order counts only the tasks the ledger closes, in the segment and in the list', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  const run = planRun()
+  writeFileSync(run.ledger, '# Progress\n\nTask 3: complete (commits a1b2c3d..d4e5f6a, review clean)\n')
+  await startPlan(pipeName, tabId, run.ws)
+  const seg = page.locator('#statusbar .status-plan')
+  await expect(seg.locator('.status-text')).toHaveText('1/4 · Save dialog and file writing')
+  await seg.click()
+  const list = page.locator('#plan-list')
+  await expect(list.locator('.plan-count')).toHaveText('1 of 4 done')
+  await expect(list.locator('.plan-mark')).toHaveText(['○', '○', '✓', '●'])
+  appendFileSync(run.ledger, 'Task 2a: complete\nTask 2b: dispatched (haiku)\n')
+  await expect(list.locator('.plan-count')).toHaveText('2 of 5 done')
+  await expect(list.locator('.plan-task-title')).toHaveText(['Report rows to CSV lines', '2a · Escape quotes and separators', '2b · Escape quotes and separators', 'Export button in the toolbar', 'Save dialog and file writing'])
+  await expect(list.locator('.plan-mark')).toHaveText(['○', '✓', '●', '✓', '○'])
+  await expect(seg.locator('.status-text')).toHaveText('2/5 · 2b · Escape quotes and separators')
+  await app.close()
+})
+
 test('Esc closes the list without reaching Claude and gives the terminal the focus; a second click, a click outside and a tab switch close it too', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   await startPlan(pipeName, tabId, planRun().ws)

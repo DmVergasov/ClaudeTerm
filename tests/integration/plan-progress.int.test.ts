@@ -87,6 +87,22 @@ describe('plan progress', () => {
     expect(hub.get('t').plan?.done).toBe(2)
   })
 
+  it('a plan run out of order: only the tasks the ledger closes count as done, whatever comes before them', async () => {
+    const { root, ws, transcriptPath } = layout()
+    writeFileSync(join(ws, 'progress.md'), '# SDD ledger — plan: docs/superpowers/plans/2026-10-20-csv-export.md\nTask 2: complete (commits a..b, review clean)\n')
+    const { hub, feed } = wire(root, transcriptPath)
+    await feed.scanSubagents()
+    await feed.poll()
+    await expect.poll(() => hub.get('t').plan?.title, { timeout: 5000 }).toBe('CSV Export')
+    expect(hub.get('t').plan).toMatchObject({ done: 1, total: 3, finished: false, tasks: [{ state: 'left' }, { state: 'done' }, { state: 'current' }] })
+    appendFileSync(join(ws, 'progress.md'), 'Task 3: complete\n')
+    await hub.refresh()
+    expect(hub.get('t').plan).toMatchObject({ done: 2, total: 3, finished: false, tasks: [{ state: 'current' }, { state: 'done' }, { state: 'done' }] })
+    appendFileSync(join(ws, 'progress.md'), 'Task 1: complete\n')
+    await hub.refresh()
+    expect(hub.get('t').plan).toMatchObject({ done: 3, total: 3, finished: true })
+  })
+
   it('a ledger that records a task complete at the end of a longer line moves the plan on', async () => {
     const { root, ws, transcriptPath } = layout()
     writeFileSync(join(ws, 'progress.md'), 'Task 1: fix round 1 verified by controller (build green, CRLF). Task 1: complete\r\n')
