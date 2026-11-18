@@ -830,6 +830,14 @@ function runAction(a: KeyAction, tabId: string | null): void {
   }
 }
 
+/**
+ * AltGr types a character on many layouts (AltGr+7 is { on German, AltGr+2 is @ on Spanish). Windows sends it as Ctrl+Alt, so a
+ * key with the AltGraph state, or a character key with Ctrl+Alt, is the layout's; a digit is still a tab switch
+ */
+function isAltGrKey(e: KeyboardEvent): boolean {
+  return e.getModifierState('AltGraph') || (e.ctrlKey && e.altKey && [...e.key].length === 1 && !/^\d$/.test(e.key))
+}
+
 function onTerminalKey(tabId: string, e: KeyboardEvent): boolean {
   const t = tabs.get(tabId)
   if (t?.info.remote && t.info.kind === 'claude' && isImagePasteKey(e, ct.platform)) {
@@ -837,6 +845,8 @@ function onTerminalKey(tabId: string, e: KeyboardEvent): boolean {
     void pasteImageKey(t)
     return false
   }
+  // xterm types an AltGr character itself
+  if (isAltGrKey(e)) return true
   const action = mapKey(e, ct.platform)
   if (!action) return true
   if (action.type === 'copyOrInterrupt') {
@@ -1676,9 +1686,8 @@ async function boot(): Promise<void> {
     const target = e.target as HTMLElement | null
     // the agent page's message box is a composer too
     const onComposer = target?.classList.contains('chat-input') === true || target?.classList.contains('agent-input') === true
-    // AltGr types a character on many layouts (AltGr+7 is { on German). Windows sends it as Ctrl+Alt, so a character key with
-    // Ctrl+Alt stays with the composer; a digit is still a tab switch
-    if (onComposer && (e.getModifierState('AltGraph') || (e.ctrlKey && e.altKey && [...e.key].length === 1 && !/^\d$/.test(e.key)))) return
+    // an AltGr character stays with the composer
+    if (onComposer && isAltGrKey(e)) return
     // the chat composer keeps its keys (typing, Enter, Esc, arrows), but an app chord still runs with it focused; its copy
     // and paste are left to the textarea by the checks below
     const composer = onComposer && (e.ctrlKey || e.metaKey || e.altKey)

@@ -185,3 +185,31 @@ test('a menu the user opens pops in', async () => {
   await page.keyboard.press('Escape')
   await app.close()
 })
+
+test('AltGr types its character in the terminal and switches no tab: AltGr+2 is @ on a Spanish layout, the dead key ~ on a French one', async () => {
+  const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const first = (await page.evaluate(() => window.__ct!.activeTabId()))!
+  await expect.poll(() => bufferText(page)).toMatch(PROMPT)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press(KEYS.newTab)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() !== id, first)
+  await page.keyboard.press(KEYS.nextTab)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, first)
+  // Windows sends AltGr as Ctrl+Alt with the AltGraph state. The events are synthetic: the keypress that types the character
+  // follows only a keydown nobody cancelled, as in the window
+  const altGr = (key: string, charCode: number) => page.locator('.terminal-host:visible .xterm-helper-textarea').evaluate((el, [k, c]) => {
+    const init = { key: k, code: 'Digit2', ctrlKey: true, altKey: true, modifierAltGraph: true, bubbles: true, cancelable: true }
+    const down = new KeyboardEvent('keydown', init)
+    el.dispatchEvent(down)
+    if (!down.defaultPrevented && c > 0) el.dispatchEvent(new KeyboardEvent('keypress', { ...init, charCode: c }))
+    el.dispatchEvent(new KeyboardEvent('keyup', init))
+    return down.defaultPrevented
+  }, [key, charCode] as const)
+  const cancelled = [await altGr('@', '@'.charCodeAt(0)), await altGr('Dead', 0)]
+  expect({ cancelled, active: await page.evaluate(() => window.__ct!.activeTabId()) }).toEqual({ cancelled: [false, false], active: first })
+  // xterm types a Ctrl+Alt character only where AltGr is Ctrl+Alt
+  if (WIN) await expect.poll(() => page.evaluate((id) => window.__ct!.ptyInput!(id), first)).toContain('@')
+  await app.close()
+})
