@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { isolateFromMachine } from '../fixtures/machine-env'
 import { MAC, testPipeName, WIN } from '../fixtures/platform'
 
 export const ROOT = resolve(__dirname, '..', '..')
@@ -81,9 +82,16 @@ export function makeDataDir(settings?: object): string {
   return dir
 }
 
+/**
+ * the app's environment: the test process's, without the machine's Claude Code and ClaudeTerm and with the run's home
+ * folder (machine-env.ts), so that the app reads and writes none of the person's config; a test that needs a
+ * CLAUDE_CONFIG_DIR or a home folder passes its own
+ */
 export function testEnv(dataDir: string, pipeName: string): Record<string, string> {
+  const env = { ...process.env }
+  isolateFromMachine(env, tmpdir())
   return {
-    ...(process.env as Record<string, string>),
+    ...(env as Record<string, string>),
     CLAUDETERM_TEST: '1',
     CLAUDETERM_DATA_DIR: dataDir,
     CLAUDETERM_PIPE_NAME: pipeName,

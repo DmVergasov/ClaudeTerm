@@ -1,24 +1,29 @@
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { isolateFromMachine } from './machine-env'
 
 /**
  * Everything a test run writes goes into a folder of its own in the system temp folder, and the run deletes it when it
  * ends. The global setup of Vitest and of Playwright (temp-root-setup.ts) points TEMP, TMP and TMPDIR at it, so tmpdir()
  * in the tests lands there, and so do the processes they start: the app with its data folder and caches, the hook
- * script, git.
+ * script, git. Their home folder is in it too, and none of them sees the machine's Claude Code (machine-env.ts).
  */
 export const TEMP_ROOT_PREFIX = 'ct-test-'
 /** a root this old belongs to a run that was killed before it could delete it: the next run deletes it */
 export const STALE_ROOT_MS = 24 * 3_600_000
 
-/** makes the run's root in `systemTmp` and points the temp variables of `env` at it; deletes the roots runs left */
+/**
+ * makes the run's root in `systemTmp` and points the temp variables of `env` at it, and its home folder at <root>/home,
+ * without the machine's Claude Code and ClaudeTerm variables (machine-env.ts); deletes the roots runs left
+ */
 export function openTempRoot(env: NodeJS.ProcessEnv = process.env, systemTmp: string = tmpdir(), now: number = Date.now()): string {
   sweepStaleRoots(systemTmp, now)
   const root = mkdtempSync(join(systemTmp, TEMP_ROOT_PREFIX))
   env.TEMP = root
   env.TMP = root
   env.TMPDIR = root
+  isolateFromMachine(env, root)
   return root
 }
 
