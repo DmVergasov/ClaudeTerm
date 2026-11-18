@@ -41,6 +41,7 @@ import { badgeDescription, dotBitmap } from './app-badge'
 import { AutoContinue, CONTINUE_DELAY_MS, LIMIT_ERROR, limitResetOf, type RestoreCut } from './auto-continue'
 import { CoordinatorHub, type HubPeer, type HubRemoteTab } from './coordinator/coordinator-hub'
 import { CoordinatorStore } from './coordinator/coordinator-store'
+import { countedForms, FormRecord } from './coordinator/form-answers'
 import { PersonInput } from './coordinator/person-input'
 import { WordsLog } from './coordinator/person-words'
 import { PromptDelivery } from './coordinator/prompt-delivery'
@@ -1145,6 +1146,7 @@ function bootstrap(): void {
         tabAttention.drop(id)
         tabInputs.drop(id)
         personInput.drop(id)
+        formRecord.drop(id)
         wordsLogs.delete(id)
         titles.delete(id)
         sessionTitles.delete(id)
@@ -1302,6 +1304,7 @@ function bootstrap(): void {
   }
   const chatHub: ChatHub = new ChatHub({
     engine: startSdkEngine,
+    questionAnswered: (tabId, answers) => formRecord.cardAnswered(tabId, answers, Date.now()),
     support: async (tab, env) => chatSupport(settings.claude.command, await canonicalFolder(tab.cwd), env, {
       // the probe the Claude tab started with, still running or done: a chat start waits for its answer
       version: (command) => versionProbes.get(command) ?? Promise.resolve(versions.get(command) ?? null),
@@ -1496,6 +1499,8 @@ function bootstrap(): void {
   const tabInputs = new TabInputs()
   /** the window's prompt-like input into each tab, from this device or a paired one: what tells the person's prompts in a transcript from written ones */
   const personInput = new PersonInput()
+  /** the person's answers to each tab's question forms: the cards answered in the window and the dialogs the tabs' hooks reported */
+  const formRecord = new FormRecord()
   /** a message sent to a chat: it is the person's words when its origin is none (the composer's Send) or the Changes or Doc panel's, and the chat took it; a refused message is no submit */
   const sentToChat = (tabId: string, s: ChatSend): Promise<string | null> => {
     const at = Date.now()
@@ -2422,6 +2427,7 @@ function bootstrap(): void {
       listed: remote?.viewer.listedOf(d.id) ?? false,
       coord: mailSync.knowsCoordinator(d.id),
       words: mailSync.knowsWords(d.id),
+      questions: mailSync.knowsQuestions(d.id),
       mail: accept?.on === true && accept.wakes === true
     }
   })
@@ -2634,6 +2640,15 @@ function bootstrap(): void {
       }
       return wordsLogs.get(id)?.log.prompts() ?? []
     },
+    // the person's answers to a coordinator tab's question forms that count: its transcript is read up to now first
+    forms: async (id) => {
+      try {
+        await sources.get(id)?.feed?.pollMain()
+      } catch (e) {
+        log.warn(`cannot read the transcript of tab=${id} for the question forms: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      return countedForms({ cards: formRecord.cards(id), transcript: wordsLogs.get(id)?.log.forms() ?? [], dialogs: formRecord.dialogs(id), submits: personInput.submits(id) })
+    },
     submits: (id) => personInput.submits(id),
     startedAt: () => appStartedAt,
     toast,
@@ -2760,6 +2775,14 @@ function bootstrap(): void {
       // a done ends the mail turn the tab was started for, if one was: taken on every done, so no later turn is taken for it
       const mailTurn = msg.reason === 'done' && mailHub.takeMailTurn(msg.tabId)
       wakeFeed(msg.tabId)
+      if (msg.reason === 'question' && msg.agentId === undefined) {
+        const reason = projectCoordinators.ask(msg.tabId, msg.questions ?? null)
+        // the question went to the session's coordinator: no dialog opens in the tab, and the tab gives no signal for it
+        if (reason !== null) return { ok: true, info: reason }
+      }
+      // a dialog the tab opens (not routed to a coordinator above) is recorded: a question form's answers can count for its question, and every
+      // later dialog bounds how long an answer of an earlier one can count, so a permission prompt is recorded too, with no questions
+      if (msg.reason === 'question' || msg.reason === 'permission') formRecord.dialogOpened(msg.tabId, msg.reason === 'question' ? (msg.questions ?? []).map((q) => q.question) : [], Date.now())
       // Send must never press Enter into a dialog; the end of a turn is a moment to look at the changes
       if (msg.reason === 'done') {
         review.turnEnded(msg.tabId)
@@ -2818,7 +2841,7 @@ function bootstrap(): void {
       tabs.setWorking(msg.tabId, true)
       autoContinue.turnStarted(msg.tabId)
       // the turn starts: a task waiting for the session is open in it, and no dialog or limit waits any more
-      projectCoordinators.turnStarted(msg.tabId)
+      projectCoordinators.turnStarted(msg.tabId, msg.prompt ?? null)
       tabWaits.dialogsClosed(msg.tabId)
       tabWaits.turnStarted(msg.tabId)
       // a coordinator's turn starts with ClaudeTerm's instruction, which the hook gives Claude Code as the turn's context
@@ -2944,6 +2967,8 @@ function bootstrap(): void {
         knowsCoordinator: !(isTest && process.env.CLAUDETERM_TEST_NO_COORD === '1'),
         // a test that stands in for a device which predates the person's words (CLAUDETERM_TEST_NO_WORDS)
         knowsWords: !(isTest && process.env.CLAUDETERM_TEST_NO_WORDS === '1'),
+        // a test that stands in for a device which predates the session questions (CLAUDETERM_TEST_NO_QUESTIONS)
+        knowsQuestions: !(isTest && process.env.CLAUDETERM_TEST_NO_QUESTIONS === '1'),
         hostName: () => hostname().slice(0, MAX_DEVICE_NAME),
         addresses: testDeviceHost ? () => [testDeviceHost] : localAddresses,
         onData: (updates) => bridge?.applied(updates),

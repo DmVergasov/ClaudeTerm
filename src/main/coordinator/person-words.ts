@@ -7,6 +7,7 @@
 import { COORD_CONTEXT_MAX, COORD_WORDS_MAX } from '../../shared/coordinator'
 import { isClaudeCodeFlag, isClaudeCodeText, isObj, type Obj } from '../chat/chat-fold'
 import { isClaudeTermText } from '../claudeterm-text'
+import { formEntries, FORMS_KEPT, type FormEntry, type FormResult } from './form-answers'
 import type { Submit } from './person-input'
 
 /** a person's message can be passed on for this long after it was written, at most */
@@ -38,10 +39,20 @@ export function clipContext(text: string): string | null {
   return `…${tail}`
 }
 
-/** one transcript line's words: a prompt (of the person's kind when `plain`) or an answer of the coordinator's Claude */
+/** the tag rule of a prompt: a text that starts with a tag, such as a task notification, is a message of a tool, not the person's */
+export const TAG_TEXT = /^<[A-Za-z][\w-]*[\s>/]/
+
+/** whether a text is the person's own message: not one ClaudeTerm wrote, nor one that starts with a tag */
+export function isPersonPrompt(text: string): boolean {
+  const t = text.trim()
+  return !isClaudeTermText(t) && !TAG_TEXT.test(t)
+}
+
+/** one transcript line's words: a prompt (of the person's kind when `plain`), an answer of the coordinator's Claude, or the answers of a form the person gave */
 export type WordsLine =
   | { kind: 'prompt'; id: string; at: number; text: string; plain: boolean }
   | { kind: 'answer'; text: string }
+  | { kind: 'form'; id: string; at: number; answers: FormEntry[] }
 
 /** the text blocks of a content joined by `joiner`; a string is its own text */
 function textOf(content: unknown, joiner: string): string {
@@ -57,7 +68,7 @@ function promptOf(o: Obj, raw: string, origin: unknown, stamp: string | undefine
   const text = normWords(raw)
   if (isClaudeCodeText(text) || text.startsWith('<local-command-')) return null
   // a message the person typed has no origin but the human one; a tag such as <task-notification> is a message of a tool
-  const plain = (origin === undefined || (isObj(origin) && origin.kind === 'human')) && !/^<[A-Za-z][\w-]*[\s>/]/.test(text) && !isClaudeTermText(text)
+  const plain = (origin === undefined || (isObj(origin) && origin.kind === 'human')) && !TAG_TEXT.test(text) && !isClaudeTermText(text)
   const parsed = stamp === undefined ? NaN : Date.parse(stamp)
   const at = Number.isFinite(parsed) ? parsed : 0
   const id = typeof o.uuid === 'string' ? o.uuid : `at:${at}`
@@ -84,12 +95,28 @@ function longLineOf(line: string): WordsLine | null {
 }
 
 /**
- * the words of one line of a coordinator's transcript: a prompt, an answer, or null for a line that holds neither. A line that does
- * not parse gives nothing; a line too long to parse gives what longLineOf reads of it
+ * the answers of an AskUserQuestion result, read from its toolUseResult: a form of the person's answers, with its time and its id; null
+ * when the answers are not 1 to 4 within their bounds
+ */
+function formOf(o: Obj, answers: Obj): WordsLine | null {
+  const entries = formEntries(answers)
+  if (entries === null) return null
+  const parsed = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) : NaN
+  const at = Number.isFinite(parsed) ? parsed : 0
+  const id = typeof o.uuid === 'string' ? o.uuid : `at:${at}`
+  return { kind: 'form', id, at, answers: entries }
+}
+
+/**
+ * the words of one line of a coordinator's transcript: a prompt, an answer, a form, or null for a line that holds none of them. A line
+ * that does not parse gives nothing; a line too long to parse gives what longLineOf reads of it
  */
 export function wordsLine(line: string): WordsLine | null {
   if (line.length > WORDS_LINE_MAX) return longLineOf(line)
-  const maybe = (line.includes('"type":"user"') && !line.includes('"tool_use_id"')) ||
+  // a result of AskUserQuestion is a tool result, so it is read as a form before the prompts' test that leaves tool results out
+  const form = line.includes('"toolUseResult"') && line.includes('"answers"')
+  const maybe = form ||
+    (line.includes('"type":"user"') && !line.includes('"tool_use_id"')) ||
     (line.includes('"type":"assistant"') && line.includes('"type":"text"')) ||
     line.includes('"queued_command"')
   if (!maybe) return null
@@ -101,6 +128,7 @@ export function wordsLine(line: string): WordsLine | null {
   }
   if (!isObj(parsed) || parsed.isSidechain === true || parsed.isVisibleInTranscriptOnly === true || isClaudeCodeFlag(parsed)) return null
   const o = parsed
+  if (o.type === 'user' && isObj(o.toolUseResult) && isObj(o.toolUseResult.answers)) return formOf(o, o.toolUseResult.answers)
   if (o.type === 'assistant') {
     const text = textOf(isObj(o.message) ? o.message.content : undefined, '\n\n').trim()
     return text === '' ? null : { kind: 'answer', text }
@@ -138,6 +166,8 @@ export interface WordsPrompt {
 export class WordsLog {
   private readonly list: WordsPrompt[] = []
   private readonly seen = new Set<string>()
+  private readonly formList: FormResult[] = []
+  private readonly formSeen = new Set<string>()
   private answer = ''
   private last: number
 
@@ -148,6 +178,15 @@ export class WordsLog {
 
   /** a line read at `readAt`: a prompt's own time is not believed when it is ahead of that, and then counts as the read time */
   add(line: WordsLine, readAt: number): void {
+    if (line.kind === 'form') {
+      // a form is kept apart: it leaves the prompts and the answers before them as they are
+      if (this.formSeen.has(line.id)) return
+      this.formSeen.add(line.id)
+      const ahead = line.at > readAt + INPUT_SLACK_MS
+      this.formList.push({ id: line.id, at: line.at === 0 || ahead ? readAt : line.at, answers: line.answers })
+      if (this.formList.length > FORMS_KEPT) this.formList.shift()
+      return
+    }
     if (line.kind === 'answer') {
       const joined = this.answer === '' ? line.text : `${this.answer}\n\n${line.text}`
       this.answer = joined.length > 2 * COORD_CONTEXT_MAX ? joined.slice(joined.length - 2 * COORD_CONTEXT_MAX) : joined
@@ -170,6 +209,11 @@ export class WordsLog {
 
   prompts(): readonly WordsPrompt[] {
     return this.list
+  }
+
+  /** the latest forms the person answered in the transcript, oldest first */
+  forms(): readonly FormResult[] {
+    return this.formList
   }
 }
 

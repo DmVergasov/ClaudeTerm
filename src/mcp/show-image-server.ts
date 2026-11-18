@@ -333,6 +333,22 @@ server.registerTool(
   }
 )
 
+server.registerTool(
+  'answer_session',
+  {
+    title: "Answer a coordinated session's question in ClaudeTerm",
+    description: COORD_TOOL_DESCRIPTIONS.answer_session,
+    inputSchema: {
+      session: z.string().describe('a ref or a name from list_sessions or list_agents'),
+      questions: z.array(z.string()).min(1).max(4).describe("the session's questions exactly as you wrote them in AskUserQuestion, in the order of the session's questions")
+    }
+  },
+  async ({ session, questions }) => {
+    const r = await coordTool('answer_session', { op: 'answer', session, questions }, coordDeps())
+    return { content: [{ type: 'text', text: r.text }], isError: r.isError }
+  }
+)
+
 registerNoteTools(server)
 
 void server.connect(new StdioServerTransport())

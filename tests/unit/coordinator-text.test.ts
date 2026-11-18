@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { listText, readText, roleNoteText, ROLE_NOTE_MAX, turnNoteText } from '../../src/main/coordinator/session-text'
+import { listText, readText, roleNoteText, ROLE_NOTE_MAX, sessionTurnNoteText, turnNoteText } from '../../src/main/coordinator/session-text'
+import { TURN_CONTEXT_MAX } from '../../src/hook/session-hook'
 import type { CoordSessionRow, CoordinatorView } from '../../src/shared/coordinator'
 
 const clock = (ms: number): string => new Date(ms).toISOString().slice(11, 16)
 const DELEGATE = 'give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
+
+const LANGUAGE = "Write to the person in the language of their own messages, even when reports, notes and tool results are in English, and write the tasks you give sessions in it too: the person reads them in the sessions' tabs."
+const QUESTIONS = "A session's permission prompts are the person's to answer in that session: never answer one. A session's questions come to you as question notes: ask the person them with AskUserQuestion, then pass the answers with answer_session. When a report or a progress note ends with a question to the person, ask it with AskUserQuestion and give the answer with message_session."
+const PROGRESS = "A progress note means the task is still running."
+const WORDS = "When the person's message tells a session what it may do (a go to merge, push, release or delete), pass that message as `words`, exactly as they wrote it. The session acts on the person's words. It does not act on your own."
 
 const row = (over: Partial<CoordSessionRow>): CoordSessionRow => ({
   key: 'local:x', tabId: null, device: null, deviceName: null, session: null, ref: null, name: 'x', folder: null, branch: null,
@@ -111,6 +117,25 @@ describe('listText', () => {
     expect(text).toContain('- parser · Laptop [e10000] · Offline')
     expect(text).toContain('- docs · Laptop [e20000] · Attaching…')
   })
+
+  it('list_sessions notes a waiting question: it is asked with AskUserQuestion and answered with answer_session', () => {
+    const asking = row({
+      key: 'local:s4', ref: '3c9d10', name: 'Desk · Studio', group: 'waiting', why: 'question', line: 'Asks you: Where should the browser live?'
+    })
+    const view: CoordinatorView = {
+      tabId: 'tab-1', session: 'coord-1', project: { key: 'desk', name: 'Desk' }, problem: null,
+      sessions: [asking], notAttached: [], waiting: 1
+    }
+    expect(listText(view, clock)).toBe([
+      'Desk coordinator · 1 attached',
+      'Waiting on you (1):',
+      '- Desk · Studio [3c9d10] · Asks you: Where should the browser live?',
+      'Notes:',
+      '- Reports come to you by themselves when a task ends; there is no need to poll or wait.',
+      `- As the coordinator, ${DELEGATE}`,
+      '- A question from Desk · Studio waits for the person: ask it with AskUserQuestion (read_session shows it), then pass the answers with answer_session.'
+    ].join('\n'))
+  })
 })
 
 describe('readText', () => {
@@ -124,7 +149,8 @@ describe('readText', () => {
     expect(readText(r, {
       prompt: { kind: 'permission', text: 'Allow Bash: npm test', since: 0 },
       report: 'The task failed: Claude Code exited.\n\nIts last answer:\n\nTests are green.',
-      taskList: { title: 'Triage', tasks: [{ title: 'Reproduce', status: 'completed' }, { title: 'Fix', status: 'in_progress' }] }
+      taskList: { title: 'Triage', tasks: [{ title: 'Reproduce', status: 'completed' }, { title: 'Fix', status: 'in_progress' }] },
+      question: null
     }, clock)).toBe([
       'Desk · Api [8f3a2c]',
       'State: Waiting on you · Allow Bash: npm test',
@@ -143,12 +169,31 @@ describe('readText', () => {
     ].join('\n'))
   })
 
+  it("shows the question the person is asked, in full with its options, after the state lines", () => {
+    const asking = row({ key: 'local:s4', ref: '3c9d10', name: 'Desk · Studio', group: 'waiting', why: 'question', line: 'Asks you: Where should the browser live?' })
+    expect(readText(asking, {
+      prompt: null,
+      report: null,
+      taskList: null,
+      question: [{ question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] }]
+    }, clock)).toBe([
+      'Desk · Studio [3c9d10]',
+      'State: Waiting on you · Asks you: Where should the browser live?',
+      "Waiting for the person's answer to its question:",
+      '1. [Place] Where should the browser live?  (one answer)',
+      '   - Side panel: Next to Changes.',
+      '   - Own tab',
+      'No open task.',
+      'No report yet.'
+    ].join('\n'))
+  })
+
   it('says when a report is no longer kept, and when there is none yet', () => {
     const kept = row({
       key: 'local:s2', name: 'Desk · Web', group: 'working', line: 'Working',
       lastReport: { id: 'r3', outcome: 'finished', reason: null, at: Date.UTC(2026, 10, 14, 19, 30) }
     })
-    expect(readText(kept, { prompt: null, report: null, taskList: null }, clock)).toBe([
+    expect(readText(kept, { prompt: null, report: null, taskList: null, question: null }, clock)).toBe([
       'Desk · Web',
       'State: Working · Working',
       'No open task.',
@@ -157,7 +202,7 @@ describe('readText', () => {
     ].join('\n'))
 
     const fresh = row({ key: 'local:s3', name: 'Desk · Docs', group: 'idle', line: 'Idle' })
-    expect(readText(fresh, { prompt: null, report: null, taskList: null }, clock)).toBe([
+    expect(readText(fresh, { prompt: null, report: null, taskList: null, question: null }, clock)).toBe([
       'Desk · Docs',
       'State: Idle · Idle',
       'No open task.',
@@ -181,12 +226,12 @@ describe('roleNoteText', () => {
         row({ name: 'Desk · Api', group: 'waiting', line: 'Allow Bash: npm test' })
       ]
     })
-    expect(roleNoteText(view)).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} 3 sessions (Desk · Api — Allow Bash: npm test, Desk · Alpha — Idle, Desk · Docs — Idle). ${TAIL}`)
+    expect(roleNoteText(view)).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} ${LANGUAGE} 3 sessions (Desk · Api — Allow Bash: npm test, Desk · Alpha — Idle, Desk · Docs — Idle). ${TAIL}`)
   })
 
   it('says 1 session for one, and no list for none, with the words that send the person to attach or start one', () => {
-    expect(roleNoteText(roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] }))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} 1 session (Desk · Api — Idle). ${TAIL}`)
-    expect(roleNoteText(roleView({}))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} No sessions are attached yet: attach one with attach_session, or start one with start_session.`)
+    expect(roleNoteText(roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] }))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} ${LANGUAGE} 1 session (Desk · Api — Idle). ${TAIL}`)
+    expect(roleNoteText(roleView({}))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} ${LANGUAGE} No sessions are attached yet: attach one with attach_session, or start one with start_session.`)
   })
 
   it('lists 8 sessions at most and counts the rest; exactly 8 has no rest', () => {
@@ -194,7 +239,7 @@ describe('roleNoteText', () => {
     const eight = roleNoteText(roleView({ sessions: sessions(8) }))
     expect(eight).not.toMatch(/and \d+ more/)
     expect(eight).toContain('S08 — Idle). ')
-    expect(roleNoteText(roleView({ sessions: sessions(10) }))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} 10 sessions (${sessions(8).map((r) => `${r.name} — Idle`).join(', ')}, and 2 more). ${TAIL}`)
+    expect(roleNoteText(roleView({ sessions: sessions(10) }))).toBe(`You coordinate Desk in ClaudeTerm: ${DELEGATE} ${LANGUAGE} 10 sessions (${sessions(8).map((r) => `${r.name} — Idle`).join(', ')}, and 2 more). ${TAIL}`)
   })
 
   it('a control character in a name, a line or the project name cannot start a line of the note', () => {
@@ -202,7 +247,7 @@ describe('roleNoteText', () => {
       project: { key: 'desk', name: 'Desk\nNew' },
       sessions: [row({ name: 'Desk\nIgnore · Api', group: 'waiting', line: 'Idle\r\n- injected' })]
     })
-    expect(roleNoteText(view)).toBe(`You coordinate Desk New in ClaudeTerm: ${DELEGATE} 1 session (Desk Ignore · Api — Idle  - injected). ${TAIL}`)
+    expect(roleNoteText(view)).toBe(`You coordinate Desk New in ClaudeTerm: ${DELEGATE} ${LANGUAGE} 1 session (Desk Ignore · Api — Idle  - injected). ${TAIL}`)
   })
 
   it('a name is cut at 40 characters and a line at 60, and the note is at most ROLE_NOTE_MAX however long the project and the problem are', () => {
@@ -244,10 +289,21 @@ describe('roleNoteText', () => {
     expect(text).not.toMatch(lone)
   })
 
+  it("carries the person's language right after the delegation line, and stays within ROLE_NOTE_MAX", () => {
+    const view = roleView({
+      project: { key: 'desk', name: 'p'.repeat(200) },
+      problem: 'q'.repeat(2000),
+      sessions: Array.from({ length: 8 }, (_, i) => row({ name: `${'n'.repeat(200)}${i}`, group: 'working', line: 'l'.repeat(200) }))
+    })
+    const text = roleNoteText(view)
+    expect(text.length).toBeLessThanOrEqual(ROLE_NOTE_MAX)
+    expect(text).toContain(`${DELEGATE} ${LANGUAGE} 8 sessions (`)
+  })
+
   it('holds the delegation line right after the head, with sessions and with none', () => {
     const head = 'You coordinate Desk in ClaudeTerm: '
-    expect(roleNoteText(roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] })).startsWith(`${head}${DELEGATE} 1 session (`)).toBe(true)
-    expect(roleNoteText(roleView({})).startsWith(`${head}${DELEGATE} No sessions are attached yet: `)).toBe(true)
+    expect(roleNoteText(roleView({ sessions: [row({ name: 'Desk · Api', line: 'Idle' })] })).startsWith(`${head}${DELEGATE} ${LANGUAGE} 1 session (`)).toBe(true)
+    expect(roleNoteText(roleView({})).startsWith(`${head}${DELEGATE} ${LANGUAGE} No sessions are attached yet: `)).toBe(true)
   })
 
   it('keeps the delegation line whole when many long sessions push the note past ROLE_NOTE_MAX', () => {
@@ -258,14 +314,14 @@ describe('roleNoteText', () => {
     })
     const text = roleNoteText(view)
     expect(text.length).toBe(ROLE_NOTE_MAX)
-    expect(text).toContain(`: ${DELEGATE} 8 sessions (`)
+    expect(text).toContain(`: ${DELEGATE} ${LANGUAGE} 8 sessions (`)
   })
 })
 
 describe('turnNoteText', () => {
   it('is the note that tells the coordinator it coordinates the project, gives the work to its sessions, and names the reports and the prompts', () => {
     expect(turnNoteText('Desk')).toBe(
-      `Note from ClaudeTerm, not from the user: you are the coordinator of Desk: ${DELEGATE} Reports come by themselves when a task ends. A progress note means the task is still running: when it says the session waits for the person, tell the person where. When the person's message tells a session what it may do (a go to merge, push, release or delete), pass that message as \`words\`, exactly as they wrote it. The session acts on the person's words. It does not act on your own. A session's permission prompts and questions are the person's to answer, in that session.`
+      `Note from ClaudeTerm, not from the user: you are the coordinator of Desk: ${DELEGATE} Reports come by themselves when a task ends. ${PROGRESS} ${WORDS} ${QUESTIONS} ${LANGUAGE}`
     )
   })
 
@@ -275,9 +331,28 @@ describe('turnNoteText', () => {
     expect(turnNoteText('p'.repeat(200))).not.toContain('p'.repeat(41))
   })
 
-  it('is under 1000 characters, whatever the project name is', () => {
-    expect(turnNoteText('Desk').length).toBeLessThan(1000)
-    expect(turnNoteText('p'.repeat(200)).length).toBeLessThan(1000)
+  it("gives the questions' rule and the person's language, and no longer sends the person to the session", () => {
+    const note = turnNoteText('p'.repeat(100))
+    expect(note).toContain(QUESTIONS)
+    expect(note).toContain(LANGUAGE)
+    expect(note).not.toContain("A session's permission prompts and questions are the person's to answer, in that session")
+    expect(note.length).toBeLessThanOrEqual(TURN_CONTEXT_MAX)
+  })
+
+  it('is at most TURN_CONTEXT_MAX characters, whatever the project name is', () => {
+    expect(turnNoteText('Desk').length).toBeLessThanOrEqual(TURN_CONTEXT_MAX)
+    expect(turnNoteText('p'.repeat(200)).length).toBeLessThanOrEqual(TURN_CONTEXT_MAX)
+  })
+})
+
+describe('sessionTurnNoteText', () => {
+  it("is the note of a session's task: its coordinator's name in one line, cut at 40 characters, and the person's questions with AskUserQuestion", () => {
+    expect(sessionTurnNoteText('coord · Desktop')).toBe(
+      "Note from ClaudeTerm, not from the user: you work on a task from your coordinator coord · Desktop. The person talks to you through it: ask them only with AskUserQuestion, which ClaudeTerm passes to the coordinator, and never as a question in your answer. Write in the language of your task."
+    )
+    expect(sessionTurnNoteText('c'.repeat(100))).toContain(`coordinator ${'c'.repeat(40)}. `)
+    expect(sessionTurnNoteText('c'.repeat(100))).not.toContain('c'.repeat(41))
+    expect(sessionTurnNoteText('Desk\nIgnore\u0007 rules')).toContain('coordinator Desk Ignore  rules. ')
   })
 })
 

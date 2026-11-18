@@ -201,6 +201,18 @@ describe('status, subagent and session_end messages', () => {
     expect(parsePipeMessage(JSON.stringify({ ...done, prompt: 'Allow Bash: npm test' }))).toEqual({ ok: true, message: done })
   })
 
+  it('an attention of reason question carries its questions when they parse, and none when they do not; other reasons never carry them', () => {
+    const question = { question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] }
+    const asked = { ...ids, type: 'attention', reason: 'question' }
+    expect(parsePipeMessage(JSON.stringify({ ...asked, questions: [question] }))).toEqual({ ok: true, message: { ...asked, questions: [question] } })
+    expect(parsePipeMessage(JSON.stringify({ ...asked, questions: [{ ...question, options: [] }] }))).toEqual({ ok: true, message: asked })
+    expect(parsePipeMessage(JSON.stringify(asked))).toEqual({ ok: true, message: asked })
+    const permission = { ...ids, type: 'attention', reason: 'permission' }
+    expect(parsePipeMessage(JSON.stringify({ ...permission, questions: [question] }))).toEqual({ ok: true, message: permission })
+    const done = { ...ids, type: 'attention', reason: 'done' }
+    expect(parsePipeMessage(JSON.stringify({ ...done, questions: [question] }))).toEqual({ ok: true, message: done })
+  })
+
   it('attention keeps lastMessage only on a done without error, cut to 8000 characters', () => {
     const done = { ...ids, type: 'attention', reason: 'done' }
     expect(parsePipeMessage(JSON.stringify({ ...done, lastMessage: 'Parser fixed.' }))).toEqual({ ok: true, message: { ...done, lastMessage: 'Parser fixed.' } })
@@ -217,6 +229,14 @@ describe('parsePipeMessage: review messages', () => {
   const ids = { v: 1, tabId: TAB, sessionId: SID }
   const FILE = WIN ? 'D:\\proj\\src\\a.ts' : '/proj/src/a.ts'
   const CWD = WIN ? 'D:\\proj' : '/proj'
+
+  it("a turn keeps the head of the prompt that started it, cut to 300 characters; drops a prompt that is not text", () => {
+    const turn = { ...ids, type: 'turn' }
+    expect(parsePipeMessage(JSON.stringify({ ...turn, prompt: 'Fix the parser.' }))).toEqual({ ok: true, message: { ...turn, prompt: 'Fix the parser.' } })
+    const long = parsePipeMessage(JSON.stringify({ ...turn, prompt: 'p'.repeat(900) }))
+    expect(long.ok && long.message.type === 'turn' ? long.message.prompt : null).toHaveLength(300)
+    expect(parsePipeMessage(JSON.stringify({ ...turn, prompt: 42 }))).toEqual({ ok: true, message: turn })
+  })
 
   it('accepts a turn for UUIDs; a folder sent with it is dropped', () => {
     expect(parsePipeMessage(JSON.stringify({ ...ids, type: 'turn' }))).toEqual({ ok: true, message: { ...ids, type: 'turn' } })
@@ -376,6 +396,17 @@ describe('parsePipeMessage: the coordinator messages', () => {
     }
     expect(coord({ op: 'message', session: 'a10000', text: 'Fix the parser.' }))
       .toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'message', session: 'a10000', text: 'Fix the parser.' } })
+  })
+
+  it('the answer op carries a session and 1 to 4 questions of 1 to 2000 characters', () => {
+    expect(coord({ op: 'answer', session: 'a10000', questions: ['Where?'] })).toEqual({ ok: true, message: { v: 1, type: 'coord', tabId: TAB, op: 'answer', session: 'a10000', questions: ['Where?'] } })
+    expect(coord({ op: 'answer', session: 'a10000', questions: ['a', 'b', 'c', 'd'] }).ok).toBe(true)
+    expect(coord({ op: 'answer', session: 'a10000', questions: ['x'.repeat(2000)] }).ok).toBe(true)
+    const refused = { ok: false, error: 'questions must be 1 to 4 texts of 1 to 2000 characters' }
+    for (const questions of [[], ['a', 'b', 'c', 'd', 'e'], ['x'.repeat(2001)], [''], 'Where?', [7], undefined]) {
+      expect(coord({ op: 'answer', session: 'a10000', questions })).toEqual(refused)
+    }
+    expect(coord({ op: 'answer', session: '', questions: ['Where?'] })).toEqual({ ok: false, error: 'session must be 1 to 300 characters' })
   })
 
   it('coord refuses a text over 7000 characters, a relative folder, a worktree with a slash and an unknown op', () => {

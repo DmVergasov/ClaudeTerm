@@ -70,7 +70,7 @@ test('the role note reaches the coordinator at its next typed turn and wakes not
     const row = view.sessions.find((r) => r.session === sids[1])!
     expect(note.info!.startsWith(`${ROLE_NOTE_HEAD}\n`)).toBe(true)
     // the note cuts a session's name to 40 characters: a long device name (the macOS runner's) makes the name longer than that
-    expect(note.info).toContain(`You coordinate ${view.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. 1 session (${cutText(row.name, 40)} — ${row.line}).`)
+    expect(note.info).toContain(`You coordinate ${view.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Write to the person in the language of their own messages, even when reports, notes and tool results are in English, and write the tasks you give sessions in it too: the person reads them in the sessions' tabs. 1 session (${cutText(row.name, 40)} — ${row.line}).`)
 
     // the note is taken: the next typed turn carries the message alone, with no second note
     await done(pipeName, t0, sids[0])
@@ -96,7 +96,7 @@ test('the role note reaches the coordinator at its next typed turn and wakes not
     await stillWaiting(third, 1000)
     await turnOf(pipeName, t0, next)
     const again = (await within(third, 10_000)) as WaitAnswer
-    expect(again.info).toContain(`You coordinate ${after.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. 1 session (${cutText(attached.name, 40)} — ${attached.line}).`)
+    expect(again.info).toContain(`You coordinate ${after.project.name} in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Write to the person in the language of their own messages, even when reports, notes and tool results are in English, and write the tasks you give sessions in it too: the person reads them in the sessions' tabs. 1 session (${cutText(attached.name, 40)} — ${attached.line}).`)
 
     // the note is no message: the coordinator's Agent messages panel holds none
     await activate(page, t0)

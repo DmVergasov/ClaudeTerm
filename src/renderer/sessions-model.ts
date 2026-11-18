@@ -28,11 +28,11 @@ export function sessionSections(view: CoordinatorView, folded: ReadonlySet<Secti
 
 export type RowIcon = 'amber' | 'red' | 'spin' | 'check' | 'grey'
 
-/** not-attached or marker 'offline' → grey; marker 'starting' | 'attaching' → spin; waiting → amber for why 'prompt', else red; working → spin; idle, resolved → check */
+/** not-attached or marker 'offline' → grey; marker 'starting' | 'attaching' → spin; waiting → amber for why 'prompt' or 'question', else red; working → spin; idle, resolved → check */
 export function rowIcon(row: CoordSessionRow, section: SectionKey): RowIcon {
   if (section === 'not-attached' || row.marker === 'offline') return 'grey'
   if (row.marker === 'starting' || row.marker === 'attaching') return 'spin'
-  if (section === 'waiting') return row.why === 'prompt' ? 'amber' : 'red'
+  if (section === 'waiting') return row.why === 'prompt' || row.why === 'question' ? 'amber' : 'red'
   if (section === 'working') return 'spin'
   return 'check'
 }

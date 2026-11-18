@@ -183,7 +183,7 @@ export class SessionsPanel {
       row.append(line)
     }
     if (attached) {
-      const tone = r.why === 'prompt' ? ' warn' : r.why === 'limit' || r.why === 'failed' ? ' err' : ''
+      const tone = r.why === 'prompt' || r.why === 'question' ? ' warn' : r.why === 'limit' || r.why === 'failed' ? ' err' : ''
       row.append(el('div', `coord-l3${tone}`, r.line))
     } else if (r.attachedTo !== null) {
       row.append(el('div', 'coord-l3', `Attached to ${r.attachedTo}`))

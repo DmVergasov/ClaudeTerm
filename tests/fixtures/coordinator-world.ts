@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { CoordinatorHub, type HubPeer, type HubRemoteTab, type HubTab, type RemoteOpened } from '../../src/main/coordinator/coordinator-hub'
 import { CoordinatorStore, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
 import { PersonInput } from '../../src/main/coordinator/person-input'
+import type { FormResult } from '../../src/main/coordinator/form-answers'
 import type { WordsPrompt } from '../../src/main/coordinator/person-words'
 import { nameAgents, type Agent, type AgentTab } from '../../src/main/mail/agent-directory'
 import { isShareable, MailStore } from '../../src/main/mail/mail-store'
@@ -36,8 +37,8 @@ export const L = { one: 'e1000000-0000-4000-8000-000000000011', two: 'e2000000-0
 export const NEW = { coord: 'f1000000-0000-4000-8000-000000000021', one: 'f2000000-0000-4000-8000-000000000022' }
 export const NO_FACTS: RemoteCoordFacts = { prompt: null, limit: null, progress: null, task: null, attachedTo: null, coordinator: false }
 
-/** a paired device as the coordinator's hub sees it: linked, listed, knowing coordinator records and the person's words, its mail watcher waking a session */
-export const peerOf = (id: string, name: string, over: Partial<HubPeer> = {}): HubPeer => ({ id, name, online: true, listed: true, coord: true, words: true, mail: true, ...over })
+/** a paired device as the coordinator's hub sees it: linked, listed, knowing coordinator records, the person's words and session questions, its mail watcher waking a session */
+export const peerOf = (id: string, name: string, over: Partial<HubPeer> = {}): HubPeer => ({ id, name, online: true, listed: true, coord: true, words: true, questions: true, mail: true, ...over })
 
 /** a tab of another device as this window lists it: Laptop's parser, in ACME_L's folder on the main account */
 export const remoteTab = (over: Partial<HubRemoteTab> = {}): HubRemoteTab =>
@@ -71,11 +72,13 @@ export interface WorldOptions {
   /** the tabs of this device, in place of the four default ones */
   tabs?: HubTab[]
   newId?: () => string
+  /** a folder that already holds a store and mail: the world opens on it, and does not delete it (only a world that made its folder does) */
+  dir?: string
 }
 
 export function world(o: WorldOptions = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'ct-coord-'))
-  tempDirs.push(dir)
+  const dir = o.dir ?? mkdtempSync(join(tmpdir(), 'ct-coord-'))
+  if (o.dir === undefined) tempDirs.push(dir)
   let ids = 0
   const warns: string[] = []
   const selfName = o.selfName ?? 'Desktop'
@@ -125,6 +128,8 @@ export function world(o: WorldOptions = {}) {
     activated: [] as string[],
     /** the prompts of each tab's conversation, as the hub's prompts dep reads them: said() adds the person's */
     prompts: {} as Record<string, WordsPrompt[]>,
+    /** the form results of each tab, as the hub's forms dep reads them: formed() adds the person's answers to a coordinator's form */
+    forms: {} as Record<string, FormResult[]>,
     /** the window's prompt-like input into the tabs */
     input: new PersonInput(),
     /** when this app run started */
@@ -196,6 +201,7 @@ export function world(o: WorldOptions = {}) {
     },
     accountEmail: (account) => (account === null ? w.mainEmail : (w.emails[account] ?? null)),
     prompts: async (tabId) => w.prompts[tabId] ?? [],
+    forms: async (tabId) => w.forms[tabId] ?? [],
     submits: (tabId) => w.input.submits(tabId),
     startedAt: () => w.startedAt,
     toast: (text) => {
@@ -257,6 +263,18 @@ export function said(w: World, text: string, o: { tabId?: string; context?: stri
   return prompt
 }
 
+/**
+ * The person answers a coordinator's question form (tab-c unless given) at the world's time, or at `at`: each pair is a question's text as the form
+ * has it and the person's answer. The hub's forms dep then gives this result with the others.
+ */
+export function formed(w: World, answers: [string, string][], o: { tabId?: string; at?: number } = {}): FormResult {
+  const tabId = o.tabId ?? 'tab-c'
+  const list = (w.forms[tabId] ??= [])
+  const result: FormResult = { id: `form-${list.length + 1}`, at: o.at ?? w.now, answers: answers.map(([question, answer]) => ({ question, answer })) }
+  list.push(result)
+  return result
+}
+
 /** runs the settle timers that wait now */
 export const fire = (w: World): void => {
   const due = w.timers
@@ -268,7 +286,7 @@ export const fire = (w: World): void => {
 export function attachDirect(w: World, pending: string | null = null): void {
   const c = w.store.coordinator(S.coord)
   if (!c) throw new Error('tab-c is not a coordinator: make it one first')
-  const attachment: StoredAttachment = { device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending }
+  const attachment: StoredAttachment = { device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending, former: [] }
   w.store.putCoordinator({ ...c, attachments: [attachment] })
 }
 

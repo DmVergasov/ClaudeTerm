@@ -144,7 +144,7 @@ function fakeAttach(files: Map<string, Buffer>): ChatHubDeps['attach'] {
 }
 
 /** a hub with fake dependencies: the engines it started, the window's batches, and what it told the tabs */
-function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessionReady' | 'transcript' | 'remoteControl'>> & { attach?: (files: Map<string, Buffer>) => ChatHubDeps['attach'] } = {}) {
+function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessionReady' | 'transcript' | 'remoteControl' | 'questionAnswered'>> & { attach?: (files: Map<string, Buffer>) => ChatHubDeps['attach'] } = {}) {
   const clock = { t: 1000 }
   const engines: FakeEngine[] = []
   const windows: { tabId: string; fromRev: number; toRev: number; patches: ChatPatch[] }[] = []
@@ -202,6 +202,7 @@ function harness(over: Partial<Pick<ChatHubDeps, 'support' | 'history' | 'sessio
     log: { warn: m => calls.warn.push(m) },
     ...(over.sessionReady ? { sessionReady: over.sessionReady } : {}),
     ...(over.remoteControl ? { remoteControl: over.remoteControl } : {}),
+    ...(over.questionAnswered ? { questionAnswered: over.questionAnswered } : {}),
   }
   return { hub: new ChatHub(deps), engines, windows, remotes, agentWindows, agentRemotes, watched, calls, env, cards, files, alive, clock }
 }
@@ -1943,6 +1944,51 @@ describe('ChatHub: the Remote Control tap', () => {
     await expect(asked).resolves.toMatchObject({ behavior: 'allow' })
     expect(last(hub.snapshot(TAB)!.items)).toMatchObject({ kind: 'card', answered: 'Answered from claude.ai' })
     expect(heard.filter((c) => c[0] === 'cardClosed').map((c) => c[3])).toEqual(['remote', 'remote'])
+  })
+  it('a question card answered in the window, or from claude.ai, tells questionAnswered its answers; a multi-select is joined with ", "', async () => {
+    const answered: [string, Record<string, string>][] = []
+    const { hub, engines } = harness({ questionAnswered: (tabId, answers) => answered.push([tabId, answers]) })
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    const two = { questions: [
+      { question: 'Which?', header: 'Pick', multiSelect: false, options: [{ label: 'A', description: 'first' }, { label: 'B', description: 'second' }] },
+      { question: 'Which too?', header: 'Many', multiSelect: true, options: [{ label: 'X', description: 'x' }, { label: 'Y', description: 'y' }] }
+    ] }
+    const windowed = engines[0].h.ask({ toolName: 'AskUserQuestion', input: two }, new AbortController().signal)
+    const first = last(hub.snapshot(TAB)!.items)
+    expect(hub.answer(TAB, first.id, { type: 'question', answers: { 'Which?': 'A', 'Which too?': ['X', 'Y'] } })).toBe(true)
+    await expect(windowed).resolves.toMatchObject({ behavior: 'allow' })
+    expect(answered).toEqual([[TAB, { 'Which?': 'A', 'Which too?': 'X, Y' }]])
+
+    const one = { questions: [{ question: 'Which?', header: 'Pick', multiSelect: false, options: [{ label: 'A', description: 'first' }, { label: 'B', description: 'second' }] }] }
+    const remote = engines[0].h.ask({ toolName: 'AskUserQuestion', input: one }, new AbortController().signal)
+    const second = last(hub.snapshot(TAB)!.items)
+    expect(hub.answerRemote(TAB, second.id, { behavior: 'allow', updatedInput: { answers: { 'Which?': 'B' } } })).toBe(true)
+    await expect(remote).resolves.toMatchObject({ behavior: 'allow' })
+    expect(answered).toEqual([[TAB, { 'Which?': 'A', 'Which too?': 'X, Y' }], [TAB, { 'Which?': 'B' }]])
+  })
+  it('a permission card, a declined question, and an answer with no answers object or one the card refuses tell questionAnswered nothing', async () => {
+    const answered: unknown[] = []
+    const { hub, engines } = harness({ questionAnswered: (...args) => answered.push(args) })
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    const allowed = engines[0].h.ask({ toolName: 'Bash', input: { command: 'ls' } }, new AbortController().signal)
+    expect(hub.answer(TAB, last(hub.snapshot(TAB)!.items).id, { type: 'permission', choice: 'once', suggestion: null, message: null })).toBe(true)
+    await expect(allowed).resolves.toMatchObject({ behavior: 'allow' })
+    const question = { questions: [{ question: 'Which?', header: 'Pick', multiSelect: false, options: [{ label: 'A', description: 'first' }, { label: 'B', description: 'second' }] }] }
+    const declined = engines[0].h.ask({ toolName: 'AskUserQuestion', input: question }, new AbortController().signal)
+    expect(hub.answer(TAB, last(hub.snapshot(TAB)!.items).id, { type: 'question', answers: null })).toBe(true)
+    await expect(declined).resolves.toEqual({ behavior: 'deny', message: 'The user declined to answer.' })
+    const refused = engines[0].h.ask({ toolName: 'AskUserQuestion', input: question }, new AbortController().signal)
+    const card = last(hub.snapshot(TAB)!.items)
+    expect(hub.answer(TAB, card.id, { type: 'question', answers: { 'Which?': 'A', 'Other?': 'B' } })).toBe(false)
+    expect(hub.answerRemote(TAB, card.id, { behavior: 'allow', updatedInput: { answers: 'A' } })).toBe(true)
+    await expect(refused).resolves.toEqual({ behavior: 'allow', updatedInput: { answers: 'A' } })
+    expect(answered).toEqual([])
   })
   it('a message from claude.ai shows as the person’s, marked as from remote, and reaches Claude Code', async () => {
     const { tap, heard } = recordingTap()

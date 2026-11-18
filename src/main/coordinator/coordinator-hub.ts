@@ -1,6 +1,7 @@
 import type { CoordGroup, CoordMarker, CoordMarks, CoordOp, CoordResult, CoordSessionRow, CoordStartRequest, CoordTaskInfo, CoordinatorView } from '../../shared/coordinator'
 import { COORD_TASK_MAX } from '../../shared/coordinator'
-import { isSignal, kindOf, MAIL_MIN_CLAUDE, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
+import { isSignal, kindOf, MAIL_MIN_CLAUDE, MAIL_TEXT_MAX, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
+import type { AskedQuestion, PassedAnswer } from '../../shared/questions'
 import { isUuid, oneLineText, PROMPT_TEXT_MAX, type PipeResponse } from '../../shared/protocol'
 import { COORD_FACT_TEXT_MAX, type RemoteCoordFacts } from '../../shared/remote'
 import type { TabView } from '../../shared/chat'
@@ -9,21 +10,24 @@ import type { OpenTabRequest, PlanStatus } from '../../shared/types'
 import type { Logger } from '../log'
 import { refOf, replaceControls, resolveAgent, type Agent } from '../mail/agent-directory'
 import { checkMailRecord } from '../mail/mail-record'
-import { wordsText } from '../mail/wake-text'
+import { answersText, wordsText } from '../mail/wake-text'
 import type { HandOver } from '../mail/mail-hub'
 import type { MailStore } from '../mail/mail-store'
 import type { TabWaitsState } from '../tab-waits'
 import { LIMIT_ERROR } from '../auto-continue'
 import type { Submit } from './person-input'
-import { checkWords, WORDS_KEEP_MS, type WordsPrompt } from './person-words'
+import { checkWords, isPersonPrompt, WORDS_KEEP_MS, type WordsPrompt } from './person-words'
 import { findRow, rowState } from './session-state'
-import { listText, readText, roleBlock, roleNoteText, turnNoteText } from './session-text'
+import { ASK_REASON, listText, readText, roleBlock, roleNoteText, sessionTurnNoteText, turnNoteText } from './session-text'
+import { answersBody, questionsBody } from './question-text'
+import { FORM_SLACK_MS, matchForm, type FormResult } from './form-answers'
 import {
   MAX_ATTACHMENTS,
   MAX_COORDINATORS,
   MAX_FORMER,
   MAX_HOSTED,
   MAX_TASKS_PER_SESSION,
+  formerAfter,
   type CoordinatorStore,
   type StoredAttachment,
   type StoredCoordinator,
@@ -55,6 +59,7 @@ export interface HubPeer {
   listed: boolean // its tab list has come on the current link
   coord: boolean // its hello says it knows coordinator records
   words: boolean // its hello says it knows progress notes and the person's words on a task
+  questions: boolean // its hello says it knows a session's questions, the answers and their withdrawal
   mail: boolean // it takes agent mail and its mail watcher wakes a session
 }
 
@@ -116,6 +121,7 @@ export interface CoordinatorHubDeps {
   later(ms: number, fn: () => void): () => void // a timer; the function cancels it
   prompts(tabId: string): Promise<readonly WordsPrompt[]> // the prompts of a tab's conversation, its transcript read up to now first
   submits(tabId: string): readonly Submit[] // what the window submitted into the tab, oldest first (PersonInput.submits)
+  forms(tabId: string): Promise<readonly FormResult[]> // the person's answers to a tab's question forms that count (countedForms), its transcript read up to now first
   startedAt(): number // when this app run started
   toast(text: string): void
   sender(a: MailAddress): { folder: string | null; branch: string | null } // the folder and branch a wake block names, as MailHub's sender
@@ -214,8 +220,25 @@ export const HUB_TEXT = {
   wordsOffline: (device: string) => `${device} is not connected, and the person's words go only to a session whose device is connected. Say it in that session, or send the task without words.`,
   oldDeviceWords: (device: string) => `${device} runs an older ClaudeTerm: your words cannot go there; say it in that session.`,
   wordsToast: (name: string, line: string) => `Your words went to ${name}: «${line}»`,
-  withWords: "The person's words go with its task."
+  withWords: "The person's words go with its task.",
+  answered: (name: string) => `The person's answers went to ${name}. It goes on with its task; its report comes to you by itself when the task ends.`,
+  noQuestion: (name: string) => `${name} has no question waiting for an answer.`,
+  answeredInTab: (name: string) => `The person answered ${name}'s question in its tab already; nothing was sent.`,
+  questionCount: (name: string, n: number) => `${name} asked ${n === 1 ? '1 question' : `${n} questions`}: pass ${n} in questions, one for each, in their order.`,
+  notInForm: (missing: string[], found: string[]) =>
+    `These questions are not in your question form since the session asked: ${quoted(missing)}. Pass each one exactly as you wrote it in AskUserQuestion. ${found.length === 0 ? 'Ask the person with AskUserQuestion first.' : `Your form holds: ${quoted(found)}.`}`,
+  answersTooLong: 'The answers are too long to pass on; give them with message_session.',
+  answerToast: (name: string, line: string) => `Your answer went to ${name}: «${line}»`
 }
+
+/** texts as a list: each in «», joined by commas, cut to 600 characters with … when longer */
+const quoted = (items: string[]): string => {
+  const text = items.map((s) => `«${s}»`).join(', ')
+  return text.length > 600 ? `${text.slice(0, 600)}…` : text
+}
+
+/** the text of a withdraw record: the person answered the question in the session's own tab, so the coordinator does not ask it */
+export const WITHDRAW_TEXT = "The person answered in the session's tab."
 
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error })
 
@@ -514,6 +537,8 @@ export class CoordinatorHub {
         return this.resolve(tabId, op.session)
       case 'start':
         return this.start(tabId, op)
+      case 'answer':
+        return this.answer(tabId, op.session, op.questions)
       default:
         return fail('unknown operation')
     }
@@ -534,16 +559,19 @@ export class CoordinatorHub {
     if ('error' in found) return fail(found.error)
     const row = found.row
     const reportText = row.lastReport ? (this.d.mail.get(row.lastReport.id)?.text ?? null) : null
+    // the questions the session waits on with the person, in full; a row that is not attached waits on none
+    const att = c.attachments.find((a) => a.session === row.session && a.device === row.device) ?? null
+    const question = att === null ? null : this.waitingQuestions(c, att, this.d.mail.all())
     // a session of another device: its prompt is what its device reports, and its task list is not read here
     if (row.device !== null) {
       const prompt = row.session === null ? null : (snap.tabByKey.get(remoteKey(row.device, row.session))?.coord?.prompt ?? null)
-      return { ok: true, info: readText(row, { prompt, report: reportText, taskList: null }, (ms) => this.d.clock(ms)) }
+      return { ok: true, info: readText(row, { prompt, report: reportText, taskList: null, question }, (ms) => this.d.clock(ms)) }
     }
     return {
       ok: true,
       info: readText(
         row,
-        { prompt: row.tabId ? this.d.waits(row.tabId).prompt : null, report: reportText, taskList: row.tabId ? this.d.taskList(row.tabId) : null },
+        { prompt: row.tabId ? this.d.waits(row.tabId).prompt : null, report: reportText, taskList: row.tabId ? this.d.taskList(row.tabId) : null, question },
         (ms) => this.d.clock(ms)
       )
     }
@@ -903,13 +931,68 @@ export class CoordinatorHub {
     return { ok: true, info: HUB_TEXT.resolved(found.row.name) }
   }
 
-  /** whether the tab can take the person's words now: its session's next queued task carries them, and the tab is in no turn */
-  canTakeWords(tabId: string, session: string): boolean {
-    return this.wordsDue(tabId, session) !== null
+  /**
+   * The person's answers to a session's question, from the coordinator's question form: the checks in order, then an answer record to the
+   * session. The asked texts are the coordinator's, one for each of the session's questions; the form's answers are matched to them.
+   */
+  private async answer(tabId: string, target: string, asked: string[]): Promise<PipeResponse> {
+    const first = this.answerTarget(tabId, target, asked.length)
+    if ('error' in first) return fail(first.error)
+    const forms = await this.d.forms(tabId)
+    // the coordinator, the session's attachment or the question may have changed while the forms were read: the same checks again
+    const checked = this.answerTarget(tabId, target, asked.length)
+    if ('error' in checked) return fail(checked.error)
+    const { c, att, name, record } = checked
+    const match = matchForm({ asked, forms, since: record.sentAt - FORM_SLACK_MS })
+    if (!match.ok) return fail(HUB_TEXT.notInForm(match.missing, match.found))
+    const sessionQuestions = record.questions ?? []
+    const answers: PassedAnswer[] = match.answers.map((a, i) => ({ question: sessionQuestions[i]!.question, asked: a.question, answer: a.answer }))
+    const text = answersBody(answers)
+    if (text.length > MAIL_TEXT_MAX) return fail(HUB_TEXT.answersTooLong)
+    const id = this.write({ kind: 'answer', from: this.address(null, c.session), to: this.address(att.device, att.session), replyTo: record.id, text, answers })
+    if (id === null) return fail(HUB_TEXT.notSaved)
+    this.d.toast(HUB_TEXT.answerToast(name, oneLineText(answers[0]?.answer ?? '', 60)))
+    this.d.log.info(`coordinator: the person's answers went to ${name} for the question ${record.id}`)
+    const tab = this.norm(att.device) === null ? this.tabOfSession(att.session) : null
+    if (tab) this.d.poke(tab.tabId)
+    this.d.changed()
+    return { ok: true, info: HUB_TEXT.answered(name) }
   }
 
-  /** the person's words of the session's next task, for its prompt: the task is delivered, and the text is what the prompt takes; null when the tab cannot take them now */
+  /** the checks of answer_session, in order: this tab coordinates, the target is attached and started, and a question waits on the person for `count` answers */
+  private answerTarget(tabId: string, target: string, count: number): { c: StoredCoordinator; att: StoredAttachment; name: string; record: MailRecord } | { error: string } {
+    const c = this.own(tabId)
+    if (!c) return { error: HUB_TEXT.notCoordinator }
+    const found = this.attachedFind(c, target)
+    if ('error' in found) return found
+    if (found.att === null) return { error: HUB_TEXT.starting(found.row.name) }
+    const waiting = this.waitingFor(c, found.att, found.row.name, count)
+    if ('error' in waiting) return waiting
+    return { c, att: found.att, name: found.row.name, record: waiting.record }
+  }
+
+  /** the question record a session waits on with the person, when the coordinator's `count` answers fit it; else the refusal: none waits, the person answered it in the session's tab, or it asked another count */
+  private waitingFor(c: StoredCoordinator, a: StoredAttachment, name: string, count: number): { record: MailRecord } | { error: string } {
+    const state = this.questionState(c, a, this.d.mail.all())
+    if (state === null || !state.open) return { error: state?.withdrawn ? HUB_TEXT.answeredInTab(name) : HUB_TEXT.noQuestion(name) }
+    const asked = state.record.questions ?? []
+    if (asked.length !== count) return { error: HUB_TEXT.questionCount(name, asked.length) }
+    return { record: state.record }
+  }
+
+  /** whether the tab can take the person's words now, or the answers to its session's question: its session's next queued task carries words, or an answer is due, and the tab is in no turn */
+  canTakeWords(tabId: string, session: string): boolean {
+    return this.answerDue(tabId, session) !== null || this.wordsDue(tabId, session) !== null
+  }
+
+  /** the person's answers to the session's question, or the person's words of the session's next task, for its prompt: the record is delivered, and the text is what the prompt takes; null when the tab cannot take them now */
   takeWords(tabId: string, session: string): { info: string } | null {
+    const answer = this.answerDue(tabId, session)
+    if (answer !== null) {
+      this.d.mail.mark([answer.record.id], 'delivered')
+      this.setQuestion(session, answer.taskId, null)
+      return { info: answersText(answer.record, (a) => this.d.sender(a)) }
+    }
     const r = this.wordsDue(tabId, session)
     if (r === null) return null
     this.d.mail.mark([r.id], 'delivered')
@@ -933,6 +1016,22 @@ export class CoordinatorHub {
     return r
   }
 
+  /** the answer due to the session's tab: its task waits on a question, the tab is in no turn, and the answer to that question is on record here and not typed yet; null otherwise */
+  private answerDue(tabId: string, session: string): { record: MailRecord; taskId: string } | null {
+    if (this.d.problem() !== null || this.inTurn.has(tabId)) return null
+    const cur = this.currentOf(tabId)
+    if (!cur || cur.session !== session || cur.task.question === null) return null
+    const record = this.unsentAnswer(session, cur.task.question)
+    return record === null ? null : { record, taskId: cur.task.id }
+  }
+
+  /** the answer to a question of a session, when this device holds it and has not typed it yet; null otherwise */
+  private unsentAnswer(session: string, question: string): MailRecord | null {
+    // an answer may name the session's id from before it took a new one
+    const ids = [session, ...(this.d.store.hosted(session)?.former ?? [])]
+    return this.d.mail.all().find((r) => kindOf(r) === 'answer' && r.replyTo === question && ids.includes(r.to.session) && this.norm(r.to.device) === null && !r.delivered) ?? null
+  }
+
   /** whether a mail record may be handed to the tab over this hand-over */
   accepts(r: MailRecord, tabId: string, into: HandOver): boolean {
     if (isSignal(r)) return false
@@ -949,11 +1048,15 @@ export class CoordinatorHub {
       const held = hosted.tasks.find((t) => t.id === r.id)
       return held?.state === 'queued' && this.nextQueuedTask(session)?.id === r.id
     }
-    // a report or a progress note from another device is taken only by the coordinator it is addressed to, while its session is attached to it
-    if ((kind === 'report' || kind === 'progress') && this.norm(r.from.device) !== null && !this.takesReport(r, this.d.store.coordinator(r.to.session))) return false
+    // an answer is typed into its session's tab by the person's turn, never handed over here (canTakeWords and takeWords)
+    if (kind === 'answer') return false
+    // a question goes to the coordinator's tab only, as a prompt or from its watcher, and never once the person answered it in its session's tab
+    if (kind === 'question' && (!this.isCoordinator(tabId) || this.withdrawalOf(r, this.d.mail.all()) || !this.takesQuestion(r))) return false
+    // a report, a progress note or a question from another device is taken only by the coordinator it is addressed to, while its session is attached to it
+    if ((kind === 'report' || kind === 'progress' || kind === 'question') && this.norm(r.from.device) !== null && !this.takesReport(r, this.d.store.coordinator(r.to.session))) return false
     if (kind === 'report' && r.outcome === 'stopped') return into === 'running'
-    // a prompt carries a report or a progress note, never a plain message; and only a tab that still coordinates takes one as a prompt
-    if (into === 'prompt') return (kind === 'report' || kind === 'progress') && this.isCoordinator(tabId)
+    // a prompt carries a report, a progress note or a question, never a plain message; and only a tab that still coordinates takes one as a prompt
+    if (into === 'prompt') return (kind === 'report' || kind === 'progress' || kind === 'question') && this.isCoordinator(tabId)
     return true
   }
 
@@ -965,13 +1068,29 @@ export class CoordinatorHub {
     this.d.changed()
   }
 
-  /** a turn started: a task delivered as a prompt is open now, and a Stop that waits for its settle is overtaken */
-  turnStarted(tabId: string): void {
+  /** a turn started: a task delivered as a prompt is open now, and a Stop that waits for its settle is overtaken; a turn whose prompt is the person's closes the question its task waits on */
+  turnStarted(tabId: string, prompt: string | null = null): void {
     this.cancelSettle(tabId)
     this.inTurn.add(tabId)
+    if (prompt !== null && isPersonPrompt(prompt)) this.personTookOver(tabId)
     this.onCurrent(tabId, { kind: 'turn' })
     if (this.isCoordinator(tabId)) this.d.recheckMail()
     this.d.changed()
+  }
+
+  /** the person writes in a session's tab while its task waits on a question: the question is withdrawn, and its answer not typed yet is dropped */
+  private personTookOver(tabId: string): void {
+    const cur = this.currentOf(tabId)
+    const h = cur === null ? null : this.d.store.hosted(cur.session)
+    if (!cur || !h || cur.task.question === null) return
+    const question = cur.task.question
+    this.withdraw(h, question)
+    this.setQuestion(cur.session, cur.task.id, null)
+    const answer = this.unsentAnswer(cur.session, question)
+    if (answer === null) return
+    this.d.mail.mark([answer.id], 'delivered')
+    this.d.mail.mark([answer.id], 'read')
+    this.d.log.info(`coordinator: the answer to ${question} came after the person took over in ${cur.session}'s tab; it is dropped`)
   }
 
   /** a turn ended; without background work left, the task ends at rest after REST_SETTLE_MS, unless a turn starts meanwhile; with background work left, the coordinator gets the answer at once as a progress note */
@@ -980,12 +1099,14 @@ export class CoordinatorHub {
     const cur = this.currentOf(tabId)
     if (cur && end.lastMessage !== null) this.answers.set(cur.task.id, end.lastMessage)
     this.cancelSettle(tabId)
-    if (cur && !end.background) {
+    // a task that waits for its question's answer ends no turn: the answer comes as the session's next message
+    const waiting = cur !== null && cur.task.question !== null
+    if (cur && !end.background && !waiting) {
       const taskId = cur.task.id
       this.settle.set(tabId, this.d.later(REST_SETTLE_MS, () => this.rest(tabId, taskId)))
     }
     // background work still runs: the task stays open, and the coordinator hears at once what the turn ended with
-    if (cur && end.background && end.lastMessage !== null && cur.task.state === 'open') this.sendProgress(cur, end.lastMessage)
+    if (cur && end.background && end.lastMessage !== null && cur.task.state === 'open' && !waiting) this.sendProgress(cur, end.lastMessage)
     this.d.recheckMail()
     this.d.poke(tabId)
   }
@@ -1158,7 +1279,82 @@ export class CoordinatorHub {
   /** the instruction a coordinator tab's every turn starts with; null when the tab is no coordinator now */
   turnNote(tabId: string): string | null {
     const c = this.own(tabId)
-    return c === null ? null : turnNoteText(c.project.name)
+    if (c !== null) return turnNoteText(c.project.name)
+    // a session's turn on its task: the task's coordinator is named, so the session asks the person through it
+    const cur = this.currentOf(tabId)
+    const h = cur === null ? null : this.d.store.hosted(cur.session)
+    return h === null ? null : sessionTurnNoteText(h.coordinator.name)
+  }
+
+  /**
+   * A session's AskUserQuestion, as its hook reports it: while the session works on an open task of its coordinator, the questions
+   * go to the coordinator as a question record and the task waits on them. Returns ASK_REASON when they went (the hook denies the
+   * tool call, and no dialog opens in the tab), else null.
+   */
+  ask(tabId: string, questions: AskedQuestion[] | null): string | null {
+    if (this.own(tabId) !== null) return null
+    const cur = this.currentOf(tabId)
+    if (!cur || cur.task.state !== 'open') return null
+    const h = this.d.store.hosted(cur.session)
+    if (!h) return null
+    const text = questions === null ? '' : questionsBody(questions)
+    if (questions !== null && text.length <= MAIL_TEXT_MAX && this.canAsk(h.coordinator)) {
+      const id = this.write({
+        kind: 'question',
+        from: this.address(null, h.session),
+        to: this.address(h.coordinator.device, h.coordinator.session),
+        replyTo: cur.task.id,
+        text,
+        questions,
+        delivered: false,
+        read: false
+      })
+      if (id !== null) {
+        // the question the task waited on before is answered in the session's tab now, so the coordinator is told
+        if (cur.task.question !== null) this.withdraw(h, cur.task.question)
+        this.setQuestion(h.session, cur.task.id, id)
+        return ASK_REASON
+      }
+    }
+    // the tab's own form takes the place of a question still waiting for the coordinator: that question is withdrawn, and the task stops waiting
+    if (cur.task.question !== null) {
+      this.withdraw(h, cur.task.question)
+      this.setQuestion(h.session, cur.task.id, null)
+    }
+    return null
+  }
+
+  /** whether a question can go to a coordinator now: on this device its session has a live tab and agent messages are on; on a paired device the peer is online and knows questions, coordinator records and mail */
+  private canAsk(coordinator: MailAddress): boolean {
+    if (this.norm(coordinator.device) === null) {
+      if (this.d.problem() !== null || this.d.store.coordinator(coordinator.session) === null) return false
+      const tab = this.tabOfSession(coordinator.session)
+      return tab !== null && !tab.exited
+    }
+    const peer = this.d.peers().find((p) => p.id === coordinator.device)
+    return peer !== undefined && peer.online && peer.coord && peer.questions && peer.mail
+  }
+
+  /** the question a task of a session waits on, now stored as it is: null once it is answered */
+  private setQuestion(session: string, taskId: string, question: string | null): void {
+    const h = this.d.store.hosted(session)
+    if (!h) return
+    this.d.store.putHosted({ ...h, tasks: h.tasks.map((t) => (t.id === taskId ? { ...t, question } : t)) })
+    this.d.changed()
+  }
+
+  /** the question of a session the person answered in its tab: a withdraw record tells the coordinator it is no longer asked */
+  private withdraw(h: StoredHosted, question: string): void {
+    const id = this.write({
+      kind: 'withdraw',
+      from: this.address(null, h.session),
+      to: this.address(h.coordinator.device, h.coordinator.session),
+      replyTo: question,
+      text: WITHDRAW_TEXT,
+      delivered: false,
+      read: false
+    })
+    if (id === null) this.d.log.warn(`coordinator: the withdrawal of a question of ${h.session} was not saved`)
   }
 
   /** the role note of the tab was handed to its coordinator: it is no longer due */
@@ -1306,7 +1502,7 @@ export class CoordinatorHub {
     const project = c.project.name
     const id = this.write({ kind: 'attach', from: this.address(null, c.session), to, replyTo: null, text: HUB_TEXT.attachText(project), project, delivered: false, read: false })
     if (id === null) return null
-    const attachment: StoredAttachment = { device: to.device, session: to.session, name: to.name, attachedAt: this.d.now(), resolved: false, failed: false, lastReport: null, pending: id }
+    const attachment: StoredAttachment = { device: to.device, session: to.session, name: to.name, attachedAt: this.d.now(), resolved: false, failed: false, lastReport: null, pending: id, former: [] }
     this.d.store.putCoordinator({ ...c, attachments: [...c.attachments, attachment] })
     return id
   }
@@ -1352,7 +1548,7 @@ export class CoordinatorHub {
       read: true
     })
     if (written === null) return fail(HUB_TEXT.notSaved)
-    const attachment: StoredAttachment = { device: null, session, name, attachedAt: this.d.now(), resolved: false, failed: false, pending: null, lastReport: null }
+    const attachment: StoredAttachment = { device: null, session, name, attachedAt: this.d.now(), resolved: false, failed: false, pending: null, lastReport: null, former: [] }
     this.d.store.putCoordinator({ ...c, attachments: [...c.attachments, attachment] })
     this.d.store.putHosted({ session, coordinator: this.stored(this.address(null, c.session)), project, tasks: [], former: [] })
     this.d.changed()
@@ -1685,7 +1881,7 @@ export class CoordinatorHub {
     const c = this.d.store.coordinatorBy(r.to.session)
     const att = c?.attachments.find((a) => a.device === device && a.session === was)
     if (c && att) {
-      this.patchAttachment(c, att.session, { session: r.from.session, name: r.from.name })
+      this.patchAttachment(c, att.session, { session: r.from.session, name: r.from.name, former: formerAfter(att.former, was, r.from.session) })
       if (device !== null) this.carryRelayed(remoteKey(device, was), remoteKey(device, r.from.session))
     }
     const hosted = this.d.store.hostedBy(r.to.session)
@@ -1711,20 +1907,27 @@ export class CoordinatorHub {
     this.forwardFormer(old)
   }
 
-  /** a coordinator's remote reports and progress notes in flight to a former id here are written again to the current one; a task a hosted session holds is taken by its own hand-over, so it is not copied */
+  /** a coordinator's remote reports, progress notes and questions, and a hosted session's remote answers, in flight to a former id here are written again to the current one; a task a hosted session holds is taken by its own hand-over, so it is not copied */
   private forwardFormer(old: string): void {
-    for (const r of this.d.mail.all()) if (r.to.session === old && (kindOf(r) === 'report' || kindOf(r) === 'progress')) this.forwardArrived(r)
+    for (const r of this.d.mail.all()) if (r.to.session === old && (kindOf(r) === 'report' || kindOf(r) === 'progress' || kindOf(r) === 'question' || kindOf(r) === 'answer')) this.forwardArrived(r)
   }
 
-  /** a report, a progress note or a task from another device, not delivered or read, addressed to a former id of a coordinator or hosted session here, is written again to the current id, and the original is delivered and read */
+  /** a report, a progress note, a question, a task or an answer from another device, not delivered or read, addressed to a former id of a coordinator or hosted session here, is written again to the current id, and the original is delivered and read */
   private forwardArrived(r: MailRecord): boolean {
     if (r.delivered || r.read || this.norm(r.to.device) !== null || this.norm(r.from.device) === null) return false
     const kind = kindOf(r)
-    if (kind !== 'report' && kind !== 'task' && kind !== 'progress') return false
-    const holder = kind === 'task' ? this.d.store.hostedBy(r.to.session) : this.d.store.coordinatorBy(r.to.session)
+    if (kind !== 'report' && kind !== 'task' && kind !== 'progress' && kind !== 'question' && kind !== 'answer') return false
+    // a task or an answer goes to the hosted session it names; a report, a progress note or a question to the coordinator
+    const holder = kind === 'task' || kind === 'answer' ? this.d.store.hostedBy(r.to.session) : this.d.store.coordinatorBy(r.to.session)
     if (!holder || holder.session === r.to.session) return false
     // a task the hosted session already holds is not copied: a copy would queue it twice
     if (kind === 'task' && this.d.store.hostedBy(r.to.session)?.tasks.some((t) => t.id === r.id)) return false
+    // a question its session withdrew is answered already: it is not copied, and the original is delivered and read
+    if (kind === 'question' && this.withdrawalOf(r, this.d.mail.all())) {
+      this.d.mail.mark([r.id], 'delivered')
+      this.d.mail.mark([r.id], 'read')
+      return true
+    }
     const copy = this.write({
       kind,
       from: r.from,
@@ -1737,6 +1940,8 @@ export class CoordinatorHub {
       ...(r.reason === undefined ? {} : { reason: r.reason }),
       ...(r.words === undefined ? {} : { words: r.words }),
       ...(r.context === undefined ? {} : { context: r.context }),
+      ...(r.questions === undefined ? {} : { questions: r.questions }),
+      ...(r.answers === undefined ? {} : { answers: r.answers }),
       delivered: false,
       read: false
     })
@@ -1753,13 +1958,87 @@ export class CoordinatorHub {
 
   /** whether a coordinator takes a report or a progress note from another device: its session is attached to it */
   private takesReport(r: MailRecord, c: StoredCoordinator | null): boolean {
-    return c !== null && c.attachments.some((a) => a.session === r.from.session && a.device === this.norm(r.from.device))
+    return c !== null && c.attachments.some((a) => a.device === this.norm(r.from.device) && [a.session, ...a.former].includes(r.from.session))
   }
 
-  /** an undelivered, unread report or progress note from another device that no coordinator here takes: its session is attached to no coordinator of this device, by its id or a former one */
+  /** an undelivered, unread report, progress note or question from another device that no coordinator here takes: its session is attached to no coordinator of this device, by its id or a former one */
   private unroutedReport(r: MailRecord): boolean {
     if (r.delivered || r.read || this.norm(r.to.device) !== null || this.norm(r.from.device) === null) return false
     return !this.takesReport(r, this.d.store.coordinatorBy(r.to.session))
+  }
+
+  /**
+   * The newest question an attachment's session sent coordinator c, under c's id now or a former one, and whether it still waits for
+   * the person: it does not once an answer or a withdrawal replies to it, the session reports its task, or c gives the session a task
+   * after it. `withdrawn`: a withdrawal replies to it. Null when the session asked c no question.
+   */
+  private questionState(c: StoredCoordinator, a: Pick<StoredAttachment, 'device' | 'session' | 'former'>, all: readonly MailRecord[]): { record: MailRecord; open: boolean; withdrawn: boolean } | null {
+    const ids = [c.session, ...c.former]
+    // the session's ids: the one it has now and those it had before a clear, a compact or a resume
+    const asker = [a.session, ...a.former]
+    // a forwarded copy has the same sentAt as its original and comes later in mail.all() (the original is stored first): on a tie the first one
+    // written stays, so withdrawals and answers name the original's id
+    let newest: MailRecord | null = null
+    for (const r of all) {
+      if (kindOf(r) !== 'question' || !asker.includes(r.from.session) || this.norm(r.from.device) !== a.device) continue
+      if (!ids.includes(r.to.session) || this.norm(r.to.device) !== null) continue
+      if (newest === null || r.sentAt > newest.sentAt) newest = r
+    }
+    if (newest === null) return null
+    const q = newest
+    const withdrawn = this.withdrawalOf(q, all)
+    const answered = all.some((r) => kindOf(r) === 'answer' && r.replyTo === q.id)
+    const reported = q.replyTo !== null && all.some((r) => kindOf(r) === 'report' && r.replyTo === q.replyTo && asker.includes(r.from.session) && this.norm(r.from.device) === a.device)
+    const tasked = all.some((r) => kindOf(r) === 'task' && r.sentAt > q.sentAt && asker.includes(r.to.session) && this.norm(r.to.device) === a.device && this.wroteAs(r, c))
+    return { record: q, open: !withdrawn && !answered && !reported && !tasked, withdrawn }
+  }
+
+  /**
+   * Whether this device's coordinator takes the question `r` now: the newest question of its asker's attachment is still open, and `r` is that
+   * question or a copy of it (a forwarded copy has the same sender, sentAt and replyTo). A question whose task reported, whose session was
+   * detached or whose withdrawal came, wakes nobody.
+   */
+  private takesQuestion(r: MailRecord): boolean {
+    const device = this.norm(r.from.device)
+    const c = this.d.store.coordinatorBy(r.to.session)
+    const att = c?.attachments.find((a) => a.device === device && [a.session, ...a.former].includes(r.from.session))
+    if (!c || !att) return false
+    const state = this.questionState(c, att, this.d.mail.all())
+    if (state === null || !state.open) return false
+    const q = state.record
+    return q.id === r.id || (q.from.session === r.from.session && this.norm(q.from.device) === device && q.sentAt === r.sentAt && q.replyTo === r.replyTo)
+  }
+
+  /** the questions an attachment's session waits on with the person, while its question is open; null when none waits */
+  private waitingQuestions(c: StoredCoordinator, a: Pick<StoredAttachment, 'device' | 'session' | 'former'>, all: readonly MailRecord[]): AskedQuestion[] | null {
+    const state = this.questionState(c, a, all)
+    return state !== null && state.open ? (state.record.questions ?? null) : null
+  }
+
+  /**
+   * Whether a withdrawal replies to the question: it comes from the question's device and from its session, or from another id the same
+   * attachment had (a session that took a new id since). A withdrawal of another session or device names it in vain.
+   */
+  private sameAsker(w: MailRecord, q: MailRecord): boolean {
+    const device = this.norm(q.from.device)
+    if (this.norm(w.from.device) !== device) return false
+    if (w.from.session === q.from.session) return true
+    const c = this.d.store.coordinatorBy(q.to.session)
+    const att = c?.attachments.find((a) => a.device === device && [a.session, ...a.former].includes(q.from.session))
+    return att !== undefined && [att.session, ...att.former].includes(w.from.session)
+  }
+
+  /** whether a withdrawal of the question is on record in `all` */
+  private withdrawalOf(q: MailRecord, all: readonly MailRecord[]): boolean {
+    return all.some((w) => kindOf(w) === 'withdraw' && w.replyTo === q.id && this.sameAsker(w, q))
+  }
+
+  /** a withdrawal to this device: the question it replies to is marked delivered and read, when the coordinator has not taken it */
+  private withdrawArrived(r: MailRecord): void {
+    const q = r.replyTo === null ? undefined : this.d.mail.get(r.replyTo)
+    if (!q || kindOf(q) !== 'question' || q.delivered || !this.sameAsker(r, q)) return
+    this.d.mail.mark([q.id], 'delivered')
+    this.d.mail.mark([q.id], 'read')
   }
 
   /** the paired devices and their tabs, read once: a view or the marks takes one of these, not a read per lookup */
@@ -1779,15 +2058,17 @@ export class CoordinatorHub {
   /** the rows of a coordinator's attachments, in the order it has them */
   private attachedRows(c: StoredCoordinator, snap: RemoteSnapshot, notes?: Map<string, string>): CoordSessionRow[] {
     const queued = c.attachments.some((a) => a.device !== null) ? this.queuedRemoteTasks(c) : new Map<string, CoordTaskInfo>()
-    return c.attachments.map((a) =>
-      a.device === null
-        ? this.rowOf(a.session, this.agentName(a.session) ?? a.name, this.tabOfSession(a.session), this.d.store.hosted(a.session), a, notes)
-        : this.attachedRemoteRow(a, a.device, queued, snap, notes)
-    )
+    const all = this.d.mail.all()
+    return c.attachments.map((a) => {
+      const question = this.waitingQuestions(c, a, all)?.[0]?.question ?? null
+      return a.device === null
+        ? this.rowOf(a.session, this.agentName(a.session) ?? a.name, this.tabOfSession(a.session), this.d.store.hosted(a.session), a, notes, question)
+        : this.attachedRemoteRow(a, a.device, queued, snap, notes, question)
+    })
   }
 
-  /** a row of a session of another device attached here: its tab's facts from the device's list, and the attachment's marks */
-  private attachedRemoteRow(a: StoredAttachment, device: string, queued: Map<string, CoordTaskInfo>, snap: RemoteSnapshot, notes?: Map<string, string>): CoordSessionRow {
+  /** a row of a session of another device attached here: its tab's facts from the device's list, and the attachment's marks; question: the text of the first question it waits on, if any */
+  private attachedRemoteRow(a: StoredAttachment, device: string, queued: Map<string, CoordTaskInfo>, snap: RemoteSnapshot, notes?: Map<string, string>, question: string | null = null): CoordSessionRow {
     const rt = snap.tabByKey.get(remoteKey(device, a.session)) ?? null
     const peer = snap.peers.get(device) ?? null
     const coord = rt?.coord ?? null
@@ -1807,7 +2088,8 @@ export class CoordinatorHub {
         resolved: a.resolved,
         failed: a.failed,
         lastReport: a.lastReport,
-        note: task !== null && notes ? notes.get(task.id) ?? null : null
+        note: task !== null && notes ? notes.get(task.id) ?? null : null,
+        question
       },
       this.d.clock
     )
@@ -1920,8 +2202,8 @@ export class CoordinatorHub {
     return { row: found.row, att: null, start: starts[i - attached.length] }
   }
 
-  /** a row of a session: its tab's facts, its hosted entry's task, and its attachment's report and marks */
-  private rowOf(session: string, name: string, tab: HubTab | null, hosted: StoredHosted | null, att: StoredAttachment | null, notes?: Map<string, string>): CoordSessionRow {
+  /** a row of a session: its tab's facts, its hosted entry's task, and its attachment's report and marks; question: the text of the first question it waits on, if any */
+  private rowOf(session: string, name: string, tab: HubTab | null, hosted: StoredHosted | null, att: StoredAttachment | null, notes?: Map<string, string>, question: string | null = null): CoordSessionRow {
     const tabId = tab?.tabId ?? null
     const waits: TabWaitsState = tabId === null ? { prompt: null, limit: null } : this.d.waits(tabId)
     const task: CoordTaskInfo | null = hosted ? this.taskInfo(hosted) : null
@@ -1938,7 +2220,8 @@ export class CoordinatorHub {
         resolved: att?.resolved ?? false,
         failed: att?.failed ?? false,
         lastReport: att?.lastReport ?? null,
-        note: task !== null && notes ? notes.get(task.id) ?? null : null
+        note: task !== null && notes ? notes.get(task.id) ?? null : null,
+        question
       },
       this.d.clock
     )
@@ -2025,8 +2308,31 @@ export class CoordinatorHub {
         if (this.detachArrived(r)) signalled = true
         continue
       }
-      // a report, a progress note or a task still addressed to a former id is written again to the current one, before any rule that would drop it
+      // a withdrawal to this device: its question is no longer asked, so the rows and the marks change
+      if (kindOf(r) === 'withdraw') {
+        if (this.norm(r.to.device) === null) {
+          this.withdrawArrived(r)
+          signalled = true
+        }
+        continue
+      }
+      // a report, a progress note, a question or a task still addressed to a former id is written again to the current one, before any rule that would drop it
       if (this.forwardArrived(r)) continue
+      // an answer is typed into its session's tab while the session's task waits on its question; any other answer is dropped
+      if (kindOf(r) === 'answer') {
+        if (r.delivered || this.norm(r.to.device) !== null) continue
+        const waiting = this.d.store.hostedBy(r.to.session)
+        if (waiting !== null && currentTask(waiting)?.question === r.replyTo) {
+          const tab = this.tabOfSession(waiting.session)
+          if (tab) pokes.push(tab.tabId)
+          continue
+        }
+        this.d.mail.mark([r.id], 'delivered')
+        this.d.mail.mark([r.id], 'read')
+        this.d.log.info(`coordinator: an answer to ${r.replyTo} came for no waiting question of ${r.to.session}; it is dropped`)
+        signalled = true
+        continue
+      }
       if (kindOf(r) === 'report') {
         if (this.holdReport(r)) {
           held = true
@@ -2039,8 +2345,14 @@ export class CoordinatorHub {
         }
         continue
       }
-      if (kindOf(r) === 'progress') {
-        // a progress note no coordinator here takes wakes nobody; one a coordinator takes wakes its tab, which is prompted with it
+      if (kindOf(r) === 'progress' || kindOf(r) === 'question') {
+        // a question whose withdrawal came first is answered already, and one this device's coordinator no longer takes wakes nobody
+        if (kindOf(r) === 'question' && (this.withdrawalOf(r, this.d.mail.all()) || (this.norm(r.to.device) === null && !this.takesQuestion(r)))) {
+          this.d.mail.mark([r.id], 'delivered')
+          this.d.mail.mark([r.id], 'read')
+          continue
+        }
+        // a progress note or a question no coordinator here takes wakes nobody; one a coordinator takes wakes its tab, which is prompted with it
         if (this.unroutedReport(r)) {
           this.d.mail.mark([r.id], 'delivered')
           this.d.mail.mark([r.id], 'read')
@@ -2058,8 +2370,9 @@ export class CoordinatorHub {
       if (hosted.tasks.length >= MAX_TASKS_PER_SESSION) continue
       const from: MailAddress = { device: this.norm(r.from.device), session: r.from.session, name: r.from.name }
       // newer words of the person replace a queued task with earlier words of the same coordinator: it was never typed
-      const current = r.words === undefined ? hosted : this.replaceQueuedWords(hosted, from)
-      this.d.store.putHosted({ ...current, tasks: [...current.tasks, { id: r.id, from, state: 'queued', queuedAt: r.sentAt, deliveredAt: null }] })
+      const open = this.endWait(hosted)
+      const current = r.words === undefined ? open : this.replaceQueuedWords(open, from)
+      this.d.store.putHosted({ ...current, tasks: [...current.tasks, { id: r.id, from, state: 'queued', queuedAt: r.sentAt, deliveredAt: null, question: null }] })
       taken = true
       const tab = this.tabOfSession(hosted.session)
       if (tab) pokes.push(tab.tabId)
@@ -2084,6 +2397,15 @@ export class CoordinatorHub {
   private nextQueuedTask(session: string): StoredTask | null {
     const h = this.d.store.hosted(session)
     return h ? nextTask(this.withoutDeadTasks(h)) : null
+  }
+
+  /** the hosted entry without the task that waits on a question, when a new task of the coordinator comes: that task goes without a report, and the entry is stored; else the entry as it is */
+  private endWait(h: StoredHosted): StoredHosted {
+    const waiting = currentTask(h)
+    if (waiting === null || waiting.question === null) return h
+    const live = { ...h, tasks: h.tasks.filter((t) => t.id !== waiting.id) }
+    this.d.store.putHosted(live)
+    return live
   }
 
   /** the hosted entry without its dead tasks: a queued task whose mail record is gone is dropped and stored, so it cannot hold the queue, show in the view or count toward the cap */

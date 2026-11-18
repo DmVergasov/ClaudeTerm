@@ -1031,10 +1031,16 @@ function headsUpSteps(text: string): FakeStep[] | undefined {
   return undefined
 }
 
+// the steps of the first key of turnsStarting the text starts with, if any
+function startingSteps(text: string): FakeStep[] | undefined {
+  const key = Object.keys(script.turnsStarting ?? {}).find((k) => text.startsWith(k))
+  return key === undefined ? undefined : script.turnsStarting![key]
+}
+
 async function runTurn(text: string): Promise<void> {
   aborted = false
   const forward = readForward(text)
-  const steps = forward !== null ? [] : headsUpSteps(text) ?? (Object.hasOwn(script.turns, text) ? script.turns[text] : script.fallback ?? [{ text: 'ok' }])
+  const steps = forward !== null ? [] : headsUpSteps(text) ?? (Object.hasOwn(script.turns, text) ? script.turns[text] : startingSteps(text) ?? script.fallback ?? [{ text: 'ok' }])
   if (steps.length === 1 && 'command' in steps[0]) return runLocalTurn(steps[0], text)
   if (steps.length === 1 && 'notAvailable' in steps[0]) return runUnavailableTurn(steps[0].notAvailable, text)
   emit(state('running'))

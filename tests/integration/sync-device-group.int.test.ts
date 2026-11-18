@@ -44,6 +44,8 @@ interface OpenOptions {
   knowsCoordinator?: boolean
   /** false: the group's hello leaves words out, as a device that predates the person's words does */
   knowsWords?: boolean
+  /** false: the group's hello leaves questions out, as a device that predates the session questions does */
+  knowsQuestions?: boolean
 }
 
 const groups: DeviceGroup[] = []
@@ -90,7 +92,8 @@ async function openGroup(name: string, platform: DevicePlatform, opts: OpenOptio
     now: opts.now,
     onPeer: opts.onPeer,
     knowsCoordinator: opts.knowsCoordinator,
-    knowsWords: opts.knowsWords
+    knowsWords: opts.knowsWords,
+    knowsQuestions: opts.knowsQuestions
   }
   const group = await DeviceGroup.open(deps)
   groups.push(group)
@@ -198,6 +201,27 @@ describe('DeviceGroup: pairing and records', () => {
     await until(() => peers.length > 0)
     expect(peers[0][1]).not.toHaveProperty('words')
     expect(peers[0][1].coord).toBe(1)
+  })
+
+  it("a device's hello says it knows the session questions", async () => {
+    const peers: [PeerLink, HelloMessage][] = []
+    const a = await openGroup('Studio', 'linux', { onPeer: (link, hello) => peers.push([link, hello]) })
+    const b = await openGroup('Laptop', 'windows')
+    await pair(a, b)
+    await until(() => connected(a, 1) && connected(b, 1))
+    await until(() => peers.length > 0)
+    expect(peers[0][1].questions).toBe(1)
+  })
+
+  it('a device opened with knowsQuestions false leaves questions out of its hello, and keeps words', async () => {
+    const peers: [PeerLink, HelloMessage][] = []
+    const a = await openGroup('Studio', 'linux', { onPeer: (link, hello) => peers.push([link, hello]) })
+    const b = await openGroup('Laptop', 'windows', { knowsQuestions: false })
+    await pair(a, b)
+    await until(() => connected(a, 1) && connected(b, 1))
+    await until(() => peers.length > 0)
+    expect(peers[0][1]).not.toHaveProperty('questions')
+    expect(peers[0][1].words).toBe(1)
   })
 
   it('an onPeer that throws is logged, not toasted, and the group goes on with the next member', async () => {

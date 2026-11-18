@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { HUB_TEXT, START_WAIT_MS } from '../../src/main/coordinator/coordinator-hub'
 import { MAX_ATTACHMENTS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
+import { ASK_REASON } from '../../src/main/coordinator/session-text'
 import { refOf } from '../../src/main/mail/agent-directory'
 import { checkMailRecord } from '../../src/main/mail/mail-record'
+import { answersText } from '../../src/main/mail/wake-text'
 import { isShareable } from '../../src/main/mail/mail-store'
 import { coordinatorProblem, type CoordSessionRow, type CoordinatorView } from '../../src/shared/coordinator'
 import { MAIL_MIN_CLAUDE, type MailRecord } from '../../src/shared/mail'
-import { attachDirect, ACME, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, L, NEW, NO_FACTS, NOW, peerOf, records, remoteTab, said, S, sync, tab, uid, world, type World } from '../fixtures/coordinator-world'
+import type { AskedQuestion } from '../../src/shared/questions'
+import { attachDirect, ACME, cleanWorlds, deviceWorlds, DEV_C, DEV_S, fire, formed, L, NEW, NO_FACTS, NOW, peerOf, records, remoteTab, said, S, sync, tab, uid, world, type World } from '../fixtures/coordinator-world'
 
 const TASK = '7a000000-0000-4000-8000-000000000001'
 const ATTACH_ID = '7b000000-0000-4000-8000-000000000002'
@@ -61,7 +64,7 @@ describe('rows of other devices', () => {
   it('a remote session attached to a coordinator of this device names that coordinator', () => {
     c.hub.make('tab-b', false)
     const beta = c.store.coordinator(S.beta)!
-    c.store.putCoordinator({ ...beta, attachments: [{ device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null }] })
+    c.store.putCoordinator({ ...beta, attachments: [{ device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null, former: [] }] })
     c.remoteTabs = [remoteTab()]
     expect(remoteRows(c.hub.view('tab-c')!)).toMatchObject([{ key: `${DEV_S}:${L.one}`, attachedTo: 'beta · Studio' }])
   })
@@ -181,7 +184,7 @@ describe('rows of other devices', () => {
 
   it('a view and the marks each read the paired devices and their tabs once, however many remote rows and attachments there are', () => {
     const coordinator = c.store.coordinator(S.coord)!
-    const attachment = (session: string, name: string) => ({ device: DEV_S, session, name, attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null })
+    const attachment = (session: string, name: string) => ({ device: DEV_S, session, name, attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null, former: [] })
     c.store.putCoordinator({ ...coordinator, attachments: [attachment(L.one, 'parser · Laptop'), attachment(L.two, 'docs · Laptop')] })
     c.remoteTabs = [
       remoteTab(),
@@ -504,7 +507,8 @@ describe('attach, detach and tasks across devices', () => {
       resolved: false,
       failed: false,
       lastReport: null,
-      pending: i === 0 ? ATTACH_ID : null
+      pending: i === 0 ? ATTACH_ID : null,
+      former: []
     }))
     c.store.putCoordinator({ ...coordinator, attachments })
     expect(c.hub.attach('tab-c', 'e10000')).toEqual({ ok: false, error: HUB_TEXT.fullAttached })
@@ -566,7 +570,7 @@ describe('attach, detach and tasks across devices', () => {
   it('attaching a Laptop session attached to another coordinator of this device is refused with that coordinator', () => {
     c.hub.make('tab-b', false)
     const beta = c.store.coordinator(S.beta)!
-    c.store.putCoordinator({ ...beta, attachments: [{ device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null }] })
+    c.store.putCoordinator({ ...beta, attachments: [{ device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null, former: [] }] })
     expect(c.hub.attach('tab-c', 'e10000')).toEqual({ ok: false, error: HUB_TEXT.elsewhere('parser · Laptop', 'beta', 'beta · Studio') })
     expect(records(c, 'attach')).toEqual([])
   })
@@ -835,7 +839,7 @@ describe('new ids across devices', () => {
     // beta's coordinator takes the id the clear would move to, and it holds a session of Laptop: a rename onto it must tell no one
     c.hub.make('tab-b', false)
     const beta = c.store.coordinator(S.beta)!
-    c.store.putCoordinator({ ...beta, attachments: [{ device: DEV_S, session: L.two, name: 'docs · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null }] })
+    c.store.putCoordinator({ ...beta, attachments: [{ device: DEV_S, session: L.two, name: 'docs · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null, former: [] }] })
     clear(c, 'tab-c', S.coord, S.beta)
     expect(c.store.coordinator(S.coord)).not.toBeNull()
     expect(records(c, 'attach').filter((r) => r.was !== undefined)).toEqual([])
@@ -1074,7 +1078,7 @@ describe('start on another device', () => {
     const coordinator = c.store.coordinator(S.coord)!
     c.store.putCoordinator({
       ...coordinator,
-      attachments: Array.from({ length: MAX_ATTACHMENTS - 1 }, (_, i) => ({ device: null, session: uid(0x10000 + i), name: `session ${i}`, attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null }))
+      attachments: Array.from({ length: MAX_ATTACHMENTS - 1 }, (_, i) => ({ device: null, session: uid(0x10000 + i), name: `session ${i}`, attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null, former: [] }))
     })
     void c.hub.start('tab-c', START_LAPTOP)
     await tick()
@@ -1206,5 +1210,142 @@ describe('start on another device', () => {
     expect(await answer).toEqual({ ok: true, info: expect.stringMatching(/ The person's words go with its task\.$/) })
     expect(c.toasts).toEqual(['Your words went to Release notes: «Write them now.»'])
     expect(records(c, 'task')).toEqual([expect.objectContaining({ to: expect.objectContaining({ session: L.fresh }), words: 'Write them now.' })])
+  })
+})
+
+describe("a session's question and the person's answer across devices", () => {
+  let c: World
+  let s: World
+  const WHERE = 'Where should the browser live?'
+  const PARTS = 'Which parts?'
+  const QS: AskedQuestion[] = [
+    { question: WHERE, header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] },
+    { question: PARTS, header: '', multiSelect: true, options: [{ label: 'Browser', description: '' }, { label: 'Cookies', description: '' }] }
+  ]
+  const PARSER = 'parser · Laptop'
+  const FORM: [string, string][] = [
+    [`parser: ${WHERE}`, 'Side panel'],
+    [`parser: ${PARTS}`, 'Browser, Cookies']
+  ]
+  const ASKED = [`parser: ${WHERE}`, `parser: ${PARTS}`]
+  const sender = () => ({ folder: null, branch: null })
+  const clear = (w: World, tabId: string, from: string, to: string): void => {
+    w.hub.tabSession(tabId, to)
+    w.hub.sessionStarted(tabId, from, to, 'clear')
+  }
+
+  beforeEach(() => {
+    const worlds = deviceWorlds()
+    c = worlds.c
+    s = worlds.s
+    c.hub.make('tab-c', false)
+    c.hub.attach('tab-c', 'e10000')
+    sync(c, s)
+    c.hub.message('tab-c', 'e10000', 'Fix the parser.')
+    sync(c, s)
+    // Laptop's parser holds the task of Studio's coordinator, and its turn has started
+    s.hub.handedOver('tab-l1', records(s, 'task'), 'idle')
+    s.hub.turnStarted('tab-l1')
+  })
+
+  /** Laptop's parser asks QS on its open task, and its turn ends: the task waits for the answer */
+  const asking = (): MailRecord => {
+    expect(s.hub.ask('tab-l1', QS)).toBe(ASK_REASON)
+    s.hub.turnEnded('tab-l1', { background: false, lastMessage: 'Which one?' })
+    return records(s, 'question')[0]!
+  }
+
+  it("a session's question crosses to the coordinator's device; the answer comes back and is typed there", async () => {
+    asking()
+    sync(c, s)
+    expect(c.pokes).toContain('tab-c')
+    expect(c.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'waiting', why: 'question', line: `Asks you: ${WHERE}` })
+
+    formed(c, FORM)
+    expect(await c.hub.tool('tab-c', { op: 'answer', session: 'e10000', questions: ASKED })).toEqual({ ok: true, info: HUB_TEXT.answered(PARSER) })
+    sync(c, s)
+    expect(s.hub.canTakeWords('tab-l1', L.one)).toBe(true)
+    const answer = records(s, 'answer')[0]!
+    expect(s.hub.takeWords('tab-l1', L.one)).toEqual({ info: answersText(answer, sender) })
+    expect(records(s, 'answer')[0]).toMatchObject({ delivered: true })
+  })
+
+  it("a coordinator's device that is offline, or whose hello lacks questions, keeps the form in the session's tab", () => {
+    for (const over of [{ online: false }, { questions: false }]) {
+      s.peers = [peerOf(DEV_C, 'Studio', over)]
+      expect(s.hub.ask('tab-l1', QS)).toBeNull()
+    }
+    expect(records(s, 'question')).toEqual([])
+    s.peers = [peerOf(DEV_C, 'Studio')]
+    expect(s.hub.ask('tab-l1', QS)).toBe(ASK_REASON)
+  })
+
+  it("the person's turn on Laptop withdraws the question on Studio", async () => {
+    asking()
+    sync(c, s)
+    formed(c, FORM)
+    s.hub.turnStarted('tab-l1', 'Use the side panel.')
+    sync(c, s)
+    expect(await c.hub.tool('tab-c', { op: 'answer', session: 'e10000', questions: ASKED })).toEqual({ ok: false, error: HUB_TEXT.answeredInTab(PARSER) })
+    expect(records(c, 'answer')).toEqual([])
+  })
+
+  it("an answer that arrives after the person's turn closed the question is dropped there", async () => {
+    const question = asking()
+    sync(c, s)
+    formed(c, FORM)
+    expect(await c.hub.tool('tab-c', { op: 'answer', session: 'e10000', questions: ASKED })).toMatchObject({ ok: true })
+    // the person writes in Laptop's tab before the answer reaches it
+    s.hub.turnStarted('tab-l1', 'My own words.')
+    sync(c, s)
+    expect(s.hub.canTakeWords('tab-l1', L.one)).toBe(false)
+    expect(s.hub.takeWords('tab-l1', L.one)).toBeNull()
+    expect(records(s, 'answer')).toMatchObject([{ replyTo: question.id, delivered: true, read: true }])
+  })
+
+  /** Laptop's tab resumes under a new session id: the window's tab shows it, and the hook's sessionStarted follows */
+  const resumed = (w: World, tabId: string, from: string, to: string): void => {
+    w.tabs = w.tabs.map((t) => (t.tabId === tabId ? { ...t, session: to } : t))
+    w.hub.tabSession(tabId, to)
+    w.hub.sessionStarted(tabId, from, to, 'resume')
+  }
+
+  it("a session that takes a new id while its question waits: Studio's row still asks, the answer is ok, and Laptop types it after the sync", async () => {
+    asking()
+    sync(c, s)
+    resumed(s, 'tab-l1', L.one, NEW.one)
+    sync(c, s)
+    expect(c.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'waiting', why: 'question', line: `Asks you: ${WHERE}` })
+    formed(c, FORM)
+    expect(await c.hub.tool('tab-c', { op: 'answer', session: refOf(NEW.one), questions: ASKED })).toEqual({ ok: true, info: HUB_TEXT.answered(PARSER) })
+    sync(c, s)
+    expect(s.hub.canTakeWords('tab-l1', NEW.one)).toBe(true)
+    const answer = records(s, 'answer')[0]!
+    expect(s.hub.takeWords('tab-l1', NEW.one)).toEqual({ info: answersText(answer, sender) })
+    expect(records(s, 'answer')[0]).toMatchObject({ delivered: true })
+  })
+
+  it('an answer that reached Laptop before its session took the new id is typed under the new id', async () => {
+    asking()
+    sync(c, s)
+    formed(c, FORM)
+    expect(await c.hub.tool('tab-c', { op: 'answer', session: 'e10000', questions: ASKED })).toMatchObject({ ok: true })
+    sync(c, s)
+    resumed(s, 'tab-l1', L.one, NEW.one)
+    expect(s.hub.canTakeWords('tab-l1', NEW.one)).toBe(true)
+    // the copy the rename wrote is the one not delivered yet
+    const copy = records(s, 'answer').find((r) => !r.delivered)!
+    expect(s.hub.takeWords('tab-l1', NEW.one)).toEqual({ info: answersText(copy, sender) })
+  })
+
+  it('a question to a former id of the coordinator after its clear is forwarded to its current one', () => {
+    // Studio's coordinator clears before Laptop's parser asks: Laptop still sends to the old id
+    clear(c, 'tab-c', S.coord, NEW.coord)
+    expect(s.hub.ask('tab-l1', QS)).toBe(ASK_REASON)
+    sync(c, s)
+    const original = records(c, 'question').find((r) => r.to.session === S.coord)!
+    expect(original).toMatchObject({ delivered: true, read: true })
+    expect(records(c, 'question').filter((r) => r.id !== original.id)).toMatchObject([{ from: { device: DEV_S, session: L.one }, to: { session: NEW.coord }, replyTo: original.replyTo, questions: QS }])
+    expect(c.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'waiting', why: 'question', line: `Asks you: ${WHERE}` })
   })
 })

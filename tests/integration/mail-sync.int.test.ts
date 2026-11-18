@@ -38,8 +38,8 @@ function store(): MailStore {
   return MailStore.open({ dir: tempDir('mail-sync'), now: () => NOW, debounceMs: 100000 })
 }
 
-function helloOf(id: string, mail = true, coord = true, words = true): HelloMessage {
-  return { t: 'hello', v: 1, id, name: 'Device', platform: 'linux', port: 0, addresses: [], reachedYou: null, ...(mail ? { mail: 1 as const } : {}), ...(coord ? { coord: 1 as const } : {}), ...(words ? { words: 1 as const } : {}) }
+function helloOf(id: string, mail = true, coord = true, words = true, questions = true): HelloMessage {
+  return { t: 'hello', v: 1, id, name: 'Device', platform: 'linux', port: 0, addresses: [], reachedYou: null, ...(mail ? { mail: 1 as const } : {}), ...(coord ? { coord: 1 as const } : {}), ...(words ? { words: 1 as const } : {}), ...(questions ? { questions: 1 as const } : {}) }
 }
 
 const syncs: MailSync[] = []
@@ -399,5 +399,52 @@ describe('coordinator records between devices', () => {
     expect(a.knowsWords(DEV_C)).toBe(false)
     knows.client.close('test')
     expect(a.knowsWords(DEV_B)).toBe(false)
+  })
+
+  it("a peer whose hello has no questions gets no question, answer or withdraw; its tasks and reports still go", async () => {
+    const sa = store()
+    const sb = store()
+    const from = { device: DEV_A, session: SES_A, name: 'Parser' }
+    const to = { device: DEV_B, session: SES_B, name: 'Reviewer' }
+    const task = record({ kind: 'task', project: 'acme', from, to })
+    const report = record({ kind: 'report', outcome: 'finished', replyTo: newId(), from, to })
+    const question = record({ kind: 'question', replyTo: newId(), from, to })
+    const answer = record({ kind: 'answer', replyTo: newId(), from, to })
+    const withdraw = record({ kind: 'withdraw', replyTo: newId(), from, to })
+    sa.add(task)
+    sa.add(report)
+    sa.add(question)
+    sa.add(answer)
+    sa.add(withdraw)
+    const a = sync(sa)
+    const b = sync(sb)
+    const { client, server } = await linkPair()
+    a.attach(client, helloOf(DEV_B, true, true, true, false))
+    b.attach(server, helloOf(DEV_A))
+    await until(() => sb.get(task.id) !== undefined && sb.get(report.id) !== undefined)
+    await settle()
+    expect(sb.get(question.id)).toBeUndefined()
+    expect(sb.get(answer.id)).toBeUndefined()
+    expect(sb.get(withdraw.id)).toBeUndefined()
+    // a record added later is relayed by the same rule
+    const later = record({ kind: 'question', replyTo: newId(), from, to })
+    const plain = record({ kind: 'task', project: 'acme', from, to, text: 'Fix the parser.' })
+    sa.add(later)
+    sa.add(plain)
+    await until(() => sb.get(plain.id) !== undefined)
+    await settle()
+    expect(sb.get(later.id)).toBeUndefined()
+  })
+
+  it('knowsQuestions is true for a linked peer with questions, false for one without, and false once the link closes', async () => {
+    const a = sync(store())
+    const knows = await linkPair()
+    const plain = await linkPair()
+    a.attach(knows.client, helloOf(DEV_B))
+    a.attach(plain.client, helloOf(DEV_C, true, true, true, false))
+    expect(a.knowsQuestions(DEV_B)).toBe(true)
+    expect(a.knowsQuestions(DEV_C)).toBe(false)
+    knows.client.close('test')
+    expect(a.knowsQuestions(DEV_B)).toBe(false)
   })
 })

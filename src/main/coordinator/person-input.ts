@@ -9,8 +9,10 @@ export const READINGS_MAX = 8
 export interface Submit {
   at: number
   texts: readonly string[] | null
-  /** the person wrote something: a reading holds text, or the prompt was typed into (or pasted into) while its readings are unknown, or it grew past the longest message that can be relayed. A dialog answer the person wrote is texts null with wrote true */
+  /** the person wrote something: a reading holds text, or the prompt was typed into (or pasted into) while its readings are unknown, or it grew past the longest message that can be relayed. An option picked in a dialog (a digit, or an Enter with nothing written) is texts null with wrote false; a dialog answer the person wrote is texts null with wrote true */
   wrote: boolean
+  /** a submit made while a dialog showed: an Enter or a digit typed in it. Only these answer a dialog; a prompt submit, a slash command, a bash line or a chat message leaves it absent */
+  dialog?: true
 }
 
 /** a prompt's draft: its readings (null when unknown), whether a bracketed paste is open and whether it began in a dialog, whether it grew past the longest message,
@@ -74,8 +76,8 @@ export class PersonInput {
 
   /**
    * keys or a paste the window sent into the tab at `at`: `writeInput`'s data, from this device or a paired one, followed like a line
-   * editor would. While `dialog` (a permission prompt or a question) shows in the tab, the draft is left as it is: only what the person
-   * writes in the dialog is noted, as a submit with no text
+   * editor would. While `dialog` (a permission prompt or a question) shows in the tab, the draft is left as it is: what the person writes
+   * in the dialog, and each option they pick in it, is noted as a submit with no text
    */
   keys(tabId: string, data: string, at: number, dialog = false): void {
     const d = this.draftOf(tabId)
@@ -158,23 +160,23 @@ export class PersonInput {
   }
 
   /**
-   * one key while a dialog shows, from `i`: an Enter after the person wrote in the dialog is a submit with no text; a printable character
+   * one key while a dialog shows, from `i`: an Enter is a submit with no text, which the person wrote when they wrote in the dialog and
+   * picked an option otherwise; a digit is an option picked, a submit with no text the person did not write; a printable character
    * other than a digit says the person wrote; every other key does nothing. Returns the index after the key
    */
   private dialogKey(tabId: string, d: Draft, input: string, i: number, at: number): number {
     const c = input[i]!
     if (c === '\x1b') return i + escapeLength(input, i)
     if (c === '\r') {
-      if (d.dialogWrote) {
-        this.push(tabId, { at, texts: null, wrote: true })
-        d.dialogWrote = false
-      }
+      this.push(tabId, { at, texts: null, wrote: d.dialogWrote, dialog: true })
+      d.dialogWrote = false
       return i + 1
     }
     const ch = String.fromCodePoint(input.codePointAt(i)!)
     const code = c.charCodeAt(0)
     const control = code < 0x20 || (code >= 0x7f && code <= 0x9f)
-    if (!control && !/^[0-9]$/.test(ch)) d.dialogWrote = true
+    if (/^[0-9]$/.test(ch)) this.push(tabId, { at, texts: null, wrote: false, dialog: true })
+    else if (!control) d.dialogWrote = true
     return i + ch.length
   }
 

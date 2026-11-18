@@ -47,7 +47,7 @@ describe('show_image MCP server', () => {
     const client = new Client({ name: 'claudeterm-test', version: '1.0.0' })
     await client.connect(transport)
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['add_to_note', 'attach_session', 'check_note_item', 'detach_session', 'device_status', 'get_task_list', 'list_agents', 'list_sessions', 'message_agent', 'message_session', 'open_device_settings', 'read_notes', 'read_session', 'resolve_session', 'set_task_list', 'show_diff', 'show_document', 'show_image', 'start_session'])
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['add_to_note', 'answer_session', 'attach_session', 'check_note_item', 'detach_session', 'device_status', 'get_task_list', 'list_agents', 'list_sessions', 'message_agent', 'message_session', 'open_device_settings', 'read_notes', 'read_session', 'resolve_session', 'set_task_list', 'show_diff', 'show_document', 'show_image', 'start_session'])
     const instructions = client.getInstructions() ?? ''
     for (const name of ['ListAgents', 'SendMessage', 'list_agents', 'message_agent', 'read_notes', 'add_to_note', 'check_note_item']) expect(instructions).toContain(name)
     const res = await client.callTool({ name: 'show_image', arguments: { path: 'out/plot.png', caption: 'Plot' } })

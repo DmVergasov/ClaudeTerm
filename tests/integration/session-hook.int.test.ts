@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { hookCommandString, writeClaudeTabFiles } from '../../src/main/claude-tab-settings'
 import { startPipeServer, type PipeServerHandle } from '../../src/main/pipe-server'
+import { ASK_REASON } from '../../src/main/coordinator/session-text'
 import type { PipeMessage, PipeResponse } from '../../src/shared/protocol'
 import { testPipeName, WIN } from '../fixtures/platform'
 
@@ -67,7 +68,7 @@ function run(file: string, args: string[], env: Record<string, string>, input = 
 /** the answer the fake main gives to mail_wait: the mail, or a superseded watcher */
 const MAIL_TEXT = 'You have 1 new message from reviewer: Please re-run the checks.'
 
-async function listen(mailAnswer: PipeResponse = { ok: true }, answers: { turn?: PipeResponse; attention?: PipeResponse } = {}): Promise<{ pipe: string; got: PipeMessage[] }> {
+async function listen(mailAnswer: PipeResponse = { ok: true }, answers: { turn?: PipeResponse; attention?: PipeResponse; attentionWaitMs?: number } = {}): Promise<{ pipe: string; got: PipeMessage[] }> {
   const pipe = testPipeName('test')
   const got: PipeMessage[] = []
   const take = (m: PipeMessage): PipeResponse => {
@@ -76,7 +77,11 @@ async function listen(mailAnswer: PipeResponse = { ok: true }, answers: { turn?:
   }
   server = await startPipeServer(pipe, {
     showImage: async () => ({ ok: true }), session: take, status: take, subagent: take, sessionEnd: take,
-    attention: (m) => { got.push(m); return answers.attention ?? { ok: true } },
+    attention: async (m) => {
+      got.push(m)
+      if (answers.attentionWaitMs !== undefined) await new Promise((resolve) => setTimeout(resolve, answers.attentionWaitMs))
+      return answers.attention ?? { ok: true }
+    },
     turn: (m) => { got.push(m); return answers.turn ?? { ok: true } }, editBefore: take, showDiff: async (m) => take(m),
     showDocument: async () => ({ ok: true }), taskList: take, taskListGet: take, deviceStatus: take, openDeviceSettings: take,
     agentList: take, agentSend: take, coord: async (m) => take(m),
@@ -150,7 +155,7 @@ describe('session hook end to end', () => {
     const prompt = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: elsewhere, hook_event_name: 'UserPromptSubmit', prompt: 'go on' })
     const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, prompt)
     expect(r).toEqual({ code: 0, stdout: '' })
-    expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null }])
+    expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, prompt: 'go on', remote: null }])
   })
 
   it('node bundle: the status line forwards the folder Claude Code names as the session\'s, not the one its shell is in, and prints nothing', async () => {
@@ -297,6 +302,14 @@ describe('session hook end to end', () => {
     ])
   })
 
+  it('a question waits up to 8 s for main: an answer after 3 s still denies the tool call, so no form opens beside the question', async () => {
+    const { pipe, got } = await listen({ ok: true }, { attention: { ok: true, info: ASK_REASON }, attentionWaitMs: 3000 })
+    const ask = JSON.stringify({ session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [] } })
+    const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, ask)
+    expect(r).toEqual({ code: 0, stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: ASK_REASON } })}\n` })
+    expect(got).toEqual([{ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', remote: null }])
+  }, 15_000)
+
   it('exits 0 silently when ClaudeTerm is not running', async () => {
     const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: testPipeName('none') })
     expect(r).toEqual({ code: 0, stdout: '' })
@@ -324,7 +337,7 @@ describe('session hook end to end', () => {
       const { pipe, got } = await listen({ ok: true }, { turn: { ok: true, info: NOTE } })
       const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
       expect(r).toEqual({ code: 0, stdout: contextLine(NOTE) })
-      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null }])
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, prompt: 'go on', remote: null }])
     })
 
     it('node bundle: a line break in the instruction stays inside the one JSON line', async () => {
@@ -367,7 +380,7 @@ describe('session hook end to end', () => {
       const r = await runExecForm(settingsHook(settingsPath, 'UserPromptSubmit'), { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
       expect(r).toEqual({ code: 0, stdout: contextLine(WRAPPED) })
       expect(JSON.parse(r.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: WRAPPED } })
-      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null }])
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, prompt: 'go on', remote: null }])
     })
 
     it.runIf(!WIN)('the .sh hook from the settings file prints the instruction as one intact JSON line', async () => {
@@ -376,13 +389,44 @@ describe('session hook end to end', () => {
       const r = await run('/bin/sh', ['-c', hookCommandString(hookPath!)], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, PROMPT)
       expect(r).toEqual({ code: 0, stdout: contextLine(WRAPPED) })
       expect(JSON.parse(r.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: WRAPPED } })
-      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null }])
+      expect(got).toEqual([{ v: 1, type: 'turn', tabId: TAB, sessionId: SID, prompt: 'go on', remote: null }])
     })
 
     it('node bundle: with no app running UserPromptSubmit prints nothing and exits 0', async () => {
       const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: testPipeName('none') }, PROMPT)
       expect(r).toEqual({ code: 0, stdout: '' })
     })
+  })
+
+  describe('a session\'s question through its coordinator', () => {
+    const REASON = 'ClaudeTerm sent these questions to your coordinator, which asks the person in its own question form. Do not ask them again, with a form or in text. End your turn now with one short line saying that you wait for the person\'s answer. The answer comes as your next message, and your task goes on then.'
+    const QUESTIONS = [
+      { question: 'Where should the browser live?', header: 'Browser', multiSelect: false, options: [{ label: 'Own tab', description: 'A tab of its own' }, { label: 'Side panel', description: 'Beside the chat' }] },
+      { question: 'Which colour?', header: 'Colour', multiSelect: true, options: [{ label: 'Red', description: 'Warm' }, { label: 'Blue', description: 'Cool' }] }
+    ]
+    const ASK = JSON.stringify({ session_id: SID, transcript_path: TP, cwd: START, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: QUESTIONS } })
+    /** the one line a PreToolUse hook prints to deny the tool call, as Claude Code reads it */
+    const denyLine = (reason: string): string => `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })}\n`
+
+    it('node bundle: the answer\'s reason is printed as the one deny line, and the attention carries the questions', async () => {
+      const { pipe, got } = await listen({ ok: true }, { attention: { ok: true, info: REASON } })
+      const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, ASK)
+      expect(r).toEqual({ code: 0, stdout: denyLine(REASON) })
+      expect(got[0]).toMatchObject({ type: 'attention', reason: 'question', questions: QUESTIONS })
+    })
+
+    it('node bundle: an answer without info prints nothing', async () => {
+      const { pipe, got } = await listen({ ok: true }, { attention: { ok: true } })
+      expect(await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: pipe }, ASK)).toEqual({ code: 0, stdout: '' })
+      expect(got).toHaveLength(1)
+    })
+
+    it('exits 0 silently when ClaudeTerm is not running', async () => {
+      const started = Date.now()
+      const r = await run(process.execPath, [bundle], { CLAUDETERM_TAB_ID: TAB, CLAUDETERM_PIPE: testPipeName('none') }, ASK)
+      expect(r).toEqual({ code: 0, stdout: '' })
+      expect(Date.now() - started).toBeLessThan(10_000)
+    }, 15_000)
   })
 
   it('in mail mode with no pipe it exits 0 quickly', async () => {

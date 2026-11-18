@@ -31,9 +31,10 @@ const coord: StoredCoordinator = {
       resolved: false,
       failed: false,
       pending: null,
-      lastReport: { id: REPORT, outcome: 'finished', reason: null, at: 300 }
+      lastReport: { id: REPORT, outcome: 'finished', reason: null, at: 300 },
+      former: []
     },
-    { device: DEV, session: S, name: 'Search', attachedAt: 210, resolved: true, failed: false, pending: null, lastReport: null }
+    { device: DEV, session: S, name: 'Search', attachedAt: 210, resolved: true, failed: false, pending: null, lastReport: null, former: [] }
   ],
   former: []
 }
@@ -42,7 +43,7 @@ const hosted: StoredHosted = {
   coordinator: { device: null, session: A, name: 'Coordinator' },
   project: 'Shop',
   former: [],
-  tasks: [{ id: TASK, from: { device: null, session: A, name: 'Coordinator' }, state: 'queued', queuedAt: 400, deliveredAt: null }]
+  tasks: [{ id: TASK, from: { device: null, session: A, name: 'Coordinator' }, state: 'queued', queuedAt: 400, deliveredAt: null, question: null }]
 }
 
 const dirs: string[] = []
@@ -308,5 +309,35 @@ describe('coordinator store', () => {
     expect(store.hostedBy(S)!.session).toBe(S2)
     expect(store.coordinatorBy(uuid(99))).toBeNull()
     expect(store.hostedBy(uuid(99))).toBeNull()
+  })
+
+  it('an attachment of this device keeps the ids its session had, newest first, and the file keeps them', () => {
+    const dir = newDir()
+    const store = new CoordinatorStore(dir, { debounceMs: 60_000 })
+    store.putCoordinator(coord)
+    expect(store.renameSession(S, S2)).toBe(true)
+    expect(store.renameSession(S2, S3)).toBe(true)
+    expect(store.coordinator(A)!.attachments.find((a) => a.device === null)).toMatchObject({ session: S3, former: [S2, S] })
+    store.flush()
+    const again = new CoordinatorStore(dir, { debounceMs: 60_000 })
+    expect(again.coordinator(A)!.attachments.find((a) => a.device === null)).toMatchObject({ session: S3, former: [S2, S] })
+  })
+
+  it("a task's waiting question is kept across a restart, and a task stored before the field loads with none", () => {
+    const dir = newDir()
+    const a = new CoordinatorStore(dir, { debounceMs: 60_000 })
+    a.putHosted({ ...hosted, tasks: [{ ...hosted.tasks[0], state: 'open', question: REPORT }] })
+    a.flush()
+    expect(new CoordinatorStore(dir).hosted(S)!.tasks[0].question).toBe(REPORT)
+
+    // a task written before the field has none, and a question that is no UUID loads as none too
+    const file = join(dir, 'coordinators.json')
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    delete raw.hosted[0].tasks[0].question
+    writeFileSync(file, JSON.stringify(raw), 'utf8')
+    expect(new CoordinatorStore(dir).hosted(S)!.tasks[0].question).toBeNull()
+    raw.hosted[0].tasks[0].question = 'not-a-uuid'
+    writeFileSync(file, JSON.stringify(raw), 'utf8')
+    expect(new CoordinatorStore(dir).hosted(S)!.tasks[0].question).toBeNull()
   })
 })

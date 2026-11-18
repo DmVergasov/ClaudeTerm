@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { questionsBody } from '../../src/main/coordinator/question-text'
 import { roleBlock } from '../../src/main/coordinator/session-text'
 import { wakeText, wordsText } from '../../src/main/mail/wake-text'
 import type { MailRecord } from '../../src/shared/mail'
-import { outcomeText, PERSON_WORDS_ANSWER, PERSON_WORDS_NOTE,PROGRESS_WAKE_HEAD, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD, splitPersonWords, splitWake, WAKE_HEADS } from '../../src/shared/report-wake'
+import type { AskedQuestion } from '../../src/shared/questions'
+import { ANSWER_WAKE_HEAD, outcomeText, PERSON_ANSWERS_HEAD, PERSON_WORDS_ANSWER, PERSON_WORDS_NOTE,PROGRESS_WAKE_HEAD, QUESTION_WAKE_HEAD, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD, splitPersonWords, splitWake, WAKE_HEADS } from '../../src/shared/report-wake'
 
 const COORD = { device: null, session: 'c0000000-0000-4000-8000-000000000001', name: 'coord · Desktop' }
 const PARSER = { device: null, session: 'a1000000-0000-4000-8000-000000000002', name: 'parser · Desktop' }
@@ -46,6 +48,16 @@ describe('splitWake reads the report blocks of a wake text', () => {
     expect(split.reports.map((r) => r.text)).toEqual(['Parser fixed.'])
     expect(split.rest).toBe(wakeText([progress], where))
     expect(split.rest.startsWith(`${PROGRESS_WAKE_HEAD}.\n`)).toBe(true)
+  })
+
+  it('the new heads are wake heads, and splitWake keeps a question block in rest', () => {
+    const QS: AskedQuestion[] = [{ question: 'Which parts?', header: '', multiSelect: true, options: [{ label: 'Browser', description: '' }, { label: 'Cookies', description: '' }] }]
+    const question = report({ id: '5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d', kind: 'question', outcome: undefined, replyTo: TASK, questions: QS, text: questionsBody(QS), sentAt: 1 })
+    expect(WAKE_HEADS).toEqual(expect.arrayContaining([QUESTION_WAKE_HEAD, ANSWER_WAKE_HEAD, PERSON_ANSWERS_HEAD]))
+    const split = splitWake(wakeText([question, report({})], where))
+    expect(split.reports.map((r) => r.text)).toEqual(['Parser fixed.'])
+    expect(split.rest).toBe(wakeText([question], where))
+    expect(split.rest.startsWith(`${QUESTION_WAKE_HEAD}\n`)).toBe(true)
   })
 })
 

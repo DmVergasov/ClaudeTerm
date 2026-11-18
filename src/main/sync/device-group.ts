@@ -43,6 +43,8 @@ export interface DeviceGroupDeps {
   knowsCoordinator?: boolean
   /** false: the hello leaves words out (a test stands in for a device without progress notes and the person's words); left out: true */
   knowsWords?: boolean
+  /** false: the hello leaves questions out (a test stands in for a device without the session questions); left out: true */
+  knowsQuestions?: boolean
   hostName(): string
   /** the addresses other devices can reach this one at */
   addresses(): string[]
@@ -349,6 +351,7 @@ export class DeviceGroup {
         mail: 1,
         ...(this.deps.knowsCoordinator === false ? {} : { coord: 1 as const }),
         ...(this.deps.knowsWords === false ? {} : { words: 1 as const }),
+        ...(this.deps.knowsQuestions === false ? {} : { questions: 1 as const }),
         app: this.deps.appVersion
       }),
       members: () => this.netMembers(),

@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { COORD_DELEGATE, COORD_PROGRESS, COORD_WORDS, type CoordOp } from '../shared/coordinator'
+import { COORD_DELEGATE, COORD_LANGUAGE, COORD_PROGRESS, COORD_QUESTIONS, COORD_WORDS, type CoordOp } from '../shared/coordinator'
 import { PipeUnavailableError } from '../shared/pipe-client'
 import type { CoordMessage, PipeResponse } from '../shared/protocol'
 import type { ToolResult } from './show-image-tool'
@@ -11,12 +11,12 @@ export interface CoordToolDeps {
   send(pipeName: string, msg: CoordMessage, timeoutMs: number): Promise<PipeResponse>
 }
 
-export const COORD_TOOL_NAMES = ['list_sessions', 'start_session', 'attach_session', 'detach_session', 'message_session', 'read_session', 'resolve_session'] as const
+export const COORD_TOOL_NAMES = ['list_sessions', 'start_session', 'attach_session', 'detach_session', 'message_session', 'read_session', 'resolve_session', 'answer_session'] as const
 
 export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], string> = {
   list_sessions:
     'Coordinator only: list the Claude sessions attached to this coordinator with their state, open task, last report and task list progress, then the sessions of the project that are not attached. ' +
-    'Reports come to you by themselves when a task ends: do not poll. A permission prompt or a question waiting in a session is the user\'s to answer there: tell the user once where it waits, never answer it. ' +
+    'Reports come to you by themselves when a task ends: do not poll. A permission prompt waiting in a session is the user\'s to answer there: tell the user once where it waits, never answer it. ' + COORD_QUESTIONS + ' ' +
     'A usage limit is not a failure. A stopped task was stopped by the user. ' +
     `${COORD_PROGRESS} As the coordinator, ${COORD_DELEGATE}`,
   start_session:
@@ -28,7 +28,7 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
     'With worktree, the session first enters a new git worktree of that name with EnterWorktree; ClaudeTerm itself creates none. ' +
     'If EnterWorktree fails, the session makes no worktree another way: it stops and reports the error as its result. ' +
     'It is attached to you at once, and its report comes to you by itself when its task ends. ' +
-    COORD_WORDS,
+    `${COORD_WORDS} ${COORD_LANGUAGE}`,
   attach_session:
     'Coordinator only: attach a running Claude session, by a ref or a name from list_sessions or list_agents; a session on a paired device is attached once that device confirms. ' +
     'Attaching sends the session nothing and does not interrupt it; give it work with message_session. A session attached to another coordinator is refused.',
@@ -37,11 +37,16 @@ export const COORD_TOOL_DESCRIPTIONS: Record<(typeof COORD_TOOL_NAMES)[number], 
   message_session:
     'Coordinator only: give an attached session a task. It waits until the session is idle, then reaches it as the user\'s instruction given through you. ' +
     'When the session\'s turn on it ends, ClaudeTerm sends you its last answer as a report and wakes you: do not poll or wait for it. ' +
-    `${COORD_PROGRESS} ${COORD_WORDS}`,
+    `${COORD_PROGRESS} ${COORD_WORDS} ${COORD_LANGUAGE}`,
   read_session:
-    'Coordinator only: one session in detail: its state, a permission prompt or question waiting for the user, its open task, its last report in full and its task list.',
+    'Coordinator only: one session in detail: its state, a permission prompt or question waiting for the user, a question waiting for the person\'s answer through you, its open task, its last report in full and its task list.',
   resolve_session:
-    'Coordinator only: mark an attached session resolved: its work for you is done. A new task un-resolves it.'
+    'Coordinator only: mark an attached session resolved: its work for you is done. A new task un-resolves it.',
+  answer_session:
+    "Coordinator only: pass the person's answers to a session's question. " +
+    "First ask the person the session's questions with AskUserQuestion, one form question for each of the session's questions (you may add the session's name, context or a translation). " +
+    'Then call this with questions: the questions exactly as you wrote them in AskUserQuestion, in the order of the session\'s questions. ' +
+    "ClaudeTerm takes the person's answers from your question form, checks that the person gave them, and types them into the session as the person's words; the session goes on with its task."
 }
 
 /** a start waits for Claude Code to open the new session; the other operations answer at once */
@@ -49,7 +54,7 @@ const START_WAIT_MS = 30_000
 /** how long attach_session waits for its answer: a session on a paired device is attached once that device confirms */
 export const COORD_ATTACH_TIMEOUT_MS = 15_000
 const OP_WAIT_MS = 3000
-/** message_session with the person's words: main reads the coordinator's transcript before it answers */
+/** message_session with the person's words, and answer_session: main reads the coordinator's transcript (and its question forms) before it answers */
 const WORDS_WAIT_MS = 10_000
 
 export async function coordTool(name: (typeof COORD_TOOL_NAMES)[number], op: CoordOp, deps: CoordToolDeps): Promise<ToolResult> {
@@ -59,7 +64,7 @@ export async function coordTool(name: (typeof COORD_TOOL_NAMES)[number], op: Coo
     : { v: 1, type: 'coord', tabId: deps.tabId, ...op }
   let res: PipeResponse
   try {
-    res = await deps.send(deps.pipeName, msg, op.op === 'start' ? START_WAIT_MS : op.op === 'attach' ? COORD_ATTACH_TIMEOUT_MS : op.op === 'message' && op.words != null ? WORDS_WAIT_MS : OP_WAIT_MS)
+    res = await deps.send(deps.pipeName, msg, op.op === 'start' ? START_WAIT_MS : op.op === 'attach' ? COORD_ATTACH_TIMEOUT_MS : (op.op === 'message' && op.words != null) || op.op === 'answer' ? WORDS_WAIT_MS : OP_WAIT_MS)
   } catch (e) {
     if (e instanceof PipeUnavailableError) return { text: 'ClaudeTerm is not running.', isError: true }
     return { text: `ClaudeTerm request failed: ${e instanceof Error ? e.message : String(e)}`, isError: true }

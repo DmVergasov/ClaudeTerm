@@ -32,12 +32,13 @@ interface HaveBuffer {
   dropped: boolean
 }
 
-/** a link that carries mail, with the device at its far end, the accept that device last sent, whether that device knows coordinator records and the person's words, the digest being received and the listeners on the link */
+/** a link that carries mail, with the device at its far end, the accept that device last sent, whether that device knows coordinator records, the person's words and the session questions, the digest being received and the listeners on the link */
 interface MailLink {
   device: string
   accept: MailAccept | null
   coord: boolean
   words: boolean
+  questions: boolean
   have: HaveBuffer
   /** the relays held back until this side has answered the peer's digest; null once they are sent */
   held: MailRecord[] | null
@@ -67,6 +68,7 @@ export class MailSync {
       accept: null,
       coord: hello.coord === 1,
       words: hello.words === 1,
+      questions: hello.questions === 1,
       have: { entries: [], chunks: 0, dropped: false },
       held: [],
       onMessage: (m) => this.onMessage(link, m),
@@ -100,6 +102,14 @@ export class MailSync {
   knowsWords(device: string): boolean {
     for (const entry of this.links.values()) {
       if (entry.device === device) return entry.words
+    }
+    return false
+  }
+
+  /** true while the device is linked and its hello says it knows a session's questions */
+  knowsQuestions(device: string): boolean {
+    for (const entry of this.links.values()) {
+      if (entry.device === device) return entry.questions
     }
     return false
   }
@@ -189,8 +199,10 @@ export class MailSync {
 
   /** The records a link may carry: a peer that does not know coordinator records gets, and gives, only the messages (records with no kind); one that does not know the person's words gets no progress note and no task that carries words. */
   private forLink(entry: MailLink, records: MailRecord[]): MailRecord[] {
-    if (!entry.coord) return records.filter((r) => kindOf(r) === 'message')
-    return entry.words ? records : records.filter((r) => kindOf(r) !== 'progress' && r.words === undefined)
+    // a device that does not know the session questions gets no question, answer or withdraw, whatever else it knows
+    const asked = entry.questions ? records : records.filter((r) => !['question', 'answer', 'withdraw'].includes(kindOf(r)))
+    if (!entry.coord) return asked.filter((r) => kindOf(r) === 'message')
+    return entry.words ? asked : asked.filter((r) => kindOf(r) !== 'progress' && r.words === undefined)
   }
 
   private sendAccept(link: PeerLink): void {

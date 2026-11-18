@@ -7,7 +7,7 @@ export interface PipeHandlers {
   status(msg: StatusMessage): PipeResponse
   subagent(msg: SubagentMessage): PipeResponse
   sessionEnd(msg: SessionEndMessage): PipeResponse
-  attention(msg: AttentionMessage): PipeResponse
+  attention(msg: AttentionMessage): PipeResponse | Promise<PipeResponse>
   turn(msg: TurnMessage): PipeResponse
   editBefore(msg: EditBeforeMessage): PipeResponse
   showDiff(msg: ShowDiffMessage): Promise<PipeResponse>

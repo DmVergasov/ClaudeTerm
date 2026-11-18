@@ -1,6 +1,6 @@
 import { kindOf, type MailAddress, type MailRecord } from '../../shared/mail'
 import { refOf, replaceControls } from './agent-directory'
-import { MESSAGE_WAKE_HEAD, PERSON_WORDS_ANSWER, PERSON_WORDS_CHECKED, PERSON_WORDS_CONTEXT, PERSON_WORDS_HEAD, PERSON_WORDS_NOTE, PROGRESS_WAKE_HEAD, REPORT_WAKE_HEAD, TASK_WAKE_HEAD } from '../../shared/report-wake'
+import { ANSWER_WAKE_HEAD, ANSWERS_ABOVE, MESSAGE_WAKE_HEAD, PERSON_ANSWERS_ASKED, PERSON_ANSWERS_CHECKED, PERSON_ANSWERS_HEAD, PERSON_ANSWERS_NOTE, PERSON_ANSWERS_QUESTION, PERSON_WORDS_ANSWER, PERSON_WORDS_CHECKED, PERSON_WORDS_CONTEXT, PERSON_WORDS_HEAD, PERSON_WORDS_NOTE, PROGRESS_WAKE_HEAD, QUESTION_WAKE_HEAD, REPORT_WAKE_HEAD, TASK_WAKE_HEAD } from '../../shared/report-wake'
 
 /** the blocks of a wake text are separated by a blank line */
 const SEPARATOR = '\n\n'
@@ -44,7 +44,9 @@ function block(r: MailRecord, sender: { folder: string | null; branch: string | 
   if (sender.branch) known.push(`branch ${replaceControls(sender.branch)}`)
   const where = known.length > 0 ? ` (${known.join(', ')})` : ''
   const { header, id } = headerOf(r, ref)
-  return [header, `from: ${replaceControls(r.from.name)} [${ref}]${where}`, id, '', quoted(r.text)].join('\n')
+  // an answer's text is the person's answers, typed into the session by answersText: its block only points at them
+  const body = kindOf(r) === 'answer' ? ANSWERS_ABOVE : r.text
+  return [header, `from: ${replaceControls(r.from.name)} [${ref}]${where}`, id, '', quoted(body)].join('\n')
 }
 
 /** the first and third lines of a block: what the record is, and the id to answer with; a signal is read as a message */
@@ -54,9 +56,19 @@ function headerOf(r: MailRecord, ref: string): { header: string; id: string } {
       const coordinator = r.project === undefined ? 'their coordinator' : `their ${replaceControls(r.project)} coordinator`
       return {
         header: `${TASK_WAKE_HEAD} the user's instruction, given through ${coordinator}.`,
-        id: `id: ${r.id}  (do it; when it is done, end your turn: ClaudeTerm sends your last answer to the coordinator as your report)`
+        id: `id: ${r.id}  (do it, writing in the language of this task, and ask the person only with AskUserQuestion; when it is done, end your turn: ClaudeTerm sends your last answer to the coordinator as your report)`
       }
     }
+    case 'question':
+      return {
+        header: QUESTION_WAKE_HEAD,
+        id: `id: ${r.id}  (ask the person with AskUserQuestion, in their language, then pass the answers with answer_session "${ref}"; read_session "${ref}" shows the session)`
+      }
+    case 'answer':
+      return {
+        header: ANSWER_WAKE_HEAD,
+        id: `id: ${r.id}  (the answer to your question ${r.replyTo}; go on with your task: when it is done, end your turn, and ClaudeTerm sends your last answer to the coordinator as your report)`
+      }
     case 'report':
       return {
         header: `${REPORT_WAKE_HEAD} ${outcomeOf(r)}.`,
@@ -92,6 +104,19 @@ export function wordsText(r: MailRecord, senders: (a: MailAddress) => { folder: 
   const lines = [`${PERSON_WORDS_HEAD} ${replaceControls(r.from.name)} ${PERSON_WORDS_CHECKED}`, PERSON_WORDS_NOTE]
   if (r.context !== undefined) lines.push(PERSON_WORDS_CONTEXT, quoted(r.context))
   lines.push(PERSON_WORDS_ANSWER, quoted(r.words ?? ''))
+  return lines.join('\n') + SEPARATOR + block(r, senders(r.from))
+}
+
+/**
+ * The text typed into a session for the person's answers to its questions: each question as the session asked it, the question as
+ * the coordinator asked the person, and the person's answer, then the answer's block. Only the lines under PERSON_WORDS_ANSWER are the
+ * person's, and every line of them is quoted.
+ */
+export function answersText(r: MailRecord, senders: (a: MailAddress) => { folder: string | null; branch: string | null }): string {
+  const lines = [`${PERSON_ANSWERS_HEAD} ${replaceControls(r.from.name)} ${PERSON_ANSWERS_CHECKED}`, PERSON_ANSWERS_NOTE]
+  for (const a of r.answers ?? []) {
+    lines.push(PERSON_ANSWERS_QUESTION, quoted(a.question), PERSON_ANSWERS_ASKED, quoted(a.asked), PERSON_WORDS_ANSWER, quoted(a.answer))
+  }
   return lines.join('\n') + SEPARATOR + block(r, senders(r.from))
 }
 

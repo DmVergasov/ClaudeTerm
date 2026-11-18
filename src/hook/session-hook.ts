@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
-import { type AttentionMessage, type AttentionReason, cutText, defaultPipeName, isUuid, LAST_MESSAGE_MAX, oneLineText, parseTasks, type PipeMessage, type PipeResponse, PROMPT_TEXT_MAX } from '../shared/protocol'
+import { type AttentionMessage, type AttentionReason, cutText, defaultPipeName, isUuid, LAST_MESSAGE_MAX, oneLineText, parseTasks, type PipeMessage, type PipeResponse, PROMPT_TEXT_MAX, TURN_PROMPT_MAX } from '../shared/protocol'
+import { parseQuestions } from '../shared/questions'
 import { isBridgeId } from '../shared/remote-control'
 import { compactWindow } from './compact-window'
 import { statusFromStatusLine } from './status-line'
@@ -85,7 +86,10 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
   }
   if (event === 'SessionEnd') return { v: 1, type: 'session_end', tabId, sessionId }
   // the folder Claude's shell is in is not the tab's: a Bash cd only looks around; the session's folder comes with the statusLine
-  if (event === 'UserPromptSubmit') return { v: 1, type: 'turn', tabId, sessionId }
+  if (event === 'UserPromptSubmit') {
+    const prompt = typeof input.prompt === 'string' && input.prompt !== '' ? { prompt: cutText(input.prompt, TURN_PROMPT_MAX) } : {}
+    return { v: 1, type: 'turn', tabId, sessionId, ...prompt }
+  }
   if (event === 'PreToolUse' && typeof input.tool_name === 'string' && EDIT_TOOLS.has(input.tool_name)) {
     const ti = isObj(input.tool_input) ? input.tool_input : {}
     const p = typeof ti.file_path === 'string' ? ti.file_path : typeof ti.notebook_path === 'string' ? ti.notebook_path : null
@@ -106,7 +110,9 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
   }
   if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') {
     const prompt = questionPrompt(input.tool_input)
-    return { ...attention('question'), ...(prompt ? { prompt } : {}) }
+    const ti = isObj(input.tool_input) ? input.tool_input : {}
+    const questions = parseQuestions(ti.questions)
+    return { ...attention('question'), ...(prompt ? { prompt } : {}), ...(questions ? { questions } : {}) }
   }
   // background_tasks: the background work still in flight, which wakes the session again when it ends; capped as the pipe parser caps them
   if (event === 'Stop') {
@@ -145,6 +151,19 @@ export function turnContextLine(answer: PipeResponse | null): string {
   return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: answer.info } })}\n`
 }
 
+/** the most characters of the reason the hook denies a session's question with, which Claude Code shows the model */
+export const ASK_REASON_MAX = 2000
+
+/**
+ * The line a PreToolUse hook prints for the answer to a session's AskUserQuestion: a deny decision whose reason the answer carries,
+ * so Claude Code does not ask the question itself. Empty when the answer carries none, or one that is empty or longer than ASK_REASON_MAX.
+ */
+export function askDecisionLine(answer: PipeResponse | null): string {
+  if (answer === null || !answer.ok || typeof answer.info !== 'string') return ''
+  if (answer.info.length < 1 || answer.info.length > ASK_REASON_MAX) return ''
+  return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: answer.info } })}\n`
+}
+
 /** the answer to the message, or null when it did not get one */
 async function deliver(msg: PipeMessage, env: NodeJS.ProcessEnv, send: Sender): Promise<PipeResponse | null> {
   try {
@@ -154,7 +173,7 @@ async function deliver(msg: PipeMessage, env: NodeJS.ProcessEnv, send: Sender): 
   }
 }
 
-/** the text to print on stdout: '' for none, which every event but a coordinator's UserPromptSubmit answer is */
+/** the text to print on stdout: '' for none; only a coordinator's UserPromptSubmit and an AskUserQuestion's PreToolUse print what main answers */
 export async function runSessionHook(stdinText: string, env: NodeJS.ProcessEnv, send: Sender): Promise<string> {
   const tabId = env.CLAUDETERM_TAB_ID
   if (!isUuid(tabId)) return ''
@@ -164,7 +183,9 @@ export async function runSessionHook(stdinText: string, env: NodeJS.ProcessEnv, 
   // the session, its turns and its attention carry the Remote Control id: the app shows Remote Control from them
   const sent: PipeMessage = msg.type === 'session' || msg.type === 'turn' || msg.type === 'attention' ? { ...msg, remote: bridgeId(env) } : msg
   const answer = await deliver(sent, env, send)
-  return msg.type === 'turn' && input?.hook_event_name === 'UserPromptSubmit' ? turnContextLine(answer) : ''
+  if (msg.type === 'turn' && input?.hook_event_name === 'UserPromptSubmit') return turnContextLine(answer)
+  if (input?.hook_event_name === 'PreToolUse' && input.tool_name === 'AskUserQuestion') return askDecisionLine(answer)
+  return ''
 }
 
 export async function runStatusLine(stdinText: string, env: NodeJS.ProcessEnv, send: Sender): Promise<boolean> {

@@ -2,6 +2,7 @@ import { isAbsolute, posix } from 'node:path'
 import { COORD_NAME_MAX, COORD_TASK_MAX, COORD_WORDS_MAX, isWorktreeName, type CoordOp } from './coordinator'
 import { MAIL_TEXT_MAX, MAIL_TO_MAX } from './mail'
 import { NOTE_ADD_MAX, NOTE_ITEM_MAX, NOTE_SIDES, type NoteSide } from './note'
+import { FORM_QUESTION_MAX, QUESTIONS_MAX, parseQuestions, type AskedQuestion } from './questions'
 import { isBridgeId } from './remote-control'
 import { REVIEW_SCOPES, type ReviewScope } from './review'
 import { normalizeTaskList, type TaskList } from './task-list'
@@ -25,6 +26,8 @@ const ATTENTION_REASONS: readonly string[] = ['permission', 'question', 'done'] 
 /** the longest last answer a Stop passes, and the longest line of a pending permission or question, in characters */
 export const LAST_MESSAGE_MAX = 8000
 export const PROMPT_TEXT_MAX = 200
+/** the longest head of the prompt that started a turn, in characters */
+export const TURN_PROMPT_MAX = 300
 
 /** the first max code points of text */
 export function cutText(text: string, max: number): string {
@@ -106,6 +109,8 @@ export interface AttentionMessage {
   tasks?: BackgroundTask[]
   /** permission or question: what waits for the user, as one line */
   prompt?: string
+  /** question only: the questions the session asks the person, as they parse; absent when they do not */
+  questions?: AskedQuestion[]
   /** done without error (Stop): Claude Code's last_assistant_message, at most LAST_MESSAGE_MAX characters */
   lastMessage?: string
   /** the Remote Control session id (CLAUDE_CODE_BRIDGE_SESSION_ID) while the session is connected, null while it is not; absent from a sender that does not say (an older hook, a chat tab's status) */
@@ -118,6 +123,8 @@ export interface TurnMessage {
   type: 'turn'
   tabId: string
   sessionId: string
+  /** the head of the prompt that started the turn, at most TURN_PROMPT_MAX characters; absent when the prompt is not text */
+  prompt?: string
   /** the Remote Control session id (CLAUDE_CODE_BRIDGE_SESSION_ID) while the session is connected, null while it is not; absent from a sender that does not say (an older hook, a chat tab's status) */
   remote?: string | null
 }
@@ -332,6 +339,14 @@ function parseCoordOp(m: Obj): { ok: true; op: CoordOp } | { ok: false; error: s
     if (words === undefined) return { ok: false, error: `words must be 1 to ${COORD_WORDS_MAX} characters` }
     return { ok: true, op: { op: 'start', task: m.task, name, folder, device, worktree, ...(words === null ? {} : { words }) } }
   }
+  if (m.op === 'answer') {
+    if (!sized(m.session, MAIL_TO_MAX)) return { ok: false, error: `session must be 1 to ${MAIL_TO_MAX} characters` }
+    const questions = m.questions
+    if (!Array.isArray(questions) || questions.length < 1 || questions.length > QUESTIONS_MAX || !questions.every((s) => sized(s, FORM_QUESTION_MAX))) {
+      return { ok: false, error: `questions must be 1 to ${QUESTIONS_MAX} texts of 1 to ${FORM_QUESTION_MAX} characters` }
+    }
+    return { ok: true, op: { op: 'answer', session: m.session, questions } }
+  }
   if (m.op === 'attach' || m.op === 'detach' || m.op === 'read' || m.op === 'resolve' || m.op === 'message') {
     if (!sized(m.session, MAIL_TO_MAX)) return { ok: false, error: `session must be 1 to ${MAIL_TO_MAX} characters` }
     if (m.op !== 'message') return { ok: true, op: { op: m.op, session: m.session } }
@@ -385,7 +400,10 @@ export function parsePipeMessage(line: string): ParseResult {
   if (m.type === 'turn' || m.type === 'edit_before') {
     if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
     if (!isUuid(m.sessionId)) return { ok: false, error: 'sessionId must be a UUID' }
-    if (m.type === 'turn') return { ok: true, message: { v: 1, type: 'turn', tabId: m.tabId, sessionId: m.sessionId, ...remoteField(m.remote) } }
+    if (m.type === 'turn') {
+      const prompt = typeof m.prompt === 'string' ? { prompt: cutText(m.prompt, TURN_PROMPT_MAX) } : {}
+      return { ok: true, message: { v: 1, type: 'turn', tabId: m.tabId, sessionId: m.sessionId, ...prompt, ...remoteField(m.remote) } }
+    }
     if (typeof m.toolUseId !== 'string' || !TOOL_USE_ID_RE.test(m.toolUseId)) return { ok: false, error: 'toolUseId must match [A-Za-z0-9_-]{1,200}' }
     if (typeof m.path !== 'string' || !isAbsolute(m.path)) return { ok: false, error: 'path must be an absolute path' }
     return { ok: true, message: { v: 1, type: 'edit_before', tabId: m.tabId, sessionId: m.sessionId, toolUseId: m.toolUseId, path: m.path } }
@@ -475,7 +493,9 @@ export function parsePipeMessage(line: string): ParseResult {
       const line = typeof m.prompt === 'string' ? oneLineText(m.prompt, PROMPT_TEXT_MAX) : ''
       const prompt = m.reason !== 'done' && line !== '' ? { prompt: line } : {}
       const lastMessage = m.reason === 'done' && !('error' in error) && typeof m.lastMessage === 'string' ? { lastMessage: cutText(m.lastMessage, LAST_MESSAGE_MAX) } : {}
-      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background, ...error, ...tasks, ...prompt, ...lastMessage, ...remoteField(m.remote) } }
+      const questions = m.reason === 'question' ? parseQuestions(m.questions) : null
+      const asked = questions === null ? {} : { questions }
+      return { ok: true, message: { v: 1, type: 'attention', ...ids, reason: m.reason as AttentionReason, ...agent, ...background, ...error, ...tasks, ...prompt, ...asked, ...lastMessage, ...remoteField(m.remote) } }
     }
     if (m.type === 'subagent') {
       if (m.event !== 'start' && m.event !== 'stop') return { ok: false, error: 'event must be "start" or "stop"' }

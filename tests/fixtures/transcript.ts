@@ -65,6 +65,22 @@ export function queuedLine(text: string, o: { timestamp?: string; uuid?: string 
   return JSON.stringify({ type: 'attachment', uuid: o.uuid ?? `q-${text.length}`, timestamp, isSidechain: false, attachment: { type: 'queued_command', prompt: text, timestamp, isMeta: false } })
 }
 
+/** the result of an AskUserQuestion as Claude Code writes it: a tool_result, and its toolUseResult with a question per answer, the answer's label first */
+export function formResultLine(answers: Record<string, string>, o: { timestamp?: string; uuid?: string; isSidechain?: boolean } = {}): string {
+  const timestamp = o.timestamp ?? '2026-10-08T10:00:03.000Z'
+  const questions = Object.entries(answers).map(([question, answer]) => ({
+    question, header: 'Q', multiSelect: false, options: [{ label: answer, description: 'The answer' }, { label: 'Other', description: 'Another choice' }]
+  }))
+  return JSON.stringify({
+    type: 'user',
+    uuid: o.uuid ?? `r-${timestamp}`,
+    timestamp,
+    isSidechain: o.isSidechain ?? false,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ask', content: 'User has answered your questions.' }] },
+    toolUseResult: { questions, answers }
+  })
+}
+
 /** what Claude Code records as the origin of a message another root session sent */
 export const PEER_ORIGIN = { kind: 'peer', from: 'uds:build-session', msg_id: 'msg-7', name: 'Build session', fromMode: 'prompting' }
 /** the origin of a subagent's report to its parent: a peer entry, but not a message from another session */

@@ -35,6 +35,17 @@ describe('rowState', () => {
       .toEqual({ group: 'waiting', why: 'prompt', line: 'Waiting for your answer', progress: null })
   })
 
+  it('a waiting question puts the row in Waiting on you, why question, with Asks you and its first line, cut as a note; a prompt in the tab comes first; a question comes before a limit', () => {
+    const asked = 'Where should the browser live?\nSide panel or own tab'
+    expect(rowState({ ...idle, question: asked }, clock))
+      .toEqual({ group: 'waiting', why: 'question', line: 'Asks you: Where should the browser live?', progress: null })
+    expect(rowState({ ...idle, question: 'x'.repeat(150) }, clock).line).toBe(`Asks you: ${'x'.repeat(99)}…`)
+    expect(rowState({ ...idle, question: asked, prompt: { kind: 'permission', text: 'Allow Bash: npm test', since: 0 } }, clock))
+      .toMatchObject({ why: 'prompt', line: 'Allow Bash: npm test' })
+    expect(rowState({ ...idle, question: asked, limit: { resetsAt: null, since: 0 } }, clock)).toMatchObject({ why: 'question', line: 'Asks you: Where should the browser live?' })
+    expect(rowState({ ...idle, question: null }, clock)).toEqual({ group: 'idle', why: null, line: 'Idle', progress: null })
+  })
+
   it('a usage limit says when it resets', () => {
     expect(rowState({ ...idle, limit: { resetsAt: Date.UTC(2026, 10, 14, 22, 0), since: 0 } }, clock))
       .toEqual({ group: 'waiting', why: 'limit', line: 'Usage limit · resets 22:00', progress: null })
