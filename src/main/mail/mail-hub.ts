@@ -301,6 +301,14 @@ export class MailHub {
 
   conversations(of: { device: string | null; session: string } | null): MailConversationView[] {
     const ofKey = of ? this.endKey(of) : null
+    // each device's name is asked once per answer, not once per message: main reads it from the device group's view, which
+    // enumerates the network interfaces (milliseconds on Windows), and the panel asks for hundreds of messages at once
+    const names = new Map<string | null, string | null>()
+    const viewOf = (end: MailAddress): MailEndView => {
+      const device = this.norm(end.device)
+      if (!names.has(device)) names.set(device, this.deps.deviceName(device))
+      return { name: end.name, device, deviceName: names.get(device) ?? deviceFromName(end.name) }
+    }
     const groups = new Map<
       string,
       { keys: [string, string]; a: MailEndView; b: MailEndView; lastAt: number; messages: MailMessageView[] }
@@ -309,7 +317,7 @@ export class MailHub {
     for (const r of this.deps.store.all()) {
       if (isSignal(r)) continue
       const ends = [r.from, r.to]
-        .map(end => ({ key: this.endKey(end), view: this.endView(end) }))
+        .map(end => ({ key: this.endKey(end), view: viewOf(end) }))
         .sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0))
       const key = `${ends[0].key}|${ends[1].key}`
       let group = groups.get(key)
@@ -322,7 +330,7 @@ export class MailHub {
       group.lastAt = Math.max(group.lastAt, r.sentAt)
       group.messages.push({
         id: r.id,
-        from: this.endView(r.from),
+        from: viewOf(r.from),
         side: this.endKey(r.from) === ends[0].key ? 'a' : 'b',
         sentAt: r.sentAt,
         text: r.text,
@@ -587,10 +595,6 @@ export class MailHub {
 
   private sameEnd(a: { device: string | null; session: string }, b: { device: string | null; session: string }): boolean {
     return this.endKey(a) === this.endKey(b)
-  }
-
-  private endView(addr: MailAddress): MailEndView {
-    return { name: addr.name, device: this.norm(addr.device), deviceName: this.deviceLabel(addr) }
   }
 
   private deviceLabel(addr: MailAddress): string {

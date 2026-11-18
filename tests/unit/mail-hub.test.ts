@@ -835,6 +835,31 @@ describe('MailHub unread and conversations', () => {
     const end = conv.a.device === DEV_C ? conv.a : conv.b
     expect(end.deviceName).toBe('Laptop')
   })
+
+  it("answers the panel with 200 messages at once, though a device's name takes 5 ms to look up", () => {
+    // main reads a device's name from the device group's view, which enumerates the network interfaces: about 5 ms on Windows.
+    // Asked once per end of each message, 200 messages held the main process, and so the window, for seconds
+    const slowName = (device: string | null): string | null => {
+      const until = performance.now() + 5
+      while (performance.now() < until) { /* the cost of the device group's view */ }
+      return device === null ? 'Desktop' : 'MacBook'
+    }
+    const { hub, store } = setup({ deviceName: slowName })
+    const ends: MailAddress[] = Array.from({ length: 30 }, (_, i) => ({
+      device: i < 22 ? null : DEV_B,
+      session: `30000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      name: `demo-${i} · ${i < 22 ? 'Desktop' : 'MacBook'}`
+    }))
+    store.merge(Array.from({ length: 200 }, (_, i) => record({ from: ends[i % 30], to: ends[(i * 7 + 1) % 30], text: `message ${i}`, sentAt: NOW - i })), 'local')
+
+    const started = performance.now()
+    const all = hub.conversations(null)
+    const took = performance.now() - started
+
+    expect(all.flatMap(c => c.messages)).toHaveLength(200)
+    expect(all.flatMap(c => c.messages).every(m => m.from.deviceName === (m.from.device === null ? 'Desktop' : 'MacBook'))).toBe(true)
+    expect(took).toBeLessThan(250)
+  })
 })
 
 describe("MailHub messages of Claude Code's own messaging", () => {
