@@ -18,13 +18,29 @@ export const PERSON_WORDS_HEAD = "The person's words, through your coordinator"
 /** the line after the head: ClaudeTerm checked the words are the person's own latest message */
 export const PERSON_WORDS_CHECKED = "(ClaudeTerm checked they are the person's own latest message):"
 /** the line that says whose words are whose: the person's lines, and the task under them the coordinator's */
-export const PERSON_WORDS_NOTE = 'Only the lines under "The person answered" are the person\'s. The task under it is your coordinator\'s: do what the person\'s words cover, and ask the person in this tab before doing anything they do not cover.'
+export const PERSON_WORDS_NOTE = 'Only the lines under "The person answered" are the person\'s. The task under it is your coordinator\'s: do what the person\'s words cover, and ask the person with AskUserQuestion before doing anything they do not cover.'
 /** the line before the coordinator's words the person answered */
 export const PERSON_WORDS_CONTEXT = 'The coordinator had written to the person, right before:'
 /** the line before the person's own words */
 export const PERSON_WORDS_ANSWER = 'The person answered:'
+/** the first line of a session's question block: the coordinator asks the person, and passes the answers back */
+export const QUESTION_WAKE_HEAD = 'Question from a session attached to you, through ClaudeTerm: its task waits for the person\'s answer.'
+/** the first line of an answer's block: the coordinator's answer to the question of this session */
+export const ANSWER_WAKE_HEAD = 'Answer from your coordinator, through ClaudeTerm: the person answered your question.'
+/** the first line of a block that types the person's answers into a session: the coordinator's question form checked them */
+export const PERSON_ANSWERS_HEAD = 'The person\'s answers, through your coordinator'
+/** the line after the head: ClaudeTerm checked the answers in the coordinator's question form */
+export const PERSON_ANSWERS_CHECKED = '(ClaudeTerm checked them in the coordinator\'s question form):'
+/** the line that says whose answers are whose: the person's lines, which answer the session's own questions */
+export const PERSON_ANSWERS_NOTE = 'Only the lines under "The person answered" are the person\'s. They answer the questions you asked with AskUserQuestion: go on with your task.'
+/** the line before the session's question an answer is for */
+export const PERSON_ANSWERS_QUESTION = 'Your question:'
+/** the line before the question as the coordinator asked it */
+export const PERSON_ANSWERS_ASKED = 'The coordinator asked the person:'
+/** the quoted body of an answer's block: the person's answers are in the text typed for the session */
+export const ANSWERS_ABOVE = 'The person\'s answers are above.'
 /** the first lines of the kinds of wake blocks ClaudeTerm writes */
-export const WAKE_HEADS: readonly string[] = [MESSAGE_WAKE_HEAD, TASK_WAKE_HEAD, REPORT_WAKE_HEAD, PROGRESS_WAKE_HEAD, ROLE_NOTE_HEAD, PERSON_WORDS_HEAD]
+export const WAKE_HEADS: readonly string[] = [MESSAGE_WAKE_HEAD, TASK_WAKE_HEAD, REPORT_WAKE_HEAD, PROGRESS_WAKE_HEAD, ROLE_NOTE_HEAD, PERSON_WORDS_HEAD, QUESTION_WAKE_HEAD, ANSWER_WAKE_HEAD, PERSON_ANSWERS_HEAD]
 
 /** a report block as the chat reads it: the mail it came in, the session that sent it (its name and ref), and how its task ended */
 export interface ReportWake {

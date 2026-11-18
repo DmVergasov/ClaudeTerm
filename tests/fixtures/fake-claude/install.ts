@@ -85,6 +85,8 @@ export interface FakeScript {
   initPermissionMode?: string
   beforeInit?: FakeStep[]
   turns: Record<string, FakeStep[]>
+  /** the turns of the texts that start with a key, when the whole text is no key of turns: for a block whose ids the test does not know, as a ClaudeTerm wake block */
+  turnsStarting?: Record<string, FakeStep[]>
   fallback?: FakeStep[]
   /** the percentage the get_context_usage answer gives (the context fill the chat reads); the recorded one when not given, none when null */
   contextPct?: number | null

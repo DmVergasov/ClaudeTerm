@@ -18,6 +18,11 @@ describe('kindLabel', () => {
     expect(kindLabel({ kind: 'progress', outcome: null, reason: null })).toBe('Progress')
   })
 
+  it('kindLabel names a question and the answer a coordinator passes on', () => {
+    expect(kindLabel({ kind: 'question', outcome: null, reason: null })).toBe('Question')
+    expect(kindLabel({ kind: 'answer', outcome: null, reason: null })).toBe('Answer · your words')
+  })
+
   it("kindLabel names a task with the person's words", () => {
     expect(kindLabel({ kind: 'task', outcome: null, reason: null, words: true })).toBe('Task · your words')
     expect(kindLabel({ kind: 'task', outcome: null, reason: null, words: false })).toBe('Task')

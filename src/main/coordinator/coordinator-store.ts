@@ -30,6 +30,8 @@ export interface StoredAttachment {
   lastReport: CoordReport | null
   /** the id of the attach record its device has not confirmed yet; null once confirmed, and always for this device's sessions */
   pending: string | null
+  /** the session's earlier ids, newest first, at most MAX_FORMER */
+  former: string[]
 }
 
 /** A coordinator on this device: the Claude session that coordinates one project. */
@@ -52,6 +54,8 @@ export interface StoredTask {
   state: TaskState
   queuedAt: number
   deliveredAt: number | null
+  /** the id of the question record the task waits on, while its session's question is unanswered; null otherwise */
+  question: string | null
 }
 
 /**
@@ -112,7 +116,7 @@ function parseFormer(v: unknown, own: string): string[] {
 }
 
 /** the former ids once a session takes the id `to`: `from` first, without `to` and without repeats, at most MAX_FORMER */
-function formerAfter(former: string[], from: string, to: string): string[] {
+export function formerAfter(former: string[], from: string, to: string): string[] {
   return [from, ...former.filter((id) => id !== from && id !== to)].slice(0, MAX_FORMER)
 }
 
@@ -130,7 +134,8 @@ function parseAttachment(v: unknown): StoredAttachment | null {
     resolved: v.resolved,
     failed: v.failed,
     pending: isUuid(v.pending) ? v.pending : null,
-    lastReport
+    lastReport,
+    former: parseFormer(v.former, v.session)
   }
 }
 
@@ -139,7 +144,7 @@ function parseTask(v: unknown): StoredTask | null {
   const from = parseAddress(v.from)
   if (!from || !TASK_STATES.includes(v.state as TaskState)) return null
   if (v.deliveredAt !== null && !isTime(v.deliveredAt)) return null
-  return { id: v.id, from, state: v.state as TaskState, queuedAt: v.queuedAt, deliveredAt: v.deliveredAt as number | null }
+  return { id: v.id, from, state: v.state as TaskState, queuedAt: v.queuedAt, deliveredAt: v.deliveredAt as number | null, question: isUuid(v.question) ? v.question : null }
 }
 
 function parseCoordinator(v: unknown): StoredCoordinator | null {
@@ -295,6 +300,7 @@ export class CoordinatorStore {
       for (const a of c.attachments) {
         if (a.device === null && a.session === from) {
           a.session = to
+          a.former = formerAfter(a.former, from, to)
           changed = true
         }
       }

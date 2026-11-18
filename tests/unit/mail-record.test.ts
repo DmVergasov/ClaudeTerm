@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { checkMailRecord, mailFlags, mergeMail } from '../../src/main/mail/mail-record'
-import type { MailRecord } from '../../src/shared/mail'
+import { isSignal, type MailRecord } from '../../src/shared/mail'
 
 const ID = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
 const DEV_A = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -128,10 +128,54 @@ describe('checkMailRecord kinds', () => {
     expect(checkMailRecord({ ...base, kind: 'task', context: 'Shall I?' })).toBeNull()
   })
 
+  it('keeps a question with its replyTo and its questions; one without a UUID replyTo or with questions out of bounds is refused', () => {
+    const question = { question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] }
+    const k = { ...base, kind: 'question', replyTo: TASK_ID, questions: [question] }
+    expect(checkMailRecord(k)).toEqual(k)
+    expect(checkMailRecord({ ...base, kind: 'question', replyTo: null, questions: [question] })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'question', replyTo: TASK_ID })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'question', replyTo: TASK_ID, questions: [] })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'question', replyTo: TASK_ID, questions: [{ ...question, question: '' }] })).toBeNull()
+  })
+
+  it('keeps an answer with its replyTo and its answers; one without them is refused', () => {
+    const answers = [{ question: 'Where should the browser live?', asked: 'docs: Where should the browser live?', answer: 'Side panel' }]
+    const a = { ...base, kind: 'answer', replyTo: TASK_ID, answers }
+    expect(checkMailRecord(a)).toEqual(a)
+    expect(checkMailRecord({ ...base, kind: 'answer', replyTo: null, answers })).toBeNull()
+    expect(checkMailRecord({ ...base, kind: 'answer', replyTo: TASK_ID })).toBeNull()
+  })
+
+  it('a withdraw needs a UUID replyTo', () => {
+    const w = { ...base, kind: 'withdraw', replyTo: TASK_ID }
+    expect(checkMailRecord(w)).toEqual(w)
+    expect(checkMailRecord({ ...base, kind: 'withdraw', replyTo: null })).toBeNull()
+  })
+
+  it('questions on another kind, or answers on another kind, are dropped from the checked copy', () => {
+    const question = { question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] }
+    const answers = [{ question: 'Where should the browser live?', asked: 'docs: Where should the browser live?', answer: 'Side panel' }]
+    expect(checkMailRecord({ ...base, kind: 'task', project: 'acme', questions: [question] })).toEqual({ ...base, kind: 'task', project: 'acme' })
+    expect(checkMailRecord({ ...base, kind: 'question', replyTo: TASK_ID, questions: [question], answers })).toEqual({ ...base, kind: 'question', replyTo: TASK_ID, questions: [question] })
+    expect(checkMailRecord({ ...base, kind: 'withdraw', replyTo: TASK_ID, questions: [question], answers })).toEqual({ ...base, kind: 'withdraw', replyTo: TASK_ID })
+  })
+
   it('refuses words that are only whitespace or control characters, and a context that is', () => {
     expect(checkMailRecord({ ...base, kind: 'task', words: '  \n\t ' })).toBeNull()
     expect(checkMailRecord({ ...base, kind: 'task', words: 'Go.', context: '\u0007' })).toBeNull()
     expect(checkMailRecord({ ...base, kind: 'task', words: '\u0007' })).toBeNull()
+  })
+})
+
+describe('isSignal', () => {
+  it('is true for attach, detach and withdraw, and false for a message, a task and the other kinds', () => {
+    expect(isSignal({ kind: 'attach' })).toBe(true)
+    expect(isSignal({ kind: 'detach' })).toBe(true)
+    expect(isSignal({ kind: 'withdraw' })).toBe(true)
+    expect(isSignal({})).toBe(false)
+    expect(isSignal({ kind: 'task' })).toBe(false)
+    expect(isSignal({ kind: 'question' })).toBe(false)
+    expect(isSignal({ kind: 'answer' })).toBe(false)
   })
 })
 

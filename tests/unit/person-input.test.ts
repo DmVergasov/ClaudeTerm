@@ -104,22 +104,30 @@ describe('PersonInput', () => {
     expect(p.submits('t1')).toEqual([])
   })
 
-  it('a draft survives a dialog: the keys and the Enter typed into the dialog push nothing, and the prompt is what it was', () => {
+  it('a draft survives a dialog: the option picked in the dialog is a submit with no text, and the prompt is what it was', () => {
     const p = new PersonInput()
     p.keys('t', 'Merge it', 1000)
     p.keys('t', '1', 2000, true)
     p.keys('t', '\r', 2100, true)
-    expect(p.submits('t')).toEqual([])
+    expect(p.submits('t')).toEqual([{ at: 2000, texts: null, wrote: false, dialog: true }, { at: 2100, texts: null, wrote: false, dialog: true }])
     p.keys('t', ' now\r', 3000)
-    expect(p.submits('t')).toEqual([{ at: 3000, texts: ['Merge it now'], wrote: true }])
+    expect(p.submits('t')).toEqual([{ at: 2000, texts: null, wrote: false, dialog: true }, { at: 2100, texts: null, wrote: false, dialog: true }, { at: 3000, texts: ['Merge it now'], wrote: true }])
   })
 
-  it('a written answer in a dialog is a submit with no text, and the Enter after a digit answer pushes nothing', () => {
+  it('a written answer in a dialog is a submit with no text the person wrote; a digit answer and its Enter are picks the person did not write', () => {
     const p = new PersonInput()
     p.keys('t', 'no, wait\r', 1000, true)
-    expect(p.submits('t')).toEqual([{ at: 1000, texts: null, wrote: true }])
+    expect(p.submits('t')).toEqual([{ at: 1000, texts: null, wrote: true, dialog: true }])
     p.keys('t', '2\r', 2000, true)
-    expect(p.submits('t')).toEqual([{ at: 1000, texts: null, wrote: true }])
+    expect(p.submits('t')).toEqual([{ at: 1000, texts: null, wrote: true, dialog: true }, { at: 2000, texts: null, wrote: false, dialog: true }, { at: 2000, texts: null, wrote: false, dialog: true }])
+  })
+
+  it('an option picked in a dialog, by its digit or with Enter, is a dialog answer with no text that the person did not write', () => {
+    const p = new PersonInput()
+    p.keys('t', '2', 1000, true)
+    expect(p.submits('t')).toEqual([{ at: 1000, texts: null, wrote: false, dialog: true }])
+    p.keys('t', '\r', 2000, true)
+    expect(p.submits('t')).toEqual([{ at: 1000, texts: null, wrote: false, dialog: true }, { at: 2000, texts: null, wrote: false, dialog: true }])
   })
 
   it('a pasted answer in a dialog is an answer too, and Backspace and Esc in a dialog change nothing', () => {
@@ -127,10 +135,10 @@ describe('PersonInput', () => {
     p.keys('t', 'Merge it', 1000)
     p.keys('t', '\x1b[200~pasted\x1b[201~\x7f\x1b', 2000, true)
     p.keys('t', '\r', 3000, true)
-    expect(p.submits('t')).toEqual([{ at: 3000, texts: null, wrote: true }])
+    expect(p.submits('t')).toEqual([{ at: 3000, texts: null, wrote: true, dialog: true }])
     p.keys('t', ' now\r', 4000)
     expect(p.submits('t')).toEqual([
-      { at: 3000, texts: null, wrote: true },
+      { at: 3000, texts: null, wrote: true, dialog: true },
       { at: 4000, texts: ['Merge it now'], wrote: true }
     ])
   })
@@ -216,13 +224,13 @@ describe('PersonInput', () => {
     expect(p.submits('t')).toEqual([{ at: 3000, texts: null, wrote: true }])
   })
 
-  it('dialogWrote is reset by a draft key: a dialog Enter after "no wait", Esc, a draft key and a digit pushes nothing', () => {
+  it('dialogWrote is reset by a draft key: a dialog digit and its Enter after "no wait", Esc and a draft key are picks the person did not write', () => {
     const p = new PersonInput()
     p.keys('t', 'no wait', 1000, true)
     p.keys('t', '\x1b', 2000, true)
     p.keys('t', 'ok', 3000)
     p.keys('t', '1\r', 4000, true)
-    expect(p.submits('t')).toEqual([])
+    expect(p.submits('t')).toEqual([{ at: 4000, texts: null, wrote: false, dialog: true }, { at: 4000, texts: null, wrote: false, dialog: true }])
   })
 
   it('a CR at the end of a pasted piece waits for the next piece, so a CRLF split across two calls is one line break', () => {
@@ -230,5 +238,22 @@ describe('PersonInput', () => {
     p.keys('t', '\x1b[200~Merge it.\r', 1)
     p.keys('t', '\nThen push.\x1b[201~\r', 2)
     expect(p.submits('t')).toEqual([{ at: 2, texts: ['Merge it.\nThen push.'], wrote: true }])
+  })
+
+  it('a submit made in a dialog carries the dialog mark; a prompt submit, a slash command and a bash line do not', () => {
+    const p = new PersonInput()
+    p.keys('t', '2', 1000, true)
+    p.keys('t', '\r', 2000, true)
+    p.keys('t', 'ok\r', 3000)
+    p.keys('t', '/compact\r', 4000)
+    p.keys('t', '!ls\r', 5000)
+    expect(p.submits('t')).toEqual([
+      { at: 1000, texts: null, wrote: false, dialog: true },
+      { at: 2000, texts: null, wrote: false, dialog: true },
+      { at: 3000, texts: ['ok'], wrote: true },
+      { at: 4000, texts: null, wrote: true },
+      { at: 5000, texts: null, wrote: true }
+    ])
+    expect(p.submits('t').map((s) => s.dialog === true)).toEqual([true, true, false, false, false])
   })
 })

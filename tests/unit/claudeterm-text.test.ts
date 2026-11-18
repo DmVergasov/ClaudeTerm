@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { BACKGROUND_PROMPT, CONTINUE_PROMPT, LIMIT_PROMPT, RESUME_PROMPT } from '../../src/main/auto-continue'
 import { FORWARD_HEAD } from '../../src/main/chat/agent-forward'
 import { isClaudeTermText } from '../../src/main/claudeterm-text'
+import { answersBody, questionsBody } from '../../src/main/coordinator/question-text'
 import { roleBlock } from '../../src/main/coordinator/session-text'
-import { wakeText } from '../../src/main/mail/wake-text'
+import { answersText, wakeText } from '../../src/main/mail/wake-text'
 import type { MailRecord } from '../../src/shared/mail'
 import { MESSAGE_WAKE_HEAD, PERSON_WORDS_HEAD, REPORT_WAKE_HEAD, ROLE_NOTE_HEAD } from '../../src/shared/report-wake'
 
@@ -55,5 +56,16 @@ describe('isClaudeTermText', () => {
     ]
     for (const text of texts) expect(isClaudeTermText(text)).toBe(true)
     expect(texts[3]!.startsWith(ROLE_NOTE_HEAD)).toBe(true)
+  })
+
+  it("the typed answers, a question block and an answer block are ClaudeTerm's text", () => {
+    const QS = [{ question: 'Which parts?', header: '', multiSelect: true, options: [{ label: 'Browser', description: '' }, { label: 'Cookies', description: '' }] }]
+    const answers = [{ question: 'Which parts?', asked: 'parser: Which parts?', answer: 'Browser' }]
+    const question = record({ id: 'm4', kind: 'question', replyTo: null, questions: QS, text: questionsBody(QS) })
+    const answer = record({ id: 'm5', kind: 'answer', from: address('s-coord', 'coord'), replyTo: 'm4', answers, text: answersBody(answers) })
+    for (const text of [wakeText([question], senders), wakeText([answer], senders), answersText(answer, senders)]) {
+      expect(isClaudeTermText(text)).toBe(true)
+      expect(isClaudeTermText(`  ${text}\n`)).toBe(true)
+    }
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WIN } from '../fixtures/platform'
-import { hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine, turnContextLine } from '../../src/hook/session-hook'
+import { askDecisionLine, hookMessage, permissionPrompt, questionPrompt, runSessionHook, runStatusLine, turnContextLine } from '../../src/hook/session-hook'
 import { encodeMessage, type AttentionMessage, type PipeMessage, type PipeResponse } from '../../src/shared/protocol'
 
 const TAB = '0b8f8c1e-3f7a-4c41-9d0a-2b6f1a7e9c11'
@@ -77,6 +77,54 @@ describe('turnContextLine: the line a UserPromptSubmit hook prints for its turn'
     const send = vi.fn(async () => ({ ok: true as const, info: 'Note from ClaudeTerm.' }))
     expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)).toBe('')
     expect(await runSessionHook(prompt, ENV, send)).toBe(line('Note from ClaudeTerm.'))
+  })
+})
+
+describe('askDecisionLine and the AskUserQuestion decision', () => {
+  const line = (reason: string): string => `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })}\n`
+  const browser = { question: 'Where should the browser live?', header: 'Browser', multiSelect: false, options: [{ label: 'Own tab', description: 'A tab of its own' }, { label: 'Side panel', description: 'Beside the chat' }] }
+  const colour = { question: 'Which colour?', header: 'Colour', multiSelect: true, options: [{ label: 'Red', description: 'Warm' }, { label: 'Blue', description: 'Cool' }] }
+  const ask = { session_id: SID, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [browser, colour] } }
+
+  it('the question\'s attention carries the whole questions, and the first question\'s line as its prompt', () => {
+    expect(hookMessage(ask, TAB)).toEqual({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', prompt: 'Where should the browser live?', questions: [browser, colour] })
+  })
+
+  it('questions out of bounds are left out; the attention still goes with its prompt', () => {
+    const five = { ...ask, tool_input: { questions: Array.from({ length: 5 }, (_, i) => ({ ...browser, question: `Question ${i}?` })) } }
+    const msg = hookMessage(five, TAB)
+    expect(msg).toEqual({ v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', prompt: 'Question 0?' })
+    expect(msg).not.toHaveProperty('questions')
+  })
+
+  it('askDecisionLine: an answer with info is the deny line; none, an error, an empty info or one of 2001 characters is \'\'', () => {
+    expect(askDecisionLine({ ok: true, info: 'Ask later.' })).toBe(line('Ask later.'))
+    expect(askDecisionLine({ ok: true, info: 'n'.repeat(2000) })).toBe(line('n'.repeat(2000)))
+    expect(askDecisionLine({ ok: true, info: '' })).toBe('')
+    expect(askDecisionLine({ ok: true, info: 'n'.repeat(2001) })).toBe('')
+    expect(askDecisionLine({ ok: true })).toBe('')
+    expect(askDecisionLine(null)).toBe('')
+    expect(askDecisionLine({ ok: false, error: 'unknown claude tab', info: 'Ask later.' } as unknown as PipeResponse)).toBe('')
+  })
+
+  it('runSessionHook prints the decision for AskUserQuestion\'s PreToolUse when main\'s answer has info, and nothing for a Stop whose answer has info', async () => {
+    const send = vi.fn(async () => ({ ok: true as const, info: 'Ask later.' }))
+    expect(await runSessionHook(JSON.stringify(ask), ENV, send)).toBe(line('Ask later.'))
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'question', prompt: 'Where should the browser live?', questions: [browser, colour], remote: null })
+    expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Stop', stop_hook_active: false }), ENV, send)).toBe('')
+  })
+})
+
+describe('hookMessage: the head of a turn\'s prompt', () => {
+  const turn = (extra: object) => hookMessage({ session_id: SID, hook_event_name: 'UserPromptSubmit', ...extra }, TAB)
+
+  it('the turn carries the head of its prompt, cut to 300 characters', () => {
+    expect(turn({ prompt: 'go on' })).toEqual({ v: 1, type: 'turn', tabId: TAB, sessionId: SID, prompt: 'go on' })
+    expect(turn({ prompt: 'p'.repeat(301) })).toEqual({ v: 1, type: 'turn', tabId: TAB, sessionId: SID, prompt: 'p'.repeat(300) })
+  })
+
+  it('the turn carries no prompt when it is missing, empty or not text', () => {
+    for (const extra of [{}, { prompt: '' }, { prompt: 7 }]) expect(turn(extra)).not.toHaveProperty('prompt')
   })
 })
 
@@ -217,7 +265,7 @@ describe('runSessionHook: review events', () => {
   it('maps UserPromptSubmit to a turn, without the folder Claude\'s shell is in', async () => {
     const send = vi.fn(async () => ({ ok: true as const }))
     await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'UserPromptSubmit', prompt: 'fix it', cwd: CWD }), ENV, send)
-    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'turn', tabId: TAB, sessionId: SID, remote: null })
+    expect(send).toHaveBeenCalledWith('\\\\.\\pipe\\x', { v: 1, type: 'turn', tabId: TAB, sessionId: SID, prompt: 'fix it', remote: null })
   })
 
   it('maps PreToolUse of Edit, Write, MultiEdit and NotebookEdit to edit_before', async () => {

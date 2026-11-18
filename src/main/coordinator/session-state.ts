@@ -18,6 +18,8 @@ export interface RowFacts {
   lastReport: CoordReport | null
   /** the text of the newest progress note on the row's task; absent or null: none */
   note?: string | null
+  /** the first question's text of the session's waiting question, while the person has not answered it; absent or null: none */
+  question?: string | null
 }
 
 export const GROUP_LABELS: Record<CoordGroup, string> = { waiting: 'Waiting on you', working: 'Working', idle: 'Idle', resolved: 'Resolved' }
@@ -35,7 +37,7 @@ export function noteLine(text: string): string {
 
 /** the group, the reason it waits, the line and the progress of a row, from its facts */
 export function rowState(f: RowFacts, clock: (ms: number) => string): { group: CoordGroup; why: CoordWhy; line: string; progress: { done: number; total: number } | null } {
-  const why: CoordWhy = f.prompt ? 'prompt' : f.limit ? 'limit' : f.failed ? 'failed' : null
+  const why: CoordWhy = f.prompt ? 'prompt' : f.question ? 'question' : f.limit ? 'limit' : f.failed ? 'failed' : null
   const group: CoordGroup =
     why !== null ? 'waiting' : f.marker === 'starting' || f.working || f.task !== null ? 'working' : f.resolved ? 'resolved' : 'idle'
   const progress = f.progress && !f.progress.finished ? { done: f.progress.done, total: f.progress.total } : null
@@ -47,6 +49,7 @@ function lineOf(f: RowFacts, clock: (ms: number) => string): string {
   if (f.marker === 'attaching') return 'Attaching…'
   if (f.marker === 'offline') return 'Offline'
   if (f.prompt) return f.prompt.text || (f.prompt.kind === 'permission' ? 'Waiting for your permission' : 'Waiting for your answer')
+  if (f.question) return `Asks you: ${noteLine(f.question)}`
   if (f.limit) return f.limit.resetsAt === null ? 'Usage limit' : `Usage limit · resets ${clock(f.limit.resetsAt)}`
   if (f.failed) return `Failed: ${f.lastReport?.reason ?? 'no reason given'}`
   if (f.closed) return 'Tab closed'

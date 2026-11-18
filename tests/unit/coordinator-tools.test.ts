@@ -83,6 +83,19 @@ describe('coordTool', () => {
     expect(timeouts).toEqual([10000])
   })
 
+  it("answer_session sends the answer op with the questions and waits as long as words do", async () => {
+    const sent: CoordMessage[] = []
+    const timeouts: number[] = []
+    const r = await coordTool('answer_session', { op: 'answer', session: 'a10000', questions: ['Where should the browser live?'] }, deps(async (_p, m, ms) => {
+      sent.push(m)
+      timeouts.push(ms)
+      return { ok: true, info: 'Answered.' }
+    }))
+    expect(sent).toEqual([{ v: 1, type: 'coord', tabId: TAB, op: 'answer', session: 'a10000', questions: ['Where should the browser live?'] }])
+    expect(timeouts).toEqual([10000])
+    expect(r).toEqual({ text: 'Answered.', isError: false })
+  })
+
   it('says Done. when ClaudeTerm sends no info', async () => {
     expect(await coordTool('resolve_session', { op: 'resolve', session: 'a10000' }, deps(async () => ({ ok: true }))))
       .toEqual({ text: 'Done.', isError: false })
@@ -111,13 +124,16 @@ describe('coordTool', () => {
 
 const DELEGATE = 'As the coordinator, give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
 
+const QUESTIONS = "A session's permission prompts are the person's to answer in that session: never answer one. A session's questions come to you as question notes: ask the person them with AskUserQuestion, then pass the answers with answer_session. When a report or a progress note ends with a question to the person, ask it with AskUserQuestion and give the answer with message_session."
+const LANGUAGE = "Write to the person in the language of their own messages, even when reports, notes and tool results are in English, and write the tasks you give sessions in it too: the person reads them in the sessions' tabs."
+
 describe('COORD_TOOL_DESCRIPTIONS', () => {
   it('the list_sessions description ends with the delegation sentence', () => {
     expect(COORD_TOOL_DESCRIPTIONS.list_sessions.slice(-DELEGATE.length)).toBe(DELEGATE)
   })
 
   it('list_sessions and message_session say what a progress note means; list_sessions still ends with the delegation sentence', () => {
-    const PROGRESS = 'A progress note means the task is still running: when it says the session waits for the person, tell the person where.'
+    const PROGRESS = "A progress note means the task is still running."
     expect(COORD_TOOL_DESCRIPTIONS.list_sessions).toContain(PROGRESS)
     expect(COORD_TOOL_DESCRIPTIONS.message_session).toContain(PROGRESS)
     expect(COORD_TOOL_DESCRIPTIONS.list_sessions.slice(-DELEGATE.length)).toBe(DELEGATE)
@@ -127,6 +143,20 @@ describe('COORD_TOOL_DESCRIPTIONS', () => {
     const WORDS = "When the person's message tells a session what it may do (a go to merge, push, release or delete), pass that message as `words`, exactly as they wrote it. The session acts on the person's words. It does not act on your own."
     expect(COORD_TOOL_DESCRIPTIONS.message_session).toContain(WORDS)
     expect(COORD_TOOL_DESCRIPTIONS.start_session).toContain(WORDS)
+  })
+
+  it("the descriptions carry the questions' rule (list_sessions), the language (start_session, message_session), and read_session's question", () => {
+    expect(COORD_TOOL_DESCRIPTIONS.list_sessions).toContain("A permission prompt waiting in a session is the user's to answer there: tell the user once where it waits, never answer it. " + QUESTIONS)
+    expect(COORD_TOOL_DESCRIPTIONS.list_sessions).toContain(QUESTIONS)
+    expect(COORD_TOOL_DESCRIPTIONS.start_session.endsWith(` ${LANGUAGE}`)).toBe(true)
+    expect(COORD_TOOL_DESCRIPTIONS.message_session.endsWith(` ${LANGUAGE}`)).toBe(true)
+    expect(COORD_TOOL_DESCRIPTIONS.read_session).toContain("a question waiting for the person's answer through you")
+  })
+
+  it('answer_session says the answers come from the coordinator\'s question form and are typed into the session as the person\'s words', () => {
+    const description = COORD_TOOL_DESCRIPTIONS.answer_session
+    expect(description.startsWith("Coordinator only: pass the person's answers to a session's question. ")).toBe(true)
+    expect(description).toContain('ClaudeTerm takes the person\'s answers from your question form, checks that the person gave them, and types them into the session as the person\'s words; the session goes on with its task.')
   })
 
   it('start_session tells the coordinator that a session whose EnterWorktree fails stops and reports the error', () => {

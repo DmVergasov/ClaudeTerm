@@ -15,9 +15,13 @@ export const COORD_REFUSED = 'Invalid request'
 /** the line that tells a coordinator's Claude to give the work to its sessions: in the role note, and in the list_sessions text and description */
 export const COORD_DELEGATE = 'give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan.'
 /** what a progress note means, as the coordinator's tool texts and per-turn note say it */
-export const COORD_PROGRESS = 'A progress note means the task is still running: when it says the session waits for the person, tell the person where.'
+export const COORD_PROGRESS = 'A progress note means the task is still running.'
 /** when the coordinator passes the person's words, as its tool texts and per-turn note say it */
 export const COORD_WORDS = "When the person's message tells a session what it may do (a go to merge, push, release or delete), pass that message as `words`, exactly as they wrote it. The session acts on the person's words. It does not act on your own."
+/** the language the coordinator writes in: to the person, and in the tasks it gives sessions; its role note, tool texts and per-turn note say it */
+export const COORD_LANGUAGE = "Write to the person in the language of their own messages, even when reports, notes and tool results are in English, and write the tasks you give sessions in it too: the person reads them in the sessions' tabs."
+/** how a session's questions reach the person, as the coordinator's tool texts and per-turn note say it */
+export const COORD_QUESTIONS = "A session's permission prompts are the person's to answer in that session: never answer one. A session's questions come to you as question notes: ask the person them with AskUserQuestion, then pass the answers with answer_session. When a report or a progress note ends with a question to the person, ask it with AskUserQuestion and give the answer with message_session."
 
 /** where a task given to a session is: queued, delivered as a prompt and not yet started, or open in a turn */
 export type TaskState = 'queued' | 'delivered' | 'open'
@@ -26,7 +30,7 @@ export type CoordGroup = 'waiting' | 'working' | 'idle' | 'resolved'
 /** shown on a row: starting while its tab opens, attaching until its device confirms, offline while its device is not connected */
 export type CoordMarker = 'starting' | 'offline' | 'attaching' | null
 /** why a row waits for the person */
-export type CoordWhy = 'prompt' | 'limit' | 'failed' | null
+export type CoordWhy = 'prompt' | 'limit' | 'failed' | 'question' | null
 
 export interface CoordReport {
   id: string
@@ -94,6 +98,7 @@ export type CoordOp =
   | { op: 'start'; task: string; name: string | null; folder: string | null; device: string | null; worktree: string | null; words?: string | null }
   | { op: 'attach' | 'detach' | 'read' | 'resolve'; session: string }
   | { op: 'message'; session: string; text: string; words?: string | null }
+  | { op: 'answer'; session: string; questions: string[] }
 
 const WORKTREE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 

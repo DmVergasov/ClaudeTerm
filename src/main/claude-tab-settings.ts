@@ -82,7 +82,7 @@ export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string, r
         allow: [
           'mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent',
           'mcp__claudeterm__list_sessions', 'mcp__claudeterm__start_session', 'mcp__claudeterm__attach_session', 'mcp__claudeterm__detach_session',
-          'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session'
+          'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session', 'mcp__claudeterm__answer_session'
         ]
       },
       hooks: {

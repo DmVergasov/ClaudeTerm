@@ -45,6 +45,8 @@ export interface HelloMessage {
   coord?: 1
   /** 1 when the device knows progress notes and the person's words on a task; absent from a device that does not */
   words?: 1
+  /** 1 when the device knows a session's questions, the person's answers and their withdrawal; absent from a device that does not */
+  questions?: 1
   /** this app's version; absent from a device that predates it */
   app?: string
 }
@@ -249,9 +251,11 @@ function parseHello(v: Record<string, unknown>): HelloMessage | null {
   const coord = v.coord === 1 ? { coord: 1 as const } : {}
   // only words: 1 counts, as for coord: a device that sends another value is taken as one that does not know the person's words
   const words = v.words === 1 ? { words: 1 as const } : {}
+  // only questions: 1 counts, as for words: a device that sends another value is taken as one that does not know the questions
+  const questions = v.questions === 1 ? { questions: 1 as const } : {}
   // the app version: a string of 1 to 32 characters of a version, anything else is dropped
   const app = typeof v.app === 'string' && APP_RE.test(v.app) ? { app: v.app } : {}
-  return { t: 'hello', v: v.v, id, name, platform: known, port: port as number, addresses: list, reachedYou, ...mail, ...coord, ...words, ...app }
+  return { t: 'hello', v: v.v, id, name, platform: known, port: port as number, addresses: list, reachedYou, ...mail, ...coord, ...words, ...questions, ...app }
 }
 
 function parseRecords(v: Record<string, unknown>): Message | null {

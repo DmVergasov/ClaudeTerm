@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { CONTINUE_PROMPT } from '../../src/main/auto-continue'
 import { PersonInput, type Submit } from '../../src/main/coordinator/person-input'
-import { checkWords, INPUT_SLACK_MS, WORDS_KEEP_MS, WORDS_LINE_MAX, WORDS_PROMPTS_KEPT, WordsLog, wordsLine, type WordsLine, type WordsPrompt } from '../../src/main/coordinator/person-words'
+import { FORMS_KEPT } from '../../src/main/coordinator/form-answers'
+import { checkWords, INPUT_SLACK_MS, isPersonPrompt, WORDS_KEEP_MS, WORDS_LINE_MAX, WORDS_PROMPTS_KEPT, WordsLog, wordsLine, type WordsLine, type WordsPrompt } from '../../src/main/coordinator/person-words'
 import { COORD_CONTEXT_MAX } from '../../src/shared/coordinator'
 import { PERSON_WORDS_HEAD, REPORT_WAKE_HEAD } from '../../src/shared/report-wake'
+import { FORM_ANSWER_MAX, FORM_QUESTION_MAX, QUESTIONS_MAX } from '../../src/shared/questions'
+import { formResultLine } from '../fixtures/transcript'
 
 const T = Date.parse('2026-11-16T10:00:00.000Z')
 const iso = (s: number): string => new Date(T + s * 1000).toISOString()
@@ -100,6 +103,39 @@ describe('wordsLine', () => {
     expect(wordsLine(queued({}))).toEqual({ kind: 'prompt', id: 'q1', at: T + 20_000, text: 'Stop, do not merge.', plain: true })
     expect(wordsLine(queued({ origin: { kind: 'coordinator' } }))).toMatchObject({ kind: 'prompt', plain: false })
   })
+
+  it('wordsLine reads an AskUserQuestion result as a form, with its answers and its time', () => {
+    expect(wordsLine(formResultLine({ 'docs: Where?': 'Side panel' }, { uuid: 'u-1', timestamp: '2026-11-17T10:00:00.000Z' }))).toEqual({
+      kind: 'form', id: 'u-1', at: Date.parse('2026-11-17T10:00:00.000Z'), answers: [{ question: 'docs: Where?', answer: 'Side panel' }]
+    })
+    // a result with no uuid and no time: its id is its time, and the time is 0
+    const bare = JSON.parse(formResultLine({ Q: 'A' }))
+    delete bare.uuid
+    delete bare.timestamp
+    expect(wordsLine(JSON.stringify(bare))).toEqual({ kind: 'form', id: 'at:0', at: 0, answers: [{ question: 'Q', answer: 'A' }] })
+  })
+
+  it('a sidechain result, one whose answers are not strings or are out of bounds, and a user prompt give no form; the prompt is still a prompt', () => {
+    expect(wordsLine(formResultLine({ Q: 'A' }, { isSidechain: true }))).toBeNull()
+    const withAnswers = (answers: unknown): string => {
+      const o = JSON.parse(formResultLine({ Q: 'A' }))
+      o.toolUseResult.answers = answers
+      return JSON.stringify(o)
+    }
+    const bad: unknown[] = [
+      { Q: 3 },
+      { Q: null },
+      { Q: '' },
+      { [`${'q'.repeat(FORM_QUESTION_MAX)}x`]: 'A' },
+      { Q: `${'a'.repeat(FORM_ANSWER_MAX)}x` },
+      {},
+      Object.fromEntries(Array.from({ length: QUESTIONS_MAX + 1 }, (_, i) => [`Q${i}`, 'A'])),
+      'Side panel',
+      ['Side panel']
+    ]
+    for (const answers of bad) expect(wordsLine(withAnswers(answers))).toBeNull()
+    expect(wordsLine(user('Pick the side panel, the answers are above.'))).toMatchObject({ kind: 'prompt', text: 'Pick the side panel, the answers are above.', plain: true })
+  })
 })
 
 describe('WordsLog', () => {
@@ -153,6 +189,32 @@ describe('WordsLog', () => {
     feed(log, { kind: 'prompt', id: 'n', at: T + 30_000, text: '<task-notification>', plain: false })
     feed(log, prompt('Stop.', 40))
     expect(log.prompts().at(-1)).toMatchObject({ id: 'p40', after: T + 10_000 })
+  })
+
+  it('keeps the latest forms, each once, and a form leaves the prompts and their context as they were', () => {
+    const log = new WordsLog()
+    feed(log, prompt('Merge it.', 10))
+    feed(log, { kind: 'answer', text: 'Which side should the docs go to?' })
+    const form = (n: number): WordsLine => ({ kind: 'form', id: `f${n}`, at: T + n * 1000, answers: [{ question: `Q${n}`, answer: 'A' }] })
+    for (let n = 1; n <= FORMS_KEPT + 1; n++) log.add(form(n), T + 100_000)
+    // the transcript read again from its start: the first form is not kept twice
+    log.add(form(1), T + 100_000)
+    expect(log.forms().map((f) => f.id)).toEqual(Array.from({ length: FORMS_KEPT }, (_, i) => `f${i + 2}`))
+    expect(log.forms()[0]).toEqual({ id: 'f2', at: T + 2000, answers: [{ question: 'Q2', answer: 'A' }] })
+    feed(log, prompt('Docs side panel.', 20))
+    expect(log.prompts()).toEqual([
+      { id: 'p10', at: T + 10_000, text: 'Merge it.', plain: true, after: 0, context: null },
+      { id: 'p20', at: T + 20_000, text: 'Docs side panel.', plain: true, after: T + 10_000, context: 'Which side should the docs go to?' }
+    ])
+  })
+})
+
+describe('isPersonPrompt', () => {
+  it("the person's text is; a wake block, an auto-continue prompt and a task notification are not", () => {
+    expect(isPersonPrompt('  Merge it into master.\n')).toBe(true)
+    expect(isPersonPrompt(`${REPORT_WAKE_HEAD} its task finished.\nfrom: parser [a10000]\nid: x\n\n> Merged.`)).toBe(false)
+    expect(isPersonPrompt(CONTINUE_PROMPT)).toBe(false)
+    expect(isPersonPrompt('<task-notification>\n<task-id>b1</task-id>\n</task-notification>')).toBe(false)
   })
 })
 

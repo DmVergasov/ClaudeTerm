@@ -1,10 +1,12 @@
-import { COORD_DELEGATE, COORD_PROGRESS, COORD_WORDS, type CoordGroup, type CoordSessionRow, type CoordinatorView } from '../../shared/coordinator'
+import { COORD_DELEGATE, COORD_LANGUAGE, COORD_PROGRESS, COORD_QUESTIONS, COORD_WORDS, type CoordGroup, type CoordSessionRow, type CoordinatorView } from '../../shared/coordinator'
 import { ROLE_NOTE_HEAD } from '../../shared/report-wake'
 import { describeTaskList, type TaskList } from '../../shared/task-list'
 import { cutText } from '../../shared/protocol'
 import { replaceControls } from '../mail/agent-directory'
 import { quoted } from '../mail/wake-text'
+import type { AskedQuestion } from '../../shared/questions'
 import type { TabPrompt } from '../tab-waits'
+import { questionsBody } from './question-text'
 import { GROUP_LABELS } from './session-state'
 
 const GROUPS: CoordGroup[] = ['waiting', 'working', 'idle', 'resolved']
@@ -14,12 +16,23 @@ export const ROLE_NOTE_MAX = 1200
 const NAME_MAX = 40
 const LINE_MAX = 60
 
+/** the deny reason of a session's AskUserQuestion: ClaudeTerm sends its questions to the coordinator, which asks the person */
+export const ASK_REASON = "ClaudeTerm sent these questions to your coordinator, which asks the person in its own question form. Do not ask them again, with a form or in text. End your turn now with one short line saying that you wait for the person's answer. The answer comes as your next message, and your task goes on then."
+
+/**
+ * The instruction a session's every turn starts with while it works on a task from a coordinator: the coordinator's name, the person's
+ * questions go through the coordinator, and the language of the task. The name is cut and made one line.
+ */
+export function sessionTurnNoteText(coordinatorName: string): string {
+  return `Note from ClaudeTerm, not from the user: you work on a task from your coordinator ${cutText(replaceControls(coordinatorName), NAME_MAX)}. The person talks to you through it: ask them only with AskUserQuestion, which ClaudeTerm passes to the coordinator, and never as a question in your answer. Write in the language of your task.`
+}
+
 /**
  * The instruction a coordinator's every turn starts with, as Claude Code's additional context for it: the project, the line
  * that gives the work to the sessions, and what a report and a session's prompt mean. The project name is cut and made one line.
  */
 export function turnNoteText(projectName: string): string {
-  return `Note from ClaudeTerm, not from the user: you are the coordinator of ${cutText(replaceControls(projectName), NAME_MAX)}: ${COORD_DELEGATE} Reports come by themselves when a task ends. ${COORD_PROGRESS} ${COORD_WORDS} A session's permission prompts and questions are the person's to answer, in that session.`
+  return `Note from ClaudeTerm, not from the user: you are the coordinator of ${cutText(replaceControls(projectName), NAME_MAX)}: ${COORD_DELEGATE} Reports come by themselves when a task ends. ${COORD_PROGRESS} ${COORD_WORDS} ${COORD_QUESTIONS} ${COORD_LANGUAGE}`
 }
 
 function rowLine(r: CoordSessionRow, clock: (ms: number) => string): string {
@@ -53,6 +66,11 @@ export function listText(v: CoordinatorView, clock: (ms: number) => string): str
     const names = prompted.map((r) => replaceControls(r.name)).join(', ')
     lines.push(`- A permission prompt or question waits for the user in ${names}: it is theirs to answer there; tell them once where it waits.`)
   }
+  const questioned = v.sessions.filter((r) => r.why === 'question')
+  if (questioned.length > 0) {
+    const names = questioned.map((r) => replaceControls(r.name)).join(', ')
+    lines.push(`- A question from ${names} waits for the person: ask it with AskUserQuestion (read_session shows it), then pass the answers with answer_session.`)
+  }
   if (v.sessions.some((r) => r.why === 'limit')) lines.push('- A usage limit is not a failure: the session goes on after the reset.')
   if (v.sessions.some((r) => r.marker === 'offline')) {
     lines.push('- A session marked Offline is on a device that is not connected: a task given to it goes out when the device connects; detach_session works meanwhile.')
@@ -65,7 +83,7 @@ export function listText(v: CoordinatorView, clock: (ms: number) => string): str
 /** the text of read_session: one session in full, with its prompt, its open task, its task list and its last report */
 export function readText(
   row: CoordSessionRow,
-  d: { prompt: TabPrompt | null; report: string | null; taskList: TaskList | null },
+  d: { prompt: TabPrompt | null; report: string | null; taskList: TaskList | null; question: readonly AskedQuestion[] | null },
   clock: (ms: number) => string
 ): string {
   const lines = [`${replaceControls(row.name)}${row.ref ? ` [${row.ref}]` : ''}`, `State: ${GROUP_LABELS[row.group]} · ${row.line}`]
@@ -74,6 +92,7 @@ export function readText(
     const what = d.prompt.text || (d.prompt.kind === 'permission' ? 'a permission prompt' : 'a question')
     lines.push(`Waiting for the user: ${what}. It is the user's to answer in that session.`)
   }
+  if (d.question !== null) lines.push("Waiting for the person's answer to its question:", questionsBody(d.question))
   lines.push(row.task ? `Open task: ${row.task.state} since ${clock(row.task.since)} (id ${row.task.id})` : 'No open task.')
   if (d.taskList) lines.push(`Task list: ${describeTaskList(d.taskList)}`)
   if (row.lastReport) {
@@ -91,7 +110,7 @@ export function readText(
  * when there is one. Names and lines are cut and made one line each, so no session can add a line to the note.
  */
 export function roleNoteText(v: CoordinatorView, maxSessions = 8): string {
-  const head = `You coordinate ${replaceControls(v.project.name)} in ClaudeTerm: ${COORD_DELEGATE}`
+  const head = `You coordinate ${replaceControls(v.project.name)} in ClaudeTerm: ${COORD_DELEGATE} ${COORD_LANGUAGE}`
   let text: string
   if (v.sessions.length === 0) {
     text = `${head} No sessions are attached yet: attach one with attach_session, or start one with start_session.`

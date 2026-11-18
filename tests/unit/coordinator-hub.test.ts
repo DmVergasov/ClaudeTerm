@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { LIMIT_ERROR } from '../../src/main/auto-continue'
-import { HUB_TEXT, START_WAIT_MS, worktreeInstruction, type HubTab } from '../../src/main/coordinator/coordinator-hub'
+import { CONTINUE_PROMPT, LIMIT_ERROR } from '../../src/main/auto-continue'
+import { HUB_TEXT, START_WAIT_MS, WITHDRAW_TEXT, worktreeInstruction, type HubTab } from '../../src/main/coordinator/coordinator-hub'
 import { CoordinatorStore, MAX_ATTACHMENTS, MAX_COORDINATORS, MAX_HOSTED, MAX_TASKS_PER_SESSION, type StoredAttachment } from '../../src/main/coordinator/coordinator-store'
+import { FORM_SLACK_MS } from '../../src/main/coordinator/form-answers'
 import { WORDS_KEEP_MS } from '../../src/main/coordinator/person-words'
+import { questionsBody } from '../../src/main/coordinator/question-text'
 import { REASONS } from '../../src/main/coordinator/report-text'
-import { wordsText } from '../../src/main/mail/wake-text'
+import { ASK_REASON, sessionTurnNoteText, turnNoteText } from '../../src/main/coordinator/session-text'
+import { answersText, wordsText } from '../../src/main/mail/wake-text'
 import { refOf } from '../../src/main/mail/agent-directory'
 import type { CoordOp } from '../../src/shared/coordinator'
 import type { MailRecord } from '../../src/shared/mail'
-import { ACME, BETA, NOW, S, TITLES, cleanWorlds, fire, records, said, tab, uid, world, type World } from '../fixtures/coordinator-world'
+import type { AskedQuestion } from '../../src/shared/questions'
+import { TASK_WAKE_HEAD } from '../../src/shared/report-wake'
+import { ACME, BETA, DEV_C, DEV_S, L, NOW, S, TITLES, attachDirect, cleanWorlds, deviceWorlds, fire, formed, peerOf, records, said, tab, uid, world, type World } from '../fixtures/coordinator-world'
 
 const SELF = 'd0000000-0000-4000-8000-0000000000dd'
 const PROBLEM =
@@ -29,7 +34,8 @@ const attachment = (session: string, name = 'parser · Desktop'): StoredAttachme
   resolved: false,
   failed: false,
   pending: null,
-  lastReport: null
+  lastReport: null,
+  former: []
 })
 
 describe('roles', () => {
@@ -185,7 +191,7 @@ describe('roles', () => {
       coordinator: { device: null, session: NEW1, name: 'coord · Desktop' },
       project: 'acme',
       former: [S.one],
-      tasks: [{ id: task.id, from: { device: null, session: NEW1, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW, deliveredAt: null }]
+      tasks: [{ id: task.id, from: { device: null, session: NEW1, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW, deliveredAt: null, question: null }]
     })
     expect(w.store.coordinator(NEW1)!.attachments.map((a) => a.session)).toEqual([NEW2])
   })
@@ -197,7 +203,7 @@ describe('the turn note', () => {
     expect(w.hub.turnNote('tab-c')).toBeNull()
     w.hub.make('tab-c', false)
     expect(w.hub.turnNote('tab-c')).toBe(
-      'Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Reports come by themselves when a task ends. A progress note means the task is still running: when it says the session waits for the person, tell the person where. When the person\'s message tells a session what it may do (a go to merge, push, release or delete), pass that message as `words`, exactly as they wrote it. The session acts on the person\'s words. It does not act on your own. A session\'s permission prompts and questions are the person\'s to answer, in that session.'
+      'Note from ClaudeTerm, not from the user: you are the coordinator of acme: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Reports come by themselves when a task ends. A progress note means the task is still running. When the person\'s message tells a session what it may do (a go to merge, push, release or delete), pass that message as `words`, exactly as they wrote it. The session acts on the person\'s words. It does not act on your own. A session\'s permission prompts are the person\'s to answer in that session: never answer one. A session\'s questions come to you as question notes: ask the person them with AskUserQuestion, then pass the answers with answer_session. When a report or a progress note ends with a question to the person, ask it with AskUserQuestion and give the answer with message_session. Write to the person in the language of their own messages, even when reports, notes and tool results are in English, and write the tasks you give sessions in it too: the person reads them in the sessions\' tabs.'
     )
     expect(w.hub.turnNote('tab-1')).toBeNull()
     w.hub.stop('tab-c')
@@ -354,7 +360,7 @@ describe('tasks given', () => {
     })
     const [t] = records(w, 'task')
     expect(t).toMatchObject({ from: { session: S.coord, name: 'coord · Desktop' }, to: { session: S.one }, text: 'Fix the parser.', project: 'acme', delivered: false })
-    expect(w.store.hosted(S.one)!.tasks).toEqual([{ id: t.id, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW, deliveredAt: null }])
+    expect(w.store.hosted(S.one)!.tasks).toEqual([{ id: t.id, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW, deliveredAt: null, question: null }])
     expect(w.store.coordinator(S.coord)!.attachments[0]).toMatchObject({ resolved: false, failed: false })
     expect(w.rechecks).toBeGreaterThan(0)
     expect(w.pokes).toEqual(['tab-1'])
@@ -494,7 +500,7 @@ describe('tasks given', () => {
     // a queued task older than both, whose record the mail store does not hold: it would block the queue for ever
     const gone = uid(0x5001)
     const h = w.store.hosted(S.one)!
-    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW - 1, deliveredAt: null }, ...h.tasks] })
+    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW - 1, deliveredAt: null, question: null }, ...h.tasks] })
     expect(w.mail.get(gone)).toBeUndefined()
 
     expect(w.hub.accepts(first, 'tab-1', 'idle')).toBe(true)
@@ -508,7 +514,7 @@ describe('tasks given', () => {
     w.hub.attach('tab-c', 'a10000')
     const gone = uid(0x5002)
     const h = w.store.hosted(S.one)!
-    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW, deliveredAt: null }] })
+    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW, deliveredAt: null, question: null }] })
     expect(w.hub.view('tab-c')!.sessions[0].task).toBeNull()
     expect(w.hub.message('tab-c', 'a10000', 'Fix the parser.')).toMatchObject({ ok: true })
     const [t] = records(w, 'task')
@@ -522,7 +528,7 @@ describe('tasks given', () => {
     for (let i = 0; i < MAX_TASKS_PER_SESSION - 1; i++) expect(w.hub.message('tab-c', 'a10000', `Task ${i}.`)).toMatchObject({ ok: true })
     const gone = uid(0x5003)
     const h = w.store.hosted(S.one)!
-    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW - 1, deliveredAt: null }, ...h.tasks] })
+    w.store.putHosted({ ...h, tasks: [{ id: gone, from: { device: null, session: S.coord, name: 'coord · Desktop' }, state: 'queued', queuedAt: NOW - 1, deliveredAt: null, question: null }, ...h.tasks] })
     expect(w.hub.message('tab-c', 'a10000', 'One more.')).toMatchObject({ ok: true })
     expect(w.store.hosted(S.one)!.tasks.some((t) => t.id === gone)).toBe(false)
     expect(records(w, 'task')).toHaveLength(MAX_TASKS_PER_SESSION)
@@ -811,6 +817,733 @@ describe("a task with the person's words in its session's tab", () => {
     const [, newer] = records(w, 'task')
     expect(w.store.hosted(NEW)!.tasks.map((t) => t.id)).toEqual([newer.id])
     expect(records(w, 'report')).toMatchObject([{ replyTo: task.id, outcome: 'stopped', reason: REASONS.replaced }])
+  })
+})
+
+describe('a session asks its coordinator', () => {
+  const QS: AskedQuestion[] = [
+    { question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] },
+    { question: 'Which parts?', header: '', multiSelect: true, options: [{ label: 'Browser', description: '' }, { label: 'Cookies', description: '' }] }
+  ]
+  // more text than one question record holds: four questions with long options
+  const TOO_LONG: AskedQuestion[] = [1, 2, 3, 4].map((i) => ({
+    question: `${i}${'q'.repeat(1999)}`,
+    header: '',
+    multiSelect: false,
+    options: [
+      { label: 'a', description: 'd'.repeat(500) },
+      { label: 'b', description: 'd'.repeat(500) }
+    ]
+  }))
+
+  /** tab-c coordinates acme and gives tab-1 a task that tab-1 has open: its turn has started; returns the task's id */
+  const onTask = (w: World): string => {
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    const task = records(w, 'task')[0]
+    w.hub.handedOver('tab-1', [task], 'prompt')
+    w.hub.turnStarted('tab-1')
+    return task.id
+  }
+
+  it('a session on an open task asks: a question goes to its coordinator, the task waits on it, and the hook gets ASK_REASON', () => {
+    const w = world()
+    const taskId = onTask(w)
+    expect(w.hub.ask('tab-1', QS)).toBe(ASK_REASON)
+    const [q] = records(w, 'question')
+    expect(q).toMatchObject({ from: { session: S.one }, to: { session: S.coord }, replyTo: taskId, questions: QS, text: questionsBody(QS), delivered: false })
+    expect(w.store.hosted(S.one)!.tasks[0]).toMatchObject({ id: taskId, state: 'open', question: q!.id })
+  })
+
+  it('no question goes out, and null comes back, for the coordinator, a session without a task or with a queued one, questions that did not parse or do not fit a record, a coordinator whose tab is gone, or agent messages off', () => {
+    const none = (w: World, tabId: string, questions: AskedQuestion[] | null): void => {
+      expect(w.hub.ask(tabId, questions)).toBeNull()
+      expect(records(w, 'question')).toEqual([])
+    }
+    let w = world()
+    onTask(w)
+    none(w, 'tab-c', QS)
+    none(w, 'tab-2', QS)
+    none(w, 'tab-1', null)
+    none(w, 'tab-1', TOO_LONG)
+
+    w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    none(w, 'tab-1', QS)
+
+    w = world()
+    onTask(w)
+    w.tabs = w.tabs.filter((t) => t.tabId !== 'tab-c')
+    none(w, 'tab-1', QS)
+
+    w = world()
+    onTask(w)
+    update(w, 'tab-c', { exited: true })
+    none(w, 'tab-1', QS)
+
+    w = world()
+    onTask(w)
+    w.problem = PROBLEM
+    none(w, 'tab-1', QS)
+  })
+
+  it("while its question waits, the task's turn end arms no settle and sends no progress note", () => {
+    const w = world()
+    onTask(w)
+    w.hub.ask('tab-1', QS)
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'I wait for the answer.' })
+    expect(w.timers).toEqual([])
+    w.hub.turnEnded('tab-1', { background: true, lastMessage: 'I wait for the answer.' })
+    expect(records(w, 'progress')).toEqual([])
+    expect(records(w, 'report')).toEqual([])
+  })
+
+  it('a second question on the same task withdraws the first and waits on the second', () => {
+    const w = world()
+    onTask(w)
+    expect(w.hub.ask('tab-1', QS)).toBe(ASK_REASON)
+    expect(w.hub.ask('tab-1', QS)).toBe(ASK_REASON)
+    const [first, second] = records(w, 'question')
+    expect(records(w, 'withdraw')).toMatchObject([{ replyTo: first.id, text: WITHDRAW_TEXT, to: { session: S.coord } }])
+    expect(w.store.hosted(S.one)!.tasks[0].question).toBe(second.id)
+  })
+
+  it("a second question that falls back to the tab's form withdraws the waiting one, and the task's turn end settles again", () => {
+    const w = world()
+    onTask(w)
+    expect(w.hub.ask('tab-1', QS)).toBe(ASK_REASON)
+    const [first] = records(w, 'question')
+    w.problem = PROBLEM
+    expect(w.hub.ask('tab-1', QS)).toBeNull()
+    expect(records(w, 'question')).toHaveLength(1)
+    expect(records(w, 'withdraw')).toMatchObject([{ replyTo: first.id, text: WITHDRAW_TEXT, to: { session: S.coord } }])
+    expect(w.store.hosted(S.one)!.tasks[0].question).toBeNull()
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Asked in my tab.' })
+    expect(w.timers.map((t) => t.ms)).toEqual([2000])
+  })
+
+  it('a turn end settles nothing while the stored task waits on its question, as after a restart', () => {
+    const w = world()
+    onTask(w)
+    const h = w.store.hosted(S.one)!
+    w.store.putHosted({ ...h, tasks: h.tasks.map((t) => ({ ...t, question: uid(0x9001) })) })
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'I wait for the answer.' })
+    expect(w.timers).toEqual([])
+    expect(records(w, 'report')).toEqual([])
+  })
+
+  it("a session's turn on its task gets the session's turn note; a session without a task gets none; the coordinator its own", () => {
+    const w = world()
+    onTask(w)
+    expect(w.hub.turnNote('tab-1')).toBe(sessionTurnNoteText('coord · Desktop'))
+    expect(w.hub.turnNote('tab-2')).toBeNull()
+    expect(w.hub.turnNote('tab-c')).toBe(turnNoteText('acme'))
+  })
+
+  it('on a paired device the question goes to the coordinator only while its device is online, knows questions, coordinator records and mail', () => {
+    const { s } = deviceWorlds()
+    // Laptop's parser holds an open task of Studio's coordinator
+    s.store.putHosted({
+      session: L.one,
+      coordinator: { device: DEV_C, session: S.coord, name: 'coord · Studio' },
+      project: 'acme',
+      former: [],
+      tasks: [{ id: uid(0x5001), from: { device: DEV_C, session: S.coord, name: 'coord · Studio' }, state: 'open', queuedAt: NOW, deliveredAt: NOW, question: null }]
+    })
+    for (const over of [{ online: false }, { coord: false }, { questions: false }, { mail: false }]) {
+      s.peers = [peerOf(DEV_C, 'Studio', over)]
+      expect(s.hub.ask('tab-l1', QS)).toBeNull()
+    }
+    expect(records(s, 'question')).toEqual([])
+    s.peers = [peerOf(DEV_C, 'Studio')]
+    expect(s.hub.ask('tab-l1', QS)).toBe(ASK_REASON)
+    expect(records(s, 'question')).toMatchObject([{ from: { device: DEV_S, session: L.one }, to: { device: DEV_C, session: S.coord }, questions: QS }])
+  })
+})
+
+describe("the coordinator's side of a question", () => {
+  const ASKED: AskedQuestion[] = [
+    { question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] },
+    { question: 'Which parts?', header: '', multiSelect: true, options: [{ label: 'Browser', description: '' }, { label: 'Cookies', description: '' }] }
+  ]
+
+  /** tab-c coordinates acme with parser attached, and parser's tab holds an open task of it: its turn has started */
+  const working = (w: World): void => {
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    const task = records(w, 'task')[0]
+    w.hub.handedOver('tab-1', [task], 'prompt')
+    w.hub.turnStarted('tab-1')
+  }
+
+  /** a question from Laptop's parser to Studio's coordinator, as the other device's sync brings it */
+  const remoteQuestion = (id: number, to: string): MailRecord => ({
+    v: 1,
+    id: uid(id),
+    kind: 'question',
+    from: { device: DEV_S, session: L.one, name: 'parser · Laptop' },
+    to: { device: null, session: to, name: 'coord · Desktop' },
+    replyTo: uid(id + 1),
+    text: questionsBody(ASKED),
+    questions: ASKED,
+    sentAt: NOW,
+    delivered: false,
+    read: false
+  })
+
+  it('a question pokes the coordinator\'s tab, and the session\'s row and the marks show it waiting', () => {
+    const w = world()
+    working(w)
+    expect(w.hub.ask('tab-1', ASKED)).toBe(ASK_REASON)
+    expect(w.pokes).toContain('tab-c')
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'waiting', why: 'question', line: 'Asks you: Where should the browser live?' })
+    expect(w.hub.marks()['tab-c']).toEqual({ role: 'coordinator', project: 'acme', sessions: 1, waiting: 1 })
+  })
+
+  it("the coordinator's tab takes a question as a prompt or from its watcher; a session's tab does not, and no tab takes an answer", () => {
+    const w = world()
+    working(w)
+    w.hub.ask('tab-1', ASKED)
+    const [q] = records(w, 'question')
+    expect(w.hub.accepts(q!, 'tab-c', 'prompt')).toBe(true)
+    expect(w.hub.accepts(q!, 'tab-c', 'idle')).toBe(true)
+    expect(w.hub.accepts(q!, 'tab-1', 'prompt')).toBe(false)
+    expect(w.hub.accepts(q!, 'tab-1', 'idle')).toBe(false)
+    const answer: MailRecord = { ...q!, id: uid(0x8001), kind: 'answer', replyTo: q!.id, answers: [{ question: 'Where should the browser live?', asked: 'Where should the browser live?', answer: 'Own tab' }] }
+    for (const tabId of ['tab-c', 'tab-1']) {
+      for (const into of ['idle', 'running', 'prompt'] as const) expect(w.hub.accepts(answer, tabId, into)).toBe(false)
+    }
+  })
+
+  it('a question from another device is taken by the coordinator only while its session is attached to it', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    // the question is on record first: with no attachment it wakes nobody, and is marked delivered and read
+    const q = remoteQuestion(0x7101, S.coord)
+    w.mail.add(q)
+    expect(w.mail.get(q.id)).toMatchObject({ delivered: true, read: true })
+    expect(w.hub.accepts(q, 'tab-c', 'prompt')).toBe(false)
+    attachDirect(w)
+    const asked: MailRecord = { ...remoteQuestion(0x7103, S.coord), sentAt: NOW + 1 }
+    w.mail.add(asked)
+    expect(w.pokes).toContain('tab-c')
+    expect(w.hub.accepts(asked, 'tab-c', 'prompt')).toBe(true)
+  })
+
+  it('read_session shows the question in full, and list_sessions says to ask it and pass it with answer_session', () => {
+    const w = world()
+    working(w)
+    w.hub.ask('tab-1', ASKED)
+    expect(w.hub.read('tab-c', 'a10000')).toEqual({ ok: true, info: expect.stringContaining(`Waiting for the person's answer to its question:\n${questionsBody(ASKED)}`) })
+    expect(w.hub.list('tab-c')).toEqual({
+      ok: true,
+      info: expect.stringContaining('- A question from parser · Desktop waits for the person: ask it with AskUserQuestion (read_session shows it), then pass the answers with answer_session.')
+    })
+  })
+
+  it('a withdraw marks a question the coordinator has not taken delivered and read, and the row leaves Waiting on you', () => {
+    const w = world()
+    working(w)
+    w.hub.ask('tab-1', ASKED)
+    const [q] = records(w, 'question')
+    // the person answers in the session's own tab: its form takes the place of the question
+    expect(w.hub.ask('tab-1', null)).toBeNull()
+    expect(records(w, 'withdraw')).toMatchObject([{ replyTo: q!.id, to: { session: S.coord } }])
+    expect(w.mail.get(q!.id)).toMatchObject({ delivered: true, read: true })
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'working', why: null })
+    expect(w.hub.marks()['tab-c']).toEqual({ role: 'coordinator', project: 'acme', sessions: 1, waiting: 0 })
+  })
+
+  it("a report on the task, a new task of the coordinator, or a newer question closes the question on the coordinator's side", () => {
+    let w = world()
+    working(w)
+    w.hub.ask('tab-1', ASKED)
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ why: 'question' })
+    w.hub.interrupted('tab-1')
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'idle', why: null, line: 'Stopped by you' })
+
+    w = world()
+    working(w)
+    w.hub.ask('tab-1', ASKED)
+    w.now += 1000
+    w.hub.message('tab-c', 'a10000', 'Also check the tests.')
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'working', why: null })
+
+    w = world()
+    working(w)
+    w.hub.ask('tab-1', ASKED)
+    w.now += 1000
+    w.hub.ask('tab-1', [ASKED[1]!])
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'waiting', why: 'question', line: 'Asks you: Which parts?' })
+  })
+
+  it('a withdraw that came before its question wakes no tab, and accepts refuses the question', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    attachDirect(w)
+    const q = remoteQuestion(0x7301, S.coord)
+    const withdraw: MailRecord = { v: 1, id: uid(0x7303), kind: 'withdraw', from: q.from, to: q.to, replyTo: q.id, text: WITHDRAW_TEXT, sentAt: NOW, delivered: false, read: false }
+    w.mail.add(withdraw)
+    w.pokes.length = 0
+    w.mail.add(q)
+    expect(w.pokes).toEqual([])
+    expect(w.mail.get(q.id)).toMatchObject({ delivered: true, read: true })
+    expect(w.hub.accepts(q, 'tab-c', 'prompt')).toBe(false)
+    expect(w.hub.view('tab-c')!.waiting).toBe(0)
+  })
+
+  it('a withdrawal from another session or another device does not close or mark the question', () => {
+    const w = world()
+    working(w)
+    w.hub.ask('tab-1', ASKED)
+    const [q] = records(w, 'question')
+    const forged = (id: number, from: MailRecord['from']): MailRecord => ({ v: 1, id: uid(id), kind: 'withdraw', from, to: { device: null, session: S.coord, name: 'coord · Desktop' }, replyTo: q!.id, text: WITHDRAW_TEXT, sentAt: NOW + 1, delivered: false, read: false })
+    w.mail.add(forged(0x7401, { device: null, session: S.two, name: 'docs · Desktop' }))
+    w.mail.add(forged(0x7402, { device: DEV_S, session: S.one, name: 'parser · Desktop' }))
+    expect(w.mail.get(q!.id)).toMatchObject({ delivered: false, read: false })
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'waiting', why: 'question', line: 'Asks you: Where should the browser live?' })
+  })
+
+  it('a question forwarded to a former id keeps the original id: a withdraw of the original closes the row', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.make('tab-2', true)
+    // Laptop's parser is attached to the current coordinator, tab-2's session
+    const c = w.store.coordinator(S.two)!
+    w.store.putCoordinator({ ...c, attachments: [{ device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null, former: [] }] })
+    const q = remoteQuestion(0x7501, S.coord)
+    w.mail.add(q)
+    expect(records(w, 'question').filter((r) => r.id !== q.id)).toHaveLength(1)
+    expect(w.hub.view('tab-2')!.sessions[0]).toMatchObject({ group: 'waiting', why: 'question' })
+    const withdraw: MailRecord = { v: 1, id: uid(0x7503), kind: 'withdraw', from: q.from, to: { device: null, session: S.two, name: 'coord · Desktop' }, replyTo: q.id, text: WITHDRAW_TEXT, sentAt: NOW + 1, delivered: false, read: false }
+    w.mail.add(withdraw)
+    expect(w.hub.view('tab-2')!.sessions[0]).toMatchObject({ group: 'idle', why: null })
+  })
+
+  it('a question whose task got its report before the coordinator took it wakes nobody', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    attachDirect(w)
+    const q = remoteQuestion(0x7601, S.coord)
+    const report: MailRecord = { v: 1, id: uid(0x7603), kind: 'report', from: q.from, to: q.to, replyTo: q.replyTo, outcome: 'finished', text: 'Parser fixed.', sentAt: NOW, delivered: false, read: false }
+    w.mail.add(report)
+    w.pokes.length = 0
+    w.mail.add(q)
+    expect(w.pokes).toEqual([])
+    expect(w.mail.get(q.id)).toMatchObject({ delivered: true, read: true })
+    expect(w.hub.accepts(q, 'tab-c', 'prompt')).toBe(false)
+  })
+
+  it('a forwarded copy of a withdrawn question wakes nobody and is not taken', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.make('tab-2', true)
+    // Laptop's parser is attached to the current coordinator, tab-2's session
+    const c = w.store.coordinator(S.two)!
+    w.store.putCoordinator({ ...c, attachments: [{ device: DEV_S, session: L.one, name: 'parser · Laptop', attachedAt: NOW, resolved: false, failed: false, lastReport: null, pending: null, former: [] }] })
+    const q = remoteQuestion(0x7701, S.coord)
+    w.mail.add(q)
+    const [copy] = records(w, 'question').filter((r) => r.id !== q.id)
+    const withdraw: MailRecord = { v: 1, id: uid(0x7703), kind: 'withdraw', from: q.from, to: { device: null, session: S.coord, name: 'coord · Desktop' }, replyTo: q.id, text: WITHDRAW_TEXT, sentAt: NOW + 1, delivered: false, read: false }
+    w.mail.add(withdraw)
+    // the copy of the same question arrives from another device after its withdrawal
+    const late: MailRecord = { ...copy!, id: uid(0x7705) }
+    w.pokes.length = 0
+    w.mail.add(late)
+    expect(w.pokes).toEqual([])
+    expect(w.mail.get(late.id)).toMatchObject({ delivered: true, read: true })
+    expect(w.hub.accepts(copy!, 'tab-2', 'prompt')).toBe(false)
+  })
+
+  it('a question to a former id of the coordinator is forwarded to its current one', () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    // tab-2 replaces tab-c as the project's coordinator: S.coord is its former id
+    w.hub.make('tab-2', true)
+    const q = remoteQuestion(0x7201, S.coord)
+    w.mail.add(q)
+    expect(w.mail.get(q.id)).toMatchObject({ delivered: true, read: true })
+    expect(records(w, 'question').filter((r) => r.id !== q.id)).toMatchObject([{ from: { device: DEV_S, session: L.one }, to: { session: S.two }, replyTo: q.replyTo, questions: ASKED }])
+  })
+})
+
+describe("answer_session: the person's answers from the coordinator's question form", () => {
+  const QS: AskedQuestion[] = [
+    { question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] },
+    { question: 'Which parts?', header: '', multiSelect: true, options: [{ label: 'Browser', description: '' }, { label: 'Cookies', description: '' }] }
+  ]
+  // two questions with texts and answers so long that the answer record does not fit a mail record
+  const LONG: AskedQuestion[] = [1, 2].map((i) => ({ question: `${i}${'q'.repeat(1999)}`, header: '', multiSelect: false, options: [{ label: 'a', description: '' }, { label: 'b', description: '' }] }))
+  const PARSER = 'parser · Desktop'
+  const WHERE = 'Where should the browser live?'
+  const PARTS = 'Which parts?'
+  const NONE_IN_FORM = `These questions are not in your question form since the session asked: «${WHERE}», «${PARTS}». Pass each one exactly as you wrote it in AskUserQuestion. Ask the person with AskUserQuestion first.`
+
+  /** tab-c coordinates acme with parser attached, and parser's tab holds an open task of it: its turn has started */
+  const onTask = (w: World): void => {
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    const task = records(w, 'task')[0]
+    w.hub.handedOver('tab-1', [task], 'prompt')
+    w.hub.turnStarted('tab-1')
+  }
+
+  /** parser's tab asks qs on its open task: the question record */
+  const asking = (w: World, qs: AskedQuestion[] = QS): MailRecord => {
+    onTask(w)
+    expect(w.hub.ask('tab-1', qs)).toBe(ASK_REASON)
+    return records(w, 'question')[0]
+  }
+
+  const answer = (w: World, questions: string[]) => w.hub.tool('tab-c', { op: 'answer', session: 'a10000', questions })
+
+  it("passes the person's answers from the coordinator's form: an answer record to the session, a toast, a poke, and the info", async () => {
+    const w = world()
+    const q = asking(w)
+    formed(w, [[`parser: ${WHERE}`, 'Side panel'], [`parser: ${PARTS}`, 'Browser, Cookies']])
+    expect(await answer(w, [`parser: ${WHERE}`, `parser: ${PARTS}`])).toEqual({ ok: true, info: HUB_TEXT.answered(PARSER) })
+    expect(records(w, 'answer')).toMatchObject([
+      {
+        from: { session: S.coord },
+        to: { session: S.one },
+        replyTo: q.id,
+        text: `1. ${WHERE}\n   The person answered: Side panel\n2. ${PARTS}\n   The person answered: Browser, Cookies`,
+        answers: [
+          { question: WHERE, asked: `parser: ${WHERE}`, answer: 'Side panel' },
+          { question: PARTS, asked: `parser: ${PARTS}`, answer: 'Browser, Cookies' }
+        ]
+      }
+    ])
+    expect(w.toasts).toEqual([`Your answer went to ${PARSER}: «Side panel»`])
+    expect(w.pokes).toContain('tab-1')
+    expect(w.order).toContain('changed')
+  })
+
+  it('answers the questions of two sessions from one form: each answer goes to its own session', async () => {
+    const w = world()
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.attach('tab-c', 'b20000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    w.hub.message('tab-c', 'b20000', 'Fix the docs.')
+    const tasks = records(w, 'task')
+    w.hub.handedOver('tab-1', [tasks.find((t) => t.to.session === S.one)!], 'prompt')
+    w.hub.turnStarted('tab-1')
+    w.hub.handedOver('tab-2', [tasks.find((t) => t.to.session === S.two)!], 'prompt')
+    w.hub.turnStarted('tab-2')
+    expect(w.hub.ask('tab-1', [QS[0]!])).toBe(ASK_REASON)
+    expect(w.hub.ask('tab-2', [QS[1]!])).toBe(ASK_REASON)
+    const questions = records(w, 'question')
+    formed(w, [[`parser: ${WHERE}`, 'Side panel'], [`docs: ${PARTS}`, 'Cookies']])
+    expect(await w.hub.tool('tab-c', { op: 'answer', session: 'a10000', questions: [`parser: ${WHERE}`] })).toEqual({ ok: true, info: HUB_TEXT.answered(PARSER) })
+    expect(await w.hub.tool('tab-c', { op: 'answer', session: 'b20000', questions: [`docs: ${PARTS}`] })).toEqual({ ok: true, info: HUB_TEXT.answered('docs · Desktop') })
+    expect(records(w, 'answer')).toMatchObject([
+      { to: { session: S.one }, replyTo: questions.find((q) => q.from.session === S.one)!.id, answers: [{ question: WHERE, asked: `parser: ${WHERE}`, answer: 'Side panel' }] },
+      { to: { session: S.two }, replyTo: questions.find((q) => q.from.session === S.two)!.id, answers: [{ question: PARTS, asked: `docs: ${PARTS}`, answer: 'Cookies' }] }
+    ])
+  })
+
+  it('refuses, and writes no answer, when no question waits for one, nor a tab that is not a coordinator', async () => {
+    const w = world()
+    onTask(w)
+    formed(w, [[WHERE, 'Side panel']])
+    expect(await answer(w, [WHERE])).toEqual({ ok: false, error: HUB_TEXT.noQuestion(PARSER) })
+    expect(await w.hub.tool('tab-1', { op: 'answer', session: 'a10000', questions: [WHERE] })).toEqual({ ok: false, error: HUB_TEXT.notCoordinator })
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it('refuses a second answer to a question that is answered already', async () => {
+    const w = world()
+    asking(w)
+    formed(w, [[WHERE, 'Side panel'], [PARTS, 'Cookies']])
+    expect(await answer(w, [WHERE, PARTS])).toMatchObject({ ok: true })
+    expect(await answer(w, [WHERE, PARTS])).toEqual({ ok: false, error: HUB_TEXT.noQuestion(PARSER) })
+    expect(records(w, 'answer')).toHaveLength(1)
+  })
+
+  it("refuses with answeredInTab when the person answered the question in the session's tab", async () => {
+    const w = world()
+    asking(w)
+    formed(w, [[WHERE, 'Side panel'], [PARTS, 'Cookies']])
+    // the person answers in the session's own tab: its form takes the place of the question
+    expect(w.hub.ask('tab-1', null)).toBeNull()
+    expect(await answer(w, [WHERE, PARTS])).toEqual({ ok: false, error: HUB_TEXT.answeredInTab(PARSER) })
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it('refuses, and writes no answer, when the session is detached while the coordinator\'s form is read', async () => {
+    const w = world()
+    asking(w)
+    formed(w, [[WHERE, 'Side panel'], [PARTS, 'Cookies']])
+    const pending = answer(w, [WHERE, PARTS])
+    w.hub.detach('tab-c', 'a10000')
+    const refused = await answer(w, [WHERE, PARTS])
+    expect(refused).toMatchObject({ ok: false })
+    expect(await pending).toEqual(refused)
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it('refuses when the question is closed while the coordinator\'s form is read', async () => {
+    const w = world()
+    asking(w)
+    formed(w, [[WHERE, 'Side panel'], [PARTS, 'Cookies']])
+    const pending = answer(w, [WHERE, PARTS])
+    w.hub.ask('tab-1', null)
+    expect(await pending).toEqual({ ok: false, error: HUB_TEXT.answeredInTab(PARSER) })
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it("refuses a count of questions that is not the session's, and names the count", async () => {
+    const w = world()
+    asking(w)
+    formed(w, [[WHERE, 'Side panel'], [PARTS, 'Cookies']])
+    expect(await answer(w, [WHERE])).toEqual({ ok: false, error: HUB_TEXT.questionCount(PARSER, 2) })
+    expect(await answer(w, [WHERE, PARTS, PARTS])).toEqual({ ok: false, error: HUB_TEXT.questionCount(PARSER, 2) })
+    expect(HUB_TEXT.questionCount(PARSER, 2)).toBe(`${PARSER} asked 2 questions: pass 2 in questions, one for each, in their order.`)
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it('refuses a question that is not in the form, and says what the form holds', async () => {
+    const w = world()
+    asking(w)
+    formed(w, [[WHERE, 'Side panel']])
+    expect(await answer(w, [WHERE, PARTS])).toEqual({
+      ok: false,
+      error: `These questions are not in your question form since the session asked: «${PARTS}». Pass each one exactly as you wrote it in AskUserQuestion. Your form holds: «${WHERE}».`
+    })
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it('refuses when the form holds none of the questions, and when its only form is older than the question', async () => {
+    const w = world()
+    asking(w)
+    expect(await answer(w, [WHERE, PARTS])).toEqual({ ok: false, error: NONE_IN_FORM })
+    formed(w, [[WHERE, 'Side panel'], [PARTS, 'Cookies']], { at: NOW - FORM_SLACK_MS - 1 })
+    expect(await answer(w, [WHERE, PARTS])).toEqual({ ok: false, error: NONE_IN_FORM })
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it('refuses answers too long for one mail record', async () => {
+    const w = world()
+    asking(w, LONG)
+    formed(w, [[LONG[0]!.question, 'a'.repeat(2000)], [LONG[1]!.question, 'a'.repeat(2000)]])
+    expect(await answer(w, LONG.map((q) => q.question))).toEqual({ ok: false, error: HUB_TEXT.answersTooLong })
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it('the HUB_TEXT copy of the answer refusals and the toast', () => {
+    expect(HUB_TEXT.noQuestion('parser · Desktop')).toBe('parser · Desktop has no question waiting for an answer.')
+    expect(HUB_TEXT.answeredInTab('parser · Desktop')).toBe("The person answered parser · Desktop's question in its tab already; nothing was sent.")
+    expect(HUB_TEXT.questionCount('parser · Desktop', 1)).toBe('parser · Desktop asked 1 question: pass 1 in questions, one for each, in their order.')
+    expect(HUB_TEXT.answersTooLong).toBe('The answers are too long to pass on; give them with message_session.')
+    expect(HUB_TEXT.answerToast('parser · Desktop', 'Side panel')).toBe('Your answer went to parser · Desktop: «Side panel»')
+  })
+})
+
+describe('the answer reaches the session, and the wait ends', () => {
+  const QS: AskedQuestion[] = [
+    { question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] },
+    { question: 'Which parts?', header: '', multiSelect: true, options: [{ label: 'Browser', description: '' }, { label: 'Cookies', description: '' }] }
+  ]
+  const PARSER = 'parser · Desktop'
+  const WHERE = 'Where should the browser live?'
+  const PARTS = 'Which parts?'
+  const sender = () => ({ folder: null, branch: null })
+
+  /** tab-c coordinates acme with parser attached, and parser's tab holds an open task of it: its turn has started */
+  const onTask = (w: World): void => {
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    const task = records(w, 'task')[0]
+    w.hub.handedOver('tab-1', [task], 'prompt')
+    w.hub.turnStarted('tab-1')
+  }
+
+  /** parser's tab asks QS on its open task, and its turn ends: the session waits for the answer */
+  const asking = (w: World): MailRecord => {
+    onTask(w)
+    expect(w.hub.ask('tab-1', QS)).toBe(ASK_REASON)
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Which one?' })
+    return records(w, 'question')[0]!
+  }
+
+  /** the person answers the form, and the coordinator passes the answers to parser: the answer record */
+  const answered = async (w: World): Promise<MailRecord> => {
+    formed(w, [[`parser: ${WHERE}`, 'Side panel'], [`parser: ${PARTS}`, 'Browser, Cookies']])
+    expect(await w.hub.tool('tab-c', { op: 'answer', session: 'a10000', questions: [`parser: ${WHERE}`, `parser: ${PARTS}`] })).toMatchObject({ ok: true })
+    return records(w, 'answer')[0]!
+  }
+
+  it('the answer is typed into the idle session: canTakeWords, then takeWords gives answersText, the question closes, and the next turn\'s end reports', async () => {
+    const w = world()
+    asking(w)
+    const task = records(w, 'task')[0]!
+    const answer = await answered(w)
+    expect(w.timers).toEqual([])
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(true)
+    const taken = w.hub.takeWords('tab-1', S.one)
+    expect(taken).toEqual({ info: answersText(answer, sender) })
+    expect(records(w, 'answer')[0]).toMatchObject({ delivered: true })
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ id: task.id, question: null }])
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+
+    w.hub.turnStarted('tab-1', taken!.info)
+    expect(records(w, 'withdraw')).toEqual([])
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Parser fixed.' })
+    expect(w.timers.map((t) => t.ms)).toEqual([2000])
+    fire(w)
+    expect(records(w, 'report')).toMatchObject([{ outcome: 'finished', replyTo: task.id, to: { session: S.coord } }])
+  })
+
+  it('a turn of the person closes the question: a withdraw goes, and answer_session is refused as answered in its tab', async () => {
+    const w = world()
+    const question = asking(w)
+    formed(w, [[`parser: ${WHERE}`, 'Side panel'], [`parser: ${PARTS}`, 'Cookies']])
+    w.hub.turnStarted('tab-1', 'Use the side panel.')
+    expect(records(w, 'withdraw')).toMatchObject([{ replyTo: question.id, from: { session: S.one }, to: { session: S.coord } }])
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ question: null }])
+    expect(await w.hub.tool('tab-c', { op: 'answer', session: 'a10000', questions: [`parser: ${WHERE}`, `parser: ${PARTS}`] })).toEqual({ ok: false, error: HUB_TEXT.answeredInTab(PARSER) })
+    expect(records(w, 'answer')).toEqual([])
+  })
+
+  it('a turn of the person while the answer waits to be typed: the answer is dropped, never typed', async () => {
+    const w = world()
+    const question = asking(w)
+    const answer = await answered(w)
+    w.hub.turnStarted('tab-1', 'my own words')
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    expect(w.hub.takeWords('tab-1', S.one)).toBeNull()
+    expect(records(w, 'answer')).toMatchObject([{ id: answer.id, delivered: true, read: true }])
+    expect(w.infos).toContain(`coordinator: the answer to ${question.id} came after the person took over in ${S.one}'s tab; it is dropped`)
+  })
+
+  it('turns that are not the person\'s leave the question waiting: a wake block, an auto-continue prompt, a task notification, no prompt at all', () => {
+    const others = [
+      `${TASK_WAKE_HEAD} the user's instruction, given through their coordinator.\n\n> Fix the parser.`,
+      CONTINUE_PROMPT,
+      '<task-notification>\n<task-id>b1</task-id>\n</task-notification>',
+      null
+    ]
+    for (const prompt of others) {
+      const w = world()
+      const question = asking(w)
+      w.hub.turnStarted('tab-1', prompt)
+      expect(records(w, 'withdraw')).toEqual([])
+      expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ question: question.id }])
+    }
+  })
+
+  it('a task given while a question waits ends the wait: the open task goes without a report, and the new task is next', () => {
+    const w = world()
+    asking(w)
+    const first = records(w, 'task')[0]!
+    w.hub.message('tab-c', 'a10000', 'Also the docs.')
+    const second = records(w, 'task')[1]!
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ id: second.id, state: 'queued' }])
+    expect(records(w, 'report')).toEqual([])
+    expect(w.store.hosted(S.one)!.tasks.some((t) => t.id === first.id)).toBe(false)
+    expect(w.hub.accepts(second, 'tab-1', 'idle')).toBe(true)
+  })
+
+  it('an answer for no waiting question is dropped and logged', () => {
+    const w = world()
+    const question = asking(w)
+    const stale: MailRecord = {
+      v: 1,
+      id: uid(0x8002),
+      kind: 'answer',
+      from: { device: null, session: S.coord, name: 'coord · Desktop' },
+      to: { device: null, session: S.one, name: PARSER },
+      replyTo: uid(0x8003),
+      text: 'stale',
+      answers: [{ question: WHERE, asked: `parser: ${WHERE}`, answer: 'Own tab' }],
+      sentAt: NOW,
+      delivered: false,
+      read: false
+    }
+    w.mail.add(stale)
+    expect(w.hub.canTakeWords('tab-1', S.one)).toBe(false)
+    expect(records(w, 'answer')).toMatchObject([{ id: stale.id, delivered: true, read: true }])
+    expect(w.infos).toContain(`coordinator: an answer to ${uid(0x8003)} came for no waiting question of ${S.one}; it is dropped`)
+    expect(w.store.hosted(S.one)!.tasks).toMatchObject([{ question: question.id }])
+  })
+
+  it('a hub on the same store types the answer after a restart', async () => {
+    const w = world()
+    asking(w)
+    const answer = await answered(w)
+    w.store.flush()
+    w.mail.flush()
+    const again = world({ dir: w.dir })
+    expect(again.hub.canTakeWords('tab-1', S.one)).toBe(true)
+    expect(again.hub.takeWords('tab-1', S.one)).toEqual({ info: answersText(answer, sender) })
+  })
+})
+
+describe('a session takes a new id while its question waits', () => {
+  const QS: AskedQuestion[] = [
+    { question: 'Where should the browser live?', header: 'Place', multiSelect: false, options: [{ label: 'Side panel', description: 'Next to Changes.' }, { label: 'Own tab', description: '' }] }
+  ]
+  const WHERE = 'Where should the browser live?'
+  const PARSER = 'parser · Desktop'
+  const RESUMED = 'a3000000-0000-4000-8000-000000000031'
+  const sender = () => ({ folder: null, branch: null })
+
+  /** tab-c coordinates acme with parser attached; parser's tab asks QS on its open task, and its turn ends */
+  const asking = (w: World): void => {
+    w.hub.make('tab-c', false)
+    w.hub.attach('tab-c', 'a10000')
+    w.hub.message('tab-c', 'a10000', 'Fix the parser.')
+    w.hub.handedOver('tab-1', [records(w, 'task')[0]!], 'prompt')
+    w.hub.turnStarted('tab-1')
+    expect(w.hub.ask('tab-1', QS)).toBe(ASK_REASON)
+    w.hub.turnEnded('tab-1', { background: false, lastMessage: 'Which one?' })
+  }
+
+  /** parser's tab resumes under a new session id, as a restored tab does */
+  const resumed = (w: World): void => {
+    update(w, 'tab-1', { session: RESUMED })
+    w.hub.sessionStarted('tab-1', S.one, RESUMED, 'resume')
+  }
+
+  it("the coordinator's row still asks, answer_session is ok, and the tab types the answer under its new id", async () => {
+    const w = world()
+    asking(w)
+    resumed(w)
+    expect(w.store.coordinator(S.coord)!.attachments[0]).toMatchObject({ session: RESUMED, former: [S.one] })
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'waiting', why: 'question', line: `Asks you: ${WHERE}` })
+    formed(w, [[`parser: ${WHERE}`, 'Side panel']])
+    expect(await w.hub.tool('tab-c', { op: 'answer', session: refOf(RESUMED), questions: [`parser: ${WHERE}`] })).toEqual({ ok: true, info: HUB_TEXT.answered(PARSER) })
+    expect(w.hub.canTakeWords('tab-1', RESUMED)).toBe(true)
+    expect(w.hub.takeWords('tab-1', RESUMED)).toEqual({ info: answersText(records(w, 'answer')[0]!, sender) })
+    expect(w.store.hosted(RESUMED)!.tasks).toMatchObject([{ question: null }])
+  })
+
+  it('an answer given before the new id is typed under it: the rename does not strand it', async () => {
+    const w = world()
+    asking(w)
+    formed(w, [[`parser: ${WHERE}`, 'Side panel']])
+    expect(await w.hub.tool('tab-c', { op: 'answer', session: 'a10000', questions: [`parser: ${WHERE}`] })).toMatchObject({ ok: true })
+    resumed(w)
+    expect(w.hub.canTakeWords('tab-1', RESUMED)).toBe(true)
+    expect(w.hub.takeWords('tab-1', RESUMED)).toEqual({ info: answersText(records(w, 'answer')[0]!, sender) })
+  })
+
+  it("the person's turn in the renamed tab withdraws the question the coordinator waits on", () => {
+    const w = world()
+    asking(w)
+    const [q] = records(w, 'question')
+    resumed(w)
+    w.hub.turnStarted('tab-1', 'Use the side panel.')
+    expect(records(w, 'withdraw')).toMatchObject([{ replyTo: q!.id, from: { session: RESUMED }, to: { session: S.coord } }])
+    expect(w.hub.view('tab-c')!.sessions[0]).toMatchObject({ group: 'working', why: null })
+    expect(w.mail.get(q!.id)).toMatchObject({ delivered: true, read: true })
   })
 })
 
@@ -1636,7 +2369,7 @@ describe('facts for other devices', () => {
 })
 
 describe('the role note of a coordinator', () => {
-  const EMPTY = 'You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. No sessions are attached yet: attach one with attach_session, or start one with start_session.'
+  const EMPTY = 'You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Write to the person in the language of their own messages, even when reports, notes and tool results are in English, and write the tasks you give sessions in it too: the person reads them in the sessions\' tabs. No sessions are attached yet: attach one with attach_session, or start one with start_session.'
   /** the note's block as the mail carries it: its head, from and id lines, and the text quoted */
   const BLOCK = (text: string): string => ['Note from ClaudeTerm, not from the user:', 'from: ClaudeTerm', 'id: role-note', '', `> ${text}`].join('\n')
 
@@ -1734,7 +2467,7 @@ describe('the role note of a coordinator', () => {
     w.hub.attach('tab-c', 'a10000')
     const row = w.hub.view('tab-c')!.sessions[0]!
     expect(w.hub.roleNote('tab-c')).toBe(
-      BLOCK(`You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. 1 session (${row.name} — ${row.line}). Reports come by themselves when a task ends; use list_sessions for more.`)
+      BLOCK(`You coordinate acme in ClaudeTerm: give the work to its sessions with message_session or start_session, and do it yourself only when the person asks you to; your own subagents (the Agent tool) are only for looking things up while you plan. Write to the person in the language of their own messages, even when reports, notes and tool results are in English, and write the tasks you give sessions in it too: the person reads them in the sessions' tabs. 1 session (${row.name} — ${row.line}). Reports come by themselves when a task ends; use list_sessions for more.`)
     )
   })
 })

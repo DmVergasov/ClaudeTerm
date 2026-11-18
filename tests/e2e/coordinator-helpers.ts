@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { HUB_TEXT } from '../../src/main/coordinator/coordinator-hub'
 import type { CoordOp, CoordResult, CoordinatorView } from '../../src/shared/coordinator'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import type { AttentionMessage } from '../../src/shared/protocol'
+import type { AttentionMessage, PipeResponse } from '../../src/shared/protocol'
+import type { AskedQuestion } from '../../src/shared/questions'
 import { answerLine, promptLine } from '../fixtures/transcript'
 import { gitRepo, launchApp, type Launched } from './helpers'
 import { chatStandIn } from './chat-helpers'
@@ -66,9 +67,13 @@ export async function makeCoordinator(page: Page, tabId: string, replace = false
   }
 }
 
-/** the session starts a turn: a prompt of the user was taken */
-export const turnOf = (pipeName: string, tabId: string, sessionId: string): Promise<unknown> =>
-  sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId })
+/** the session starts a turn: a prompt of the user was taken; its text, when given, is the prompt (a prompt in the tab withdraws a question the session asked) */
+export const turnOf = (pipeName: string, tabId: string, sessionId: string, prompt?: string): Promise<unknown> =>
+  sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId, ...(prompt === undefined ? {} : { prompt }) })
+
+/** a session's question to the person, as its hook sends it: the attention of reason question, its first question as the prompt */
+export const askedBy = (pipeName: string, tabId: string, sessionId: string, questions: AskedQuestion[]): Promise<PipeResponse> =>
+  sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId, reason: 'question', prompt: questions[0]!.question, questions })
 
 /** the session's turn ends: a Stop, with what the extra fields say */
 export const done = (pipeName: string, tabId: string, sessionId: string, extra: Partial<AttentionMessage> = {}): Promise<unknown> =>

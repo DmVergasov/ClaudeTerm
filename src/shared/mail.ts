@@ -1,3 +1,5 @@
+import type { AskedQuestion, PassedAnswer } from './questions'
+
 /** the longest text of a message, in characters */
 export const MAIL_TEXT_MAX = 8000
 /** the longest agent name a message can be sent to, in characters: the pipe refuses more */
@@ -9,8 +11,8 @@ export const MAIL_MIN_CLAUDE = '2.1.287'
 /** the longest reason of a failed or stopped report, in characters */
 export const MAIL_REASON_MAX = 200
 
-/** what a record is: a message between two agents, a task, a report, a progress note on a task, or the signal of a session that attaches or detaches */
-export type MailKind = 'message' | 'task' | 'report' | 'attach' | 'detach' | 'progress'
+/** what a record is: a message between two agents, a task, a report, a progress note on a task, the signal of a session that attaches or detaches, a session's question the person answers, the person's answers passed on, or the withdrawal of a question answered in its tab */
+export type MailKind = 'message' | 'task' | 'report' | 'attach' | 'detach' | 'progress' | 'question' | 'answer' | 'withdraw'
 /** how the task of a report ended */
 export type ReportOutcome = 'finished' | 'failed' | 'stopped'
 export const REPORT_OUTCOMES: readonly ReportOutcome[] = ['finished', 'failed', 'stopped']
@@ -34,7 +36,7 @@ export interface MailRecord {
   delivered: boolean
   read: boolean
   /** absent: a message (every record of an older ClaudeTerm) */
-  kind?: 'task' | 'report' | 'attach' | 'detach' | 'progress'
+  kind?: 'task' | 'report' | 'attach' | 'detach' | 'progress' | 'question' | 'answer' | 'withdraw'
   /** task, attach: the coordinator's project name */
   project?: string
   /** report: how the task ended (required on a report) */
@@ -49,11 +51,15 @@ export interface MailRecord {
   words?: string
   /** task with words: the coordinator's answer the words reply to */
   context?: string
+  /** question: the questions the session asks the person, in the coordinator's form; set on a question only */
+  questions?: AskedQuestion[]
+  /** answer: the questions the coordinator passes on with the person's answers; set on an answer only */
+  answers?: PassedAnswer[]
 }
 
 export const kindOf = (r: Pick<MailRecord, 'kind'>): MailKind => r.kind ?? 'message'
-/** attach and detach tell a device, not a model: never handed over, counted or listed */
-export const isSignal = (r: Pick<MailRecord, 'kind'>): boolean => r.kind === 'attach' || r.kind === 'detach'
+/** attach, detach and withdraw tell a device, not a model: never handed over, counted or listed */
+export const isSignal = (r: Pick<MailRecord, 'kind'>): boolean => r.kind === 'attach' || r.kind === 'detach' || r.kind === 'withdraw'
 
 /** unread messages per tab id, for the marks */
 export type MailUnread = Record<string, number>

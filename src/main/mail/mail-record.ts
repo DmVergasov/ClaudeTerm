@@ -1,5 +1,6 @@
 import { isUuid } from '../../shared/protocol'
 import { COORD_CONTEXT_MAX, COORD_WORDS_MAX } from '../../shared/coordinator'
+import { parsePassedAnswers, parseQuestions } from '../../shared/questions'
 import { MAIL_REASON_MAX, MAIL_TEXT_MAX, REPORT_OUTCOMES, type MailAddress, type MailRecord, type ReportOutcome } from '../../shared/mail'
 import { isDeviceId } from '../ipc-guards'
 
@@ -32,7 +33,7 @@ export function checkMailRecord(v: unknown): MailRecord | null {
   }
 }
 
-type KindFields = Partial<Pick<MailRecord, 'kind' | 'project' | 'outcome' | 'reason' | 'was' | 'replaces' | 'words' | 'context'>>
+type KindFields = Partial<Pick<MailRecord, 'kind' | 'project' | 'outcome' | 'reason' | 'was' | 'replaces' | 'words' | 'context' | 'questions' | 'answers'>>
 
 /** the kind of a record and the fields that kind keeps; null when the kind is unknown or one of its fields is not valid */
 function checkKind(v: Record<string, unknown>): KindFields | null {
@@ -69,6 +70,16 @@ function checkKind(v: Record<string, unknown>): KindFields | null {
   }
   // a progress note: the turn's answer on a task still open, which replyTo names
   if (v.kind === 'progress') return isUuid(v.replyTo) ? { kind: 'progress' } : null
+  // a question the session asks the person names its task; the person's answers the coordinator passes on, and the withdrawal of a question answered in its tab, name the question
+  if (v.kind === 'question') {
+    const questions = parseQuestions(v.questions)
+    return isUuid(v.replyTo) && questions !== null ? { kind: 'question', questions } : null
+  }
+  if (v.kind === 'answer') {
+    const answers = parsePassedAnswers(v.answers)
+    return isUuid(v.replyTo) && answers !== null ? { kind: 'answer', answers } : null
+  }
+  if (v.kind === 'withdraw') return isUuid(v.replyTo) ? { kind: 'withdraw' } : null
   return null
 }
 

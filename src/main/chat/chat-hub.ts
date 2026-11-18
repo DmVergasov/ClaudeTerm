@@ -62,6 +62,9 @@ async function isProjectCommand(folder: string, name: string): Promise<boolean> 
   return (await file) || (await skill)
 }
 
+/** an object of texts, as a question's answers are: a map from each question to its answer */
+const isTextMap = (v: unknown): v is Record<string, string> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.values(v).every(s => typeof s === 'string')
+
 /** the first line of a stderr chunk that has text on it, capped; null when it has none */
 const firstLine = (text: string): string | null => text.split('\n').map(line => line.trim()).find(line => line !== '')?.slice(0, REASON_CAP) ?? null
 
@@ -109,6 +112,8 @@ export interface ChatHubDeps {
   sessionReady?(tabId: string): void
   /** the Remote Control hears the chat through it (RemoteControlTap); a tap that throws leaves the chat as it is */
   remoteControl?: RemoteControlTap
+  /** a question card answered in the window or from claude.ai: its answers as the SDK takes them (a multi-select's labels joined with ", ") */
+  questionAnswered?(tabId: string, answers: Record<string, string>): void
 }
 
 type Support = Awaited<ReturnType<ChatHubDeps['support']>>
@@ -478,7 +483,9 @@ export class ChatHub {
     if (!live || !pending) return false
     const result = resultFor(pending.ask, pending.card, a)
     if (result === null) return false
-    return this.settle(live, cardId, result, answeredLine(pending.card, a), 'window')
+    const settled = this.settle(live, cardId, result, answeredLine(pending.card, a), 'window')
+    if (settled) this.heardAnswers(tabId, pending.card, result)
+    return settled
   }
 
   /** claude.ai's answer to an open card: the card says it came from claude.ai; false when there is no such card waiting */
@@ -487,7 +494,17 @@ export class ChatHub {
     const pending = live?.cards.get(cardId)
     if (!live || !pending) return false
     const line = pending.card.type !== 'permission' ? 'Answered from claude.ai' : result.behavior === 'allow' ? 'Allowed from claude.ai' : 'Denied from claude.ai'
-    return this.settle(live, cardId, result, line, 'remote')
+    const settled = this.settle(live, cardId, result, line, 'remote')
+    if (settled) this.heardAnswers(tabId, pending.card, result)
+    return settled
+  }
+
+  /** a question card answered with an answers object of texts: the answers go to questionAnswered; nothing for any other answer */
+  private heardAnswers(tabId: string, card: ChatCard, result: SdkPermissionResult): void {
+    if (card.type !== 'question' || result.behavior !== 'allow') return
+    const answers = result.updatedInput?.answers
+    if (!isTextMap(answers)) return
+    this.d.questionAnswered?.(tabId, answers)
   }
 
   /** the session the tab's chat holds; null when there is no chat or it has no session yet */

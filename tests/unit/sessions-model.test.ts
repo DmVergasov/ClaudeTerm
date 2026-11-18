@@ -51,6 +51,7 @@ it('rowActions: Open with a tab, Message and Detach for an attached row; Resolve
 })
 it('rowIcon: amber for a pending prompt, red for a limit or a failure, the spinner at work or starting, a check when idle or resolved, grey for the others and an offline session', () => {
   expect(rowIcon(row('a', 'waiting', { why: 'prompt' }), 'waiting')).toBe('amber')
+  expect(rowIcon(row('a', 'waiting', { why: 'question' }), 'waiting')).toBe('amber')
   expect(rowIcon(row('a', 'waiting', { why: 'limit' }), 'waiting')).toBe('red')
   expect(rowIcon(row('a', 'waiting', { why: 'failed' }), 'waiting')).toBe('red')
   expect(rowIcon(row('a', 'working'), 'working')).toBe('spin')

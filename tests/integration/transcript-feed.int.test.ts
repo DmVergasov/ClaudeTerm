@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest'
 import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
 import type { PeerMail } from '../../src/main/transcript-mail'
-import { assistantLine, bashResultLine, editResultLine, failedResultLine, interruptLine, PEER_ORIGIN, peerMessageLine, PNG_B64, pastedLine, promptLine, sendMessageLines, textLine, toolResultLine, toolUseLine, turnPromptLine } from '../fixtures/transcript'
+import type { WordsLine } from '../../src/main/coordinator/person-words'
+import { assistantLine, bashResultLine, editResultLine, failedResultLine, formResultLine, interruptLine, PEER_ORIGIN, peerMessageLine, PNG_B64, pastedLine, promptLine, sendMessageLines, textLine, toolResultLine, toolUseLine, turnPromptLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
@@ -238,6 +239,15 @@ describe('TranscriptFeed', () => {
     expect(images[0].path).toBe(images[1].path)
     expect(images[0]).toMatchObject({ source: 'pasted', caption: 'pasted by you' })
     expect(readdirSync(join(cacheRoot, SID))).toHaveLength(1)
+  })
+
+  it('a transcript on disk with an AskUserQuestion result gives onWords a form line, with its answers and its time', async () => {
+    const { transcriptPath, cacheRoot } = setup()
+    writeFileSync(transcriptPath, [promptLine('Ask me.', { uuid: 'p1' }), formResultLine({ 'docs: Where?': 'Side panel' }, { uuid: 'r1', timestamp: '2026-11-17T10:00:00.000Z' }), ''].join('\n'))
+    const lines: WordsLine[] = []
+    const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, onWords: (l) => lines.push(l) })
+    await feed.pollMain()
+    expect(lines.filter((l) => l.kind === 'form')).toEqual([{ kind: 'form', id: 'r1', at: Date.parse('2026-11-17T10:00:00.000Z'), answers: [{ question: 'docs: Where?', answer: 'Side panel' }] }])
   })
 
   it('picks up subagent transcripts', async () => {

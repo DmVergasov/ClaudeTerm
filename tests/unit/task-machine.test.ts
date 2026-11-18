@@ -6,7 +6,7 @@ const ID = '3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b'
 const ID2 = '4a2d3c5b-6e7f-4081-9b0c-1d2e3f4a5b6c'
 const ID3 = '5b3e4d6c-7f80-4192-8c1d-2e3f4a5b6c7d'
 const COORD = { device: null, session: '7b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e', name: 'Coordinator' }
-const q: StoredTask = { id: ID, from: COORD, state: 'queued', queuedAt: 1, deliveredAt: null }
+const q: StoredTask = { id: ID, from: COORD, state: 'queued', queuedAt: 1, deliveredAt: null, question: null }
 
 describe('task machine', () => {
   it('a queued task handed to a watcher is open; one written as a prompt is delivered', () => {
