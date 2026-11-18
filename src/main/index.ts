@@ -1717,7 +1717,7 @@ function bootstrap(): void {
   const folderDeps = (): TabFolderDeps => ({
     home: homedir(),
     tabFolder: (tabId) => tabs.get(tabId)?.folder ?? null,
-    device: () => group?.view().self.name || hostname(),
+    device: () => group?.name() || hostname(),
     sessions: () => history.list(50).catch(() => []),
     changeFolder: (tabId, path) => tabs.changeFolder(tabId, path)
   })
@@ -1844,7 +1844,7 @@ function bootstrap(): void {
 
   /** the new-tab menu's answers: this device's name in the group, and each online device's last answer */
   const choicesNow = (): { self: string; devices: DeviceAnswer<DeviceChoices>[] } => ({
-    self: group?.view().self.name ?? '',
+    self: group?.name() ?? '',
     devices: remote?.actions.choicesNow() ?? []
   })
 
@@ -2334,11 +2334,11 @@ function bootstrap(): void {
   // the messages older than 30 days go once a day; a run that stays open for days still drops them
   setInterval(() => mailStore.prune(), 24 * 60 * 60 * 1000).unref()
   /** this device's name in the group, or the host name while the group is not open */
-  const selfName = (): string => group?.view().self.name || hostname().slice(0, MAX_DEVICE_NAME)
+  const selfName = (): string => group?.name() || hostname().slice(0, MAX_DEVICE_NAME)
   /** the name of a paired device other than this one, for a report's card: null for this device, a device not in the group, or a name that is no device name */
   const otherDeviceName = (device: string | null): string | null => {
     if (device === null || device === selfDeviceId) return null
-    const name = group?.view().devices.find((d) => d.id === device)?.name
+    const name = group?.members().find((d) => d.id === device)?.name
     return isDeviceName(name) ? name : null
   }
   /** whether an address' device is this device: null (a device never paired) is this device too */
@@ -2401,7 +2401,7 @@ function bootstrap(): void {
       list.push({ device: self, deviceName: name, tabId: t.id, session, customTitle: t.customTitle, folder: t.folder, branch: t.place?.branch ?? null, title: t.title, busy: t.working, wakes, claude })
     }
     const r = remote
-    for (const d of group?.view().devices ?? []) {
+    for (const d of group?.members() ?? []) {
       const accept = mailSync.acceptOf(d.id)
       if (!r?.viewer.online(d.id) || !accept?.on) continue
       for (const t of r.viewer.tabsOf(d.id)) {
@@ -2413,7 +2413,7 @@ function bootstrap(): void {
     return nameAgents(list)
   }
   /** the paired devices as the coordinators need them: linked, listed, knowing coordinator records, and whether their mail wakes a session */
-  const peersNow = (): HubPeer[] => (group?.view().devices ?? []).map((d) => {
+  const peersNow = (): HubPeer[] => (group?.members() ?? []).map((d) => {
     const accept = mailSync.acceptOf(d.id)
     return {
       id: d.id,
@@ -2493,7 +2493,7 @@ function bootstrap(): void {
     agents: agentsNow,
     notAccepting: () => {
       const r = remote
-      return (group?.view().devices ?? []).filter((d) => r?.viewer.online(d.id) === true && mailSync.acceptOf(d.id)?.on !== true).map((d) => d.name)
+      return (group?.members() ?? []).filter((d) => r?.viewer.online(d.id) === true && mailSync.acceptOf(d.id)?.on !== true).map((d) => d.name)
     },
     deviceOnline: (device) => device === null || device === selfDeviceId || (remote?.viewer.online(device) ?? false),
     deviceAccepts: (device) => (device === null || device === selfDeviceId ? settings.agentMessages.enabled : mailSync.acceptOf(device)?.on === true),
@@ -2507,7 +2507,7 @@ function bootstrap(): void {
     self: () => selfDeviceId || null,
     deviceName: (device) => {
       if (device === null || device === selfDeviceId) return selfName()
-      return group?.view().devices.find((d) => d.id === device)?.name ?? null
+      return group?.members().find((d) => d.id === device)?.name ?? null
     },
     // the coordinators say which mail a tab takes: a task of its coordinator, a report, or any message when no task is held
     accepts: (r, tabId, into) => projectCoordinators.accepts(r, tabId, into),
@@ -2901,6 +2901,15 @@ function bootstrap(): void {
   // a value that is not a port is ignored: the settings port is used
   const testDevicePortText = isTest ? process.env.CLAUDETERM_TEST_DEVICE_PORT : undefined
   const testDevicePort = testDevicePortText !== undefined && /^\d{1,5}$/.test(testDevicePortText) && Number(testDevicePortText) <= 65535 ? Number(testDevicePortText) : undefined
+  // a test that stands in for a machine whose network interfaces are slow to read, as on Windows (CLAUDETERM_TEST_ADDRESSES_MS):
+  // each read of the test device's addresses takes that long
+  const testAddressesText = isTest ? process.env.CLAUDETERM_TEST_ADDRESSES_MS : undefined
+  const testAddressesMs = testAddressesText !== undefined && /^\d{1,4}$/.test(testAddressesText) ? Number(testAddressesText) : 0
+  const testAddresses = (host: string): string[] => {
+    const until = performance.now() + testAddressesMs
+    while (performance.now() < until) { /* the read of the network interfaces */ }
+    return [host]
+  }
   const devicePlatform: DevicePlatform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
   let group: DeviceGroup | null = null
   let bridge: StoreBridge | null = null
@@ -2945,7 +2954,7 @@ function bootstrap(): void {
         // a test that stands in for a device which predates the person's words (CLAUDETERM_TEST_NO_WORDS)
         knowsWords: !(isTest && process.env.CLAUDETERM_TEST_NO_WORDS === '1'),
         hostName: () => hostname().slice(0, MAX_DEVICE_NAME),
-        addresses: testDeviceHost ? () => [testDeviceHost] : localAddresses,
+        addresses: testDeviceHost ? () => testAddresses(testDeviceHost) : localAddresses,
         onData: (updates) => bridge?.applied(updates),
         onView: (view) => {
           selfDeviceId = view.self.id

@@ -486,6 +486,41 @@ describe('DeviceGroup: pairing and records', () => {
   })
 })
 
+describe("DeviceGroup: the devices' names", () => {
+  it('name() and members() give the names and the order view() gives, and follow a rename', async () => {
+    const a = await openGroup('Studio', 'linux')
+    const b = await openGroup('Laptop', 'windows')
+    const c = await openGroup('Tower', 'macos')
+    await pair(a, b)
+    await pair(a, c)
+    await until(() => connected(a, 2))
+    expect(a.name()).toBe('Studio')
+    expect(a.members()).toEqual(a.view().devices.map((d) => ({ id: d.id, name: d.name })))
+    expect(a.members().map((d) => d.name)).toEqual(['Laptop', 'Tower'])
+
+    expect(b.rename('Desk')).toEqual({ ok: true })
+    expect(b.name()).toBe('Desk')
+    await until(() => a.members().some((d) => d.name === 'Desk'))
+    expect(a.members()).toEqual(a.view().devices.map((d) => ({ id: d.id, name: d.name })))
+  })
+
+  it('names the devices without reading the addresses: a read of the network interfaces takes milliseconds on Windows', async () => {
+    let reads = 0
+    const a = await openGroup('Studio', 'linux', {
+      addresses: () => {
+        reads++
+        return ['127.0.0.1']
+      }
+    })
+    const b = await openGroup('Laptop', 'windows')
+    await pair(a, b)
+    await until(() => connected(a, 1))
+    reads = 0
+    for (let i = 0; i < 100; i++) expect([a.name(), a.members().map((d) => d.name)]).toEqual(['Studio', ['Laptop']])
+    expect(reads).toBe(0)
+  })
+})
+
 describe('DeviceGroup: opening, resets and failures', () => {
   it('open() fails cleanly when the identity key cannot be decrypted', async () => {
     const dir = tempDir('group')
