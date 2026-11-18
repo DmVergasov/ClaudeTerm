@@ -36,9 +36,24 @@ a plan can switch from one to the other mid-way:
     `git clean -fdx` mid-run also deletes it; the skills then rebuild the ledger from `git log`.
 - **Not every task gets a `complete` line.** In this repository's status-bar plan, Task 1 and Task 10 were manual
   checks done with the user and Task 9 was a conditional task the run declined: none of them has a `complete`
-  line, while Tasks 2–8 do. **The user's rule: a task the run went past counts as done** — every task before
-  the furthest one with a `complete` line is shown and counted as done, whether it has its own line or not.
-  Older superpowers versions wrote free-form ledgers with no `Task <N>:` lines at all; only the current format is
+  line, while Tasks 2–8 do. The first version of this feature counted every task before the furthest one with a
+  `complete` line as done. **Changed 2026-11-18, the user's rule now: each task counts by its own ledger lines.**
+  Runs do tasks out of order: the built-in browser plan did Tasks 12–15 before 9–11, and the first rule showed 9–11
+  as done. A task without a `complete` line stays open until the ledger closes it or the plan finishes.
+- **Task ids are not only numbers.** The skills take `Task <id>` with an id of letters and digits, optionally
+  dot-separated, with at least one digit (`3`, `9a`, `2.1`, `A1`), compared as a whole. `### Task 9a:` is a task of its
+  own, while a deeper heading whose id goes on from the task's (`#### Task 7a` under `### Task 7`) is a part of that
+  task, as `task-brief` takes it.
+- **Runs split tasks and add tasks as they go.** The browser run split Task 9 into 9a and 9b, added 9c after them, and
+  split 15 into 15a and 15b. The ledger then has `Task 9a: …` lines and never one for Task 9, and the plan keeps its
+  single `### Task 9` heading. Such a task is shown as the parts the ledger names (`9a · <title of Task 9>`), each
+  counted by its own lines, unless the ledger records the task complete as a whole. A part is an id that goes on from
+  a plan task's id with a letter or a dot (`12` is not a part of `1`).
+- **Runs drop tasks.** Ledgers record it in their own words. A line `Task <id>: skipped` (also `dropped`, `declined`,
+  `cancelled`, `abandoned`, `not needed`, `superseded`, `obsolete`) closes the task, but only when the word stands on
+  its own (`Task 14: skipped, see the ruling above.`), not as the start of a sentence (`Task 4: skipped 2 flaky tests`).
+  A dropped task counts as done and its title says `(dropped)`.
+- Older superpowers versions wrote free-form ledgers with no `Task <N>:` lines at all; only the current format is
   supported.
 - **The final review is often recorded**: lines starting `Final` (`Final review: …`, `Final: Ruling: …`) come after
   the last task — in 57 of 127 ledgers in another of the user's projects, and in both current-format ledgers here.
@@ -64,8 +79,10 @@ A new segment in the Claude tab's status bar, shown only while the tab has a pla
   `▰▰▰▱▱▱▱ 3/7 · Save dialog and file writing`;
 - all tasks done: `✓ 7/7` (with the bar full or dropped — builder's call).
 
-The current task is the first task without a `complete` line after the furthest task in plan order that has one
-(Task 1 when none has); every task before it is done. A long task title is cut with an
+A task is done when the ledger closes it (complete or dropped) and open until then, in whatever order the run does
+them. The current task is the open task the ledger named last (`Task 9b: dispatched …`), when no task was closed
+after that line; otherwise the first open task after the one closed last, in plan order, or the first open task when
+none follows (Task 1 when nothing is closed). A long task title is cut with an
 ellipsis so the segment never pushes the others off the bar. The segment's tooltip names the plan and says
 "click for the task list". It sits right before the Changes counter. Like the Changes counter (and unlike model,
 context and limits), it does not come from Claude's `statusLine`, so it shows before the first status message and
@@ -90,9 +107,9 @@ that is not taken from the plan is English, like the rest of the UI.
 - **Appears** as soon as the conversation starts carrying out a plan — through either executor skill, in the main
   conversation or in an orchestrator subagent — and the plan file and workspace can be read.
 - **After the last task** it stays as `✓ 7/7`, so the user can see the plan finished. The plan is finished when
-  the last task has a `complete` line, when the ledger records the final review (a line starting `Final`), or when
-  the workspace is deleted (that is how a clean run ends). A finished plan counts all its tasks as done
-  (`✓ 10/10`, even when the last tasks were manual checks without a `complete` line), and after a deletion the
+  every task is closed (complete or dropped), when the ledger records the final review (a line starting `Final`), or
+  when the workspace is deleted (that is how a clean run ends). A finished plan counts all its tasks as done
+  (`✓ 10/10`, even when some tasks were manual checks without a `complete` line), and after a deletion the
   segment keeps that state for the rest of the session. If the workspace comes back (rebuilt after a
   `git clean`), the segment follows it again.
 - **A failed read changes nothing**: a file that is briefly unreadable or half-written keeps the last good state
@@ -135,8 +152,9 @@ Decided:
   within about a second or two. Polling or watching is the builder's call; nothing may block the event loop.
 - **Untrusted input.** Transcript lines, the plan, `plan-path` and the ledger are all untrusted: validate, ignore
   what does not parse, cap sizes, and degrade to no segment rather than a wrong one. A plan file that cannot be read,
-  or has no `Task <N>:` headings, means no segment. Ledger lines for task numbers the plan does not have are
-  ignored. If the plan file changes mid-run (tasks added or renamed), the list follows it.
+  or has no `Task <N>:` headings, means no segment. Ledger lines for task ids the plan does not have, and that are
+  no part of a plan task, are ignored; an id longer than 24 characters is no id, and a task the ledger names more
+  than 50 parts of is shown whole. If the plan file changes mid-run (tasks added or renamed), the list follows it.
 - **Paths** are compared with `pathKey`; expect `/` and `\`, MSYS paths in `plan-path`, 8.3 short names,
   junctions and symlinks. A repo-relative `plan-path` or `args` resolves against the workspace's `<root>`.
 - **Lenient parsing**: task headings at levels 2–4 (`## Task 3:` as well as `### Task 3:`), an optional note
@@ -166,7 +184,8 @@ Per AGENTS.md, each behaviour through the entry point that uses it, written firs
 
 - **Unit** (`tests/unit/`): parsing a plan (title, task headings at levels 2–4, CRLF, non-English titles, no tasks),
   parsing a ledger (only `Task <N>: complete` counts; fix rounds, parked, rulings and pre-flight lines do not;
-  tasks before the furthest complete one count as done; a `Final` line finishes the plan),
+  each task counts by its own lines, out of order too; sub-task ids, split and dropped tasks; a `Final` line
+  finishes the plan),
   `plan-path` resolution (relative, absolute, MSYS on Windows), the per-tab state machine with fake
   dependencies (appears, updates, `✓` at the end, replaced by a second plan, cleared on session end and on a new
   session, kept across compaction), and the segment's text (`3/7 · …`, ellipsis, `✓ 7/7`).
