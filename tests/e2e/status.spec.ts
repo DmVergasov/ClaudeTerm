@@ -130,6 +130,30 @@ test('the background work a turn ended with shows in the status bar until a late
   await app.close()
 })
 
+test('agents whose stop never came leave the status bar when a turn ends with no background work that runs agents; a running workflow keeps them', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  const bar = page.locator('#statusbar')
+  // two agents of a workflow: an API error ends their turns, and Claude Code sends no SubagentStop for them
+  for (const agentId of ['a1', 'a2']) {
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'start', agentId, agentType: 'workflow-subagent' })).toEqual({ ok: true })
+  }
+  await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ 2: … ×2')
+
+  // a turn ends while the workflow still runs: the agents may be its own, and stay
+  const workflow = { id: 'w9ehhq53f', type: 'workflow', description: 'Inventory the crash reports', command: null }
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks: [workflow] })).toEqual({ ok: true })
+  await expect(bar.locator('.status-background .status-text')).toHaveText('1 in background: Inventory the crash reports')
+  await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ 2: … ×2')
+
+  // the workflow is over, a dev server alone runs on: no agent runs any more
+  const server = { id: 'b1', type: 'shell', description: 'Dev server', command: 'npm run dev' }
+  expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId, sessionId: SID, reason: 'done', background: true, tasks: [server] })).toEqual({ ok: true })
+  await expect(bar.locator('.status-background .status-text')).toHaveText('1 in background: Dev server')
+  await expect(bar.locator('.status-agents')).toHaveCount(0)
+  await app.close()
+})
+
 test('long background work takes no more than about 40 characters of the status bar, and its tooltip says it all', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })

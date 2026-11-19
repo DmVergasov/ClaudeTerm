@@ -28,6 +28,8 @@ function makeHub(meta: Record<string, AgentMeta> = {}) {
 const meta = (description: string): AgentMeta => ({ description, toolUseId: null, background: false })
 
 const task = (id: string, description: string | null = 'build'): BackgroundTask => ({ id, type: 'shell', description, command: 'make' })
+/** background work of a kind, as Claude Code names it in a Stop's background_tasks */
+const work = (id: string, type: string): BackgroundTask => ({ id, type, description: null, command: null })
 
 /** a hub whose remoteChanged records [tabId, id, previous] and whose remoteState answers `state` */
 function rcHub() {
@@ -248,6 +250,33 @@ describe('StatusHub', () => {
     hub.background(TAB, SID, [])
     expect(hub.get(TAB).background).toEqual([])
     expect(changes).toEqual([TAB, TAB, TAB, TAB])
+  })
+
+  // a subagent's SubagentStop may never come (Claude Code sends StopFailure instead for one an API error stopped): past the end
+  // of a turn only background work runs agents, so a turn end that lists none that can says none runs any more
+  it('a turn end whose background work runs no agent drops the agents still shown, those whose SubagentStop never came too', () => {
+    const { hub, changes } = makeHub()
+    hub.status(status())
+    hub.subagent(sub('start', 'a1', { agentType: 'workflow-subagent' }))
+    hub.subagent(sub('start', 'a2'))
+    changes.length = 0
+    hub.background(TAB, SID, [task('b1'), work('m1', 'monitor'), work('x1', 'MCP task')])
+    expect(hub.get(TAB).agents).toEqual([])
+    expect(changes).toEqual([TAB])
+    hub.subagent(sub('start', 'a3'))
+    hub.background(TAB, SID, [])
+    expect(hub.get(TAB).agents).toEqual([])
+  })
+
+  it('a turn end that lists a running workflow, a background subagent or work of another kind keeps every agent', () => {
+    const { hub } = makeHub()
+    hub.status(status())
+    hub.subagent(sub('start', 'a1', { agentType: 'workflow-subagent' }))
+    hub.subagent(sub('start', 'a2', { agentType: 'general-purpose' }))
+    for (const tasks of [[work('w9ehhq53f', 'workflow')], [task('b1'), work('a2', 'subagent')], [work('t1', 'teammate')], [work('k1', 'a kind Claude Code adds later')]]) {
+      hub.background(TAB, SID, tasks)
+      expect(hub.get(TAB).agents.map((a) => a.agentId)).toEqual(['a1', 'a2'])
+    }
   })
 
   it('a new claude process, another session or the end of the session drops the background tasks; a late report of an ended session is ignored', () => {

@@ -16,6 +16,9 @@ export interface StatusHubDeps {
   remoteState?(tabId: string): RemoteState | null
 }
 
+/** the kinds of background work, as Claude Code names them, that run no subagent; a kind not named here may run one */
+const AGENTLESS_TASKS = new Set(['shell', 'monitor', 'MCP task'])
+
 interface TrackedAgent extends AgentStatus {
   meta: AgentMeta | null
 }
@@ -76,6 +79,9 @@ export class StatusHub {
     if (t.sessionId === null) t.sessionId = sessionId
     else if (t.sessionId !== sessionId) return // a late hook of a previous session
     t.background = tasks
+    // past the end of a turn no subagent runs in the foreground, and in the background only under work that can run one (a
+    // subagent, a workflow, a teammate): with none listed, the agents still shown have ended, also one whose SubagentStop never came
+    if (tasks.every((task) => AGENTLESS_TASKS.has(task.type))) t.agents.clear()
     this.deps.onChange(tabId)
   }
 

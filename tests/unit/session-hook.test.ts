@@ -208,6 +208,18 @@ describe('runSessionHook: other hook events', () => {
     expect(send).toHaveBeenNthCalledWith(2, '\\\\.\\pipe\\x', { v: 1, type: 'attention', tabId: TAB, sessionId: SID, reason: 'done', error: 'unknown', remote: null })
   })
 
+  // Claude Code 2.1.328 ends a subagent's turn that fails on an API error (the usage limit, an overload) with StopFailure
+  // carrying the subagent's agent_id, and never sends its SubagentStop: a workflow that hit the limit left its agents shown
+  it('maps the StopFailure of a subagent to that subagent\'s stop, not to the end of the main turn', async () => {
+    const send = vi.fn(async () => ({ ok: true as const }))
+    const failure = {
+      session_id: SID, transcript_path: TP, cwd: WORK, prompt_id: 'f3c1a2b4-5d6e-4f70-8a9b-0c1d2e3f4a5b', agent_id: AGENT, agent_type: 'workflow-subagent',
+      effort: { level: 'high' }, hook_event_name: 'StopFailure', error: 'rate_limit', last_assistant_message: "You've hit your limit · resets 3pm"
+    }
+    expect(await runSessionHook(JSON.stringify(failure), ENV, send)).toBe('')
+    expect(send.mock.calls.map((c) => (c as unknown[])[1])).toEqual([{ v: 1, type: 'subagent', tabId: TAB, sessionId: SID, event: 'stop', agentId: AGENT, agentType: 'workflow-subagent' }])
+  })
+
   it('ignores notifications and other tools', async () => {
     const send = vi.fn()
     expect(await runSessionHook(JSON.stringify({ session_id: SID, hook_event_name: 'Notification', notification_type: 'permission_prompt' }), ENV, send)).toBe('')
