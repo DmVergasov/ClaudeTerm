@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { imagePasteInput, imagePasteRoute, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyLike } from '../../src/renderer/keymap'
+import { imagePasteInput, imagePasteRoute, isAltGrText, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyLike } from '../../src/renderer/keymap'
 
 describe('imagePasteInput', () => {
   it('Alt+V for Claude Code on Windows, Ctrl+V elsewhere', () => {
@@ -167,6 +167,24 @@ describe('isPrimaryKey', () => {
     expect(isPrimaryKey(k('KeyF', { ctrlKey: true }), 'darwin')).toBe(false)
     expect(isPrimaryKey(k('KeyF', cs), 'win32')).toBe(false)
     expect(isPrimaryKey(k('KeyF', { ...cmd, altKey: true }), 'darwin')).toBe(false)
+  })
+})
+
+// Windows sends AltGr as Ctrl+Alt with the character the layout types
+describe('isAltGrText', () => {
+  const altGr = { ctrlKey: true, altKey: true }
+  it('a character or a dead key typed with Ctrl+Alt is the layout\'s: AltGr+2 is @ on Spanish, AltGr+7 is { on German, AltGr+2 is ~ on French', () => {
+    expect(isAltGrText(k('Digit2', altGr, '@'))).toBe(true)
+    expect(isAltGrText(k('Digit7', altGr, '{'))).toBe(true)
+    expect(isAltGrText(k('Digit2', altGr, 'Dead'))).toBe(true)
+  })
+
+  it('Ctrl+Alt with a digit is still a tab switch, and a named key or one modifier alone is not AltGr', () => {
+    expect(isAltGrText(k('Digit2', altGr, '2'))).toBe(false)
+    expect(isAltGrText(k('Tab', altGr, 'Tab'))).toBe(false)
+    expect(isAltGrText(k('KeyQ', { ctrlKey: true }, 'q'))).toBe(false)
+    expect(isAltGrText(k('KeyQ', { altKey: true }, 'q'))).toBe(false)
+    expect(isAltGrText(k('Digit2', { altKey: true }, 'Dead'))).toBe(false)
   })
 })
 

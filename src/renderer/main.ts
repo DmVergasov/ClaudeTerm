@@ -24,7 +24,7 @@ import { Lightbox } from './lightbox'
 import { PlanList } from './plan-list'
 import { RemotePopover, type RemotePopoverView } from './remote-popover'
 import { RecentSessionsWindow } from './recent-sessions'
-import { imagePasteInput, imagePasteRoute, isEditingKey, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
+import { imagePasteInput, imagePasteRoute, isAltGrText, isEditingKey, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar, type FindTarget } from './search'
 import { loadInter } from './dom'
 import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
@@ -846,12 +846,9 @@ function runAction(a: KeyAction, tabId: string | null): void {
   }
 }
 
-/**
- * AltGr types a character on many layouts (AltGr+7 is { on German, AltGr+2 is @ on Spanish). Windows sends it as Ctrl+Alt, so a
- * key with the AltGraph state, or a character key with Ctrl+Alt, is the layout's; a digit is still a tab switch
- */
+/** a key AltGr types with: one with the AltGraph state, or an AltGr character or dead key as Windows sends it (isAltGrText) */
 function isAltGrKey(e: KeyboardEvent): boolean {
-  return e.getModifierState('AltGraph') || (e.ctrlKey && e.altKey && [...e.key].length === 1 && !/^\d$/.test(e.key))
+  return e.getModifierState('AltGraph') || isAltGrText(e)
 }
 
 function onTerminalKey(tabId: string, e: KeyboardEvent): boolean {

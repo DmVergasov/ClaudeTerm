@@ -1,4 +1,4 @@
-import { isEditingKey, mapKey, type KeyAction, type KeyLike } from '../../shared/keymap'
+import { isAltGrText, isEditingKey, mapKey, type KeyAction, type KeyLike } from '../../shared/keymap'
 
 /** the zoom keys are the page's own on a web app (a map, a diagram editor): the page keeps them, the window still zooms on them */
 const ZOOM_KEYS: ReadonlySet<KeyAction['type']> = new Set(['zoomIn', 'zoomOut', 'zoomReset'])
@@ -20,8 +20,6 @@ export interface PageKeyInput {
  */
 export function appKeyFor(input: PageKeyInput, platform: string): KeyAction | null {
   if (input.type !== 'keyDown') return null
-  // Windows reports AltGr as Ctrl+Alt: a character it types (AltGr+2 is @ on a Spanish layout) or a dead key that starts one is the page's; a digit is still a tab switch
-  if (input.control && input.alt && (input.key === 'Dead' || ([...input.key].length === 1 && !/^\d$/.test(input.key)))) return null
   const e: KeyLike = {
     type: 'keydown',
     key: input.key,
@@ -31,6 +29,8 @@ export function appKeyFor(input: PageKeyInput, platform: string): KeyAction | nu
     altKey: input.alt,
     metaKey: input.meta
   }
+  // Windows reports AltGr as Ctrl+Alt: a character it types or a dead key that starts one is the page's
+  if (isAltGrText(e)) return null
   const action = mapKey(e, platform)
   if (action === null || isEditingKey(action) || ZOOM_KEYS.has(action.type)) return null
   return action

@@ -61,6 +61,15 @@ export function isImagePasteKey(e: KeyLike, platform: string): boolean {
   return false
 }
 
+/**
+ * AltGr types a character on many layouts (AltGr+7 is { on German, AltGr+2 is @ on Spanish), or a dead key that starts one
+ * (AltGr+2 is ~ on French). Windows sends it as Ctrl+Alt, so a character key or a dead key with Ctrl+Alt is the layout's; a
+ * digit is still a tab switch. The AltGraph state, which only a DOM event has, is checked where the event is
+ */
+export function isAltGrText(e: Pick<KeyLike, 'key' | 'ctrlKey' | 'altKey'>): boolean {
+  return e.ctrlKey && e.altKey && (e.key === 'Dead' || ([...e.key].length === 1 && !/^\d$/.test(e.key)))
+}
+
 /** Ctrl on Windows and Linux, ⌘ on macOS, without the other modifiers: the key of a panel's own shortcuts (Ctrl+F, Ctrl+D) */
 export function isPrimaryKey(e: KeyLike, platform: string): boolean {
   const mac = platform === 'darwin'
