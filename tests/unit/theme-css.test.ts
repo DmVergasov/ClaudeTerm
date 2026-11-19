@@ -28,7 +28,7 @@ describe('the stylesheets follow the theme', () => {
     expect(literals('styles.css')).toEqual(['#0A0A0C', '#111', '#111', '#111', '#000a', '#000a', '#000a', '#0A0A0C', '#000a', '#0008', '#0A0A0C', '#fff', '#000d', '#B5B5BE', '#000a',
       '#000a', '#e06c75', '#0A0A0C', 'rgba(217, 119, 87, 0.14)', '#111', '#111', 'rgba(255, 155, 148, 0.7)',
       'rgba(217, 119, 87, 0.12)', 'rgba(229, 192, 123, 0.45)', 'rgba(229, 192, 123, 0.35)', '#111', '#111', '#0A0A0C', '#000a',
-      '#000a', '#000a'])
+      '#000a', '#000a', '#000a'])
   })
 
   it('styles.css reads every other colour from the palette', () => {
