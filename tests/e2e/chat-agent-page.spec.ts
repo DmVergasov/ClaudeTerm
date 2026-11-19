@@ -1128,6 +1128,9 @@ test('the forward turn is quiet: no done sound and no mark', async () => {
     await forwardFromPage(page, stand.config, gate, 'Check the totals')
     await expect(page.locator(`${FORWARD_BUBBLE} .agent-mark`)).toHaveText('via Claude · Delivered', { timeout: 30_000 })
     await page.locator(BACK).click()
+    // the resumed agent notifies a moment later, and Claude answers that in a turn of its own: until it has, the chat is idle
+    // in between, and that quiet turn could come after the typed one below and make it quiet too
+    await expect(page.locator(`${MAIN_COLUMN} .chat-text`, { hasText: 'The agent answered: Got: Check the totals' })).toHaveCount(1, { timeout: 30_000 })
     await expect.poll(async () => (await page.evaluate((id) => window.ct.chatSnapshot(id), tabId))?.state.turn, { timeout: 30_000 }).toBe('idle')
     // a shell tab in front: the chat is in the background when its forward turn's done comes
     const shell = (await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), stand.work))!
