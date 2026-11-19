@@ -563,6 +563,14 @@ describe('browser guards', () => {
     for (const a of refused) expect(isBrowserProfileAction(a)).toBe(false)
   })
 
+  it('isBrowserProfileAction accepts allowAll with a profile id and a boolean on, and refuses any other on or id', () => {
+    expect(isBrowserProfileAction({ type: 'allowAll', id: 'default', on: true })).toBe(true)
+    expect(isBrowserProfileAction({ type: 'allowAll', id: 'default', on: false })).toBe(true)
+    expect(isBrowserProfileAction({ type: 'allowAll', id: 'default', on: 'true' })).toBe(false)
+    expect(isBrowserProfileAction({ type: 'allowAll', id: 'default' })).toBe(false)
+    expect(isBrowserProfileAction({ type: 'allowAll', id: '../x', on: true })).toBe(false)
+  })
+
   it('isBrowserProfileAction refuses a profile name with a control character or a bidi override, for add and rename', () => {
     for (const bad of ['a\nb', '\u0000x', 'x‮y']) {
       expect(isBrowserProfileAction({ type: 'add', name: bad })).toBe(false)

@@ -162,6 +162,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .browser-profile-name { flex: 1; width: auto; min-width: 0; }
 .browser-default { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12.5px; white-space: nowrap; }
 .browser-profile-sites { display: flex; flex-direction: column; gap: 6px; }
+.browser-profile-sites.is-dim { opacity: 0.5; }
+.browser-allow-all { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; color: var(--text-2); font-size: 12.5px; cursor: pointer; }
+.browser-allow-all-hint { margin: -4px 0 0; color: var(--amber); font-size: 12px; line-height: 1.45; }
 .browser-allowed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .browser-site { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 9px; border: 1px solid var(--line-2); border-radius: 7px; color: var(--text-2); font-size: 12px; }
 .browser-site-remove { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--text-4); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }

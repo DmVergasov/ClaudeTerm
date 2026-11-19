@@ -25,6 +25,7 @@
 - UI strings (English, exact):
   - panel line: `Claude is using the browser`, `Stop`, `You have control`, `Hand back to Claude`;
   - card: `Claude wants to open <site>` / `Claude wants to use <site>`, `Allow in this tab`, `Always allow`, `Deny`;
+  - profile switch (added 2026-11-19): `Always allow all sites`, and the warning line `Claude opens any website in this profile without asking, signed in with its cookies.`;
   - empty state: `Claude can open pages here, or type an address above.`;
   - import: `Import cookies…`, `Close <Browser> to continue. The import starts as soon as it is closed.`, `If it keeps running in the background, quit it from the tray icon.`, `Imported <N> cookies for <M> sites.` (each number on its own: `1 cookie`, `1 site`, the plural otherwise; so `Imported 1 cookie for 1 site.`; final 2026-11-19), `Sites that keep their sign-in outside cookies need you to sign in again here.`, `Google sign-ins are not carried over: <Browser> ties them to this computer.` (the source browser: Chrome, Edge, Brave, and Vivaldi/Chromium where it applies; 2026-11-19);
   - the sheet shows `importing` (spinner and Cancel) from the start of a copy or a Firefox read, not only once the cookies are read (2026-11-19);
@@ -302,7 +303,7 @@ export class BrowserProfilesStore {
 }
 ```
 
-- File format: `{ "version": 1, "defaultId": "default", "profiles": [{ "id": "default", "name": "Default", "allowed": [] }] }`, written to `file + '.tmp'` then renamed. A missing or broken file starts with Default only. A file whose profiles lack `default` gets it added. `newId` defaults to 8 random characters from `[a-z0-9]` (`crypto.randomBytes`).
+- File format: `{ "version": 1, "defaultId": "default", "profiles": [{ "id": "default", "name": "Default", "allowed": [], "allowAll": false }] }` (`allowAll` added 2026-11-19; a missing or non-`true` value loads as off), written to `file + '.tmp'` then renamed. A missing or broken file starts with Default only. A file whose profiles lack `default` gets it added. `newId` defaults to 8 random characters from `[a-z0-9]` (`crypto.randomBytes`).
 
 - [ ] **Step 1: Write the failing tests** (files under `mkdtempSync(join(tmpdir(),'ct-bprof-'))`):
   - a fresh store has view `{profiles:[{id:'default',name:'Default',allowed:[]}],defaultId:'default'}`;

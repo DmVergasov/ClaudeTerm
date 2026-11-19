@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { DEFAULT_PROFILE_ID, MAX_PROFILE_NAME, PROFILE_ID_RE, UNSAFE_PROFILE_NAME } from '../../shared/browser'
 import type { BrowserProfilesView } from '../../shared/browser'
 
-interface StoredProfile { id: string; name: string; allowed: string[] }
+interface StoredProfile { id: string; name: string; allowed: string[]; allowAll: boolean }
 
 export interface BrowserProfilesStoreOptions {
   onError?(message: string): void
@@ -40,7 +40,7 @@ export class BrowserProfilesStore {
 
   view(): BrowserProfilesView {
     return {
-      profiles: this.profiles.map((p) => ({ id: p.id, name: p.name, allowed: [...p.allowed] })),
+      profiles: this.profiles.map((p) => ({ id: p.id, name: p.name, allowed: [...p.allowed], allowAll: p.allowAll })),
       defaultId: this.defaultProfileId
     }
   }
@@ -63,7 +63,7 @@ export class BrowserProfilesStore {
     if (clean === null || this.nameTaken(clean)) return null
     let id = this.newId()
     while (this.has(id)) id = this.newId()
-    this.profiles.push({ id, name: clean, allowed: [] })
+    this.profiles.push({ id, name: clean, allowed: [], allowAll: false })
     this.save()
     return id
   }
@@ -98,6 +98,20 @@ export class BrowserProfilesStore {
     return [...(this.find(id)?.allowed ?? [])].sort()
   }
 
+  /** whether the profile allows every web site without asking; false for an unknown profile */
+  allowsAll(id: string): boolean {
+    return this.find(id)?.allowAll === true
+  }
+
+  /** turns the always-allow-all switch of a profile on or off; false for an unknown profile or no change */
+  setAllowAll(id: string, on: boolean): boolean {
+    const profile = this.find(id)
+    if (!profile || profile.allowAll === on) return false
+    profile.allowAll = on
+    this.save()
+    return true
+  }
+
   allow(id: string, site: string): void {
     const profile = this.find(id)
     if (!profile || profile.allowed.includes(site)) return
@@ -124,7 +138,7 @@ export class BrowserProfilesStore {
   }
 
   private load(): void {
-    this.profiles = [{ id: DEFAULT_PROFILE_ID, name: 'Default', allowed: [] }]
+    this.profiles = [{ id: DEFAULT_PROFILE_ID, name: 'Default', allowed: [], allowAll: false }]
     if (!existsSync(this.file)) return
     let raw: unknown
     try {
@@ -146,9 +160,9 @@ export class BrowserProfilesStore {
       const name = typeof p.name === 'string' ? cleanName(p.name) : null
       if (name === null || loaded.some((x) => x.name.toLowerCase() === name.toLowerCase())) continue
       const allowed = Array.isArray(p.allowed) ? [...new Set(p.allowed.filter((s): s is string => typeof s === 'string' && s.length > 0))] : []
-      loaded.push({ id: p.id, name, allowed })
+      loaded.push({ id: p.id, name, allowed, allowAll: p.allowAll === true })
     }
-    if (!loaded.some((p) => p.id === DEFAULT_PROFILE_ID)) loaded.unshift({ id: DEFAULT_PROFILE_ID, name: 'Default', allowed: [] })
+    if (!loaded.some((p) => p.id === DEFAULT_PROFILE_ID)) loaded.unshift({ id: DEFAULT_PROFILE_ID, name: 'Default', allowed: [], allowAll: false })
     this.profiles = loaded
     const wanted = typeof r.defaultId === 'string' ? r.defaultId : DEFAULT_PROFILE_ID
     this.defaultProfileId = loaded.some((p) => p.id === wanted) ? wanted : DEFAULT_PROFILE_ID

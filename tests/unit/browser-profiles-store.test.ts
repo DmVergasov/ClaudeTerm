@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -24,7 +24,55 @@ describe('BrowserProfilesStore', () => {
 
   it('starts with the Default profile only', () => {
     const store = new BrowserProfilesStore(tempFile())
-    expect(store.view()).toEqual({ profiles: [{ id: 'default', name: 'Default', allowed: [] }], defaultId: 'default' })
+    expect(store.view()).toEqual({ profiles: [{ id: 'default', name: 'Default', allowed: [], allowAll: false }], defaultId: 'default' })
+  })
+
+  it('keeps the always-allow-all switch per profile, off for a new profile, and saves only a change', () => {
+    const file = tempFile()
+    const store = new BrowserProfilesStore(file)
+    const work = store.add('Work') as string
+    expect(store.view().profiles.find((p) => p.id === work)).toEqual({ id: work, name: 'Work', allowed: [], allowAll: false })
+    expect(store.setAllowAll('default', true)).toBe(true)
+    expect(new BrowserProfilesStore(file).allowsAll('default')).toBe(true)
+    expect(new BrowserProfilesStore(file).allowsAll(work)).toBe(false)
+    expect(store.setAllowAll('default', true)).toBe(false)
+    expect(store.setAllowAll('unknown', true)).toBe(false)
+    expect(store.allowsAll('unknown')).toBe(false)
+  })
+
+  it('writes a profile whose allowAll was not true back as off, on the next save', () => {
+    const file = tempFile()
+    writeFileSync(file, JSON.stringify({ version: 1, defaultId: 'default', profiles: [{ id: 'default', name: 'Default', allowed: [], allowAll: 'yes' }] }), 'utf8')
+    new BrowserProfilesStore(file).add('Work')
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as { profiles: { id: string; allowAll: unknown }[] }
+    expect(saved.profiles.find((p) => p.id === 'default')?.allowAll).toBe(false)
+  })
+
+  it('setAllowAll with the value the profile already has does not rewrite the file', () => {
+    const file = tempFile()
+    const store = new BrowserProfilesStore(file)
+    expect(store.setAllowAll('default', true)).toBe(true)
+    const past = new Date('2001-01-01T00:00:00Z')
+    utimesSync(file, past, past)
+    expect(store.setAllowAll('default', true)).toBe(false)
+    expect(statSync(file).mtimeMs).toBe(past.getTime())
+  })
+
+  it('setAllowAll on a removed profile returns false and changes no other profile', () => {
+    const store = new BrowserProfilesStore(tempFile())
+    const work = store.add('Work') as string
+    expect(store.remove(work)).toBe(true)
+    expect(store.setAllowAll(work, true)).toBe(false)
+    expect(store.allowsAll('default')).toBe(false)
+    expect(store.view().profiles.map((p) => p.id)).toEqual(['default'])
+  })
+
+  it('loads a profile with no allowAll, or one that is not true, as off', () => {
+    const file = tempFile()
+    writeFileSync(file, JSON.stringify({ version: 1, defaultId: 'default', profiles: [{ id: 'default', name: 'Default', allowed: [] }] }), 'utf8')
+    expect(new BrowserProfilesStore(file).allowsAll('default')).toBe(false)
+    writeFileSync(file, JSON.stringify({ version: 1, defaultId: 'default', profiles: [{ id: 'default', name: 'Default', allowed: [], allowAll: 'yes' }] }), 'utf8')
+    expect(new BrowserProfilesStore(file).allowsAll('default')).toBe(false)
   })
 
   it('keeps an added profile in its file for the next store', () => {
@@ -73,7 +121,7 @@ describe('BrowserProfilesStore', () => {
     writeFileSync(file, '{"version":1,"profiles":"x"}', 'utf8')
     const errors: string[] = []
     const store = new BrowserProfilesStore(file, { onError: (m) => errors.push(m) })
-    expect(store.view()).toEqual({ profiles: [{ id: 'default', name: 'Default', allowed: [] }], defaultId: 'default' })
+    expect(store.view()).toEqual({ profiles: [{ id: 'default', name: 'Default', allowed: [], allowAll: false }], defaultId: 'default' })
     expect(errors.length).toBeGreaterThan(0)
   })
 

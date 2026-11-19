@@ -12,6 +12,8 @@ export const SITE_ANSWER_MS = 600_000
 export interface SiteGateDeps {
   allowedAlways(profileId: string): string[]
   allowAlways(profileId: string, site: string): void
+  /** the profile's Always allow all sites switch: every http and https site is allowed in it */
+  allowAll(profileId: string): boolean
   showCard(tabId: string, card: SiteCard | null): void
   /** the tab asks for attention on this device only (never forwarded to paired devices) */
   signal(tabId: string): void
@@ -84,14 +86,15 @@ export class SiteGate {
   }
 
   /**
-   * true for a local page, or when the tab's grants or the profile's always list cover the URL's site. A file is free in the
+   * true for a local page, when the profile allows all sites, or when the tab's grants or the profile's always list cover the URL's site. A file is free in the
    * tab's folder; elsewhere it is allowed only when the person allowed that file in this tab.
    */
   isAllowed(tabId: string, profileId: string, url: string): boolean {
     if (isFileUrl(url)) return this.fileAllowed(tabId, url)
     if (isLocalUrl(url)) return true
     const site = siteOf(url)
-    return site !== null && this.covered(tabId, profileId, { site, file: false })
+    if (site === null) return false
+    return this.d.allowAll(profileId) || this.covered(tabId, profileId, { site, file: false })
   }
 
   /** resolves once the URL may be used: at once when allowed, else after the person answers its card (or it times out, or stops) */

@@ -1007,6 +1007,9 @@ function bootstrap(): void {
       case 'clearData':
         if (browserProfiles.has(act.id)) void browserHub.clearProfileData(act.id)
         break
+      case 'allowAll':
+        if (browserProfiles.setAllowAll(act.id, act.on)) profilesChanged()
+        break
     }
     return browserProfiles.view()
   }

@@ -474,3 +474,44 @@ test('the card asks for attention here, in a Claude tab that is not in front', a
     await app.close()
   }
 })
+
+test('with Always allow all sites on, Claude opens and reads other sites without a card', async () => {
+  const { app, page, pipeName, tabId } = await claudeTab()
+  const outside = mkdtempSync(join(tmpdir(), 'ct-outside-'))
+  let site: SiteServer | null = null
+  try {
+    site = await startSiteServer()
+    await page.evaluate(() => window.ct.browserProfileAction({ type: 'allowAll', id: 'default', on: true }))
+    // Claude opens another site, and reads it, with no card
+    expect(await browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/page', 'other.test') })).toMatchObject({ ok: true, info: expect.stringContaining('- Title: Other page') })
+    expect((await stateOf(page, tabId))?.card ?? null).toBeNull()
+    await expect(page.locator(CARD)).toBeHidden()
+    // the person opens a page of a second other site: Claude lists its full address
+    await page.keyboard.press(SHORTCUT)
+    await page.locator(ADDRESS).fill(site.url('/form', 'site.test'))
+    await page.locator(ADDRESS).press('Enter')
+    await expect.poll(async () => (await stateOf(page, tabId))?.pages[0]?.url).toBe(site.url('/form', 'site.test'))
+    expect(await browserCmd(pipeName, tabId, { op: 'tabs', action: 'list' })).toMatchObject({ ok: true, info: expect.stringContaining(site.url('/form', 'site.test')) })
+    // a file outside the tab's folder still asks, with its own card
+    const elsewhere = join(outside, 'elsewhere.html')
+    writeFileSync(elsewhere, '<title>Elsewhere</title><p>not in the project</p>')
+    const file = browserCmd(pipeName, tabId, { op: 'navigate', url: pathToFileURL(elsewhere).href })
+    await expect(page.locator(CARD_TEXT)).toHaveText(`Claude wants to open ${elsewhere}`)
+    await cardButton(page, 'Deny').click()
+    expect(await file).toEqual({ ok: false, error: `The person did not allow ${elsewhere}.` })
+    // with the switch off, a new site asks again
+    await page.evaluate(() => window.ct.browserProfileAction({ type: 'allowAll', id: 'default', on: false }))
+    // the page the person opened on site.test is masked again in the list
+    const masked = await browserCmd(pipeName, tabId, { op: 'tabs', action: 'list' })
+    expect(masked.info).toContain('a page on site.test')
+    expect(masked.info).not.toContain(site.url('/form', 'site.test'))
+    const asked = browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/page', 'site.test') })
+    await expect(page.locator(CARD_TEXT)).toHaveText('Claude wants to open site.test')
+    await cardButton(page, 'Deny').click()
+    expect(await asked).toEqual({ ok: false, error: 'The person did not allow site.test.' })
+  } finally {
+    rmSync(outside, { recursive: true, force: true })
+    await site?.close()
+    await app.close()
+  }
+})

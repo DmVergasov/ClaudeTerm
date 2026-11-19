@@ -106,7 +106,7 @@ const URL_A = 'http://127.0.0.1:9/a'
 function deps(): TabBrowserDeps {
   return {
     stage: { add: () => undefined, remove: () => undefined, layout: () => undefined, minimized: () => false },
-    gate: new SiteGate({ allowedAlways: () => [], allowAlways: () => undefined, showCard: () => undefined, signal: () => undefined, folderOf: () => null }),
+    gate: new SiteGate({ allowedAlways: () => [], allowAlways: () => undefined, allowAll: () => false, showCard: () => undefined, signal: () => undefined, folderOf: () => null }),
     profiles: () => [{ id: 'default', name: 'Default' }],
     configureSession: () => undefined,
     changed: () => undefined,
@@ -495,6 +495,7 @@ function cardGate(answerMs?: number): { gate: SiteGate; shown: string[] } {
   const gate = new SiteGate({
     allowedAlways: () => [],
     allowAlways: () => undefined,
+    allowAll: () => false,
     showCard: (_tabId, card) => {
       if (card !== null) shown.push(card.site)
     },

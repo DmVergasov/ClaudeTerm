@@ -333,3 +333,23 @@ test("the panel clears its profile's data", async () => {
     await app.close()
   }
 })
+
+test('Always allow all sites is kept per profile', async () => {
+  const { app, page } = await launchClaudeTab()
+  try {
+    const win = await settingsWindow(app, page, 'browser')
+    const toggle = rowAt(win, 0).getByRole('switch', { name: 'Always allow all sites' })
+    await expect(toggle).not.toBeChecked()
+    await expect(rowAt(win, 0).locator('.browser-allow-all-hint')).toHaveText('Claude opens any website in this profile without asking, signed in with its cookies.')
+    await toggle.click()
+    await expect.poll(async () => (await page.evaluate(() => window.ct.browserProfiles())).profiles.find((p) => p.id === 'default')?.allowAll).toBe(true)
+    await expect(rowAt(win, 0).locator('.browser-profile-sites')).toHaveClass(/is-dim/)
+    // the switch is kept: a Settings window opened again shows it on
+    await win.close()
+    const again = await settingsWindow(app, page, 'browser')
+    await expect(rowAt(again, 0).getByRole('switch', { name: 'Always allow all sites' })).toBeChecked()
+    await expect(rowAt(again, 0).locator('.browser-profile-sites')).toHaveClass(/is-dim/)
+  } finally {
+    await app.close()
+  }
+})

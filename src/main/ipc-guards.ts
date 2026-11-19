@@ -365,6 +365,7 @@ export const isBrowserProfileAction = (v: unknown): v is BrowserProfileAction =>
     case 'setDefault':
     case 'clearData': return id
     case 'disallow': return id && typeof a.site === 'string' && a.site.length >= 1 && a.site.length <= MAX_SITE
+    case 'allowAll': return id && typeof a.on === 'boolean'
     default: return false
   }
 }

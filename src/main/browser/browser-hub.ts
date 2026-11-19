@@ -107,6 +107,7 @@ export class BrowserHub {
         d.profiles.allow(profileId, site)
         d.profilesChanged()
       },
+      allowAll: (profileId) => d.profiles.allowsAll(profileId),
       showCard: (tabId, card) => this.showCard(tabId, card),
       signal: (tabId) => d.signal(tabId),
       folderOf: (tabId) => d.folderOf(tabId),
