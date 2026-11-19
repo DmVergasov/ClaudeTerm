@@ -206,6 +206,28 @@ When your message to the coordinator gives a session a go — merge, push, relea
 
 The **Sessions** panel (in the coordinator's header, with the badge counting what waits for you) groups the sessions as **Waiting on you**, **Working**, **Idle** and **Resolved**, each with what it waits for, its task list's progress or its finished report, and lists the project's sessions that are **Not attached**. The coordinator's Claude has the same view through the `list_sessions`, `read_session`, `start_session`, `attach_session`, `detach_session`, `message_session` and `resolve_session` tools. Tasks and reports travel as agent messages, so the coordinator needs **Agent messages** on and Claude Code 2.1.287 or later, and a session on another device needs ClaudeTerm 0.22.0 or later there.
 
+### 🌐 A browser Claude can use
+
+**Browser** opens a browser beside a Claude tab, in the side panel: `Ctrl+Shift+B` (`⌘B` on macOS) or the **Browser** button in the tab's header, which shows for a Claude tab on this computer while it is in front. It has back, forward, reload and an address field, and a strip for several pages. Claude uses the same browser through the bundled `browser_*` tools: it opens pages, reads them (their structure, a screenshot, the text, the console and the network), clicks, types, selects and runs JavaScript. The pages of a tab come back after a restart.
+
+Claude can act on a site only with your say-so, and the panel asks:
+
+- **Local pages are free** — `localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`, and a `file://` page inside the folder the Claude tab works in. Claude works there without asking. Any other file on this computer gets a card with its path, which offers only **Allow in this tab** and **Deny**, and covers that one file in that tab. A `file://` address on another host (a network share) is not opened at all.
+- **Any other site** gets a card in the panel: **Allow in this tab** (until the Claude tab closes), **Always allow** (kept in the tab's profile, and listed in Settings → **Browser**) or **Deny**. A card nobody answers in 10 minutes makes Claude's command fail. Your own address, back, forward and reload are never asked about. Claude asks when it goes to another site, when it goes back or forward to one, or when it reads or acts on a page of one. A link you click inside a page while Claude's command runs, or in the 3 seconds after it, is held and asked about the same way, and so is a site a link, a redirect or a script reaches.
+- **Stop** ends the command Claude is running and takes the browser from it; **Hand back to Claude** gives it back.
+
+The residual risk: a local page or an allowed site is trusted fully. A script on it can still send requests to other sites in the background, such as images, `fetch` calls and frames, and those requests carry the profile's cookies as any browser would send them. Only top-level navigations to other sites are held for your yes. A local page Claude may use, or a file you allowed, can also read other files on this computer through the browser, so allow only the files you mean.
+
+**Profiles** keep their own sign-ins, storage and always-allowed sites. **Default** always exists; in Settings → **Browser** you add, rename and delete profiles and choose the one new Claude tabs use. Each tab's profile is chosen in the panel's profile menu, which also has **Import cookies…** and **Manage profiles…**.
+
+**Cookie import** brings sign-ins over from Chrome, Edge, Brave, Vivaldi, Chromium and Firefox in one click: choose the browser and profile in **Import cookies…** and press **Import**. Only cookies come over; a cookie with the same site, name and path is replaced, and expired ones are skipped. Sign-ins that a site keeps outside cookies need you to sign in again.
+
+- **Windows, Chrome, Edge and Brave** are read from the running browser. If ClaudeTerm cannot connect, it opens the browser's remote-debugging page (`chrome://inspect/#remote-debugging`, or the same page in Edge or Brave) in that browser: turn remote debugging on there and allow the connection; the import goes on by itself, and you can turn remote debugging off again on the same page. With several profiles open, you pick one.
+- **Vivaldi, Chromium and Firefox** are copied, and Chromium browsers on macOS and Linux too. If a Chromium browser holds its cookie file, the sheet waits: close the browser, and the import starts as soon as it is closed. ClaudeTerm does not close the browser you are running; it waits for you to.
+- On Windows, a Chromium import also says `Google sign-ins are not carried over: <Browser> ties them to this computer.`, naming the Chromium browser the cookies came from.
+
+The app encrypts its cookie store on disk in the installed build, with the operating system's key. On Windows another program running as your user can still decrypt it.
+
 ## Install
 
 1. Install [Claude Code](https://docs.claude.com/en/docs/claude-code) so that `claude` is on your `PATH`.
@@ -252,6 +274,7 @@ On its first start ClaudeTerm registers its `claudeterm` MCP server (the `show_i
 | Show / hide the Media panel | `Ctrl+Shift+I` | `⌘I` |
 | Show / hide the Changes panel | `Ctrl+Shift+D` | `⌘D` |
 | Show / hide the Docs panel | `Ctrl+Shift+O` | `⌘O` |
+| Show / hide the Browser panel | `Ctrl+Shift+B` | `⌘B` |
 | Show / hide the note of a Claude tab | `Ctrl+Shift+N` | `⌘N` |
 | Show / hide the mini-games | `Ctrl+Shift+G` | `⌘G` |
 | Tick the checkbox item under the caret, in the note | `Ctrl+Enter` | `⌘Enter` |
@@ -268,7 +291,7 @@ Right-click a tab → **Restart session** restarts Claude Code in the same tab a
 
 ## Settings
 
-Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: tabs for General, Appearance, Claude Code, Notifications, Panels, Accounts and Devices, and a search field (`Ctrl+F`, `⌘F` on macOS) that finds a setting on any tab and lets you change it right there. Changes apply at once.
+Press `Ctrl+,` (or **▾ → Settings…**) to open the settings window: tabs for General, Appearance, Claude Code, Notifications, Panels, Browser, Accounts and Devices, and a search field (`Ctrl+F`, `⌘F` on macOS) that finds a setting on any tab and lets you change it right there. Changes apply at once.
 
 ![Settings window](docs/images/settings.png)
 
