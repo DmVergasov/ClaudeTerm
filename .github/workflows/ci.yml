@@ -38,6 +38,16 @@ jobs:
         if: runner.os == 'Linux'
         run: npx electron-builder --linux deb --publish never
 
+      # the sign-ins are kept in the cookie store: without this fuse Electron writes them in plain text
+      - name: Check that the packaged Linux app encrypts its cookies
+        if: runner.os == 'Linux'
+        env:
+          FORCE_COLOR: '0'
+        run: |
+          npx @electron/fuses read --app dist/linux-unpacked/claudeterm > "$RUNNER_TEMP/fuses.txt"
+          cat "$RUNNER_TEMP/fuses.txt"
+          grep -q "EnableCookieEncryption is Enabled" "$RUNNER_TEMP/fuses.txt"
+
       - name: Keep the Linux package for a hand check
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
@@ -49,6 +59,17 @@ jobs:
       - name: Build the macOS packages
         if: runner.os == 'macOS'
         run: npx electron-builder --mac --publish never
+
+      - name: Check that the packaged macOS apps encrypt their cookies
+        if: runner.os == 'macOS'
+        env:
+          FORCE_COLOR: '0'
+        run: |
+          for app in dist/mac-arm64/ClaudeTerm.app dist/mac/ClaudeTerm.app; do
+            npx @electron/fuses read --app "$app" > "$RUNNER_TEMP/fuses.txt"
+            cat "$RUNNER_TEMP/fuses.txt"
+            grep -q "EnableCookieEncryption is Enabled" "$RUNNER_TEMP/fuses.txt"
+          done
 
       # node-pty starts every shell through spawn-helper: without its execute bit no tab opens
       - name: Check that the packaged spawn-helper can run
