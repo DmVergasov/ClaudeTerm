@@ -11,16 +11,19 @@ function setup(folder: string | null = null) {
   const shown: { tabId: string; card: SiteCard | null }[] = []
   const signals: string[] = []
   const always: [string, string][] = []
+  /** the profiles whose Always allow all sites switch is on */
+  const everySite: string[] = []
   let ids = 0
   const gate = new SiteGate({
     allowedAlways: (profileId) => always.filter(([p]) => p === profileId).map(([, site]) => site),
     allowAlways: (profileId, site) => { always.push([profileId, site]) },
+    allowAll: (profileId) => everySite.includes(profileId),
     showCard: (tabId, card) => { shown.push({ tabId, card }) },
     signal: (tabId) => { signals.push(tabId) },
     folderOf: () => folder,
     newId: () => `card${++ids}`
   })
-  return { gate, shown, signals, always }
+  return { gate, shown, signals, always, everySite }
 }
 
 beforeEach(() => { vi.useFakeTimers() })
@@ -177,6 +180,61 @@ describe('SiteGate', () => {
     expect(always).toEqual([])
     gate.answer('t1', 'card1', 'deny')
     await expect(p).resolves.toBe('denied')
+  })
+})
+
+describe('SiteGate: always allow all sites', () => {
+  it('a profile with the switch on allows every http and https site, with no card', async () => {
+    const { gate, shown, everySite } = setup()
+    everySite.push('work')
+    expect(gate.isAllowed('t1', 'work', 'https://bank.example/x')).toBe(true)
+    expect(gate.isAllowed('t1', 'work', 'http://news.example/')).toBe(true)
+    await expect(gate.check('t1', 'work', 'https://bank.example/x', 'open')).resolves.toBe('allowed')
+    expect(gate.card('t1')).toBeNull()
+    expect(shown).toEqual([])
+  })
+
+  it('a profile with the switch off still gets a card for the same site', () => {
+    const { gate, everySite } = setup()
+    everySite.push('work')
+    void gate.check('t1', 'default', 'https://bank.example/x', 'open')
+    expect(gate.card('t1')).toEqual({ id: 'card1', site: 'bank.example', kind: 'open', file: false })
+  })
+
+  it('a file outside the tab folder still asks with its card, with the switch on', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ct-gate-all-'))
+    try {
+      mkdirSync(join(root, 'elsewhere'), { recursive: true })
+      const path = join(root, 'elsewhere', 'page.html')
+      writeFileSync(path, '<p>page</p>')
+      const url = pathToFileURL(path).href
+      const { gate, everySite } = setup(join(root, 'project'))
+      everySite.push('work')
+      expect(gate.isAllowed('t1', 'work', url)).toBe(false)
+      void gate.check('t1', 'work', url, 'open')
+      expect(gate.card('t1')).toEqual({ id: 'card1', site: path, kind: 'open', file: true })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('with the switch on, ftp and a file URL with a host are still refused, with no card', async () => {
+    const { gate, shown, everySite } = setup()
+    everySite.push('work')
+    for (const url of ['ftp://example.com/x', 'file://evil.example/share/x.html']) {
+      expect(gate.isAllowed('t1', 'work', url)).toBe(false)
+      await expect(gate.check('t1', 'work', url, 'open')).resolves.toBe('denied')
+    }
+    expect(gate.card('t1')).toBeNull()
+    expect(shown).toEqual([])
+  })
+
+  it('the allowance ends when the switch goes off', () => {
+    const { gate, everySite } = setup()
+    everySite.push('work')
+    expect(gate.isAllowed('t1', 'work', 'https://bank.example/x')).toBe(true)
+    everySite.length = 0
+    expect(gate.isAllowed('t1', 'work', 'https://bank.example/x')).toBe(false)
   })
 })
 

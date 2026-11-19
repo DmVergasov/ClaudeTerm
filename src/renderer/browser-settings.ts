@@ -42,6 +42,13 @@ function profileRow(p: BrowserProfileView, defaultId: string, render: (v: Browse
   radio.addEventListener('change', () => act({ type: 'setDefault', id: p.id }, render))
   const isDefault = el('label', { className: 'browser-default' }, radio, el('span', { textContent: 'Default' }))
 
+  // the switch allows every web site in this profile: while it is on, the always-allowed list below is dimmed (still editable)
+  const allowAll = el('input', { type: 'checkbox', className: 'switch', checked: p.allowAll })
+  allowAll.setAttribute('role', 'switch')
+  allowAll.addEventListener('change', () => act({ type: 'allowAll', id: p.id, on: allowAll.checked }, render))
+  const allowAllRow = el('label', { className: 'browser-allow-all' }, allowAll, el('span', { textContent: 'Always allow all sites' }))
+  const allowAllHint = el('p', { className: 'browser-allow-all-hint', textContent: 'Claude opens any website in this profile without asking, signed in with its cookies.' })
+
   const allowed = el('div', { className: 'browser-allowed' })
   if (p.allowed.length === 0) allowed.append(el('span', { className: 'rd', textContent: 'None' }))
   for (const site of p.allowed) {
@@ -76,9 +83,14 @@ function profileRow(p: BrowserProfileView, defaultId: string, render: (v: Browse
     }))
   }
 
+  const sites = el('div', { className: 'browser-profile-sites' }, el('span', { className: 'rd', textContent: 'Always allowed sites' }), allowed)
+  sites.classList.toggle('is-dim', p.allowAll)
+
   row.append(
     el('div', { className: 'browser-profile-head' }, name, isDefault),
-    el('div', { className: 'browser-profile-sites' }, el('span', { className: 'rd', textContent: 'Always allowed sites' }), allowed),
+    allowAllRow,
+    allowAllHint,
+    sites,
     actions
   )
   return row

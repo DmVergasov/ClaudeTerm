@@ -117,7 +117,8 @@ function hubDeps(win: BrowserWindow, sendStill: (tabId: string, dataUrl: string 
       view: () => ({ profiles: [{ id: 'default', name: 'Default' }] }),
       defaultId: () => 'default',
       allowed: () => [],
-      allow: () => undefined
+      allow: () => undefined,
+      allowsAll: () => false
     } as unknown as BrowserHubDeps['profiles'],
     isLocalClaudeTab: () => true,
     forkParent: () => null,

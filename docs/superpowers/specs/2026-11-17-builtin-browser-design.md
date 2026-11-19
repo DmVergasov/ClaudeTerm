@@ -295,6 +295,31 @@ a still image of it shows in its place, so the overlay is visible.
 - Settings › Browser per profile: name, "Import cookies…", "Always allowed sites" (list, remove), "Clear data…",
   "Delete". Plus the default profile choice.
 
+### Always allow all sites (added 2026-11-19, after the person tried the local build)
+
+The person asked for "a checkbox to always allow visiting any site". It is a flag of each profile, chosen over a `*` in
+the always-allowed list (that would mix a site with "everything") and over one switch for the whole app (that would also
+open the profile that holds the bank's cookies).
+
+- **Where it lives.** Each profile's card in Settings › Browser has the switch **Always allow all sites**. It is off by
+  default and kept in the profile store; an older store file loads it as off.
+- **The warning.** A line always shows under the switch: "Claude opens any website in this profile without asking,
+  signed in with its cookies." There is no confirm dialog, by the person's choice.
+- **What it allows.** While the switch is on, the site gate allows every http and https site for every tab on that
+  profile. That covers opening a site, reading it and acting on it, held navigations (links, redirects, scripts, forms,
+  `window.open`), Claude's back and forward, and pages the person opened. No card shows, and replies to Claude no longer
+  mask those pages.
+- **What it does not change.**
+  - Local files keep the tab-folder rule: a file outside the tab's folder still asks with its own card.
+  - Local http pages stay free, as before.
+  - Other URL schemes are still refused.
+  - A held form POST is still not sent again.
+- **The always-allowed list stays.** While the switch is on, the list is shown dimmed but can still be edited, and it
+  applies again once the switch is off.
+- **A card already waiting** when the switch is turned on stays until the person answers it (builder's call).
+- **Residual risk.** The README says it plainly: with the switch on, Claude can visit and act on any site the profile
+  is signed in to.
+
 ### Cookie import
 
 From Settings › Browser › a profile › **Import cookies…** (and from the panel's profile menu). A sheet:

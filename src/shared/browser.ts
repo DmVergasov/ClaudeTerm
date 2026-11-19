@@ -193,11 +193,12 @@ export type BrowserPanelAction =
   | { type: 'newPage' } | { type: 'selectPage'; index: number } | { type: 'closePage'; index: number }
   | { type: 'setProfile'; profileId: string } | { type: 'stop' } | { type: 'handBack' }
   | { type: 'answer'; cardId: string; answer: SiteAnswer } | { type: 'devtools' } | { type: 'manageProfiles' } | { type: 'clearData' }
-export interface BrowserProfileView { id: string; name: string; allowed: string[] }
+export interface BrowserProfileView { id: string; name: string; allowed: string[]; allowAll: boolean }
 export interface BrowserProfilesView { profiles: BrowserProfileView[]; defaultId: string }
 export type BrowserProfileAction =
   | { type: 'add'; name: string } | { type: 'rename'; id: string; name: string } | { type: 'remove'; id: string }
   | { type: 'setDefault'; id: string } | { type: 'disallow'; id: string; site: string } | { type: 'clearData'; id: string }
+  | { type: 'allowAll'; id: string; on: boolean }
 export interface BrowserTabState { profile: string; pages: string[]; current: number }
 
 /** the saved state of a Claude tab's browser: its profile and pages; pages that are no web page are dropped, at most MAX_PAGES are kept, current is kept in range; null for a bad profile id or no object */
