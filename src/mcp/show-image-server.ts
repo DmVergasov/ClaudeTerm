@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { sendPipeMessage } from '../shared/pipe-client'
 import { defaultPipeName, isUuid } from '../shared/protocol'
 import { AGENT_INSTRUCTIONS, listAgents, messageAgent } from './agent-tools'
+import { BROWSER_INSTRUCTIONS, BROWSER_PIPE_TIMEOUT_MS, type BrowserToolDeps, registerBrowserTools } from './browser-tools'
 import { COORD_TOOL_DESCRIPTIONS, coordTool, type CoordToolDeps } from './coordinator-tools'
 import { handleDeviceStatus, handleOpenDeviceSettings } from './device-tools'
 import { NOTE_INSTRUCTIONS, registerNoteTools } from './note-tools'
@@ -13,7 +14,7 @@ import { handleShowDocument } from './show-document-tool'
 import { handleGetTaskList, handleSetTaskList } from './task-list-tool'
 import { handleShowImage } from './show-image-tool'
 
-const server = new McpServer({ name: 'claudeterm', version: '0.1.0' }, { instructions: `${AGENT_INSTRUCTIONS}\n\n${NOTE_INSTRUCTIONS}` })
+const server = new McpServer({ name: 'claudeterm', version: '0.1.0' }, { instructions: `${AGENT_INSTRUCTIONS}\n\n${NOTE_INSTRUCTIONS}\n\n${BROWSER_INSTRUCTIONS}` })
 
 server.registerTool(
   'show_image',
@@ -349,6 +350,17 @@ server.registerTool(
   }
 )
 
+/** what the browser tools need from this tab and its ClaudeTerm */
+function browserDeps(): BrowserToolDeps {
+  const tabId = process.env.CLAUDETERM_TAB_ID
+  return {
+    tabId: isUuid(tabId) ? tabId : null,
+    pipeName: process.env.CLAUDETERM_PIPE || defaultPipeName(userInfo().username),
+    send: (pipe, msg) => sendPipeMessage(pipe, msg, BROWSER_PIPE_TIMEOUT_MS)
+  }
+}
+
+registerBrowserTools(server, browserDeps)
 registerNoteTools(server)
 
 void server.connect(new StdioServerTransport())

@@ -124,7 +124,7 @@ function moreMenu(name: string, items: (close: () => void) => HTMLElement[]): HT
  * A dialog over the window: its scrim holds the box, and Esc closes it (and only it). `body` and `foot` are its
  * content; the caller changes them through the returned elements, and `close` takes the dialog away.
  */
-function dialog(title: string, body: HTMLElement[], foot: HTMLElement[]): { body: HTMLElement; foot: HTMLElement; close(): void } {
+export function dialog(title: string, body: HTMLElement[], foot: HTMLElement[]): { body: HTMLElement; foot: HTMLElement; close(): void } {
   const bodyEl = el('div', { className: 'account-dialog-body' }, ...body)
   const footEl = el('div', { className: 'account-dialog-foot' }, ...foot)
   const box = el('div', { className: 'account-dialog' }, el('div', { className: 'account-dialog-head', textContent: title }), bodyEl, footEl)

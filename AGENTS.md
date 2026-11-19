@@ -37,11 +37,19 @@ npm run gifs          # records the README GIFs (needs ffmpeg on the PATH)
 ```
 
 CI runs typecheck, `npm test`, the build and the e2e suite on **`windows-latest`, `ubuntu-latest` and `macos-latest`**,
-and a change is done only when all three are green. Locally `npm run test:e2e` runs three tests at a time
-(`node scripts/e2e.mjs --workers=1` on a busy machine), so a test must not depend on what the other apps on the machine
-share. A test that needs the machine to itself — the system clipboard, or a limit on how long something takes — is
-tagged `@alone` and runs after the others, on its own; a test never takes the machine's window focus, it tells the page
-it has the focus. On Linux without a display the e2e tests run under `xvfb-run -a`, with
+and a change is done only when all three are green.
+
+Locally, run only the tests of what the change affects. The full suite runs in CI after the push, and a failure CI finds
+is fixed then. The local checks are:
+- `npm run typecheck`;
+- the unit and integration files of the changed code: `npx vitest run <files>`;
+- the e2e specs that cover it: `npm run build`, then `npx playwright test <specs> --project=e2e`.
+
+Count the code the change touches in shared files as well: a changed panel, keymap or store brings in the specs of every
+feature that uses it. A local e2e run takes three tests at a time (`--workers=1` on a busy machine), so a test must not
+depend on what the other apps on the machine share. A test that needs the machine to itself — the system clipboard, or a
+limit on how long something takes — is tagged `@alone` and runs after the others, on its own; a test never takes the
+machine's window focus, it tells the page it has the focus. On Linux without a display the e2e tests run under `xvfb-run -a`, with
 `ELECTRON_DISABLE_SANDBOX=1` where there is no setuid sandbox helper (Ubuntu 24.04, WSL).
 
 ## Bug fixes need a proving test
@@ -121,9 +129,9 @@ the user's.
 ## Pull requests
 
 - Keep a PR to one change; say what it fixes or adds and why, not just what changed.
-- Show the checks you ran — `npm run typecheck`, `npm test`, `npm run test:e2e` — and their result. For a bug
-  fix, follow "Bug fixes need a proving test"; for a feature or behavior change, "New features need tests". A
-  pull request without the tests these sections require is closed, not merged.
+- Show the checks you ran — `npm run typecheck` and the tests of the affected code, by file — and their result. The
+  full suite's result is CI's. For a bug fix, follow "Bug fixes need a proving test"; for a feature or behavior
+  change, "New features need tests". A pull request without the tests these sections require is closed, not merged.
 - If the change affects what the README shows, run `npm run screenshots` and commit only the images that changed
   because of it.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org): `feat: …`, `fix: …`,

@@ -1,4 +1,5 @@
 import type { TabView } from './chat'
+import type { BrowserTabState } from './browser'
 
 export type TabKind = 'claude' | 'shell'
 export type ShellFamily = 'powershell' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'wsl' | 'other'
@@ -113,6 +114,8 @@ export interface SessionSnapshotTab {
   view: TabView | null
   /** a Claude tab with Remote Control on was saved so; left out otherwise */
   remoteControl?: true
+  /** a Claude tab's Browser: its profile and pages; left out when the tab has none to keep */
+  browser?: BrowserTabState
 }
 
 export interface SessionSnapshot {

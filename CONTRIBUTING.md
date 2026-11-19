@@ -62,7 +62,7 @@ The rules every change is held to, for people and coding agents alike, are in [A
 
 1. Fork the repository and create a branch from `master`.
 2. Write a failing test first, then the code that makes it pass. Pure logic gets a unit test; anything that crosses a process boundary (the pipe, the hook script, transcripts on disk) gets an integration test; visible behaviour gets an e2e test.
-3. Keep `npm run typecheck`, `npm test` and `npm run test:e2e` green.
+3. Run `npm run typecheck` and the tests of what your change affects. CI runs the full suite on Windows, Linux and macOS after the push; fix what it finds there.
 4. If your change affects what the README shows, run `npm run screenshots` and commit the updated images.
 5. Open a pull request and fill in the template.
 

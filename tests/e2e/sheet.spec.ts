@@ -152,7 +152,7 @@ test('a long title and a narrow window keep every toggle inside the header', asy
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThan(600)
 
   const header = await box(page.locator('#sheet-header'))
-  const toggles = page.locator('#sheet-header .tab-changes-toggle:visible, #sheet-header .tab-images-toggle:visible, #sheet-header .tab-messages-toggle:visible, #sheet-header .tab-note-toggle:visible, #sheet-header .tab-games-toggle:visible')
+  const toggles = page.locator('#sheet-header .tab-changes-toggle:visible, #sheet-header .tab-images-toggle:visible, #sheet-header .tab-messages-toggle:visible, #sheet-header .tab-browser-toggle:visible, #sheet-header .tab-note-toggle:visible, #sheet-header .tab-games-toggle:visible')
   expect(await toggles.count()).toBeGreaterThan(0)
   for (let i = 0; i < (await toggles.count()); i++) {
     const b = await box(toggles.nth(i))

@@ -84,7 +84,7 @@ async function listen(mailAnswer: PipeResponse = { ok: true }, answers: { turn?:
     },
     turn: (m) => { got.push(m); return answers.turn ?? { ok: true } }, editBefore: take, showDiff: async (m) => take(m),
     showDocument: async () => ({ ok: true }), taskList: take, taskListGet: take, deviceStatus: take, openDeviceSettings: take,
-    agentList: take, agentSend: take, coord: async (m) => take(m),
+    agentList: take, agentSend: take, coord: async (m) => take(m), browser: async () => ({ ok: true }),
     noteRead: () => ({ ok: true }), noteAdd: () => ({ ok: true }), noteCheck: () => ({ ok: true }),
     mailWait: async (m) => {
       got.push(m)

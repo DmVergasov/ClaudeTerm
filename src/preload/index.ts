@@ -209,7 +209,24 @@ const api: CtApi = {
   mcpReload: (tabId, action) => ipcRenderer.invoke(IPC.mcpReload, tabId, action),
   onMcpChanged: (cb) => on(IPC.evMcpChanged, cb),
   onChatAgentPatch: (cb) => on(IPC.evChatAgentPatch, cb),
-  onChatAgentReload: (cb) => on(IPC.evChatAgentReload, cb)
+  onChatAgentReload: (cb) => on(IPC.evChatAgentReload, cb),
+  browserBounds: (tabId, rect) => ipcRenderer.send(IPC.browserBounds, tabId, rect),
+  browserCovered: (covered) => ipcRenderer.send(IPC.browserCovered, covered),
+  browserAction: (tabId, action) => ipcRenderer.send(IPC.browserAction, tabId, action),
+  browserState: (tabId) => ipcRenderer.invoke(IPC.browserState, tabId),
+  onBrowserState: (cb) => on(IPC.evBrowserState, cb),
+  onBrowserClosed: (cb) => on(IPC.evBrowserClosed, cb),
+  onBrowserStill: (cb) => on(IPC.evBrowserStill, cb),
+  onBrowserOpen: (cb) => on(IPC.evBrowserOpen, cb),
+  onBrowserKey: (cb) => on(IPC.evBrowserKey, cb),
+  browserProfiles: () => ipcRenderer.invoke(IPC.browserProfiles),
+  browserProfileAction: (a) => ipcRenderer.invoke(IPC.browserProfileAction, a),
+  onBrowserProfiles: (cb) => on(IPC.evBrowserProfiles, cb),
+  browserImportSources: () => ipcRenderer.invoke(IPC.browserImportSources),
+  browserImportStart: (sourceId, profileId) => ipcRenderer.send(IPC.browserImportStart, sourceId, profileId),
+  browserImportPick: (contextId) => ipcRenderer.send(IPC.browserImportPick, contextId),
+  browserImportCancel: () => ipcRenderer.send(IPC.browserImportCancel),
+  onBrowserImport: (cb) => on(IPC.evBrowserImport, cb)
 }
 
 contextBridge.exposeInMainWorld('ct', api)

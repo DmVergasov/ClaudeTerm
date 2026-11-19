@@ -16,7 +16,7 @@ function signature(item: TabBarItem | null, deviceColor: string | undefined): st
   return JSON.stringify([item.id, item.title, item.kind, shownActivity(item), item.folder, item.group, item.deviceName, item.dim, item.place?.branch ?? null, worktree, deviceColor ?? null, item.coord])
 }
 
-export type SheetHeaderCallbacks = Pick<TabBarCallbacks, 'rename' | 'toggleImages' | 'toggleChanges' | 'toggleDocs' | 'toggleMessages' | 'toggleSessions' | 'toggleNote' | 'toggleGames' | 'detachTab'> & {
+export type SheetHeaderCallbacks = Pick<TabBarCallbacks, 'rename' | 'toggleImages' | 'toggleChanges' | 'toggleDocs' | 'toggleBrowser' | 'toggleMessages' | 'toggleSessions' | 'toggleNote' | 'toggleGames' | 'detachTab'> & {
   /** the way back: the tab in front shows the view the settings give Claude tabs (after the user's word when background tasks would stop) */
   switchView(view: TabView): void
   /** files dropped on the header: attached to the chat in front, as a drop on the sheet is */
@@ -38,7 +38,7 @@ const WORKING_SWITCH = 'Claude is working — switch when it finishes, or press 
 /**
  * The header of the sheet the active tab sits on: its kind icon, title, device (a remote tab), branch and folder on the
  * left, and a coordinator's or an attached session's line about it; then the panel toggles (Changes, Sessions, Media, Agent messages,
- * Docs, Note, Games). The toggles are built once and kept in place, so a redraw of the title never drops a click or a tooltip. While
+ * Docs, Browser, Note, Games). The toggles are built once and kept in place, so a redraw of the title never drops a click or a tooltip. While
  * Claude works in the tab, the header's glyph steps.
  */
 export class SheetHeader {
@@ -47,6 +47,7 @@ export class SheetHeader {
   private readonly images: HTMLButtonElement
   private readonly messages: HTMLButtonElement
   private readonly docs: HTMLButtonElement
+  private readonly browser: HTMLButtonElement
   private readonly note: HTMLButtonElement
   private readonly games: HTMLButtonElement
   private readonly spacer = document.createElement('div')
@@ -96,9 +97,10 @@ export class SheetHeader {
     this.images = this.toggle('tab-images-toggle', 'Media', `Media (${shortcutLabel('toggleImages', platform)})`, icon('image', 16), () => cb.toggleImages(), true)
     this.messages = this.toggle('tab-messages-toggle', '', 'Agent messages', icon('mail', 16), () => cb.toggleMessages(), true)
     this.docs = this.toggle('tab-docs-toggle', '', `Docs (${shortcutLabel('toggleDocs', platform)})`, icon('file-text', 16), () => cb.toggleDocs(), false)
+    this.browser = this.toggle('tab-browser-toggle', '', `Browser (${shortcutLabel('toggleBrowser', platform)})`, icon('globe', 16), () => cb.toggleBrowser(), false)
     this.note = this.toggle('tab-note-toggle', '', `Note (${shortcutLabel('toggleNote', platform)})`, noteIcon(16), () => cb.toggleNote(), false)
     this.games = this.toggle('tab-games-toggle', '', `Games (${shortcutLabel('toggleGames', platform)})`, icon('gamepad', 16), () => cb.toggleGames(), false)
-    this.root.replaceChildren(this.spacer, this.modes, this.changes, this.sessions, this.images, this.messages, this.docs, this.note, this.games)
+    this.root.replaceChildren(this.spacer, this.modes, this.changes, this.sessions, this.images, this.messages, this.docs, this.browser, this.note, this.games)
     // files dropped on the header are attached to the chat in front, as a drop on the sheet is
     this.root.addEventListener('dragover', (e) => {
       if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
@@ -112,6 +114,7 @@ export class SheetHeader {
     this.setMessages(false, false, 0, null)
     this.setSessions(false, false, 0, null)
     this.setDocs(false, false)
+    this.setBrowser(false, false)
     this.setNote(false, false)
     this.setGames(false)
   }
@@ -264,6 +267,12 @@ export class SheetHeader {
   setDocs(available: boolean, visible: boolean): void {
     this.docs.hidden = !available
     this.docs.classList.toggle('active', visible)
+  }
+
+  /** the Browser button is shown for a local Claude tab in front; it is lit while the Browser panel shows */
+  setBrowser(available: boolean, visible: boolean): void {
+    this.browser.hidden = !available
+    this.browser.classList.toggle('active', visible)
   }
 
   /** the Note button exists only for Claude tabs; it is lit while the note is shown */

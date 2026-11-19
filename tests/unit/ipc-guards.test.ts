@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { COORD_KEY_MAX, COORD_NAME_MAX, COORD_TASK_MAX } from '../../src/shared/coordinator'
 import { MAX_ADDRESS_LENGTH, MAX_DEVICE_NAME } from '../../src/shared/devices'
 import { MAX_NOTE_LENGTH } from '../../src/shared/note'
+import { MAX_URL } from '../../src/shared/browser'
 import type { OpenTabRequest } from '../../src/shared/types'
 import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../../src/shared/remote'
-import { isGamesSave, isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isLineEditKey, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isCoordKey, isCoordStartRequest } from '../../src/main/ipc-guards'
+import { isBrowserPanelAction, isBrowserProfileAction, isImportArg, isPanelRect, isGamesSave, isMcpAction, isMcpAddRequest, isMcpName, isPluginAction, isReloadAction, isAbsPath, isAccountRef, isDropPaths, isAddressInput, isDeviceId, isDeviceNameInput, isDocAction, isFolderInput, isGeneration, isTabCount, isHash, isId, isIdList, isImageAction, isFileLinkPaths, isLineNo, isLineSpan, isOptionalLineNo, isNoteForm, isNoteSide, isNoteSizeArg, isNoteText, isOpenRemoteTabArgs, isProjectKeyArg, isOpenTabRequest, openTabRequestFields, isOptionalAddress, isOptionalTitle, isPairCodeInput, isPanelWidth, isPathText, isPtyData, isPtySize, isFlag, isLineEditKey, isPromptInput, isReviewScope, isSeedText, isSeedToken, isSessionId, isTabLayoutChange, isUserInput, isAccountBegin, isFlowAction, isRemoveOptions, isCoordKey, isCoordStartRequest } from '../../src/main/ipc-guards'
 
 describe('ipc guards', () => {
   it('isId accepts only strings', () => {
@@ -522,6 +523,75 @@ describe('MCP guards', () => {
     expect(isCoordKey('')).toBe(false)
     expect(isCoordKey('k'.repeat(COORD_KEY_MAX + 1))).toBe(false)
     expect(isCoordKey('local:a\nb')).toBe(false)
+  })
+})
+
+describe('browser guards', () => {
+  it('isBrowserPanelAction accepts each action shape and refuses unknown types, non-integer or negative indexes, a url over 8192 characters and an unknown answer', () => {
+    const accepted = [
+      { type: 'navigate', url: 'http://localhost:5173/login' },
+      { type: 'back' }, { type: 'forward' }, { type: 'reload' }, { type: 'newPage' },
+      { type: 'selectPage', index: 0 }, { type: 'closePage', index: 2 },
+      { type: 'setProfile', profileId: 'default' }, { type: 'stop' }, { type: 'stopLoading' }, { type: 'handBack' },
+      { type: 'answer', cardId: '3f9c2a1e-7b4d-4c8e-9a0b-1d2e3f4a5b6c', answer: 'tab' },
+      { type: 'answer', cardId: 'card-1', answer: 'always' }, { type: 'answer', cardId: 'card-1', answer: 'deny' },
+      { type: 'devtools' }, { type: 'manageProfiles' }, { type: 'clearData' }
+    ]
+    for (const a of accepted) expect(isBrowserPanelAction(a)).toBe(true)
+    expect(isBrowserPanelAction({ type: 'navigate', url: 'x'.repeat(MAX_URL) })).toBe(true)
+    const refused = [
+      null, 'back', {}, { type: 'explode' }, { type: 'navigate', url: '' }, { type: 'navigate', url: 'x'.repeat(MAX_URL + 1) },
+      { type: 'navigate' }, { type: 'selectPage', index: 1.5 }, { type: 'selectPage', index: -1 }, { type: 'closePage', index: '2' },
+      { type: 'closePage' }, { type: 'setProfile', profileId: 'Work Profile' }, { type: 'answer', cardId: 'card-1', answer: 'maybe' },
+      { type: 'answer', cardId: '', answer: 'tab' }, { type: 'answer', answer: 'tab' }
+    ]
+    for (const a of refused) expect(isBrowserPanelAction(a)).toBe(false)
+  })
+
+  it('isBrowserProfileAction accepts each action shape and refuses an empty or over-long name, a bad profile id or site, and an unknown type', () => {
+    const accepted = [
+      { type: 'add', name: 'Work' }, { type: 'rename', id: 'k3m9x2qa', name: 'Work 2' }, { type: 'remove', id: 'k3m9x2qa' },
+      { type: 'setDefault', id: 'default' }, { type: 'disallow', id: 'k3m9x2qa', site: 'site.test' }, { type: 'clearData', id: 'default' }
+    ]
+    for (const a of accepted) expect(isBrowserProfileAction(a)).toBe(true)
+    const refused = [
+      null, 'add', {}, { type: 'explode' }, { type: 'add' }, { type: 'add', name: '' }, { type: 'add', name: 'x'.repeat(41) }, { type: 'add', name: 7 },
+      { type: 'rename', id: 'k3m9x2qa' }, { type: 'rename', id: 'Work Profile', name: 'x' }, { type: 'remove', id: 'Work Profile' }, { type: 'remove' },
+      { type: 'setDefault', id: '../etc' }, { type: 'disallow', id: 'default' }, { type: 'disallow', id: 'default', site: '' },
+      { type: 'disallow', id: 'default', site: 'x'.repeat(254) }, { type: 'clearData', id: 'Default' }, { type: 'clearData' }
+    ]
+    for (const a of refused) expect(isBrowserProfileAction(a)).toBe(false)
+  })
+
+  it('isBrowserProfileAction refuses a profile name with a control character or a bidi override, for add and rename', () => {
+    for (const bad of ['a\nb', '\u0000x', 'x‮y']) {
+      expect(isBrowserProfileAction({ type: 'add', name: bad })).toBe(false)
+      expect(isBrowserProfileAction({ type: 'rename', id: 'k3m9x2qa', name: bad })).toBe(false)
+    }
+  })
+
+  it('isImportArg takes a source id or a profile id of 1 to 200 characters and refuses anything else', () => {
+    expect(isImportArg('chromium:Profile 1')).toBe(true)
+    expect(isImportArg('c'.repeat(200))).toBe(true)
+    for (const bad of [null, '', 'c'.repeat(201), 7, ['chromium:Default'], {}]) expect(isImportArg(bad)).toBe(false)
+  })
+
+  it('isPanelRect takes a rectangle of finite numbers within 20000 pixels (wide and multi-monitor windows) and refuses NaN, negative sizes and values over 20000', () => {
+    expect(isPanelRect({ x: 0, y: 0, width: 320, height: 600 })).toBe(true)
+    expect(isPanelRect({ x: 12.5, y: 48, width: 4000, height: 4000 })).toBe(true)
+    expect(isPanelRect({ x: 5000, y: -1200, width: 7680, height: 4320 })).toBe(true)
+    expect(isPanelRect({ x: 0, y: 0, width: 20000, height: 20000 })).toBe(true)
+    for (const r of [
+      { x: 0, y: 0, width: NaN, height: 600 },
+      { x: 0, y: 0, width: -1, height: 600 },
+      { x: 0, y: 0, width: 320, height: -1 },
+      { x: 20001, y: 0, width: 320, height: 600 },
+      { x: 0, y: 0, width: 320, height: 20001 },
+      { x: 0, y: Infinity, width: 320, height: 600 },
+      { x: 0, y: 0, width: '320', height: 600 },
+      { x: 0, y: 0, height: 600 },
+      null
+    ]) expect(isPanelRect(r)).toBe(false)
   })
 })
 

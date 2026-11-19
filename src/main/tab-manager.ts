@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { BrowserTabState } from '../shared/browser'
 import type { TabView } from '../shared/chat'
 import type { OpenTabRequest, SessionSnapshotTab, TabActivity, TabFork, TabInfo } from '../shared/types'
 import { applyEnvPatch, type EnvPatch } from './child-env'
@@ -640,7 +641,8 @@ export class TabManager {
     this.changed()
   }
 
-  snapshot(): SessionSnapshotTab[] {
+  /** the saved tabs; `browserOf` gives a Claude tab's Browser state, or null when it has none to keep */
+  snapshot(browserOf?: (tabId: string) => BrowserTabState | null): SessionSnapshotTab[] {
     // the app's own tabs (the sign-in tab) are not the session's: the forks' heads are found among the saved ones
     const kept = this.order.filter((id) => !this.tabs.get(id)!.transient)
     return kept.map((id) => {
@@ -648,7 +650,8 @@ export class TabManager {
       const head = i.fork?.of ?? null
       const headAt = head === null ? -1 : kept.indexOf(head)
       const fork = i.fork ? { of: headAt < 0 ? null : headAt, from: i.fork.from } : null
-      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, background, fork, view: i.view, ...(remoteControl ? { remoteControl: true as const } : {}) }
+      const browser = browserOf?.(id) ?? null
+      return { kind: i.kind, profile: i.profile, cwd: i.cwd, title: i.customTitle, claudeSessionId: i.claudeSessionId, account: i.account, muted: i.muted, working, background, fork, view: i.view, ...(remoteControl ? { remoteControl: true as const } : {}), ...(browser ? { browser } : {}) }
     })
   }
 

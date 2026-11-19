@@ -1,14 +1,14 @@
 import type { PanelAnswer, PanelMode } from '../shared/types'
 import { icon } from './icons'
 
-export type PanelTab = 'images' | 'changes' | 'docs' | 'messages' | 'sessions' | 'mcp'
+export type PanelTab = 'images' | 'changes' | 'docs' | 'messages' | 'sessions' | 'mcp' | 'browser'
 
-const TABS: readonly PanelTab[] = ['images', 'changes', 'sessions', 'docs', 'messages', 'mcp']
+const TABS: readonly PanelTab[] = ['images', 'changes', 'sessions', 'docs', 'messages', 'mcp', 'browser']
 /** the tabs shown again when they come back, while the panel is shown and the person had chosen them: the Sessions panel of a coordinator; the others fall back as before */
 const RETURNS: readonly PanelTab[] = ['sessions']
-const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs', messages: 'Agent messages', sessions: 'Sessions', mcp: 'MCP · Plugins' }
+const LABELS: Record<PanelTab, string> = { images: 'Media', changes: 'Changes', docs: 'Docs', messages: 'Agent messages', sessions: 'Sessions', mcp: 'MCP · Plugins', browser: 'Browser' }
 /** how wide a drag may make each tab, as a share of the workspace (the window less the left tab panel) */
-const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85, messages: 0.85, sessions: 0.7, mcp: 0.7 }
+const MAX_SHARE: Record<PanelTab, number> = { images: 0.7, changes: 0.85, docs: 0.85, messages: 0.85, sessions: 0.7, mcp: 0.7, browser: 0.85 }
 const MIN_WIDTH = 180
 /** how long a panel takes to slide in or out, and its content to fade out */
 const MOTION_MS = 180
@@ -37,7 +37,7 @@ export class SidePanel {
   private isExpanded = false
   private readonly title: HTMLElement
   private readonly toolsBox: HTMLElement
-  private readonly available: Record<PanelTab, boolean> = { images: true, changes: false, docs: false, messages: false, sessions: false, mcp: false }
+  private readonly available: Record<PanelTab, boolean> = { images: true, changes: false, docs: false, messages: false, sessions: false, mcp: false, browser: false }
   private mode: PanelMode = 'beside'
   /** the width main was last asked to make room for */
   private asked = 0
@@ -64,8 +64,8 @@ export class SidePanel {
       el.className = 'panel-tool-group'
       return el
     }
-    this.tools = { images: group(), changes: group(), docs: group(), messages: group(), sessions: group(), mcp: group() }
-    this.toolsBox.append(this.tools.images, this.tools.changes, this.tools.docs, this.tools.messages, this.tools.sessions, this.tools.mcp)
+    this.tools = { images: group(), changes: group(), docs: group(), messages: group(), sessions: group(), mcp: group(), browser: group() }
+    this.toolsBox.append(this.tools.images, this.tools.changes, this.tools.docs, this.tools.messages, this.tools.sessions, this.tools.mcp, this.tools.browser)
     const hide = document.createElement('button')
     hide.className = 'panel-hide'
     hide.innerHTML = icon('x', 14)
@@ -77,8 +77,8 @@ export class SidePanel {
       el.className = `panel-body panel-${tab}`
       return el
     }
-    this.bodies = { images: body('images'), changes: body('changes'), docs: body('docs'), messages: body('messages'), sessions: body('sessions'), mcp: body('mcp') }
-    root.replaceChildren(handle, header, this.bodies.images, this.bodies.changes, this.bodies.docs, this.bodies.messages, this.bodies.sessions, this.bodies.mcp)
+    this.bodies = { images: body('images'), changes: body('changes'), docs: body('docs'), messages: body('messages'), sessions: body('sessions'), mcp: body('mcp'), browser: body('browser') }
+    root.replaceChildren(handle, header, this.bodies.images, this.bodies.changes, this.bodies.docs, this.bodies.messages, this.bodies.sessions, this.bodies.mcp, this.bodies.browser)
     this.setupResize(handle)
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.isExpanded && !e.defaultPrevented) this.setExpanded(false)
@@ -110,7 +110,7 @@ export class SidePanel {
     const switching = this.shownTab !== null
     this.currentTab = tab
     this.shownTab = tab
-    if (tab !== 'changes' && tab !== 'docs') this.isExpanded = false
+    if (tab !== 'changes' && tab !== 'docs' && tab !== 'browser') this.isExpanded = false
     this.changed()
     // a panel switched to fades its content in, while the panel's width changes from one to the other
     if (switching && this.motionMs() > 0) this.bodies[tab].animate([{ opacity: 0 }, { opacity: 1 }], { duration: MOTION_MS, easing: 'ease-out' })
@@ -145,7 +145,7 @@ export class SidePanel {
   }
 
   setExpanded(on: boolean): void {
-    const next = on && (this.shownTab === 'changes' || this.shownTab === 'docs')
+    const next = on && (this.shownTab === 'changes' || this.shownTab === 'docs' || this.shownTab === 'browser')
     if (next === this.isExpanded) return
     this.isExpanded = next
     this.apply()

@@ -1,12 +1,13 @@
 import '@fontsource-variable/inter'
 import './settings.css'
-import type { SettingsView } from '../shared/ipc'
+import { importSectionProfile, type SettingsView } from '../shared/ipc'
 import { REMOTE_COPY } from '../shared/remote'
 import { MAX_AUTO_CONTINUES, NOTIFICATION_CASES, NOTIFICATION_CHANNELS, NUMBER_LIMITS } from '../shared/settings-keys'
 import { DEFAULT_TEST_PATTERNS } from '../shared/test-files'
 import type { NotificationCase, NotificationChannels } from '../shared/types'
 import { accountsSection } from './accounts-section'
 import { applyTheme } from './app-theme'
+import { browserSection, openImportSheet } from './browser-settings'
 import { helperOpen, openHelper } from './account-helper'
 import { devicesSection } from './devices-section'
 import { el, loadInter, section } from './dom'
@@ -21,7 +22,7 @@ await loadInter()
 const ct = window.ct
 document.body.classList.add(`platform-${ct.platform}`)
 
-type TabId = 'general' | 'appearance' | 'claude' | 'notifications' | 'panels' | 'accounts' | 'devices'
+type TabId = 'general' | 'appearance' | 'claude' | 'notifications' | 'panels' | 'browser' | 'accounts' | 'devices'
 
 /** the tabs in the order of the nav, each with its page */
 const TABS: { id: TabId; label: string }[] = [
@@ -30,6 +31,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'claude', label: 'Claude Code' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'panels', label: 'Panels' },
+  { id: 'browser', label: 'Browser' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'devices', label: 'Devices' }
 ]
@@ -268,6 +270,7 @@ root.append(el('div', { className: 'settings-inner' },
         'agentMessages.enabled', (v) => v.settings.agentMessages.enabled),
       switchRow({ label: "Mark tabs that got messages you haven't read", description: 'An envelope on the tab and a counter; no sound, no pop-up.' },
         'agentMessages.marks', (v) => v.settings.agentMessages.marks)), { id: 'agent-messages' })),
+  tabPage('browser', browserSection()),
   tabPage('accounts', accountsSection()),
   tabPage('devices', devicesSection([switchRow({ label: REMOTE_COPY.keepAwake }, 'devices.keepAwake', (v) => v.settings.devices.keepAwake)])),
   searchEmpty,
@@ -276,6 +279,7 @@ root.append(el('div', { className: 'settings-inner' },
 
 // a whole section is one search unit: what a search finds it by is its text and the extra words; the rows in it are no units
 markUnit(document.getElementById('notifications')!, 'notifications sound flash banner tab front')
+markUnit(document.getElementById('browser')!, 'profiles browser cookies sign-ins default import clear data delete always allowed sites')
 markUnit(document.querySelector<HTMLElement>('.settings-page[data-page="accounts"] .settings-section')!, '')
 markUnit(document.getElementById('devices')!, '')
 // every section title carries the name of its tab, shown as a crumb while a search runs
@@ -487,9 +491,17 @@ ct.onSettingsView(render)
 void ct.getSettingsView().then(render)
 
 /** the sections a Settings window can be opened at, each with the tab it lives in: the #hash of a new window, or a section sent to an open one */
-const SECTIONS = new Map<string, TabId>([['devices', 'devices'], ['notifications', 'notifications'], ['accounts', 'accounts'], ['add-account', 'accounts'], ['agent-messages', 'panels']])
+const SECTIONS = new Map<string, TabId>([['devices', 'devices'], ['notifications', 'notifications'], ['accounts', 'accounts'], ['add-account', 'accounts'], ['agent-messages', 'panels'], ['browser', 'browser']])
 
 function showSection(name: string): void {
+  // a profile's import sheet: its tab is in front, and the sheet opens over it
+  const importProfile = importSectionProfile(name)
+  if (importProfile !== null) {
+    clearSearch()
+    showTab('browser')
+    openImportSheet(importProfile)
+    return
+  }
   const tab = SECTIONS.get(name)
   if (!tab) return
   // the section is shown in its tab, not among the results of a search

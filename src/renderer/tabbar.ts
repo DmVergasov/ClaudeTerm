@@ -81,6 +81,7 @@ export interface TabBarCallbacks {
   toggleImages(): void
   toggleChanges(): void
   toggleDocs(): void
+  toggleBrowser(): void
   toggleMessages(): void
   toggleSessions(): void
   /** Detach of an attached session, from its header */

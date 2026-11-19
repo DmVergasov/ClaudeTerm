@@ -2,6 +2,17 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.25.0
+
+### New
+
+- **A built-in browser for your Claude tabs.** **Browser** in a Claude tab's header, or **Ctrl+Shift+B** (**⌘B** on a Mac), opens a browser beside the chat, and Claude can use it too, through its `browser_*` tools: it opens pages, reads them, clicks, types, takes screenshots and runs JavaScript. Pages on this computer are free for Claude, and a file inside the folder its tab works in; any other site or file asks you in the panel first, with **Allow in this tab**, **Always allow** (sites only) or **Deny**. **Stop** takes the browser away from Claude and **Hand back to Claude** gives it back. A tab's pages come back after a restart.
+- **Browser profiles and cookie import.** Each profile keeps its own sign-ins, storage and always-allowed sites, and Settings → **Browser** manages them. **Import cookies…** brings the cookies of a Chrome, Edge, Brave, Vivaldi, Chromium or Firefox profile over in one go. On Windows, Chrome, Edge and Brave are read from the running browser, after you turn on remote debugging there and allow the connection; Vivaldi, Chromium and Firefox are copied, and an open Chromium browser waits until you close it.
+
+### Changes
+
+- **The browser's sign-ins are encrypted on disk.** The app's cookie store is encrypted in the installed version, with the system's key; on Windows another program running as you can still read it. This is one-way: an older ClaudeTerm cannot read the cookies a newer one stored, so going back to an older version loses the browser's sign-ins. Nothing else in ClaudeTerm keeps cookies you would miss.
+
 ## 0.24.0
 
 ### New

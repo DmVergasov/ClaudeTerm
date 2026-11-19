@@ -33,6 +33,8 @@ export interface SettingsWindowDeps {
   offScreen?: boolean
   /** the section a new window opens at (its #hash) */
   load(win: BrowserWindow, section?: string): void
+  /** the window is closed: what it started and still waits for is ended (a cookie import asked by its sheet) */
+  closed?(): void
 }
 
 /** The one settings window: owned by the main window, brought forward when it is already open. */
@@ -79,6 +81,7 @@ export class SettingsWindow {
     win.on('closed', () => {
       if (this.win !== win) return
       this.win = null
+      this.d.closed?.()
     })
     win.webContents.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url)

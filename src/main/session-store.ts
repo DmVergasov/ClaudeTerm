@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isTabView } from '../shared/chat'
+import { parseBrowserTabState } from '../shared/browser'
 import { isUuid } from '../shared/protocol'
 import type { SessionSnapshot, SessionSnapshotTab } from '../shared/types'
 
@@ -19,6 +20,7 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
     if (typeof t !== 'object' || t === null) return null
     const x = t as Record<string, unknown>
     if ((x.kind !== 'claude' && x.kind !== 'shell') || typeof x.profile !== 'string' || typeof x.cwd !== 'string') return null
+    const browser = x.kind === 'claude' ? parseBrowserTabState(x.browser) : null
     tabs.push({
       kind: x.kind,
       profile: x.profile,
@@ -38,7 +40,9 @@ export function parseSnapshot(text: string): SessionSnapshot | null {
       // written before views existed, or by hand: null, and a shell tab has none
       view: x.kind === 'claude' && isTabView(x.view) ? x.view : null,
       // written before Remote Control existed, or with another value: off
-      ...(x.kind === 'claude' && x.remoteControl === true ? { remoteControl: true as const } : {})
+      ...(x.kind === 'claude' && x.remoteControl === true ? { remoteControl: true as const } : {}),
+      // written before the Browser existed, by hand, or a bad value: no browser, and the tab is kept
+      ...(browser ? { browser } : {})
     })
   }
   // a fork's head is another Claude tab of the list, before or after it (tabs on top are dragged freely), and is not

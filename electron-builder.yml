@@ -21,6 +21,9 @@ extraResources:
   - from: THIRD-PARTY-NOTICES.md
     to: THIRD-PARTY-NOTICES.md
 npmRebuild: false
+# the browser's sign-ins live in the cookie store: Electron keeps that store in plain text unless this fuse is on
+electronFuses:
+  enableCookieEncryption: true
 win:
   target:
     - target: nsis

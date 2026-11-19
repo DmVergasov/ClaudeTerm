@@ -1,0 +1,183 @@
+export type KeyAction =
+  | { type: 'newTab' }
+  | { type: 'newClaudeTab' }
+  | { type: 'closeTab' }
+  | { type: 'nextTab' }
+  | { type: 'prevTab' }
+  | { type: 'gotoTab'; index: number }
+  | { type: 'copy' }
+  | { type: 'paste' }
+  | { type: 'copyOrInterrupt' }
+  | { type: 'smartPaste' }
+  | { type: 'send'; data: string }
+  | { type: 'find' }
+  | { type: 'toggleImages' }
+  | { type: 'toggleChanges' }
+  | { type: 'toggleDocs' }
+  | { type: 'toggleNote' }
+  | { type: 'toggleGames' }
+  | { type: 'toggleBrowser' }
+  | { type: 'zoomIn' }
+  | { type: 'zoomOut' }
+  | { type: 'zoomReset' }
+  | { type: 'openSettings' }
+  | { type: 'recentSessions' }
+  | { type: 'nextWaiting' }
+
+/** the actions that are the typed text's own keys: copy, paste, Ctrl+C (copy or interrupt) and Enter-send. The window and a Browser page keep them */
+const EDITING_KEYS: ReadonlySet<KeyAction['type']> = new Set(['copy', 'paste', 'copyOrInterrupt', 'smartPaste', 'send'])
+
+/** whether an action is one of the typed text's own keys (copy, paste, Ctrl+C, smart paste, Enter-send): the window and a Browser page keep them */
+export function isEditingKey(action: KeyAction): boolean {
+  return EDITING_KEYS.has(action.type)
+}
+
+export interface KeyLike {
+  type: string
+  key: string
+  code: string
+  ctrlKey: boolean
+  shiftKey: boolean
+  altKey: boolean
+  metaKey: boolean
+}
+
+/** What makes claude read an image from the clipboard: Alt+V in Claude Code on Windows, Ctrl+V elsewhere */
+export function imagePasteInput(platform: string): string {
+  return platform === 'win32' ? '\x1bv' : '\x16'
+}
+
+/** how an image-only clipboard reaches a tab: 'remote' copies it to the tab's device and types the path there; 'file' types a local PNG file's path; 'key' sends Claude Code's image-paste key */
+export function imagePasteRoute(o: { platform: string; remote: boolean; asFile: boolean }): 'remote' | 'file' | 'key' {
+  if (o.remote) return 'remote'
+  return o.platform === 'win32' && o.asFile ? 'file' : 'key'
+}
+
+/** Claude Code's image-paste key, which no key of ClaudeTerm uses: Ctrl+V on macOS, Alt+V on Windows (Ctrl+V on Linux is smart paste) */
+export function isImagePasteKey(e: KeyLike, platform: string): boolean {
+  if (e.type !== 'keydown' || e.code !== 'KeyV' || e.shiftKey) return false
+  if (platform === 'darwin') return e.ctrlKey && !e.metaKey && !e.altKey
+  if (platform === 'win32') return e.altKey && !e.ctrlKey && !e.metaKey
+  return false
+}
+
+/** Ctrl on Windows and Linux, ⌘ on macOS, without the other modifiers: the key of a panel's own shortcuts (Ctrl+F, Ctrl+D) */
+export function isPrimaryKey(e: KeyLike, platform: string): boolean {
+  const mac = platform === 'darwin'
+  return (mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.shiftKey && !e.altKey
+}
+
+const LABELS = {
+  newTab: ['Ctrl+Shift+T', '⌘T'],
+  closeTab: ['Ctrl+Shift+W', '⌘W'],
+  toggleImages: ['Ctrl+Shift+I', '⌘I'],
+  toggleChanges: ['Ctrl+Shift+D', '⌘D'],
+  toggleDocs: ['Ctrl+Shift+O', '⌘O'],
+  toggleNote: ['Ctrl+Shift+N', '⌘N'],
+  toggleGames: ['Ctrl+Shift+G', '⌘G'],
+  toggleBrowser: ['Ctrl+Shift+B', '⌘B'],
+  nextWaiting: ['Ctrl+Shift+J', '⌘J'],
+  recentSessions: ['Ctrl+Shift+H', '⇧⌘H'],
+  openSettings: ['Ctrl+,', '⌘,'],
+  panelFind: ['Ctrl+F', '⌘F'],
+  star: ['Ctrl+D', '⌘D']
+} as const
+
+/** A shortcut as the platform writes it, for tooltips and hints */
+export function shortcutLabel(name: keyof typeof LABELS, platform: string): string {
+  return LABELS[name][platform === 'darwin' ? 1 : 0]
+}
+
+// Uses KeyboardEvent.code (physical key) so shortcuts work with any keyboard layout.
+export function mapKey(e: KeyLike, platform: string): KeyAction | null {
+  if (e.type !== 'keydown') return null
+  if (platform === 'darwin') return mapMacKey(e)
+  if (e.metaKey) return null
+  const { ctrlKey: c, shiftKey: s, altKey: a, code } = e
+  if (c && s && !a) {
+    switch (code) {
+      case 'KeyT': return { type: 'newTab' }
+      case 'KeyL': return { type: 'newClaudeTab' }
+      case 'KeyW': return { type: 'closeTab' }
+      case 'KeyC': return { type: 'copy' }
+      case 'KeyV': return { type: 'paste' }
+      case 'KeyF': return { type: 'find' }
+      case 'KeyI': return { type: 'toggleImages' }
+      case 'KeyD': return { type: 'toggleChanges' }
+      case 'KeyO': return { type: 'toggleDocs' }
+      case 'KeyN': return { type: 'toggleNote' }
+      case 'KeyG': return { type: 'toggleGames' }
+      case 'KeyB': return { type: 'toggleBrowser' }
+      case 'KeyH': return { type: 'recentSessions' }
+      case 'KeyJ': return { type: 'nextWaiting' }
+      case 'Tab': return { type: 'prevTab' }
+    }
+    return null
+  }
+  if (c && !s && !a) {
+    switch (code) {
+      case 'Tab': return { type: 'nextTab' }
+      case 'KeyC': return { type: 'copyOrInterrupt' }
+      case 'KeyV': return { type: 'smartPaste' }
+      case 'Equal':
+      case 'NumpadAdd': return { type: 'zoomIn' }
+      case 'Minus':
+      case 'NumpadSubtract': return { type: 'zoomOut' }
+      case 'Digit0':
+      case 'Numpad0': return { type: 'zoomReset' }
+      case 'Comma': return { type: 'openSettings' }
+    }
+    return null
+  }
+  if (c && a && !s && /^Digit[1-9]$/.test(code)) return { type: 'gotoTab', index: Number(code.slice(5)) - 1 }
+  if (s && !c && !a && (code === 'Enter' || code === 'NumpadEnter')) return { type: 'send', data: '\x1b\r' }
+  return null
+}
+
+/**
+ * macOS: ⌘ takes the place of Ctrl+Shift, since ⌘ never reaches the terminal; Ctrl keys go to the terminal as they are
+ * (Ctrl+C interrupts, Ctrl+V is Claude Code's own image paste). ⌘H, ⌘M, ⌘Q and ⌘A are left to the system and the menu.
+ */
+function mapMacKey(e: KeyLike): KeyAction | null {
+  const { metaKey: m, ctrlKey: c, shiftKey: s, altKey: a, code } = e
+  if (m && !c && !a && !s) {
+    switch (code) {
+      case 'KeyT': return { type: 'newTab' }
+      case 'KeyL': return { type: 'newClaudeTab' }
+      case 'KeyW': return { type: 'closeTab' }
+      case 'KeyC': return { type: 'copy' }
+      case 'KeyV': return { type: 'smartPaste' }
+      case 'KeyF': return { type: 'find' }
+      case 'KeyI': return { type: 'toggleImages' }
+      case 'KeyD': return { type: 'toggleChanges' }
+      case 'KeyO': return { type: 'toggleDocs' }
+      case 'KeyN': return { type: 'toggleNote' }
+      case 'KeyG': return { type: 'toggleGames' }
+      case 'KeyB': return { type: 'toggleBrowser' }
+      case 'KeyJ': return { type: 'nextWaiting' }
+      case 'Equal':
+      case 'NumpadAdd': return { type: 'zoomIn' }
+      case 'Minus':
+      case 'NumpadSubtract': return { type: 'zoomOut' }
+      case 'Digit0':
+      case 'Numpad0': return { type: 'zoomReset' }
+      case 'Comma': return { type: 'openSettings' }
+    }
+    if (/^Digit[1-9]$/.test(code)) return { type: 'gotoTab', index: Number(code.slice(5)) - 1 }
+    return null
+  }
+  if (m && s && !c && !a) {
+    switch (code) {
+      case 'KeyV': return { type: 'paste' }
+      case 'KeyH': return { type: 'recentSessions' }
+      case 'BracketRight': return { type: 'nextTab' }
+      case 'BracketLeft': return { type: 'prevTab' }
+      // ⌘+ is ⌘⇧= on most layouts
+      case 'Equal': return { type: 'zoomIn' }
+    }
+    return null
+  }
+  if (c && !m && !a && code === 'Tab') return { type: s ? 'prevTab' : 'nextTab' }
+  if (s && !c && !a && !m && (code === 'Enter' || code === 'NumpadEnter')) return { type: 'send', data: '\x1b\r' }
+  return null
+}

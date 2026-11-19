@@ -223,6 +223,17 @@ describe('TabManager', () => {
     expect(tm.get(a.id)?.customTitle).toBeNull()
   })
 
+  it('snapshot(browserOf) adds the browser a tab gives, and leaves it out when the tab gives none', () => {
+    const { tm } = setup()
+    const a = tm.open({ kind: 'claude', cwd: 'D:\\a' })
+    const b = tm.open({ kind: 'claude', cwd: 'D:\\b' })
+    const browser = { profile: 'default', pages: ['http://localhost:1/'], current: 0 }
+    const snapped = tm.snapshot((id) => (id === a.id ? browser : null))
+    expect(snapped.find((t) => t.cwd === 'D:\\a')).toMatchObject({ browser })
+    expect(snapped.find((t) => t.cwd === 'D:\\b')).not.toHaveProperty('browser')
+    expect(b.id).not.toBe(a.id)
+  })
+
   it('setMuted mutes and unmutes a tab, tells the window and saves the state; the snapshot keeps it', () => {
     const { tm, log, onStateChanged } = setup()
     const a = tm.open({ kind: 'shell', cwd: 'D:\\a' })

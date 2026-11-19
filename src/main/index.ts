@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, type WebContents } from 'electron'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, promises as fsPromises, readFileSync, realpathSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir, hostname, release, tmpdir, userInfo } from 'node:os'
@@ -166,15 +167,29 @@ import { McpHub } from './mcp/mcp-hub'
 import { ConfigWatch } from './mcp/config-watch'
 import { RestartCoordinator } from './mcp/restart-coordinator'
 import { ViewFollow } from './view-follow'
-import { isGamesSave, isMcpAction, isMcpAddRequest, isPluginAction, isReloadAction } from './ipc-guards'
+import { isGamesSave, isMcpAction, isMcpAddRequest, isPluginAction, isReloadAction, isBrowserPanelAction, isBrowserProfileAction, isImportArg, isPanelRect } from './ipc-guards'
+import { BrowserHub } from './browser/browser-hub'
+import { tabFolderFor } from './browser/local-file'
+import { BrowserProfilesStore } from './browser/profiles-store'
+import { partitionOf, type BrowserPanelState, type BrowserProfileAction, type BrowserProfilesView, type ImportSourceView } from '../shared/browser'
+import { ImportFlow } from './browser-import/import-flow'
+import { readChromiumCookies } from './browser-import/chromium-reader'
+import { connectCdp } from './browser-import/cdp-socket'
+import { readFirefoxCookies } from './browser-import/firefox-reader'
+import { importPlatform, importSourceEnv, withTestBinaries } from './browser-import/import-env'
+import { readLiveCookies } from './browser-import/live-reader'
+import { removeStaleTemps } from './browser-import/temp-copy'
+import { findSources, inspectUrl, sourceViews, type BrowserBinary, type ImportSource } from './browser-import/sources'
 
 const dataDir = initDataDir()
 const log = createLogger(join(dataDir, 'logs'))
 const pipeName = resolvePipeName()
 const settingsPath = join(dataDir, 'settings.json')
 const isTest = process.env.CLAUDETERM_TEST === '1'
+// test runs: the *.test sites of the browser tests are this machine's own site server
+if (isTest) app.commandLine.appendSwitch('host-resolver-rules', 'MAP *.test 127.0.0.1')
 /** what a test run reads back from the main process: the window it would have brought forward, the badge it set */
-const testState = globalThis as { ctFocusRequests?: number; ctBadgeCount?: number; ctChrome?: WindowChrome }
+const testState = globalThis as { ctFocusRequests?: number; ctKeyboardReturns?: number; ctKeyboardToPage?: number; ctBadgeCount?: number; ctChrome?: WindowChrome }
 
 registerImgScheme([DOC_SCHEME_PRIVILEGES])
 
@@ -929,6 +944,133 @@ function bootstrap(): void {
       remote?.host.changed()
     }
   })
+  // the Browser: one browser per Claude tab; the profiles, with their always-allowed sites, live in a file of the data folder
+  const browserProfiles = new BrowserProfilesStore(join(dataDir, 'browser-profiles.json'), { onError: (m) => log.warn(m) })
+  const browserHub = new BrowserHub({
+    window: liveWin,
+    profiles: browserProfiles,
+    isLocalClaudeTab: (tabId) => tabs.get(tabId)?.kind === 'claude',
+    forkParent: (tabId) => tabs.get(tabId)?.fork?.of ?? null,
+    // the folder the tab works in: a local file inside it needs no card
+    folderOf: (tabId) => tabFolderFor(tabs.get(tabId)?.folder ?? null, homedir(), realpathSync.native),
+    // the attention of a permission card stays on this device: no forward to paired devices, no ring
+    signal: (tabId) => { attention.notify(tabId, 'permission') },
+    sendState: (state) => send(IPC.evBrowserState, state),
+    sendClosed: (tabId) => send(IPC.evBrowserClosed, tabId),
+    sendStill: (tabId, dataUrl) => send(IPC.evBrowserStill, tabId, dataUrl),
+    openPanel: (tabId) => send(IPC.evBrowserOpen, tabId),
+    sessionChanged: () => sessions.scheduleSave(tabs.snapshot((id) => browserHub.saved(id))),
+    profilesChanged: () => profilesChanged(),
+    openSettings: (section) => settingsWindow.open(section),
+    downloadsDir: () => (isTest ? join(dataDir, 'downloads') : app.getPath('downloads')),
+    coverColor: () => windowChrome(settings.theme).backgroundColor,
+    platform: process.platform,
+    // the keyboard goes back to the window first, so the action runs where the person types
+    appKey: (action) => {
+      keyboardTo(null)
+      send(IPC.evBrowserKey, action)
+    },
+    keyboardTo: (target) => keyboardTo(target),
+    answerMs: isTest && process.env.CLAUDETERM_TEST_SITE_ANSWER_MS ? Number(process.env.CLAUDETERM_TEST_SITE_ANSWER_MS) : undefined,
+    log: { info: (m) => log.info(m), warn: (m) => log.warn(m) }
+  })
+  /** the profiles changed: every window gets the list, and the Browser tabs their state */
+  const profilesChanged = (): void => {
+    // every window: a Settings window's Browser section lists a change made from the panel, or from another window
+    broadcast(IPC.evBrowserProfiles, browserProfiles.view())
+    browserHub.profilesChanged()
+  }
+  /** an action on the profiles from Settings, answered with the list; a refused one changes nothing, and a change goes to every window */
+  const browserProfileAction = (a: unknown): BrowserProfilesView => {
+    if (!isBrowserProfileAction(a)) return browserProfiles.view()
+    const act: BrowserProfileAction = a
+    switch (act.type) {
+      case 'add':
+        if (browserProfiles.add(act.name) !== null) profilesChanged()
+        break
+      case 'rename':
+        if (browserProfiles.rename(act.id, act.name)) profilesChanged()
+        break
+      case 'remove':
+        // the store forgets the profile first: its tabs then move to Default, and its stored data goes
+        if (browserProfiles.remove(act.id)) {
+          browserHub.profileRemoved(act.id)
+          profilesChanged()
+        }
+        break
+      case 'setDefault':
+        if (browserProfiles.setDefault(act.id)) profilesChanged()
+        break
+      case 'disallow':
+        if (browserProfiles.disallow(act.id, act.site)) profilesChanged()
+        break
+      case 'clearData':
+        if (browserProfiles.has(act.id)) void browserHub.clearProfileData(act.id)
+        break
+    }
+    return browserProfiles.view()
+  }
+  // the cookie import: copies the cookies of another browser's profile into a profile of the Browser. A test run reads only its
+  // own temp root, through its stand-ins (import-env.ts); the sources are looked for again on each use.
+  const importPlat = importPlatform(isTest, process.env, process.platform)
+  const importSources = async (): Promise<ImportSource[]> => {
+    const env = importSourceEnv({
+      isTest,
+      env: process.env,
+      platform: process.platform,
+      home: homedir(),
+      appData: process.env.APPDATA,
+      localAppData: process.env.LOCALAPPDATA,
+      programFiles: [process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter((p): p is string => Boolean(p)),
+      pathVar: process.env.PATH ?? '',
+      isExecutable: isExecutableFile,
+    })
+    if (!env) return []
+    const found = await findSources(env)
+    return isTest ? withTestBinaries(found, { standIn: process.env.CLAUDETERM_TEST_BROWSER_STANDIN, devtools: process.env.CLAUDETERM_TEST_BROWSER_DEVTOOLS, node: process.execPath }) : found
+  }
+  // a live browser is asked to open its remote debugging page: detached, its output ignored, and a browser that cannot start is left to the read to time out
+  const openSetupPage = (source: ImportSource, binary: BrowserBinary): void => {
+    const child = spawn(binary.file, [...binary.args, inspectUrl(source.kind)], { env: { ...process.env, ...binary.env }, detached: true, stdio: 'ignore' })
+    child.on('error', () => undefined)
+    child.unref()
+  }
+  const sessionOf = (profileId: string): Electron.Session => session.fromPartition(partitionOf(profileId))
+  const importFlow = new ImportFlow({
+    sources: importSources,
+    readFirefox: (source) => readFirefoxCookies(source.profileDir, Math.floor(Date.now() / 1000)),
+    readChromium: (source, onWaiting, signal) =>
+      readChromiumCookies(source, Math.floor(Date.now() / 1000), { spawn, copyFile: (src, dst) => fsPromises.copyFile(src, dst), onWaiting, signal }),
+    readLive: (source, hooks) => {
+      const binary = source.binary
+      if (!binary) throw new Error(`${source.browser} is not installed where ClaudeTerm looks for it`)
+      return readLiveCookies(source, Math.floor(Date.now() / 1000), {
+        readFile: (path) => fsPromises.readFile(path, 'utf8'),
+        connect: connectCdp,
+        openSetupPage: () => openSetupPage(source, binary),
+        onStatus: hooks.onStatus,
+        pickProfile: hooks.pickProfile,
+        signal: hooks.signal,
+      })
+    },
+    // a cookie is written into a profile that still exists: a profile removed during the import gets nothing more
+    setCookie: async (profileId, details) => {
+      if (!browserProfiles.has(profileId)) return false
+      try {
+        await sessionOf(profileId).cookies.set(details)
+        return true
+      } catch {
+        return false
+      }
+    },
+    flush: (profileId) => sessionOf(profileId).cookies.flushStore(),
+    // every window: the settings window that started the import shows it, and so does any other open one
+    status: (s) => broadcast(IPC.evBrowserImport, s),
+    platform: importPlat,
+    now: Date.now,
+  })
+  // the temp copies a crashed import left behind: removed in the background, the window does not wait for them
+  void removeStaleTemps().catch(() => undefined)
   const shownFallbacks = new Set<string>()
   const tabs = new TabManager({
     onProcessStarted: (tab) => remoteControl.processStarted(tab.id),
@@ -998,6 +1140,7 @@ function bootstrap(): void {
       planHub.removeTab(tabId)
       stopTabStatus(tabId)
       attention.removeTab(tabId)
+      browserHub.removeTab(tabId)
       turns.removeTab(tabId)
       autoContinue.forget(tabId)
       resumeAfterRestore.delete(tabId)
@@ -1082,7 +1225,7 @@ function bootstrap(): void {
       return { profileName: profile.name, spec: buildLaunch(profile, 'shell', null) }
     },
     onStateChanged: () => {
-      sessions.scheduleSave(tabs.snapshot())
+      sessions.scheduleSave(tabs.snapshot((id) => browserHub.saved(id)))
       remote?.host.changed()
       updateAwake()
     },
@@ -2244,6 +2387,8 @@ function bootstrap(): void {
       // the note stored under the fork's own conversation goes with the tab to the conversation it gets
       if (opened && unsaved[i] && t.claudeSessionId !== null) noteHub.adopt(opened.id, t.claudeSessionId)
       openedIds.push(opened?.id ?? null)
+      // the tab's pages come back with it: they are made when its Browser panel first shows them
+      if (opened && t.kind === 'claude' && t.browser) browserHub.restore(opened.id, t.browser)
       if (opened && settings.claude.continueAfterRestore && (t.working || t.background)) resumeAfterRestore.set(opened.id, t.working ? 'turn' : 'background')
       if (opened && first === null) first = opened.id
     })
@@ -2254,6 +2399,18 @@ function bootstrap(): void {
       if (id && headId) tabs.joinFamily(id, headId)
     })
     if (first) tabs.activate(first)
+  }
+
+  // the keyboard goes to a page (the one the Browser panel shows next) or to the window (null): so a key lands where the person types.
+  // A test run counts each hand-over; only an OS-focused window passes the focus on (a test window never is)
+  const keyboardTo = (target: WebContents | null): void => {
+    if (isTest) {
+      if (target === null) testState.ctKeyboardReturns = (testState.ctKeyboardReturns ?? 0) + 1
+      else testState.ctKeyboardToPage = (testState.ctKeyboardToPage ?? 0) + 1
+    }
+    if (!win || win.isDestroyed() || !win.isFocused()) return
+    if (target === null) win.webContents.focus()
+    else if (!target.isDestroyed()) target.focus()
   }
 
   const focusWindow =(): void => {
@@ -2897,6 +3054,7 @@ function bootstrap(): void {
       return reply
     },
     coord: (msg) => projectCoordinators.tool(msg.tabId, msg),
+    browser: (msg, closed) => browserHub.command(msg, closed),
     mailWait: (msg, closed) => mailHub.wait(msg.tabId, msg.sessionId, closed)
   })
     .then((h) => { pipe = h })
@@ -3347,6 +3505,33 @@ function bootstrap(): void {
   // ---- chats: a call for a tab without a chat does nothing; chatSend answers with the hub's reason, as a tab without one has no conversation
   /** a local Claude tab: the only kind that has a chat */
   const isLocalClaudeTab = (tabId: unknown): tabId is string => isId(tabId) && tabs.get(tabId)?.kind === 'claude'
+  // the Browser panel: the page's place and the overlays over it, the person's actions, and a tab's browser state
+  ipcMain.on(IPC.browserBounds, (e, tabId: unknown, rect: unknown) => {
+    if (!(tabId === null || isLocalClaudeTab(tabId)) || !(rect === null || isPanelRect(rect))) return
+    if (rect === null) {
+      browserHub.setBounds(tabId, null)
+      return
+    }
+    // the renderer measures the body in CSS pixels; a view is placed in window pixels, which the sender's zoom factor relates to them.
+    // Each edge is rounded on its own, so two rects that meet leave no seam between them
+    const zoom = e.sender.getZoomFactor()
+    const x = Math.round(rect.x * zoom)
+    const y = Math.round(rect.y * zoom)
+    browserHub.setBounds(tabId, { x, y, width: Math.round((rect.x + rect.width) * zoom) - x, height: Math.round((rect.y + rect.height) * zoom) - y })
+  })
+  ipcMain.on(IPC.browserCovered, (_e, covered: unknown) => { if (isFlag(covered)) browserHub.setCovered(covered) })
+  ipcMain.on(IPC.browserAction, (_e, tabId: unknown, a: unknown) => { if (isLocalClaudeTab(tabId) && isBrowserPanelAction(a)) browserHub.action(tabId, a) })
+  ipcMain.handle(IPC.browserState, (_e, tabId: unknown): BrowserPanelState | null => (isLocalClaudeTab(tabId) ? browserHub.state(tabId) : null))
+  // the Browser's profiles, for Settings › Browser: the list, and an action on it
+  ipcMain.handle(IPC.browserProfiles, (): BrowserProfilesView => browserProfiles.view())
+  ipcMain.handle(IPC.browserProfileAction, (_e, a: unknown): BrowserProfilesView => browserProfileAction(a))
+  // the cookie import, from Settings › Browser: the browsers it can read, a start into a profile, the person's pick and a cancel
+  ipcMain.handle(IPC.browserImportSources, async (): Promise<ImportSourceView[]> => sourceViews(await importSources()))
+  ipcMain.on(IPC.browserImportStart, (_e, sourceId: unknown, profileId: unknown) => {
+    if (isImportArg(sourceId) && isImportArg(profileId) && browserProfiles.has(profileId)) importFlow.start(sourceId, profileId)
+  })
+  ipcMain.on(IPC.browserImportPick, (_e, contextId: unknown) => { if (isImportArg(contextId)) importFlow.pick(contextId) })
+  ipcMain.on(IPC.browserImportCancel, () => importFlow.cancel())
   ipcMain.on(IPC.remoteControlSet, (_e, tabId: unknown, on: unknown) => { if (isLocalClaudeTab(tabId) && isFlag(on)) remoteControl.set(tabId, on) })
   // ---- project coordinators: the window's calls; each checks its tab (and the session's tab) is a local Claude tab
   /** the answer to a call whose request does not pass its check */
@@ -3958,6 +4143,8 @@ function bootstrap(): void {
     // the installed app takes its icon from ClaudeTerm.exe; dev and test runs use electron.exe's own
     icon: app.isPackaged ? undefined : join(__dirname, '..', '..', 'build', 'icon.png'),
     offScreen: isTest,
+    // a cookie import the window asked for waits for the person in it: closing the window ends it
+    closed: () => importFlow.cancel(),
     load: (w, section) => {
       if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}/settings.html${section ? `#${section}` : ''}`)
       else void w.loadFile(join(__dirname, '../renderer/settings.html'), section ? { hash: section } : undefined)
@@ -4189,6 +4376,7 @@ function bootstrap(): void {
     keepAwake.dispose()
     configWatch.close()
     mcpHub.dispose()
+    browserHub.dispose()
     presence.dispose()
     earlyPeers.clear()
     updater.stop()

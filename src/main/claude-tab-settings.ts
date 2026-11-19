@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, win32 } from 'node:path'
+import { BROWSER_TOOL_NAMES } from '../shared/browser'
 import type { Settings } from '../shared/types'
 import { isWindowsPath } from './path-key'
 
@@ -82,7 +83,8 @@ export function claudeTabSettingsJson(hookRun: HookRun, statusCommand: string, r
         allow: [
           'mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent',
           'mcp__claudeterm__list_sessions', 'mcp__claudeterm__start_session', 'mcp__claudeterm__attach_session', 'mcp__claudeterm__detach_session',
-          'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session', 'mcp__claudeterm__answer_session'
+          'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session', 'mcp__claudeterm__answer_session',
+          ...BROWSER_TOOL_NAMES.map((n) => 'mcp__claudeterm__' + n)
         ]
       },
       hooks: {

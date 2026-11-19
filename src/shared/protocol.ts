@@ -1,4 +1,5 @@
 import { isAbsolute, posix } from 'node:path'
+import { type BrowserCommand, parseBrowserCommand } from './browser'
 import { COORD_NAME_MAX, COORD_TASK_MAX, COORD_WORDS_MAX, isWorktreeName, type CoordOp } from './coordinator'
 import { MAIL_TEXT_MAX, MAIL_TO_MAX } from './mail'
 import { NOTE_ADD_MAX, NOTE_ITEM_MAX, NOTE_SIDES, type NoteSide } from './note'
@@ -243,13 +244,27 @@ export interface NoteCheckMessage {
 /** a coordinator tool of the MCP server: one operation of the tab's coordinator */
 export type CoordMessage = { v: 1; type: 'coord'; tabId: string } & CoordOp
 
+/** a browser tool of the MCP server: one command on the browser of the tab */
+export interface BrowserMessage {
+  v: 1
+  type: 'browser'
+  tabId: string
+  command: BrowserCommand
+}
+
+/** a screenshot returned to Claude as an image, base64 encoded */
+export interface PipeImage {
+  data: string
+  mimeType: 'image/png' | 'image/jpeg'
+}
+
 export type PipeMessage =
   | ShowImageMessage | SessionMessage | StatusMessage | SubagentMessage | SessionEndMessage | AttentionMessage
   | TurnMessage | EditBeforeMessage | ShowDiffMessage | ShowDocumentMessage
   | TaskListMessage | TaskListGetMessage | DeviceStatusMessage | OpenDeviceSettingsMessage
   | AgentListMessage | AgentSendMessage | MailWaitMessage
-  | NoteReadMessage | NoteAddMessage | NoteCheckMessage | CoordMessage
-export type PipeResponse = { ok: true; info?: string } | { ok: false; error: string }
+  | NoteReadMessage | NoteAddMessage | NoteCheckMessage | CoordMessage | BrowserMessage
+export type PipeResponse = { ok: true; info?: string; image?: PipeImage } | { ok: false; error: string }
 export type ParseResult = { ok: true; message: PipeMessage } | { ok: false; error: string }
 
 export function isUuid(value: unknown): value is string {
@@ -461,6 +476,12 @@ export function parsePipeMessage(line: string): ParseResult {
     const parsed = parseCoordOp(m)
     if (!parsed.ok) return { ok: false, error: parsed.error }
     return { ok: true, message: { v: 1, type: 'coord', tabId: m.tabId, ...parsed.op } }
+  }
+  if (m.type === 'browser') {
+    if (!isUuid(m.tabId)) return { ok: false, error: 'tabId must be a UUID' }
+    const command = parseBrowserCommand(m.command)
+    if (!command.ok) return { ok: false, error: command.error }
+    return { ok: true, message: { v: 1, type: 'browser', tabId: m.tabId, command: command.command } }
   }
   if (m.type === 'device_status') return { ok: true, message: { v: 1, type: 'device_status' } }
   if (m.type === 'open_device_settings') return { ok: true, message: { v: 1, type: 'open_device_settings' } }
