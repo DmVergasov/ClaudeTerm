@@ -3,6 +3,7 @@ import { COORD_NAME_MAX } from '../../shared/coordinator'
 import { MAX_IMAGE_BYTES } from '../../shared/image-file'
 import type { ImagesUpdate, StatusUpdate } from '../../shared/ipc'
 import { isUuid } from '../../shared/protocol'
+import { isRunId, isWorkflowRun, type WorkflowRun } from '../../shared/workflow'
 import { MAX_HASH } from '../../shared/review'
 import {
   IMAGE_PART_BYTES,
@@ -72,6 +73,7 @@ const MAX_SESSION_TEXT = 2000
 const MAX_STATUS = 200
 const MAX_AGENTS = 64
 const MAX_BACKGROUND = 64
+const MAX_RUNS = 8
 const MAX_CARDS = 10_000
 const MAX_CAPTION = 1000
 const MAX_NOTICE = 500
@@ -910,7 +912,8 @@ function agentOf(v: unknown): AgentStatus | null {
     description: description as string | null,
     model: model as string | null,
     effort: effort as string | null,
-    startedAt
+    startedAt,
+    ...(isRunId(v.runId) ? { runId: v.runId } : {})
   }
 }
 
@@ -924,13 +927,15 @@ function backgroundOf(v: unknown): BackgroundTask | null {
 
 function statusOf(v: unknown): Omit<StatusUpdate, 'tabId'> | null {
   if (!isPlainObject(v)) return null
-  const { main, agents, background } = v
+  const { main, agents, background, runs } = v
   const status = maybe(main, mainOf)
   const list = listOf(agents, MAX_AGENTS, agentOf)
   // a device that sends no background tasks has none
   const tasks = background === undefined ? [] : listOf(background, MAX_BACKGROUND, backgroundOf)
   if (status === undefined || !list || !tasks) return null
-  return { main: status, agents: list, background: tasks }
+  // a run that does not fit is dropped alone; a device that sends no runs has none
+  const kept: WorkflowRun[] = Array.isArray(runs) ? runs.map((r) => isWorkflowRun(r)).filter((r): r is WorkflowRun => r !== null).slice(0, MAX_RUNS) : []
+  return { main: status, agents: list, background: tasks, ...(kept.length > 0 ? { runs: kept } : {}) }
 }
 
 function taskOf(v: unknown): PlanTask | null {

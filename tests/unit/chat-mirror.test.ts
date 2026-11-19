@@ -55,6 +55,45 @@ describe("a subagent's model, effort and context are optional, and checked when 
   })
 })
 
+describe("a call's workflow and an agent's workflow are kept when they fit, and dropped alone when they do not", () => {
+  const run = { key: 'toolu_1', runId: 'wf_abc123', taskId: null, name: 'review', state: 'running', startedAt: 1, ms: null, phases: [], agents: [] }
+  const withCall = (over: Record<string, unknown>): ChatSnapshot => snapshot([{ kind: 'tools', id: 't', calls: [call('c1', over)], ms: null }])
+  const snapOf = (out: ReturnType<typeof parseChatPush>): ChatSnapshot => (out as { snapshot: ChatSnapshot }).snapshot
+  const callOf = (s: ChatSnapshot): Record<string, unknown> => (s.items[0] as unknown as { calls: Array<Record<string, unknown>> }).calls[0]
+
+  it('a call with a good workflow keeps it', () => {
+    const out = parseChatPush(withCall({ workflow: run }))
+    expect(out).not.toBeNull()
+    expect(callOf(snapOf(out)).workflow).toEqual(run)
+  })
+
+  it('a call with a bad workflow is kept without the field, and the whole chat push is accepted', () => {
+    const out = parseChatPush(withCall({ workflow: { ...run, state: 'odd' } }))
+    expect(out).not.toBeNull()
+    expect(callOf(snapOf(out)).id).toBe('c1')
+    expect('workflow' in callOf(snapOf(out))).toBe(false)
+  })
+
+  const agentPage = (workflow: unknown): Record<string, unknown> => ({
+    tabId: TAB, agentId: 'agent-1', rev: 2, items: [], hasOlder: false, writable: false,
+    agent: { id: 'agent-1', type: 'Explore', description: 'Find', state: 'running', startedAt: 1, ms: null, parentId: null, workflow },
+  })
+
+  it('agent info with a good workflow keeps it', () => {
+    const workflow = { run: 'wf_abc123', phase: 'Review', attempt: 2 }
+    expect(parseAgentSnapshot(agentPage(workflow))?.agent.workflow).toEqual(workflow)
+  })
+
+  it('agent info with a bad workflow field is kept without it', () => {
+    const bad = [{ run: '', phase: null, attempt: 1 }, { run: 'r'.repeat(101), phase: null, attempt: 1 }, { run: 'wf', phase: 'p'.repeat(101), attempt: 1 }, { run: 'wf', phase: null, attempt: 0 }, { run: 'wf', phase: null, attempt: 1.5 }, 'wf']
+    for (const workflow of bad) {
+      const page = parseAgentSnapshot(agentPage(workflow))
+      expect(page, JSON.stringify(workflow)).not.toBeNull()
+      expect(page!.agent).not.toHaveProperty('workflow')
+    }
+  })
+})
+
 describe("a subagent's id is an agent id: letters, digits, _ and -, 1 to 128 characters", () => {
   const agent = (id: string): Record<string, unknown> => ({ id, description: 'Find it', type: 'Explore', state: 'running', ms: null })
   const withAgent = (id: string): ChatSnapshot => snapshot([{ kind: 'tools', id: 't', calls: [call('c1', { name: 'Agent', agents: [agent(id)] })], ms: null }])

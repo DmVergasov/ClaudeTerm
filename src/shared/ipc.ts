@@ -2,6 +2,7 @@ import type { AccountBegin, AccountFlowView, AccountResult, AccountsView, CarryP
 import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
 import type { GamesSave } from './games'
 import type { RemoteState } from './remote-control'
+import type { WorkflowRun } from './workflow'
 import type { DocAction, DocRead, DocsUpdate } from './docs'
 import type { FileLink } from './chat-paths'
 import type { MailConversationView, MailUnread } from './mail'
@@ -279,6 +280,8 @@ export interface StatusUpdate {
   goesOnAt?: number | null
   /** the tab's Remote Control state; absent or null for a tab without the segment (a shell tab, another device's tab) */
   remote?: RemoteState | null
+  /** the Workflow runs the tab keeps, in start order: running ones, and ended ones until the session's next prompt; absent when it has none */
+  runs?: WorkflowRun[]
 }
 
 export interface PlanUpdate {

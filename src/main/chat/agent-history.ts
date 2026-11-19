@@ -2,6 +2,7 @@ import { type FileHandle, open, realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { isAgentId } from '../../shared/chat'
 import { isUuid } from '../../shared/protocol'
+import { isRunId } from '../../shared/workflow'
 import { isWithin } from '../path-key'
 
 // An agent's transcript on disk: read from its end, a page of whole lines at a time, so a long agent is never read whole. Everything here
@@ -14,8 +15,11 @@ export const CHUNK = 256 * 1024
 export const PAGE_LINES = 2000
 export const PAGE_BYTES = 8 * 1024 * 1024
 
-/** a page of an agent's transcript: its lines, oldest first; `start` is where the next older page ends (0: none) */
-export interface TranscriptPage { lines: Record<string, unknown>[]; start: number }
+/**
+ * a page of an agent's transcript: its lines, oldest first; `start` is where the next older page ends (0: none); `end` is the byte the page
+ * reads up to, where a tail of the transcript starts: the file's size, or the start of a half-written last line the page leaves out
+ */
+export interface TranscriptPage { lines: Record<string, unknown>[]; start: number; end: number }
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -30,6 +34,15 @@ export function agentTranscriptPath(transcript: string, sessionId: string, agent
 }
 
 /**
+ * <dirname(transcript)>/<sessionId>/subagents/workflows/<runId>/agent-<agentId>.jsonl: the file Claude Code writes a Workflow run's agent to;
+ * null when the run id or the agent id fails its pattern or the session is not a uuid
+ */
+export function runAgentTranscriptPath(transcript: string, sessionId: string, runId: string, agentId: string): string | null {
+  if (!isRunId(runId) || !isAgentId(agentId) || !isUuid(sessionId)) return null
+  return join(dirname(transcript), sessionId, 'subagents', 'workflows', runId, `agent-${agentId}.jsonl`)
+}
+
+/**
  * The real path of an agent's file, when it lies inside the real subagents folder and that folder inside the real project folder; null
  * for anything else, or a file that is missing. A junction, a symlink or a short name is resolved first, so the check is on the real places.
  */
@@ -40,6 +53,22 @@ export async function resolveAgentTranscript(file: string): Promise<string | nul
     // the project folder is the one the path names, not the one a link leads to from it
     const project = await realpath(dirname(dirname(dirname(file))))
     if (!isWithin(project, subagents) || !isWithin(subagents, real)) return null
+    return real
+  } catch {
+    return null
+  }
+}
+
+/**
+ * resolveAgentTranscript for a Workflow run's agent: the file is in its run folder, under workflows and subagents, so the project folder
+ * is five levels up. A workflows or subagents link that leads out of the project is refused.
+ */
+export async function resolveRunAgentTranscript(file: string): Promise<string | null> {
+  try {
+    const real = await realpath(file)
+    const runDir = await realpath(dirname(file))
+    const project = await realpath(dirname(dirname(dirname(dirname(dirname(file))))))
+    if (!isWithin(project, runDir) || !isWithin(runDir, real)) return null
     return real
   } catch {
     return null
@@ -128,13 +157,18 @@ export async function readAgentPage(file: string, end: number | null): Promise<T
     const size = (await fh.stat()).size
     const hi = Math.min(end ?? size, size)
     const lines: Obj[] = []
-    if (hi === 0) return { lines, start: 0 }
+    if (hi === 0) return { lines, start: 0, end: 0 }
     const last = Buffer.alloc(1)
     await readAt(fh, last, hi - 1)
     const reader = new BackwardLines(fh, last[0] === 10 ? hi - 1 : hi)
     let more = true
-    // a partial last line is skipped: the reader moves past it
-    if (last[0] !== 10) more = (await reader.next()).start > 0
+    // a partial last line is skipped: the reader moves past it, and the page reads up to where it starts
+    let upTo = hi
+    if (last[0] !== 10) {
+      const partial = await reader.next()
+      more = partial.start > 0
+      upTo = partial.start
+    }
     let start = 0
     let bytes = 0
     // the bytes read count, kept or skipped; the bytes limit applies only once the page has a line
@@ -147,7 +181,7 @@ export async function readAgentPage(file: string, end: number | null): Promise<T
       const parsed = parseLine(got.data)
       if (parsed !== null) lines.push(parsed)
     }
-    return { lines: lines.reverse(), start }
+    return { lines: lines.reverse(), start, end: upTo }
   } finally {
     await fh.close()
   }

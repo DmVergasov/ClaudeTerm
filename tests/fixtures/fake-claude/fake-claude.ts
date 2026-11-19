@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import type { FakeAgent, FakeAgentFrame, FakeCompact, FakeScript, FakeStep, FakeTask, RateLimitWindows } from './install'
+import type { FakeAgent, FakeAgentFrame, FakeCompact, FakeScript, FakeStep, FakeTask, FakeWorkflow, FakeWorkflowAgent, RateLimitWindows } from './install'
 
 type Msg = Record<string, any>
 
@@ -181,7 +181,8 @@ function lastLineUuid(file: string): string | null {
 
 // the transcript file Claude Code would write: one line per user and assistant message, each chained to the line before it
 // (the SDK reads a session by walking that chain back from its last line); none for a session that is not kept
-function record(type: 'user' | 'assistant', message: Msg): void {
+// extra: the fields only this line carries (a Workflow call's result has its toolUseResult)
+function record(type: 'user' | 'assistant', message: Msg, extra: Msg = {}): void {
   if (has('--no-session-persistence')) return
   mkdirSync(projectDir, { recursive: true })
   const file = join(projectDir, `${session}.jsonl`)
@@ -198,7 +199,8 @@ function record(type: 'user' | 'assistant', message: Msg): void {
     message,
     uuid,
     timestamp: stamp(),
-    entrypoint: 'sdk-ts'
+    entrypoint: 'sdk-ts',
+    ...extra
   }
   appendFileSync(file, JSON.stringify(line) + '\n')
   transcriptTail = uuid
@@ -853,6 +855,175 @@ async function forwardTurn(forward: { agentId: string; text: string }, turn: Tur
   return streamText(answer.success === true ? 'Forwarded.' : `Not forwarded: ${answer.message}`, 1, turn)
 }
 
+// ---- Workflow runs: a Workflow call starts a run (a local_workflow task) that goes on outside its turn, as a background agent does ----
+
+// the ids the stand-in gives a run and its agents, in order: a test names them as wf_fake-<n>, wfake<n> and awf<n>
+let workflowRuns = 0
+let workflowAgents = 0
+
+interface WorkflowAgentState {
+  index: number
+  spec: FakeWorkflowAgent
+  attempt: number
+  agentId: string // the agent id of its current try
+  startedAt: number
+  durationMs?: number
+  state: 'start' | 'done' | 'error'
+  final: boolean // its last try has started (the one that runs on)
+  tail: string | null // the uuid of the last line of its current try's transcript
+}
+
+interface WorkflowRunState {
+  step: FakeWorkflow
+  runId: string
+  taskId: string
+  toolId: string // the Workflow call
+  folder: string // subagents/workflows/<runId>, under the session folder
+  startedAt: number
+  open: boolean // false once the run has ended
+  agents: WorkflowAgentState[]
+}
+
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+
+// the index of an agent's phase: its own, else phase 0 of a run that has phases; null for a run without any
+function phaseIndexOf(step: FakeWorkflow, spec: FakeWorkflowAgent): number | null {
+  if (spec.phase !== undefined) return spec.phase
+  return (step.phases?.length ?? 0) > 0 ? 0 : null
+}
+
+// the title of an agent's phase, null for an agent without one
+function phaseTitle(step: FakeWorkflow, spec: FakeWorkflowAgent): string | null {
+  const index = phaseIndexOf(step, spec)
+  return index === null ? null : step.phases?.[index] ?? null
+}
+
+// the run's rows as the stream carries them (workflow_progress is undocumented): its phases, then one row per agent
+function workflowRows(run: WorkflowRunState): Msg[] {
+  const phases = (run.step.phases ?? []).map((title, index) => ({ type: 'workflow_phase', index, title }))
+  const agents = run.agents.map(agent => ({
+    type: 'workflow_agent', index: agent.index, label: agent.spec.label, phaseIndex: phaseIndexOf(run.step, agent.spec), phaseTitle: phaseTitle(run.step, agent.spec),
+    agentId: agent.agentId, model: currentModel(), state: agent.state, startedAt: agent.startedAt, queuedAt: run.startedAt, attempt: agent.attempt,
+    promptPreview: agent.spec.task, ...(agent.durationMs === undefined ? {} : { durationMs: agent.durationMs })
+  }))
+  return [...phases, ...agents]
+}
+
+// the run's progress: task_progress carries the whole run each time
+function reportWorkflow(run: WorkflowRunState): void {
+  emit(sys('task_progress', { task_id: run.taskId, tool_use_id: run.toolId, description: run.step.name, workflow_progress: workflowRows(run) }))
+}
+
+// a line of the run's journal (subagents/workflows/<runId>/journal.jsonl)
+function journal(run: WorkflowRunState, line: Msg): void {
+  if (has('--no-session-persistence')) return
+  appendFileSync(join(run.folder, 'journal.jsonl'), JSON.stringify(line) + '\n')
+}
+
+// a line of a run agent's transcript, chained to the line before it as writeSubagentLine chains a subagent's
+function writeRunLine(run: WorkflowRunState, agent: WorkflowAgentState, type: 'user' | 'assistant', message: Msg): void {
+  if (has('--no-session-persistence')) return
+  const uuid = randomUUID()
+  const line = { parentUuid: agent.tail, isSidechain: true, agentId: agent.agentId, sessionId: session, cwd: process.cwd(), version: VERSION, type, message, uuid, timestamp: stamp() }
+  appendFileSync(join(run.folder, `agent-${agent.agentId}.jsonl`), JSON.stringify(line) + '\n')
+  agent.tail = uuid
+}
+
+// a try of an agent starts: its journal line, its meta file, and its transcript's task line and first answer
+function startTry(run: WorkflowRunState, agent: WorkflowAgentState, attempt: number): void {
+  agent.agentId = `awf${++workflowAgents}`
+  agent.attempt = attempt
+  agent.final = attempt >= (agent.spec.attempts ?? 1)
+  agent.state = 'start'
+  agent.startedAt = Date.now()
+  agent.durationMs = undefined
+  agent.tail = null
+  const title = phaseTitle(run.step, agent.spec)
+  journal(run, { type: 'started', key: String(agent.index), agentId: agent.agentId, label: agent.spec.label, phase: title })
+  if (has('--no-session-persistence')) return
+  writeFileSync(join(run.folder, `agent-${agent.agentId}.meta.json`), JSON.stringify({ description: agent.spec.label, workflowPhase: title, model: currentModel() }))
+  writeRunLine(run, agent, 'user', { role: 'user', content: `[Workflow harness — computed task]\n\n${agent.spec.task}` })
+  writeRunLine(run, agent, 'assistant', assistantMessage([{ type: 'text', text: `Working on ${agent.spec.label}` }], 'end_turn'))
+}
+
+// a try of an agent ends: its journal line (result, or failed), and its row's state
+function endTry(run: WorkflowRunState, agent: WorkflowAgentState, state: 'done' | 'error'): void {
+  agent.state = state
+  agent.durationMs = Date.now() - agent.startedAt
+  const key = String(agent.index)
+  journal(run, state === 'done' ? { type: 'result', key, agentId: agent.agentId, result: `Done: ${agent.spec.label}` } : { type: 'failed', key, agentId: agent.agentId })
+}
+
+// an agent's later line: once its gate's file exists, while the run is open, an assistant line goes to the transcript of its
+// last try (the one that runs on), so a retried agent's line waits for its retry
+async function laterLine(run: WorkflowRunState, agent: WorkflowAgentState): Promise<void> {
+  const later = agent.spec.later
+  if (later === undefined) return
+  while (run.open && (!agent.final || !existsSync(join(configDir, later.gate)))) await sleep(20)
+  if (run.open) writeRunLine(run, agent, 'assistant', assistantMessage([{ type: 'text', text: later.text }], 'end_turn'))
+}
+
+// the run after its launch: its agents start; an agent with attempts 2 fails its first try at half the run's time and retries;
+// the run ends at its gate, or after ms from its launch, and the agents still running end as the run's status says
+async function runWorkflow(run: WorkflowRunState): Promise<void> {
+  const { step } = run
+  const ms = step.ms ?? 300
+  await tick()
+  for (const agent of run.agents) {
+    startTry(run, agent, 1)
+    void laterLine(run, agent)
+  }
+  reportWorkflow(run)
+  if (run.agents.some(agent => (agent.spec.attempts ?? 1) > 1)) {
+    await sleep(ms / 2)
+    for (const agent of run.agents) {
+      if ((agent.spec.attempts ?? 1) < 2) continue
+      endTry(run, agent, 'error')
+      startTry(run, agent, 2)
+    }
+    reportWorkflow(run)
+  }
+  if (step.gate !== undefined) {
+    while (!existsSync(join(configDir, step.gate))) await sleep(20)
+  } else {
+    await sleep(Math.max(0, run.startedAt + ms - Date.now()))
+  }
+  run.open = false
+  const status = step.status ?? 'completed'
+  for (const agent of run.agents) if (agent.state === 'start') endTry(run, agent, status === 'completed' ? 'done' : 'error')
+  const duration = Date.now() - run.startedAt
+  const rows = workflowRows(run)
+  if (!has('--no-session-persistence')) {
+    const workflows = join(projectDir, session, 'workflows')
+    mkdirSync(workflows, { recursive: true })
+    writeFileSync(join(workflows, `${run.runId}.json`), JSON.stringify({ runId: run.runId, taskId: run.taskId, workflowName: step.name, status, startTime: run.startedAt, durationMs: duration, agentCount: run.agents.length, workflowProgress: rows }))
+  }
+  reportWorkflow(run)
+  emit(sys('task_notification', { task_id: run.taskId, tool_use_id: run.toolId, status, output_file: '', summary: step.name, usage: { total_tokens: 0, tool_uses: 0, duration_ms: duration }, workflow_progress: rows }))
+}
+
+// a Workflow call: it ends at once with the launch result, as a background task's call does, and the run goes on after the turn
+async function workflowStep(workflow: FakeWorkflow): Promise<Outcome> {
+  const n = ++workflowRuns
+  const runId = `wf_fake-${n}`
+  const folder = join(projectDir, session, 'subagents', 'workflows', runId)
+  const toolId = emitToolUse('Workflow', { workflow: workflow.name })
+  const run: WorkflowRunState = {
+    step: workflow, runId, taskId: `wfake${n}`, toolId, folder, startedAt: Date.now(), open: true,
+    agents: workflow.agents.map((spec, index) => ({ index, spec, attempt: 1, agentId: '', startedAt: 0, state: 'start', final: false, tail: null }))
+  }
+  const launched = { status: 'async_launched', taskId: run.taskId, taskType: 'local_workflow', workflowName: workflow.name, runId, transcriptDir: folder, scriptPath: '' }
+  const text = `Workflow launched in background.\nTask ID: ${run.taskId}\nTranscript dir: ${folder}`
+  const message = { role: 'user', content: [{ tool_use_id: toolId, type: 'tool_result', content: text, is_error: false }] }
+  emit({ type: 'user', message, parent_tool_use_id: null, session_id: session, uuid: randomUUID(), timestamp: stamp(), tool_use_result: launched, tool_result_meta: [] })
+  record('user', message, { toolUseResult: launched })
+  if (!has('--no-session-persistence')) mkdirSync(folder, { recursive: true })
+  emit(sys('task_started', { task_id: run.taskId, tool_use_id: toolId, description: workflow.name, task_type: 'local_workflow', workflow_name: workflow.name }))
+  journal(run, { type: 'launched' })
+  void runWorkflow(run).catch(fail)
+  return 'done'
+}
+
 async function runStep(step: FakeStep, turn: Turn): Promise<Outcome> {
   if ('text' in step) return streamText(step.text, step.chunks ?? 1, turn, step.pace ?? 0, step.rate ?? 0)
   if ('tool' in step) return toolStep(step.tool)
@@ -900,6 +1071,7 @@ async function runStep(step: FakeStep, turn: Turn): Promise<Outcome> {
   }
   if ('thinking' in step) return thinkingStep(step)
   if ('task' in step) return runTask(step.task, null)
+  if ('workflow' in step) return workflowStep(step.workflow)
   if ('fold' in step) {
     if (step.fold === 'result') {
       // the sends still waiting are taken into this turn: the turn's result names them, and no turn of their own runs them

@@ -1,12 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ChatHub } from '../../src/main/chat/chat-hub'
+import { ChatHub, type ChatHubDeps } from '../../src/main/chat/chat-hub'
 import { resolveChatLaunch, type ChatLaunch } from '../../src/main/chat/claude-spawn'
 import { startSdkEngine } from '../../src/main/chat/sdk-engine'
-import type { AgentSnapshot } from '../../src/shared/chat'
+import type { AgentPatch, AgentSnapshot } from '../../src/shared/chat'
 import type { TabInfo } from '../../src/shared/types'
+import type { WorkflowRun } from '../../src/shared/workflow'
 import type { ChatHandle, ChatStartRequest } from '../../src/main/tab-manager'
 import { installFakeClaude, type FakeScript } from '../fixtures/fake-claude/install'
 
@@ -38,15 +39,15 @@ function env(log: string, script: string): Record<string, string> {
   return result
 }
 
-function hubOnSdk(): ChatHub {
+function hubOnSdk(over: Partial<Pick<ChatHubDeps, 'agentWindow' | 'history' | 'transcript'>> = {}): ChatHub {
   return new ChatHub({
     engine: startSdkEngine,
     support: async () => ({ launch }),
-    history: async () => [],
-    transcript: async () => null,
+    history: over.history ?? (async () => []),
+    transcript: over.transcript ?? (async () => null),
     window: () => undefined,
     remote: () => undefined,
-    agentWindow: () => undefined,
+    agentWindow: over.agentWindow ?? (() => undefined),
     agentRemote: () => undefined,
     watched: () => false,
     activeTabId: () => TAB,
@@ -204,5 +205,122 @@ describe('the agent chat on the SDK engine', () => {
     await until(() => hub!.snapshot(TAB)?.items.some(item => item.kind === 'text' && item.markdown.startsWith('The agent answered')) ?? false, 'the follow-up turn')
     await until(() => hub!.snapshot(TAB)?.state.turn === 'idle', 'the follow-up turn to end')
     expect(hub.quietTurn(TAB)).toBe(true)
+  }, 30_000)
+
+  it("a shown run agent's page gets the lines written after it is read, as adds, never a reset", async () => {
+    const script: FakeScript = {
+      turns: {
+        Go: [{
+          workflow: {
+            name: 'crash-triage',
+            agents: [{ label: 'triage-a', task: 'Look', later: { gate: 'later', text: 'Second look' } }],
+            gate: 'end',
+          },
+        }],
+      },
+    }
+    const scriptFile = join(dir, 'script.json')
+    writeFileSync(scriptFile, JSON.stringify(script))
+    // the stand-in writes the session's runs under the project folder named after the working folder
+    const projectFolder = join(config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'))
+    let watching: string | null = null
+    const seen: AgentPatch[] = []
+    hub = hubOnSdk({
+      transcript: async (_tab, session) => join(projectFolder, `${session}.jsonl`),
+      agentWindow: (_tab, agentId, _from, _to, patches) => {
+        if (agentId === watching) seen.push(...patches)
+      },
+    })
+    chat = hub.start({
+      tab: tabInfo(),
+      claude: { command: 'claude', settingsPath: null, resumeSessionId: null, forkSession: false },
+      env: env(join(dir, 'fake-claude.log'), scriptFile),
+      exit: () => {
+        exits++
+      },
+    } satisfies ChatStartRequest)
+    await until(() => hub!.isRunning(TAB), 'the chat running')
+    await hub.send(TAB, { text: 'Go', attachments: [] })
+
+    // the run's rows name its agent; the hub alone makes the agent's record, and its page reads the transcript's first line
+    const agentId = await until(() => {
+      const call = hub!.snapshot(TAB)?.items.flatMap(item => (item.kind === 'tools' ? item.calls : [])).find(c => c.workflow !== undefined)
+      return call?.workflow?.agents.find(row => row.agentId !== null)?.agentId ?? null
+    }, 'the run agent')
+    const before = await until(() => hub!.agentSnapshot(TAB, agentId), 'the run agent record')
+    expect(before.agent.state).toBe('running')
+    expect(before.items).toContainEqual(expect.objectContaining({ kind: 'prompt', text: expect.stringContaining('Look') }))
+
+    watching = agentId
+    hub.watchAgent(TAB, 'window', agentId)
+    writeFileSync(join(config, 'later'), '')
+    // the page's tail reads the new line within a few ticks: an add, and no reset after the snapshot
+    await until(() => seen.some(p => p.op === 'add' && p.item.kind === 'text' && p.item.markdown === 'Second look'), 'the later line', 6_000)
+    expect(seen.map(p => p.op)).not.toContain('reset')
+
+    writeFileSync(join(config, 'end'), '')
+    await until(async () => ((await hub!.agentSnapshot(TAB, agentId))?.agent.state === 'done' ? true : null), 'the run agent to end')
+  }, 30_000)
+
+  it("a resumed chat ends its Workflow run as its run file says: the run is done with its rows, and its agent has a record", async () => {
+    const script: FakeScript = {
+      turns: {
+        Go: [{
+          workflow: {
+            name: 'crash-triage', phases: ['Triage'],
+            agents: [{ label: 'triage-a', task: 'Look at crash 1' }, { label: 'triage-b', task: 'Look at crash 2' }],
+            ms: 200,
+          },
+        }],
+      },
+    }
+    const scriptFile = join(dir, 'script.json')
+    writeFileSync(scriptFile, JSON.stringify(script))
+    const log = join(dir, 'fake-claude.log')
+    // the stand-in writes the session's transcript and its run files under the project folder named after the working folder
+    const projectFolder = join(config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'))
+    const transcriptOf = async (_tab: string, session: string) => join(projectFolder, `${session}.jsonl`)
+    const runOf = (h: ChatHub): WorkflowRun | undefined => h.snapshot(TAB)?.items.flatMap(item => (item.kind === 'tools' ? item.calls : [])).find(c => c.workflow !== undefined)?.workflow
+
+    hub = hubOnSdk({ transcript: transcriptOf })
+    chat = hub.start({
+      tab: tabInfo(),
+      claude: { command: 'claude', settingsPath: null, resumeSessionId: null, forkSession: false },
+      env: env(log, scriptFile),
+      exit: () => {
+        exits++
+      },
+    } satisfies ChatStartRequest)
+    await until(() => hub!.isRunning(TAB), 'the chat running')
+    await hub.send(TAB, { text: 'Go', attachments: [] })
+    await until(() => runOf(hub!)?.state === 'done', 'the run to end')
+    const session = hub.snapshot(TAB)!.state.sessionId!
+
+    // the first conversation ends; its messages are the history a second hub reads
+    chat.kill()
+    await until(() => exits > 0, 'the exit of the first chat', 5_000)
+    chat = null
+    exits = 0
+    const messages = readFileSync(join(projectFolder, `${session}.jsonl`), 'utf8').split('\n').filter(line => line !== '').map(line => JSON.parse(line) as unknown)
+
+    hub = hubOnSdk({ transcript: transcriptOf, history: async () => messages })
+    chat = hub.start({
+      tab: tabInfo(),
+      claude: { command: 'claude', settingsPath: null, resumeSessionId: session, forkSession: false },
+      env: env(log, scriptFile),
+      exit: () => {
+        exits++
+      },
+    } satisfies ChatStartRequest)
+    // the history draws the run; its run file is read before the history is drawn
+    const run = await until(() => runOf(hub!), 'the history to draw the run')
+    expect(run).toMatchObject({ name: 'crash-triage', state: 'done', phases: [{ index: 0, title: 'Triage' }] })
+    expect(run.agents).toHaveLength(2)
+    expect(run.agents.every(a => a.state === 'done')).toBe(true)
+
+    // the run's agent has its record, made from the rows of the run file
+    const agentId = run.agents[0]!.agentId
+    expect(agentId).not.toBeNull()
+    expect(await hub.agentSnapshot(TAB, agentId!)).toMatchObject({ agent: { state: 'done' } })
   }, 30_000)
 })

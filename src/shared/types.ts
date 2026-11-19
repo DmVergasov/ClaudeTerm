@@ -231,6 +231,8 @@ export interface AgentStatus {
   model: string | null
   effort: string | null
   startedAt: number
+  /** the Workflow run the agent is one of, while that run is running; absent for an ordinary subagent */
+  runId?: string
 }
 
 /** a task of the plan Claude is carrying out: finished, being worked on, or still ahead */

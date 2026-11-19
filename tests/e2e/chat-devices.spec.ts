@@ -7,6 +7,8 @@ import type { FakeScript, FakeTask } from '../fixtures/fake-claude/install'
 import { chatReady, chatStandIn, CHAT_INPUT, controlResponses, sendMessage, userMessages } from './chat-helpers'
 import { closePaired, type Device, pairedApps, SLOW, startApps } from './device-pair'
 import { bufferText, launchApp, writeTranscript } from './helpers'
+import { mainTranscript, statusMsg, writeWorkflowRun } from './workflow-run'
+import { sendPipeMessage } from '../../src/shared/pipe-client'
 
 test.afterEach(closePaired)
 
@@ -40,6 +42,7 @@ const MODELS = [
   { value: 'haiku', displayName: 'Haiku 5.5', description: 'The fastest, for quick answers', supportedEffortLevels: [] }
 ]
 const RESUME_SID = '3c8a6f2e-1d7b-4e5a-8f9c-0b1a2c3d4e5f'
+const RUN_SID = '2b7e4d19-6a3c-4f8e-9d15-7c0a8e3b5f62'
 
 const tabIdsOf = (d: Device) => d.page.evaluate(() => window.__ct!.tabIds())
 const snapshotOf = (d: Device, tabId: string) => d.page.evaluate((id) => window.ct.chatSnapshot(id), tabId)
@@ -476,4 +479,47 @@ test("a member opens a host's agent page read-only, and its live frames arrive",
   await expect(page.locator('.chat-text', { hasText: 'Step 30 of the search' })).toHaveCount(1, SLOW)
   writeFileSync(join(stand.config, 'member-release'), '')
   await expect(page.locator('.agent-state')).toHaveAttribute('data-state', 'done', SLOW)
+})
+
+test("a member's ⚙ card shows the host's run", async () => {
+  const { a, b, tabId } = await chatTab({ turns: { hello: [{ text: 'Hi there' }] } })
+  await chatReady(a.page)
+  // the host's Workflow run, written as Claude Code writes it, and the host's session and agents reported as its hooks report them
+  const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
+  // the session starts before the run: a run on disk when the session starts is history
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'session', tabId, sessionId: RUN_SID, source: 'startup', transcriptPath: mainTranscript(projectDir, RUN_SID) })).toEqual({ ok: true })
+  const run = writeWorkflowRun({
+    projectDir,
+    sid: RUN_SID,
+    runId: 'wf_e2e-run1',
+    taskId: 'w9ehhq53f',
+    workflowName: 'crash-triage',
+    agents: [{ agentId: 'a1', label: 'triage-a', phase: 'Triage' }, { agentId: 'a2', label: 'triage-b', phase: 'Triage' }]
+  })
+  expect(await sendPipeMessage(a.pipeName, statusMsg(tabId, RUN_SID))).toEqual({ ok: true })
+  for (const agentId of ['a1', 'a2']) {
+    expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'subagent', tabId, sessionId: RUN_SID, event: 'start', agentId, agentType: 'workflow-subagent' })).toEqual({ ok: true })
+  }
+  // the host shows the run, then the member opens the tab: its status comes with the attach, not with a later push
+  await expect(a.page.locator('#statusbar .status-agents .status-text')).toHaveText('⚙ 2: crash-triage ×2', SLOW)
+  await frontOnMember(b, tabId)
+
+  // the member's segment reads the host's run, and its card opens with the run's group and its two agents
+  const bar = b.page.locator('#statusbar')
+  const card = b.page.locator('#agents-card')
+  await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ 2: crash-triage ×2', SLOW)
+  await bar.locator('.status-agents').click()
+  await expect(card).toBeVisible()
+  await expect(card.locator('.chat-run-head .chat-agent-type')).toContainText('crash-triage')
+  await expect(card.locator('.chat-run-agent')).toHaveCount(2)
+  // a chat tab's card rows are buttons that open the agent's page: the host's chat is the member's chat
+  await expect(card.locator('.chat-run-agent').first()).toHaveAttribute('role', 'button')
+  await b.page.keyboard.press('Escape')
+  await expect(card).toBeHidden()
+
+  run.finish()
+  for (const agentId of ['a1', 'a2']) {
+    expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'subagent', tabId, sessionId: RUN_SID, event: 'stop', agentId, agentType: 'workflow-subagent' })).toEqual({ ok: true })
+  }
+  run.complete()
 })

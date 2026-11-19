@@ -492,6 +492,20 @@ describe('clampPush (R5): every push fits the receiver', () => {
     expect(at('status').main.model.displayName).toBe('Opus 4.1')
   })
 
+  it('the status push carries runs, capped at 8 runs of 64 agents, and agents keep their runId', () => {
+    const row = (j: number) => ({ key: String(j), agentId: null, label: `agent ${j}`, phase: null, state: 'running', attempt: 1, model: null, effort: null, task: null, startedAt: null, ms: null })
+    const run = (i: number) => ({ key: `toolu_${i}`, runId: `wf_run${i}abc`, taskId: null, name: 'review', state: 'running', startedAt: i, ms: null, phases: [], agents: Array.from({ length: 70 }, (_, j) => row(j)) })
+    const v = { main: null, agents: [{ agentId: 'a1', type: 'Explore', description: null, model: null, effort: null, startedAt: 1, runId: 'wf_abc123' }], background: [], runs: Array.from({ length: 10 }, (_, i) => run(i)) }
+    const out = fits('status', v)
+    expect(out.runs).toHaveLength(8)
+    expect(out.runs.every((r: { agents: unknown[] }) => r.agents.length === 64)).toBe(true)
+    expect(out.agents[0].runId).toBe('wf_abc123')
+  })
+
+  it('a status without runs gets no runs field', () => {
+    expect('runs' in (clampPush('status', { main: null, agents: [], background: [] }) as object)).toBe(false)
+  })
+
   it('status: the agents are clamped even when the status has no background tasks', () => {
     const agent = (i: number) => ({ agentId: `a${i}`, type: 'Explore', description: 'd', model: null, effort: null, startedAt: i })
     const out = clampPush('status', { main: null, agents: Array.from({ length: 70 }, (_, i) => agent(i)) }) as { agents: unknown[] }

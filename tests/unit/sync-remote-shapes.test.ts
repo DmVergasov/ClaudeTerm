@@ -580,6 +580,33 @@ describe('pushes', () => {
     })
   })
 
+  it('statusOf keeps good runs and drops a bad one without refusing the push', () => {
+    const row = { key: '1', agentId: null, label: 'Review a', phase: null, state: 'running', attempt: 1, model: null, effort: null, task: null, startedAt: null, ms: null }
+    const good = { key: 'toolu_1', runId: 'wf_abc123', taskId: null, name: 'review', state: 'running', startedAt: 1, ms: null, phases: [], agents: [row] }
+    const bad = { ...good, key: 'toolu_2', state: 'odd' }
+    const task = { id: 'b1', type: 'shell', description: 'build', command: 'npm run build' }
+    expect(parsePush('status', { main: main(), agents: [agent()], background: [task], runs: [good, bad] }, T1)).toEqual({
+      k: 'status',
+      v: { main: main(), agents: [agent()], background: [task], runs: [good] }
+    })
+  })
+
+  it('an agent with a bad runId keeps its row without it', () => {
+    expect(parsePush('status', { main: null, agents: [agent({ runId: 'wf_../x' })], background: [] }, T1)).toEqual({
+      k: 'status',
+      v: { main: null, agents: [agent()], background: [] }
+    })
+    expect(parsePush('status', { main: null, agents: [agent({ runId: 'wf_abc123' })], background: [] }, T1)).toEqual({
+      k: 'status',
+      v: { main: null, agents: [{ ...agent(), runId: 'wf_abc123' }], background: [] }
+    })
+  })
+
+  it('a push with no runs has none', () => {
+    expect('runs' in (parsePush('status', { main: null, agents: [], background: [] }, T1) as { v: object }).v).toBe(false)
+    expect('runs' in (parsePush('status', { main: null, agents: [], background: [], runs: [{ key: '' }] }, T1) as { v: object }).v).toBe(false)
+  })
+
   it('background tasks: at most 64; an id or type of 201 characters or with a NUL, and a description or command that is not text, are refused', () => {
     const task = (over: object = {}) => ({ id: 'b1', type: 'shell', description: null, command: null, ...over })
     expect(parsePush('status', { main: null, agents: [], background: Array(65).fill(task()) }, T1)).toBeNull()

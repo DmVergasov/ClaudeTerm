@@ -109,8 +109,31 @@ function agentGroups(agents: AgentStatus[]): string {
 const taskName = (t: BackgroundTask): string => t.description ?? t.command ?? t.type
 const taskLine = (t: BackgroundTask): string => [t.type, t.description, t.command].filter((x) => x !== null).join(' · ')
 
-const agentLine = (a: AgentStatus, now: number): string =>
-  [a.type, agentKind(a), minutes(now - a.startedAt), ...(a.description ? [`"${a.description}"`] : [])].join(' · ')
+/** the agents segment's tooltip: the segment opens the card that lists them, so the tooltip only says that */
+export const AGENTS_TITLE = 'Agents — click for the list'
+
+/** the agents the status lists on their own: an agent of a run the status names is in that run's group, never here */
+export function bareAgents(u: StatusUpdate): AgentStatus[] {
+  const runIds = new Set((u.runs ?? []).flatMap((r) => (r.runId === null ? [] : [r.runId])))
+  return u.agents.filter((a) => a.runId === undefined || !runIds.has(a.runId))
+}
+
+/** the agents segment's text: the bare agents' groups, then each Workflow run (its running agents, or its mark once it ended); null when none runs and no run is kept */
+export function agentsText(u: StatusUpdate): string | null {
+  const runs = u.runs ?? []
+  const bare = bareAgents(u)
+  const groups = [
+    ...(bare.length > 0 ? [agentGroups(bare)] : []),
+    ...runs.map((run) => {
+      if (run.state === 'done') return `${run.name} ✓`
+      if (run.state !== 'running') return `${run.name} ✕`
+      const running = run.runId === null ? 0 : u.agents.filter((a) => a.runId === run.runId).length
+      return running > 0 ? `${run.name} ×${running}` : run.name
+    })
+  ]
+  if (u.agents.length > 0) return `⚙ ${u.agents.length}: ${groups.join(', ')}`
+  return runs.length > 0 ? `⚙ ${groups.join(', ')}` : null
+}
 
 /** the usage limits are not here: the title bar draws them as meters (limit-meters.ts) */
 export function statusSegments(u: StatusUpdate, now: number): Segment[] {
@@ -131,9 +154,8 @@ export function statusSegments(u: StatusUpdate, now: number): Segment[] {
       fill: c.usedPct / 100
     })
   }
-  if (u.agents.length > 0) {
-    segments.push({ key: 'agents', text: `⚙ ${u.agents.length}: ${agentGroups(u.agents)}`, title: u.agents.map((a) => agentLine(a, now)).join('\n'), level: 'normal' })
-  }
+  const agents = agentsText(u)
+  if (agents !== null) segments.push({ key: 'agents', text: agents, title: AGENTS_TITLE, level: 'normal' })
   if (u.background.length > 0) {
     segments.push({
       key: 'background',
@@ -235,9 +257,11 @@ export class StatusBar {
   private readonly rows = new Map<string, TaskRow>()
   /** the tasks whose ✕ was pressed and not refused: a second press on one of them does nothing */
   private readonly stopping = new Set<string>()
+  /** the agents segment's own open state, which its aria-expanded says: the card is the AgentsCard's */
+  private agentsOpen = false
   private readonly onClick: (e: MouseEvent) => void
 
-  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}, onPlanClick: (anchor: HTMLElement) => void = () => {}, onMcpClick: () => void = () => {}, onRemoteClick: (anchor: HTMLElement) => void = () => {}) {
+  constructor(private readonly el: HTMLElement, onChangesClick: () => void = () => {}, onAccountClick: (anchor: HTMLElement) => void = () => {}, onPlanClick: (anchor: HTMLElement) => void = () => {}, onMcpClick: () => void = () => {}, onRemoteClick: (anchor: HTMLElement) => void = () => {}, private readonly onAgentsClick: (anchor: HTMLElement) => void = () => {}) {
     this.list.className = 'status-tasks'
     this.list.hidden = true
     this.list.setAttribute('role', 'dialog')
@@ -253,6 +277,8 @@ export class StatusBar {
       if (planSeg) onPlanClick(planSeg)
       const remoteSeg = target.closest<HTMLElement>('.status-remote')
       if (remoteSeg) onRemoteClick(remoteSeg)
+      const agentsSeg = target.closest<HTMLElement>('.status-agents')
+      if (agentsSeg) onAgentsClick(agentsSeg)
       if (target.closest('.status-background') && this.chat) this.toggleTasks()
     }
     el.addEventListener('click', this.onClick)
@@ -316,8 +342,20 @@ export class StatusBar {
     observer.observe(this.el)
   }
 
-  /** the background segment of a chat is a button: it takes the focus, and says whether its list is open */
+  /** the AgentsCard tells the bar whether its card is open, which the agents segment says in aria-expanded */
+  setAgentsOpen(open: boolean): void {
+    this.agentsOpen = open
+    this.markSegment()
+  }
+
+  /** the background segment of a chat is a button: it takes the focus, and says whether its list is open; the agents segment is one in both kinds of tab */
   private markSegment(): void {
+    const agents = this.el.querySelector<HTMLElement>('.status-agents')
+    if (agents) {
+      agents.setAttribute('role', 'button')
+      agents.tabIndex = 0
+      agents.setAttribute('aria-expanded', String(this.agentsOpen))
+    }
     const seg = this.el.querySelector<HTMLElement>('.status-background')
     if (!seg) return
     if (this.chat === null) {
@@ -331,9 +369,16 @@ export class StatusBar {
     seg.setAttribute('aria-expanded', String(!this.list.hidden))
   }
 
-  /** Enter or Space on the segment opens its list, as a click does */
+  /** Enter or Space on a segment opens what a click opens: the agents card, or a chat's background list */
   private readonly onSegmentKey = (e: KeyboardEvent): void => {
-    if ((e.key !== 'Enter' && e.key !== ' ') || this.chat === null) return
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    const agents = (e.target as Element).closest?.<HTMLElement>('.status-agents')
+    if (agents) {
+      e.preventDefault()
+      this.onAgentsClick(agents)
+      return
+    }
+    if (this.chat === null) return
     if (!(e.target as Element).closest?.('.status-background')) return
     e.preventDefault()
     this.toggleTasks()

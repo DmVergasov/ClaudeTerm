@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { AgentChats, AgentModel, MAX_AGENT_ITEMS, MAX_AGENT_RECORDS, frameKeys, isSubagentFrame, type AgentChange } from '../../src/main/chat/agent-chats'
+import { AgentChats, AgentModel, MAX_AGENT_ITEMS, MAX_AGENT_RECORDS, MAX_RUN_RECORDS, frameKeys, isSubagentFrame, type AgentChange } from '../../src/main/chat/agent-chats'
 import { OUTPUT_CAP } from '../../src/main/chat/chat-fold'
 import type { ChatItem } from '../../src/shared/chat'
+import type { WorkflowAgentRow, WorkflowRun } from '../../src/shared/workflow'
 
 type Obj = Record<string, unknown>
 
@@ -160,7 +161,7 @@ describe('AgentChats', () => {
         { type: 'user', uuid: 'u0', message: { role: 'user', content: 'Find the bug' } },
         { type: 'assistant', uuid: 'u1', message: { id: 'msg_1', role: 'assistant', content: [text('Found it')] } },
       ],
-      start: 0,
+      start: 0, end: 0,
     })
     expect(itemsOf(c, 'task_a')).toEqual([
       expect.objectContaining({ kind: 'prompt', text: 'Find the bug', first: true }),
@@ -445,29 +446,51 @@ describe('AgentChats', () => {
         { type: 'assistant', uuid: 'u8', message: { id: 'msg_1', role: 'assistant', content: [text('same block')] } },
         { type: 'assistant', uuid: 'u7', message: { id: 'msg_3', role: 'assistant', content: [text('fresh')] } },
       ],
-      start: 0,
+      start: 0, end: 0,
     })
     expect(itemsOf(c, 'task_a').map(item => (item.kind === 'text' ? item.markdown : item.kind))).toEqual(['fresh', 'live text', 'tools'])
+  })
+
+  it('tail folds new lines as adds and sets, never a reset, and skips lines the head holds', () => {
+    const { c } = chats()
+    c.apply(started('a0', null), 'session-1')
+    const line = (uuid: string, content: unknown[]): Obj => ({ type: 'assistant', uuid, message: { id: `m_${uuid}`, role: 'assistant', content } })
+    const line1 = line('u1', [text('one')])
+    const line2 = line('u2', [text('two')])
+    const line3 = line('u3', [text('three')])
+    c.history('a0', { lines: [line1, line2], start: 0, end: 100 })
+    const patches = c.tail('a0', [line2, line3]).flatMap(change => change.patches)
+    expect(patches.map(p => p.op)).not.toContain('reset')
+    expect(patches).toHaveLength(1)
+    expect(patches[0]).toEqual({ op: 'add', item: expect.objectContaining({ kind: 'text', markdown: 'three' }) })
+    // a call in one tail and its result in the next settles the call: a call patch, while another call of the step still runs
+    const call = line('u4', [
+      { type: 'tool_use', id: 'toolu_g', name: 'Glob', input: { pattern: '*.ts' } },
+      { type: 'tool_use', id: 'toolu_r', name: 'Read', input: { file_path: 'a.ts' } },
+    ])
+    const result = { type: 'user', uuid: 'u5', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_g', content: 'a.ts' }] } }
+    c.tail('a0', [call])
+    expect(c.tail('a0', [result]).flatMap(change => change.patches).map(p => p.op)).toEqual(['call'])
   })
 
   it('transcript items come before the live ones', () => {
     const { c } = chats()
     c.apply(started('task_a', 'toolu_a'), 'session-1')
     c.apply(says('task_a', 'live one'), 'session-1')
-    c.history('task_a', { lines: [frame('assistant', null, [text('history one')]), frame('assistant', null, [text('history two')])], start: 0 })
+    c.history('task_a', { lines: [frame('assistant', null, [text('history one')]), frame('assistant', null, [text('history two')])], start: 0, end: 0 })
     expect(itemsOf(c, 'task_a').map(item => (item.kind === 'text' ? item.markdown : item.kind))).toEqual(['history one', 'history two', 'live one'])
   })
 
   it('older pages come from the held items, then from the transcript before the cursor', () => {
     const { c } = chats()
     c.apply(started('task_a', 'toolu_a'), 'session-1')
-    c.history('task_a', { lines: [frame('assistant', null, [text('msg 3')]), frame('assistant', null, [text('msg 4')])], start: 100 })
+    c.history('task_a', { lines: [frame('assistant', null, [text('msg 3')]), frame('assistant', null, [text('msg 4')])], start: 100, end: 0 })
     c.apply(says('task_a', 'live 5'), 'session-1')
     const [msg3, msg4, live5] = itemsOf(c, 'task_a')
     // the held items before live 5 come first; the first held item has a transcript cursor before it
     expect(c.older('task_a', live5.id)).toEqual({ items: [msg3, msg4], hasOlder: true })
     expect(c.older('task_a', msg3.id)).toEqual({ cursor: 100 })
-    expect(c.olderPage('task_a', { lines: [frame('assistant', null, [text('msg 1')]), frame('assistant', null, [text('msg 2')])], start: 0 }))
+    expect(c.olderPage('task_a', { lines: [frame('assistant', null, [text('msg 1')]), frame('assistant', null, [text('msg 2')])], start: 0, end: 0 }))
       .toEqual({ items: [expect.objectContaining({ markdown: 'msg 1' }), expect.objectContaining({ markdown: 'msg 2' })], hasOlder: false })
     expect(c.older('task_a', msg3.id)).toEqual({ items: [expect.objectContaining({ markdown: 'msg 1' }), expect.objectContaining({ markdown: 'msg 2' })], hasOlder: false })
     // an id the agent does not hold (its page left memory) gives nothing: the page asked for is gone, not the newest one
@@ -478,8 +501,8 @@ describe('AgentChats', () => {
   it('an older page that does not begin the transcript starts no prompt', () => {
     const { c } = chats()
     c.apply(started('task_a', 'toolu_a'), 'session-1')
-    c.history('task_a', { lines: [frame('assistant', null, [text('msg 2')])], start: 50 })
-    const older = c.olderPage('task_a', { lines: [frame('user', null, [text('Earlier question')]), frame('assistant', null, [text('msg 1')])], start: 10 })
+    c.history('task_a', { lines: [frame('assistant', null, [text('msg 2')])], start: 50, end: 0 })
+    const older = c.olderPage('task_a', { lines: [frame('user', null, [text('Earlier question')]), frame('assistant', null, [text('msg 1')])], start: 10, end: 0 })
     expect(older.items).toEqual([
       expect.objectContaining({ kind: 'prompt', text: 'Earlier question', first: false }),
       expect.objectContaining({ markdown: 'msg 1' }),
@@ -489,8 +512,8 @@ describe('AgentChats', () => {
   it('an older page that begins the transcript starts its prompt', () => {
     const { c } = chats()
     c.apply(started('task_a', 'toolu_a'), 'session-1')
-    c.history('task_a', { lines: [frame('assistant', null, [text('msg 2')])], start: 50 })
-    const older = c.olderPage('task_a', { lines: [frame('user', null, [text('First question')]), frame('assistant', null, [text('msg 1')])], start: 0 })
+    c.history('task_a', { lines: [frame('assistant', null, [text('msg 2')])], start: 50, end: 0 })
+    const older = c.olderPage('task_a', { lines: [frame('user', null, [text('First question')]), frame('assistant', null, [text('msg 1')])], start: 0, end: 0 })
     expect(older.items).toEqual([
       expect.objectContaining({ kind: 'prompt', text: 'First question', first: true }),
       expect.objectContaining({ markdown: 'msg 1' }),
@@ -508,10 +531,10 @@ describe('AgentChats', () => {
     const { c } = chats()
     c.apply(started('task_a', 'toolu_a'), 'session-1')
     // the newer page holds the result only: its call is in the older page
-    c.history('task_a', { lines: [{ type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_9', content: 'ok' }] } }], start: 50 })
+    c.history('task_a', { lines: [{ type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_9', content: 'ok' }] } }], start: 50, end: 0 })
     const older = c.olderPage('task_a', {
       lines: [{ type: 'assistant', uuid: 'c1', message: { id: 'msg_c', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_9', name: 'Bash', input: { command: 'ls' } }] } }],
-      start: 0,
+      start: 0, end: 0,
     })
     expect(older.items).toEqual([expect.objectContaining({ kind: 'tools', calls: [expect.objectContaining({ id: 'toolu_9', state: 'done', output: 'ok' })] })])
   })
@@ -535,7 +558,7 @@ describe('AgentChats', () => {
     expect(c.older('task_a', at)).toEqual({ cursor: expect.any(Number) })
     // the transcript holds the trimmed messages and the held ones; only the trimmed ones come back
     const transcript = Array.from({ length: 1005 }, (_, i) => ({ type: 'assistant', uuid: `u${i}`, message: { id: `m${i}`, role: 'assistant', content: [text(`m${i}`)] } }))
-    const answer = c.olderPage('task_a', { lines: transcript, start: 0 })
+    const answer = c.olderPage('task_a', { lines: transcript, start: 0, end: 0 })
     expect(answer.items.map(item => (item.kind === 'text' ? item.markdown : item.kind))).toEqual(['m0', 'm1', 'm2', 'm3', 'm4'])
     expect(answer.hasOlder).toBe(false)
     expect(itemsOf(c, 'task_a').map(item => (item.kind === 'text' ? item.markdown : item.kind))).toHaveLength(200)
@@ -560,7 +583,7 @@ describe('AgentChats', () => {
   it('the transcript items of an agent nobody watches stay until four others are kept', () => {
     const { c } = chats()
     c.apply(started('task_a', 'toolu_a'), 'session-1')
-    c.history('task_a', { lines: [frame('assistant', null, [text('old one')])], start: 0 })
+    c.history('task_a', { lines: [frame('assistant', null, [text('old one')])], start: 0, end: 0 })
     expect(c.needsHistory('task_a')).toBe(false)
     c.watch('task_a', true)
     expect(itemsOf(c, 'task_a')).toEqual([expect.objectContaining({ markdown: 'old one' })])
@@ -574,7 +597,7 @@ describe('AgentChats', () => {
     for (let n = 1; n <= 5; n++) {
       const agent = `task_${n}`
       c.apply(started(agent, `toolu_${n}`), 'session-1')
-      c.history(agent, { lines: [frame('assistant', null, [text(`old ${n}`)])], start: 0 })
+      c.history(agent, { lines: [frame('assistant', null, [text(`old ${n}`)])], start: 0, end: 0 })
       c.watch(agent, true)
       c.watch(agent, false)
     }
@@ -584,7 +607,7 @@ describe('AgentChats', () => {
     c.watch('task_2', true)
     c.watch('task_2', false)
     c.apply(started('task_6', 'toolu_6'), 'session-1')
-    c.history('task_6', { lines: [frame('assistant', null, [text('old 6')])], start: 0 })
+    c.history('task_6', { lines: [frame('assistant', null, [text('old 6')])], start: 0, end: 0 })
     c.watch('task_6', true)
     c.watch('task_6', false)
     expect(c.needsHistory('task_3')).toBe(true)
@@ -594,7 +617,7 @@ describe('AgentChats', () => {
   it('an unwatched agent whose live items trim drops its kept head, so the next open reads the transcript again', () => {
     const { c } = chats()
     c.apply(started('task_a', 'toolu_a'), 'session-1')
-    c.history('task_a', { lines: [frame('assistant', null, [text('old one')])], start: 0 })
+    c.history('task_a', { lines: [frame('assistant', null, [text('old one')])], start: 0, end: 0 })
     c.watch('task_a', true)
     c.watch('task_a', false)
     for (let i = 0; i < 1005; i++) c.apply({ type: 'assistant', uuid: `u${i}`, agent_id: 'task_a', message: { id: `m${i}`, role: 'assistant', content: [text(`m${i}`)] } }, 'session-1')
@@ -653,7 +676,7 @@ describe('a forward on an agent page', () => {
     c.forward(forward('Look in src/charts too.'))
     c.forward({ ...forward('Look in src/charts too.'), id: 'fw2' })
     c.known({ id: 'task_a', description: 'Look', type: 'Explore', state: 'done', ms: 5 }, 'session-1')
-    c.history('task_a', { lines: [coordinator('c1', 'Look in src/charts too.'), says('task_a', 'Got it'), coordinator('c2', 'Look in src/charts too.')], start: 0 })
+    c.history('task_a', { lines: [coordinator('c1', 'Look in src/charts too.'), says('task_a', 'Got it'), coordinator('c2', 'Look in src/charts too.')], start: 0, end: 0 })
     expect(itemsOf(c, 'task_a')).toEqual([
       expect.objectContaining({ kind: 'forward', id: 'fw1' }),
       expect.objectContaining({ kind: 'text', markdown: 'Got it' }),
@@ -666,7 +689,7 @@ describe('a forward on an agent page', () => {
     c.forward(forward('Look in src/charts too.'))
     c.known({ id: 'task_a', description: 'Look', type: 'Explore', state: 'done', ms: 5 }, 'session-1')
     const queued = { type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', prompt: 'Look in src/charts too.', origin: { kind: 'coordinator' } } }
-    c.history('task_a', { lines: [{ type: 'user', uuid: 'p1', message: { role: 'user', content: 'Find it' } }, queued, says('task_a', 'Got it')], start: 0 })
+    c.history('task_a', { lines: [{ type: 'user', uuid: 'p1', message: { role: 'user', content: 'Find it' } }, queued, says('task_a', 'Got it')], start: 0, end: 0 })
     expect(itemsOf(c, 'task_a')).toEqual([
       expect.objectContaining({ kind: 'prompt', text: 'Find it', first: true }),
       expect.objectContaining({ kind: 'forward', id: 'fw1', text: 'Look in src/charts too.' }),
@@ -678,7 +701,7 @@ describe('a forward on an agent page', () => {
     const { c } = chats()
     c.forward(forward('Look in src/charts too.'))
     c.known({ id: 'task_a', description: 'Look', type: 'Explore', state: 'done', ms: 5 }, 'session-1')
-    c.history('task_a', { lines: [{ type: 'user', uuid: 'p1', message: { role: 'user', content: 'Find it' } }, coordinator('c1', 'Look in src/charts too.')], start: 0 })
+    c.history('task_a', { lines: [{ type: 'user', uuid: 'p1', message: { role: 'user', content: 'Find it' } }, coordinator('c1', 'Look in src/charts too.')], start: 0, end: 0 })
     const changes = c.forward({ ...forward('Look in src/charts too.'), state: 'delivered', reason: null })
     expect(changes.flatMap(change => change.patches.map(p => p.op))).toEqual(['set'])
     expect(itemsOf(c, 'task_a').filter(item => item.kind === 'forward')).toEqual([expect.objectContaining({ id: 'fw1', state: 'delivered' })])
@@ -689,7 +712,7 @@ describe('a forward on an agent page', () => {
     // the forward comes before the history names its agent, as the chat's history load does it
     c.forward(forward('Look in src/charts too.'))
     c.known({ id: 'task_a', description: 'Look', type: 'Explore', state: 'done', ms: 5 }, 'session-1')
-    c.history('task_a', { lines: [{ type: 'user', uuid: 'p1', message: { role: 'user', content: 'Find it' } }, coordinator('c1', 'Look in src/charts too.'), says('task_a', 'Got it')], start: 0 })
+    c.history('task_a', { lines: [{ type: 'user', uuid: 'p1', message: { role: 'user', content: 'Find it' } }, coordinator('c1', 'Look in src/charts too.'), says('task_a', 'Got it')], start: 0, end: 0 })
     expect(itemsOf(c, 'task_a')).toEqual([
       expect.objectContaining({ kind: 'prompt', text: 'Find it', first: true }),
       expect.objectContaining({ kind: 'forward', id: 'fw1', text: 'Look in src/charts too.' }),
@@ -700,7 +723,7 @@ describe('a forward on an agent page', () => {
     const held = chats()
     held.c.apply(started('task_a', 'call_a'))
     held.c.forward(forward('Look in src/charts too.'))
-    held.c.history('task_a', { lines: [coordinator('c1', 'Look in src/charts too.')], start: 0 })
+    held.c.history('task_a', { lines: [coordinator('c1', 'Look in src/charts too.')], start: 0, end: 0 })
     expect(itemsOf(held.c, 'task_a').filter(item => item.kind === 'forward')).toHaveLength(1)
     expect(itemsOf(held.c, 'task_a').some(item => item.kind === 'prompt')).toBe(false)
   })
@@ -736,5 +759,66 @@ describe("the lines Claude Code writes itself on an agent page", () => {
       message: { role: 'user', content: 'The coordinator sent a message while you were working:\nPlease check the parser.\n\nAddress this before completing your current task.' },
     })
     expect(itemsOf(c, 'task_a')).toEqual([expect.objectContaining({ kind: 'prompt', text: 'Please check the parser.', first: true })])
+  })
+})
+
+describe('run agents', () => {
+  /** a run agent's row, one per agent call: the fields a test does not name are those of a running agent */
+  const rowOf = (id: string, over: Partial<WorkflowAgentRow> = {}): WorkflowAgentRow => ({
+    key: id, agentId: id, label: `triage-${id}`, phase: 0, state: 'running', attempt: 1, model: null, effort: null,
+    task: `Look at ${id}`, startedAt: 1000, ms: null, ...over,
+  })
+  /** a Workflow run of these agents, in one phase titled Triage */
+  const runOf = (agents: WorkflowAgentRow[]): WorkflowRun => ({
+    key: 'toolu_wf', runId: 'wf_55e3c3ec-b29', taskId: null, name: 'crash-triage', state: 'running', startedAt: null, ms: null,
+    phases: [{ index: 0, title: 'Triage' }], agents,
+  })
+
+  it('runAgents makes a record per run agent with an id: label as type, task as description, its run, phase and attempt', () => {
+    const { c } = chats()
+    c.runAgents(runOf([{
+      key: '0', agentId: 'a0', label: 'triage-0', phase: 0, state: 'running', attempt: 1, model: null, effort: null,
+      task: 'Look at crash 0', startedAt: 1000, ms: null,
+    }]), 'session-1')
+    expect(c.info('a0')).toEqual({
+      id: 'a0', type: 'triage-0', description: 'Look at crash 0', state: 'running', startedAt: 1000, ms: null, parentId: null,
+      workflow: { run: 'crash-triage', phase: 'Triage', attempt: 1 },
+    })
+    expect(c.runIdOf('a0')).toBe('wf_55e3c3ec-b29')
+  })
+
+  it('a changed row sends an agent patch, an unchanged one nothing', () => {
+    const { c } = chats()
+    c.runAgents(runOf([rowOf('a0')]), 'session-1')
+    const done = runOf([rowOf('a0', { state: 'done', ms: 500 })])
+    const changes = c.runAgents(done, 'session-1')
+    expect(changes).toHaveLength(1)
+    expect(changes[0]!.patches.map(p => p.op)).toEqual(['agent'])
+    expect(c.runAgents(done, 'session-1')).toEqual([])
+  })
+
+  it('run agents have their own cap and never evict ordinary agents', () => {
+    const { c } = chats()
+    for (let i = 0; i < MAX_AGENT_RECORDS; i++) c.apply(says(`task_${i}`, 'x'))
+    c.runAgents(runOf(Array.from({ length: 450 }, (_, i) => rowOf(`r${i}`))), 'session-1')
+    for (let i = 0; i < MAX_AGENT_RECORDS; i++) expect(c.info(`task_${i}`)).not.toBeNull()
+    const runRecords = Array.from({ length: 450 }, (_, i) => c.info(`r${i}`)).filter(record => record !== null)
+    expect(runRecords).toHaveLength(MAX_RUN_RECORDS)
+  })
+
+  it('an agent written to after its run follows the stream, not the run', () => {
+    const { c, clock } = chats()
+    c.runAgents(runOf([rowOf('a0', { state: 'done', ms: 500 })]), 'session-1')
+    clock.t = 9000
+    c.apply(started('a0', null))
+    expect(c.info('a0')).toMatchObject({ state: 'running', startedAt: 9000, ms: null })
+    c.runAgents(runOf([rowOf('a0', { state: 'done', ms: 500 })]), 'session-1')
+    expect(c.info('a0')).toMatchObject({ state: 'running', startedAt: 9000, ms: null, workflow: { run: 'crash-triage', phase: 'Triage', attempt: 1 } })
+  })
+
+  it('a local_workflow task_started makes no record', () => {
+    const { c } = chats()
+    c.apply({ type: 'system', subtype: 'task_started', task_id: 'a0', task_type: 'local_workflow', workflow_name: 'crash-triage' }, 'session-1')
+    expect(c.info('a0')).toBeNull()
   })
 })

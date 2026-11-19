@@ -20,6 +20,7 @@ import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
 import { SheetHeader } from './sheet-header'
 import { Lightbox } from './lightbox'
+import { AgentsCard } from './agents-card'
 import { PlanList } from './plan-list'
 import { RemotePopover, type RemotePopoverView } from './remote-popover'
 import { RecentSessionsWindow } from './recent-sessions'
@@ -133,6 +134,7 @@ let lightbox: Lightbox
 let sessionsWindow: RecentSessionsWindow
 let folderDialog: FolderDialog
 let planList: PlanList
+let agentsCard: AgentsCard
 let remotePopover: RemotePopover
 const imageUpdates = new Map<string, ImagesUpdate>()
 let statusBar: StatusBar
@@ -1131,6 +1133,7 @@ function activate(tabId: string): void {
   activeId = tabId
   frontFallback.activated(tabId)
   planList.close()
+  agentsCard.close()
   remotePopover.close()
   const busy = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement || !!document.activeElement?.closest('#note .cm-content')
   const focus = !busy
@@ -1738,6 +1741,14 @@ async function boot(): Promise<void> {
   ct.onStarred((ids) => sessionsWindow.applyStars(new Set(ids)))
   ct.onRemoteSessions((list) => sessionsWindow.applyRemote(list))
   planList = new PlanList(document.getElementById('plan-list')!, () => { if (activeId) focusTab(activeId) }, () => { if (activeId) ct.clearTaskList(activeId) })
+  agentsCard = new AgentsCard(document.getElementById('agents-card')!, (refocus) => {
+    statusBar.setAgentsOpen(false)
+    if (refocus && activeId) focusTab(activeId)
+  }, (agentId) => {
+    // the page takes the focus itself: the card closes without handing it back to the tab
+    agentsCard.close(false)
+    if (activeId) void tabs.get(activeId)?.chat?.openAgent(agentId)
+  })
   remotePopover = new RemotePopover({
     set: (id, on) => ct.remoteControlSet(id, on),
     setAccount: (id, on) => ct.remoteControlAccount(id, on),
@@ -1768,6 +1779,13 @@ async function boot(): Promise<void> {
   }, (anchor) => {
     const v = activeId ? remoteViewOf(activeId) : null
     if (v) remotePopover.toggle(anchor, v)
+  }, (anchor) => {
+    const id = activeId
+    const u = id ? statusUpdates.get(id) : undefined
+    const t = id ? tabs.get(id) : undefined
+    if (!id || !u || !t) return
+    agentsCard.toggle(anchor, u, isChatView(t))
+    statusBar.setAgentsOpen(agentsCard.isOpen)
   })
   statusBar.alignTo(document.getElementById('terminals')!)
   ct.onAccounts((v) => {
@@ -1791,7 +1809,11 @@ async function boot(): Promise<void> {
     if (wasOn !== (u.remote?.kind === 'on')) renderTabs()
     // a turn the usage limit stopped: the chat says when Claude goes on by itself
     tabs.get(u.tabId)?.chat?.setLimitWait(u.goesOnAt ?? null)
-    if (u.tabId === activeId) renderStatus(u.tabId)
+    if (u.tabId === activeId) {
+      renderStatus(u.tabId)
+      const t = tabs.get(u.tabId)
+      agentsCard.update(u, !!t && isChatView(t))
+    }
   })
   ct.onPlan((u) => {
     if (u.plan) planUpdates.set(u.tabId, u)
@@ -2067,7 +2089,10 @@ async function boot(): Promise<void> {
     if (!t) return
     const frontBefore = activeId
     const wasFront = id === activeId
-    if (wasFront) planList.close()
+    if (wasFront) {
+      planList.close()
+      agentsCard.close()
+    }
     t.view?.dispose()
     // the closed chat's Find clears the page's highlights when it painted them last
     if (t.chat) clearChatFinds(t.chat)

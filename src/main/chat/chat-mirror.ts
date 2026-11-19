@@ -2,6 +2,7 @@ import { acceptPatches, type AgentPatch, type AgentSnapshot, type ChatActivity, 
 import { isDeviceName } from '../../shared/devices'
 import { MAIL_REASON_MAX, REPORT_OUTCOMES } from '../../shared/mail'
 import { outcomeText } from '../../shared/report-wake'
+import { isWorkflowRun } from '../../shared/workflow'
 import type { PushKind } from '../../shared/remote'
 import { isChatOrigin, isPermissionMode } from './chat-guards'
 import { versionAtLeast } from '../claude-version'
@@ -65,9 +66,19 @@ function isSubagent(v: unknown): boolean {
 }
 
 function isCall(v: unknown): v is ChatToolCall {
-  return isObj(v) && isId(v.id) && str(v.name, NAME_CAP) && str(v.subject, SUBJECT_CAP) && opt(v.detail, (s) => str(s, OUTPUT_CAP))
+  if (!isObj(v)) return false
+  const ok = isId(v.id) && str(v.name, NAME_CAP) && str(v.subject, SUBJECT_CAP) && opt(v.detail, (s) => str(s, OUTPUT_CAP))
     && oneOf(CALL_STATES, v.state) && opt(v.output, (s) => str(s, OUTPUT_CAP)) && opt(v.error, (s) => str(s, OUTPUT_CAP))
     && opt(v.editPath, (s) => str(s, PATH_CAP)) && Array.isArray(v.agents) && v.agents.every(isSubagent) && opt(v.ms, isMs)
+  if (v.workflow !== undefined) keepCallRun(v)
+  return ok
+}
+
+/** a call's workflow: the run it is, cleaned, when it fits; otherwise it is dropped from the call, and the call is kept */
+function keepCallRun(v: Obj): void {
+  const run = isWorkflowRun(v.workflow)
+  if (run) v.workflow = run
+  else delete v.workflow
 }
 
 function isSuggestion(v: unknown): boolean {
@@ -202,8 +213,19 @@ export function parseChatPush(v: unknown): ChatPush | null {
 export type AgentPush = { snapshot: AgentSnapshot } | { agentId: string; fromRev: number; toRev: number; patches: AgentPatch[] }
 
 function isAgentInfo(v: unknown): v is ChatAgentInfo {
-  return isObj(v) && isAgentId(v.id) && str(v.type, AGENT_TEXT_CAP) && str(v.description, AGENT_TEXT_CAP)
+  if (!isObj(v)) return false
+  const ok = isAgentId(v.id) && str(v.type, AGENT_TEXT_CAP) && str(v.description, AGENT_TEXT_CAP)
     && oneOf(AGENT_STATES, v.state) && opt(v.startedAt, isMs) && opt(v.ms, isMs) && opt(v.parentId, isAgentId)
+  if (v.workflow !== undefined) keepAgentWorkflow(v)
+  return ok
+}
+
+/** an agent's workflow: a run of 1 to 100 characters, its phase (a name of at most 100, or null) and an attempt of 1 or more; a bad one is dropped from the agent */
+function keepAgentWorkflow(v: Obj): void {
+  const w = v.workflow
+  const ok = isObj(w) && str(w.run, 100, 1) && (w.phase === null || str(w.phase, 100))
+    && typeof w.attempt === 'number' && Number.isInteger(w.attempt) && w.attempt >= 1
+  if (!ok) delete v.workflow
 }
 
 /** an agent op of a batch: the agent it names is the batch's own agent */

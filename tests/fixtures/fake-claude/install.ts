@@ -16,6 +16,7 @@ export type FakeStep =
   | { compact: true | FakeCompact }
   | { wait: number }
   | { thinking: string; ms: number } // a thinking block of the message: its summary ("" for none); Claude thinks for ms
+  | { workflow: FakeWorkflow } // a Workflow run (a local_workflow task): the call ends at once with its launch result, and the run goes on outside the turn, ending with its task_notification
   | { task: FakeTask } // an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ms (failed: they end failed); the call ends with its result; background: the call ends at once with the launch notice, and each agent ends at its ms after that, outliving the turn. model, effort: what the call asks for (AgentInput); work: the subagent's own call, passed on as Claude Code does (its model, and its usage with this many tokens)
   | { crash: number; once?: boolean } // exit with this code; once: only on the first run (a marker file beside the script)
   | { noise: string } // a raw stdout line that is not a message
@@ -55,6 +56,23 @@ export interface FakeAgent {
 
 /** an Agent call (sdk.d.ts 6505, 6436): its subagents start at once and end at their ends; the call ends with its result. background: the call ends at once with the launch notice, and each agent runs on, outliving the turn */
 export interface FakeTask { description: string; result: string; background?: true; agents: FakeAgent[] }
+
+/** a Workflow run: its agents start at once and run until its gate exists (else after ms); status: how it ends (agents still running then end as failed) */
+export interface FakeWorkflow {
+  name: string // workflow_name and the run file's workflowName
+  phases?: string[] // phase titles; an agent's phase is an index into them
+  agents: FakeWorkflowAgent[]
+  gate?: string // the run ends once <config folder>/<gate> exists; without one, after ms
+  ms?: number // default 300
+  status?: 'completed' | 'failed' | 'killed' // default 'completed'
+}
+
+/** one agent of a Workflow run: attempts 2 makes its first try fail halfway through the run and a retry run under a new agent id (same key) */
+export interface FakeWorkflowAgent {
+  label: string; task: string; phase?: number
+  attempts?: number
+  later?: { gate: string; text: string } // once <config folder>/<gate> exists, an assistant line with this text is appended to its transcript (its last try's)
+}
 
 /** a compaction (compact: true is one with the defaults): gate holds it until the file <config folder>/<gate> exists; fail ends it as a failure with this error; the numbers go in its boundary */
 export interface FakeCompact { trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; gate?: string; fail?: string }

@@ -3,22 +3,20 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
-import type { StatusMessage } from '../../src/shared/protocol'
+import type { FakeTask } from '../fixtures/fake-claude/install'
 import { assistantLine } from '../fixtures/transcript'
+import { launchChatTab, sendMessage } from './chat-helpers'
 import { launchApp, launchClaudeTab } from './helpers'
+import { mainTranscript, statusMsg, writeWorkflowRun } from './workflow-run'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
-const statusMsg = (tabId: string): StatusMessage => ({
-  v: 1,
-  type: 'status',
-  tabId,
-  sessionId: SID,
-  model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
-  effort: 'xhigh',
-  context: { usedTokens: 82_314, size: 200_000, usedPct: 41.2 },
-  fiveHour: { usedPct: 23.5, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-  sevenDay: { usedPct: 41.2, resetsAt: Math.floor(Date.now() / 1000) + 3 * 86400 }
+/** a background agent that runs until the test writes the gate's file */
+const liveAgent = (gate: string): FakeTask => ({
+  description: 'Find the sales files',
+  result: 'unused',
+  background: true,
+  agents: [{ type: 'Explore', description: 'Search the sales folder', ms: 60_000, gate, frames: [{ text: 'Looking at the sales folder' }] }]
 })
 
 test('a claude tab shows model, context, the 5h and weekly limits and running subagents', async () => {
@@ -32,7 +30,7 @@ test('a claude tab shows model, context, the 5h and weekly limits and running su
   writeFileSync(join(subagentDir, 'agent-a1.meta.json'), JSON.stringify({ agentType: 'Explore', description: 'Find asar users' }))
 
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath })).toEqual({ ok: true })
-  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'start', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
 
   const bar = page.locator('#statusbar')
@@ -50,7 +48,7 @@ test('a claude tab shows model, context, the 5h and weekly limits and running su
   await expect(bar.locator('.status-limit')).toHaveCount(0)
   await expect(bar.locator('.status-week')).toHaveCount(0)
   await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ 1: opus·high', { timeout: 10_000 })
-  await expect(bar.locator('.status-agents')).toHaveAttribute('title', 'Explore · opus·high · <1 min · "Find asar users"')
+  await expect(bar.locator('.status-agents')).toHaveAttribute('title', 'Agents — click for the list')
 
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'stop', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
   await expect(bar.locator('.status-agents')).toHaveCount(0)
@@ -62,10 +60,175 @@ test('a claude tab shows model, context, the 5h and weekly limits and running su
   await app.close()
 })
 
+test('a workflow run shows as a group in the ⚙ card of a terminal tab, and stays folded until the next prompt', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  try {
+    const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
+    // the session starts before the run: a run on disk when the session starts is history
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath: mainTranscript(projectDir, SID) })).toEqual({ ok: true })
+    const run = writeWorkflowRun({
+      projectDir,
+      sid: SID,
+      runId: 'wf_e2e-run1',
+      taskId: 'w9ehhq53f',
+      workflowName: 'crash-triage',
+      agents: [{ agentId: 'a1', label: 'triage-a', phase: 'Triage' }, { agentId: 'a2', label: 'triage-b', phase: 'Triage' }]
+    })
+
+    expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
+    for (const agentId of ['a1', 'a2']) {
+      expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'start', agentId, agentType: 'workflow-subagent' })).toEqual({ ok: true })
+    }
+
+    const bar = page.locator('#statusbar')
+    const card = page.locator('#agents-card')
+    await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ 2: crash-triage ×2', { timeout: 10_000 })
+    await bar.locator('.status-agents').click()
+    await expect(card).toBeVisible()
+    await expect(card.locator('.chat-run-head .chat-agent-type')).toContainText('crash-triage')
+    await expect(card.locator('.chat-run-agent')).toHaveCount(2)
+    // a terminal tab's card does not open an agent's page: its rows are not buttons
+    await expect(card.locator('.chat-run-agent').first()).not.toHaveAttribute('role')
+    await page.keyboard.press('Escape')
+    await expect(card).toBeHidden()
+
+    await bar.locator('.status-agents').click()
+    await expect(card).toBeVisible()
+    await page.locator('#terminals').dispatchEvent('mousedown')
+    await expect(card).toBeHidden()
+
+    // a second click on the segment closes the card; Enter on the focused segment opens it again
+    await bar.locator('.status-agents').click()
+    await expect(card).toBeVisible()
+    await bar.locator('.status-agents').click()
+    await expect(card).toBeHidden()
+    await bar.locator('.status-agents').focus()
+    await page.keyboard.press('Enter')
+    await expect(card).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(card).toBeHidden()
+
+    // the run ends: its agents are done, the run is kept in the status bar with a mark
+    run.finish()
+    for (const agentId of ['a1', 'a2']) {
+      expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'stop', agentId, agentType: 'workflow-subagent' })).toEqual({ ok: true })
+    }
+    run.complete()
+    await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ crash-triage ✓', { timeout: 10_000 })
+    await bar.locator('.status-agents').click()
+    await expect(card.locator('.chat-run')).toHaveAttribute('data-folded', '')
+    await page.keyboard.press('Escape')
+    await expect(card).toBeHidden()
+
+    // the next prompt ends the kept run
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'turn', tabId, sessionId: SID })).toEqual({ ok: true })
+    await expect(bar.locator('.status-agents')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a restored session\'s old workflow runs stay out of the status bar; a run that starts later shows', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  try {
+    const projectDir = join(mkdtempSync(join(tmpdir(), 'ct-proj-')), 'projects', 'D--e2e')
+    // a run of an earlier process: its folder was last written an hour ago, before the session starts
+    writeWorkflowRun({
+      projectDir,
+      sid: SID,
+      runId: 'wf_e2e-old1',
+      taskId: 'w1oldtask',
+      workflowName: 'old-triage',
+      agents: [{ agentId: 'o1', label: 'triage-a', phase: 'Triage' }, { agentId: 'o2', label: 'triage-b', phase: 'Triage' }],
+      at: new Date(Date.now() - 3_600_000)
+    })
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId, sessionId: SID, source: 'startup', transcriptPath: mainTranscript(projectDir, SID) })).toEqual({ ok: true })
+    expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
+    // a run that starts in this session, in the same transcript
+    writeWorkflowRun({
+      projectDir,
+      sid: SID,
+      runId: 'wf_e2e-new1',
+      taskId: 'w2newtask',
+      workflowName: 'crash-triage',
+      agents: [{ agentId: 'a1', label: 'triage-a', phase: 'Triage' }, { agentId: 'a2', label: 'triage-b', phase: 'Triage' }]
+    })
+    for (const agentId of ['a1', 'a2']) {
+      expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'start', agentId, agentType: 'workflow-subagent' })).toEqual({ ok: true })
+    }
+
+    const bar = page.locator('#statusbar')
+    const card = page.locator('#agents-card')
+    await expect(bar.locator('.status-agents .status-text')).toHaveText('⚙ 2: crash-triage ×2', { timeout: 10_000 })
+    await bar.locator('.status-agents').click()
+    await expect(card).toBeVisible()
+    await expect(card.locator('.chat-run')).toHaveCount(1)
+    await expect(card).not.toContainText('old-triage')
+    await page.keyboard.press('Escape')
+    await expect(card).toBeHidden()
+  } finally {
+    await app.close()
+  }
+})
+
+test('a status update that ends the last agent closes the ⚙ card and leaves the focus where the person has it', async () => {
+  const { app, page, tabId, pipeName } = await launchClaudeTab()
+  try {
+    expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'start', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
+    const bar = page.locator('#statusbar')
+    const card = page.locator('#agents-card')
+    await expect(bar.locator('.status-agents .status-text')).toHaveText(/^⚙ 1: /, { timeout: 10_000 })
+    await bar.locator('.status-agents').click()
+    await expect(card).toBeVisible()
+    // the person moves on to another control while the card is open: a field of its own, in the page
+    await page.evaluate(() => {
+      const field = document.createElement('input')
+      field.id = 'focus-probe'
+      document.body.append(field)
+      field.focus()
+    })
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'stop', agentId: 'a1', agentType: 'Explore' })).toEqual({ ok: true })
+    await expect(card).toBeHidden()
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe('focus-probe')
+  } finally {
+    await app.close()
+  }
+})
+
+test('in a chat tab a row of the ⚙ card opens that agent\'s page', async () => {
+  const gate = 'status-card-release'
+  const { app, page, tabId, pipeName, config } = await launchChatTab({ turns: { team: [{ task: liveAgent(gate) }, { text: 'Done.' }] } })
+  try {
+    await sendMessage(page, 'team')
+    const dockRow = page.locator('.chat-host:visible .chat-agents-dock .chat-agent')
+    await expect(dockRow).toHaveCount(1)
+    const agentId = await dockRow.getAttribute('data-agent')
+    expect(agentId).not.toBeNull()
+    // the stand-in runs no hooks: the test plays the hooks that report the status and the agent
+    expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
+    expect(await sendPipeMessage(pipeName, { v: 1, type: 'subagent', tabId, sessionId: SID, event: 'start', agentId: agentId!, agentType: 'Explore' })).toEqual({ ok: true })
+    const bar = page.locator('#statusbar')
+    const card = page.locator('#agents-card')
+    await expect(bar.locator('.status-agents .status-text')).toHaveText(/^⚙ 1: /, { timeout: 10_000 })
+    await bar.locator('.status-agents').click()
+    await expect(card).toBeVisible()
+    const cardRow = card.locator('.chat-agent[data-agent]')
+    await expect(cardRow).toHaveAttribute('role', 'button')
+    await cardRow.click()
+    await expect(card).toBeHidden()
+    await expect(page.locator('.agent-page')).toBeVisible()
+    await expect(page.locator('.agent-page .agent-desc')).toHaveText('Search the sales folder')
+    writeFileSync(join(config, gate), '')
+  } finally {
+    await app.close()
+  }
+})
+
 test('the session segments sit in the middle of the status bar, not at its left', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
   try {
-    expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+    expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
     const bar = page.locator('#statusbar')
     await expect(bar.locator('.status-context .status-text')).toHaveText('ctx 41% · 82k/200k')
     // the model and the context are the middle group: its centre is the bar's centre, whatever the window's width
@@ -90,14 +253,14 @@ test('the 5h limit takes its color from the pace it is spent at, says the foreca
   const bar = (): Promise<string[]> => limit.locator('.meter-bar').evaluate((el) => [el.style.getPropertyValue('--used'), el.style.getPropertyValue('--elapsed')])
 
   // half the limit in the first of the five hours: the rest goes in the next hour
-  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), fiveHour: { usedPct: 50, resetsAt: now + 4 * 3600 } })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId, SID), fiveHour: { usedPct: 50, resetsAt: now + 4 * 3600 } })).toEqual({ ok: true })
   await expect(limit.locator('.meter-pct')).toHaveText('50%')
   await expect(limit).toHaveClass(/\bcrit\b/)
   await expect(limit).toHaveAttribute('title', /\nat this pace: runs out at \d\d:\d\d, /)
   await expect.poll(bar).toEqual(['50%', '20%'])
 
   // the same half four hours into the window lasts until the reset
-  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), fiveHour: { usedPct: 50, resetsAt: now + 3600 } })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId, SID), fiveHour: { usedPct: 50, resetsAt: now + 3600 } })).toEqual({ ok: true })
   await expect(limit).toHaveAttribute('title', /\nat this pace: lasts until the reset, about 6\d% by then$/)
   await expect(limit).not.toHaveClass(/\b(warn|crit)\b/)
   await expect.poll(bar).toEqual(['50%', '80%'])
@@ -106,7 +269,7 @@ test('the 5h limit takes its color from the pace it is spent at, says the foreca
 
 test('the background work a turn ended with shows in the status bar until a later turn end, or the end of the session, says it is over', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
-  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
   const segment = page.locator('#statusbar .status-background')
   await expect(page.locator('#statusbar .status-model .status-text')).toHaveText('Opus 5.5')
   await expect(page.locator('#statusbar .status-model .status-pill')).toHaveText('xhigh')
@@ -132,7 +295,7 @@ test('the background work a turn ended with shows in the status bar until a late
 
 test('agents whose stop never came leave the status bar when a turn ends with no background work that runs agents; a running workflow keeps them', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
-  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
   const bar = page.locator('#statusbar')
   // two agents of a workflow: an API error ends their turns, and Claude Code sends no SubagentStop for them
   for (const agentId of ['a1', 'a2']) {
@@ -156,7 +319,7 @@ test('agents whose stop never came leave the status bar when a turn ends with no
 
 test('long background work takes no more than about 40 characters of the status bar, and its tooltip says it all', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
-  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
   const segment = page.locator('#statusbar .status-background')
   const description = 'Watch the invoice export queue and re-arm the watcher on every restart of the billing service'
   const tasks = [{ id: 'm1', type: 'monitor', description, command: 'node scripts/watch-queue.js --billing --retry 5' }]
@@ -183,12 +346,12 @@ test('long background work takes no more than about 40 characters of the status 
 
 test('a new status updates the segments in place, so an open tooltip is not dismissed', async () => {
   const { app, page, tabId, pipeName } = await launchClaudeTab()
-  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: true })
   const model = page.locator('#statusbar .status-model')
   await expect(model.locator('.status-text')).toHaveText('Opus 5.5')
   await expect(model.locator('.status-pill')).toHaveText('xhigh')
   const handle = await model.elementHandle()
-  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId), context: { usedTokens: 90_000, size: 200_000, usedPct: 45 } })).toEqual({ ok: true })
+  expect(await sendPipeMessage(pipeName, { ...statusMsg(tabId, SID), context: { usedTokens: 90_000, size: 200_000, usedPct: 45 } })).toEqual({ ok: true })
   await expect(page.locator('#statusbar .status-context .status-text')).toHaveText('ctx 45% · 90k/200k')
   expect(await handle!.evaluate((e) => e.isConnected)).toBe(true)
   await app.close()
@@ -198,7 +361,7 @@ test('a shell tab has no status bar and its status messages are rejected', async
   const { app, page, pipeName } = await launchApp()
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   const tabId = (await page.evaluate(() => window.__ct!.activeTabId()))!
-  expect(await sendPipeMessage(pipeName, statusMsg(tabId))).toEqual({ ok: false, error: `unknown claude tab: ${tabId}` })
+  expect(await sendPipeMessage(pipeName, statusMsg(tabId, SID))).toEqual({ ok: false, error: `unknown claude tab: ${tabId}` })
   await expect(page.locator('#statusbar')).toBeHidden()
   await app.close()
 })

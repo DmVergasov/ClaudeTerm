@@ -33,6 +33,8 @@ export class AgentColumn implements FindView {
   private folds = new Map<string, StepKeep>()
   /** the prompts the reader unfolded with Show all, by the item's id: kept while the node is out of the column */
   private readonly unfolded = new Set<string>()
+  /** who asked the agent its first prompt, when it is a workflow's: that prompt's head reads "<asker> asked" */
+  private asker: string | undefined = undefined
   private visible = false
   /** the column follows new items while the reader is at its bottom */
   private stick = true
@@ -140,6 +142,13 @@ export class AgentColumn implements FindView {
     this.redraw()
     this.syncEmpty()
     this.settle()
+  }
+
+  /** who asked the agent its first prompt: the column is drawn again when it changes, the prompts' heads read it */
+  setAsker(asker: string | undefined): void {
+    if (asker === this.asker) return
+    this.asker = asker
+    this.redraw()
   }
 
   /** a patch of the agent's conversation: the model takes it now, and the drawing it needs is queued */
@@ -338,7 +347,7 @@ export class AgentColumn implements FindView {
   }
 
   private stateOf(item: ChatItem): string {
-    return `${this.settledAt(item.id)}|${JSON.stringify(item)}`
+    return `${this.settledAt(item.id)}|${this.asker ?? ''}|${JSON.stringify(item)}`
   }
 
   private unmount(id: string): void {
@@ -352,7 +361,7 @@ export class AgentColumn implements FindView {
 
   private draw(item: ChatItem): HTMLElement {
     const keep = item.kind === 'tools' || item.kind === 'thinking' ? this.folds.get(item.id) ?? null : null
-    const prompt = { unfolded: this.unfolded.has(item.id), unfold: () => { this.unfolded.add(item.id) } }
+    const prompt = { unfolded: this.unfolded.has(item.id), unfold: () => { this.unfolded.add(item.id) }, asker: this.asker }
     // a forward is a bubble on the page (the main conversation draws it as a note, renderItem)
     const node = item.kind === 'forward' ? forwardBubble(item) : renderItem(item, this.cb, keep, this.settledAt(item.id), prompt)
     // the item's id on its node: a reader of the DOM follows the same item across redraws

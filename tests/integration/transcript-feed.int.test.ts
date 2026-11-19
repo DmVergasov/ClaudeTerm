@@ -1,10 +1,12 @@
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage } from '../../src/main/transcript-feed'
+import { cleanupImageCache, findTranscript, LineTailer, locateTranscript, TranscriptFeed, type FeedImage, type TranscriptFeedOptions } from '../../src/main/transcript-feed'
 import type { AgentModelInfo } from '../../src/main/transcript-agent-info'
 import type { PeerMail } from '../../src/main/transcript-mail'
+import type { RunFile } from '../../src/main/workflow-files'
 import { assistantLine, bashResultLine, editResultLine, failedResultLine, interruptLine, PEER_ORIGIN, peerMessageLine, PNG_B64, pastedLine, promptLine, sendMessageLines, textLine, toolResultLine, toolUseLine, turnPromptLine } from '../fixtures/transcript'
 
 const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
@@ -400,6 +402,268 @@ describe('TranscriptFeed EnterWorktree', () => {
     appendFileSync(transcriptPath, [toolUseLine('w1', 'EnterWorktree', { name: 'notes' }), failedResultLine('w1', NO_PATH, '2026-11-17T07:30:11.976Z')].join('\n') + '\n')
     await feed.poll()
     expect(failures).toEqual([[NO_PATH, Date.parse('2026-11-17T07:30:11.976Z')]])
+  })
+})
+
+describe('workflow runs', () => {
+  const RUN = 'wf_55e3c3ec-b29'
+  const OTHER = 'wf_66f4d4fd-c3a'
+  /** the main transcript's Workflow result: the run's ids and name, as Claude Code writes it */
+  const launch = (runId: string, workflowName = 'crash-triage', at = '2026-10-05T10:00:01.000Z'): string => JSON.stringify({
+    type: 'user',
+    timestamp: at,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'wf1', content: 'Workflow launched' }] },
+    toolUseResult: { status: 'async_launched', taskId: 'w9ehhq53f', taskType: 'local_workflow', workflowName, runId, transcriptDir: `/p/${SID}/subagents/workflows/${runId}` }
+  })
+
+  /** a feed on a main transcript in a temp project folder; `runDir` is a run's folder under the session's subagents folder. Everything on disk counts as live (since: 0) unless `opts` says otherwise */
+  function runFeed(opts: Partial<TranscriptFeedOptions> = {}) {
+    const { projectDir, transcriptPath, cacheRoot } = setup()
+    const feed = new TranscriptFeed({ transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, pollMs: 20, since: 0, ...opts })
+    const sessionDir = join(projectDir, SID)
+    return { transcriptPath, sessionDir, runDir: (runId: string) => join(sessionDir, 'subagents', 'workflows', runId), feed }
+  }
+
+  it('reports the run a Workflow result launched, once, with its name and task id; a result with an invalid run id is none', async () => {
+    const runs: unknown[] = []
+    const { transcriptPath, feed } = runFeed({ onWorkflowRun: (run) => runs.push(run) })
+    writeFileSync(transcriptPath, [promptLine('go'), launch(RUN), launch(RUN), launch('../escape')].join('\n') + '\n')
+    await feed.poll()
+    expect(runs).toEqual([{ runId: RUN, name: 'crash-triage', taskId: 'w9ehhq53f' }])
+  })
+
+  it('reports the journal lines of a run in order, each write as one call', async () => {
+    const journals: [string, unknown[]][] = []
+    const { runDir, feed } = runFeed({ onWorkflowJournal: (runId, lines) => journals.push([runId, lines]) })
+    mkdirSync(runDir(RUN), { recursive: true })
+    writeFileSync(join(runDir(RUN), 'journal.jsonl'), '{"type":"started","key":"0"}\n')
+    await feed.scanSubagents()
+    await feed.poll()
+    appendFileSync(join(runDir(RUN), 'journal.jsonl'), '{"type":"result","key":"0"}\nnot json\n{"type":"started","key":"1"}\n')
+    await feed.poll()
+    expect(journals).toEqual([
+      [RUN, [{ type: 'started', key: '0' }]],
+      [RUN, [{ type: 'result', key: '0' }, { type: 'started', key: '1' }]]
+    ])
+  })
+
+  it("reads a run agent's transcript as a subagent's: its model and effort, its task once, its edits and its images", async () => {
+    const infos: [string, AgentModelInfo][] = []
+    const tasks: [string, string, string][] = []
+    const edits: string[] = []
+    const captions: (string | null)[] = []
+    const { runDir, feed } = runFeed({
+      onSubagentInfo: (id, info) => infos.push([id, info]),
+      onWorkflowTask: (runId, agentId, task) => tasks.push([runId, agentId, task]),
+      onEditEvent: (ev) => edits.push(ev.kind === 'prompt' ? 'prompt' : `edit:${ev.toolUseId}`),
+      onImage: (img) => captions.push(img.caption)
+    })
+    mkdirSync(runDir(RUN), { recursive: true })
+    writeFileSync(join(runDir(RUN), 'agent-a0.jsonl'), [
+      promptLine('Look at crash 1'),
+      assistantLine('claude-sonnet-5-5', 'medium'),
+      editResultLine({ toolUseId: 'e1', filePath: '/p/a.ts' }),
+      toolUseLine('s1', 'mcp__claude-in-chrome__computer', { action: 'screenshot' }),
+      toolResultLine('s1'),
+      promptLine('a second prompt')
+    ].join('\n') + '\n')
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(infos).toEqual([['a0', { model: 'claude-sonnet-5-5', effort: 'medium' }]])
+    expect(tasks).toEqual([[RUN, 'a0', 'Look at crash 1']])
+    expect(edits).toEqual(['edit:e1'])
+    expect(captions).toEqual(['subagent · claude-in-chrome · computer (screenshot)'])
+  })
+
+  it('reads two runs that both hold an agent-a0.jsonl, each with its own agent', async () => {
+    const tasks: [string, string, string][] = []
+    const { runDir, feed } = runFeed({ onWorkflowTask: (runId, agentId, task) => tasks.push([runId, agentId, task]) })
+    for (const [runId, task] of [[RUN, 'task of run one'], [OTHER, 'task of run two']]) {
+      mkdirSync(runDir(runId), { recursive: true })
+      writeFileSync(join(runDir(runId), 'agent-a0.jsonl'), promptLine(task) + '\n')
+    }
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(tasks).toHaveLength(2)
+    expect(tasks).toEqual(expect.arrayContaining([[RUN, 'a0', 'task of run one'], [OTHER, 'a0', 'task of run two']]))
+  })
+
+  it("reports a run once, when its run file is written, with the file's state", async () => {
+    const ends: [string, RunFile][] = []
+    const { sessionDir, runDir, feed } = runFeed({ onWorkflowEnd: (runId, file) => ends.push([runId, file]) })
+    mkdirSync(runDir(RUN), { recursive: true })
+    writeFileSync(join(runDir(RUN), 'journal.jsonl'), '')
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(ends).toEqual([])
+    mkdirSync(join(sessionDir, 'workflows'), { recursive: true })
+    writeFileSync(join(sessionDir, 'workflows', `${RUN}.json`), JSON.stringify({ status: 'completed', workflowName: 'crash-triage', taskId: 'w9ehhq53f', durationMs: 1500 }))
+    await feed.poll()
+    await feed.poll()
+    expect(ends.map(([runId, file]) => [runId, file.state, file.ms])).toEqual([[RUN, 'done', 1500]])
+  })
+
+  it('does not read a run folder whose name is not a run id, or one that is a link out of the subagents folder', async () => {
+    const tasks: unknown[] = []
+    const { sessionDir, runDir, feed } = runFeed({ onWorkflowTask: (...args) => tasks.push(args) })
+    const bad = runDir('wf_BAD_NAME')
+    mkdirSync(bad, { recursive: true })
+    writeFileSync(join(bad, 'agent-a0.jsonl'), promptLine('bad name') + '\n')
+    const outside = mkdtempSync(join(tmpdir(), 'ct-run-outside-'))
+    writeFileSync(join(outside, 'agent-a0.jsonl'), promptLine('linked') + '\n')
+    mkdirSync(join(sessionDir, 'subagents', 'workflows'), { recursive: true })
+    symlinkSync(outside, runDir(RUN), process.platform === 'win32' ? 'junction' : 'dir')
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(tasks).toEqual([])
+  })
+
+  it('reads the 8 newest run folders by modification time, and no more', async () => {
+    const tasks: [string, string, string][] = []
+    const { runDir, feed } = runFeed({ onWorkflowTask: (runId, agentId, task) => tasks.push([runId, agentId, task]) })
+    for (let i = 0; i < 10; i++) {
+      const runId = `wf_run-00${i}`
+      mkdirSync(runDir(runId), { recursive: true })
+      writeFileSync(join(runDir(runId), 'agent-a0.jsonl'), promptLine(`task ${i}`) + '\n')
+      // set after the file is written: writing a file moves a folder's time
+      const at = new Date(Date.UTC(2026, 9, 1) + i * 60_000)
+      utimesSync(runDir(runId), at, at)
+    }
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(tasks.map(([, , task]) => task).sort()).toEqual(Array.from({ length: 8 }, (_, i) => `task ${i + 2}`))
+  })
+
+  it('stops reading a run that falls out of the 8 newest: its journal and its agents are not read once 8 newer runs are there', async () => {
+    const journals: string[] = []
+    const tasks: string[] = []
+    const { runDir, feed } = runFeed({
+      onWorkflowJournal: (runId) => journals.push(runId),
+      onWorkflowTask: (runId, agentId, task) => tasks.push(`${runId} ${agentId} ${task}`)
+    })
+    const at = (i: number): Date => new Date(Date.UTC(2026, 9, 1) + i * 60_000)
+    const runId = (i: number): string => `wf_run-00${i}`
+    for (let i = 0; i < 8; i++) {
+      mkdirSync(runDir(runId(i)), { recursive: true })
+      writeFileSync(join(runDir(runId(i)), 'journal.jsonl'), '{"type":"started","key":"0"}\n')
+      writeFileSync(join(runDir(runId(i)), 'agent-a0.jsonl'), promptLine(`task ${i}`) + '\n')
+      utimesSync(runDir(runId(i)), at(i), at(i))
+    }
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(tasks).toHaveLength(8)
+    // two newer runs: the two oldest of the 8 fall out
+    for (const i of [8, 9]) {
+      mkdirSync(runDir(runId(i)), { recursive: true })
+      writeFileSync(join(runDir(runId(i)), 'journal.jsonl'), '{"type":"started","key":"0"}\n')
+      writeFileSync(join(runDir(runId(i)), 'agent-a0.jsonl'), promptLine(`task ${i}`) + '\n')
+      utimesSync(runDir(runId(i)), at(i), at(i))
+    }
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(tasks.slice(8).sort()).toEqual([`${runId(8)} a0 task 8`, `${runId(9)} a0 task 9`])
+    // the dropped runs' files grow, and a later listing still finds them older: none of it is read
+    journals.length = 0
+    tasks.length = 0
+    for (const i of [0, 1]) {
+      appendFileSync(join(runDir(runId(i)), 'journal.jsonl'), '{"type":"result","key":"0"}\n')
+      appendFileSync(join(runDir(runId(i)), 'agent-a0.jsonl'), promptLine('late') + '\n')
+    }
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(journals).toEqual([])
+    expect(tasks).toEqual([])
+  })
+
+  it("does not read a run's agent file that is a link out of the subagents folder; the run's other agent files are read", async ctx => {
+    const tasks: [string, string, string][] = []
+    const { runDir, feed } = runFeed({ onWorkflowTask: (runId, agentId, task) => tasks.push([runId, agentId, task]) })
+    const outside = mkdtempSync(join(tmpdir(), 'ct-run-file-outside-'))
+    const outsideFile = join(outside, 'agent-x.jsonl')
+    writeFileSync(outsideFile, promptLine('from outside') + '\n')
+    mkdirSync(runDir(RUN), { recursive: true })
+    writeFileSync(join(runDir(RUN), 'agent-a1.jsonl'), promptLine('inside') + '\n')
+    try {
+      symlinkSync(outsideFile, join(runDir(RUN), 'agent-x.jsonl'), 'file')
+    } catch (e) {
+      // a platform that refuses a file link (Windows without developer mode) skips this case
+      if ((e as NodeJS.ErrnoException).code === 'EPERM') return ctx.skip()
+      throw e
+    }
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(tasks).toEqual([[RUN, 'a1', 'inside']])
+  })
+
+  it('what is on disk when the feed starts is history: its runs, journals, tasks and run files are not reported; its agents are still read', async () => {
+    const runs: unknown[] = []
+    const journals: unknown[] = []
+    const tasks: unknown[] = []
+    const ends: unknown[] = []
+    const edits: string[] = []
+    const infos: [string, AgentModelInfo][] = []
+    const { projectDir, transcriptPath, cacheRoot } = setup()
+    const dir = join(projectDir, SID, 'subagents', 'workflows', RUN)
+    writeFileSync(transcriptPath, launch(RUN) + '\n')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'journal.jsonl'), '{"type":"started","key":"0","agentId":"a0","label":"triage-a"}\n')
+    writeFileSync(join(dir, 'agent-a0.jsonl'), [
+      promptLine('Look at crash 1'),
+      assistantLine('claude-sonnet-5-5', 'medium'),
+      editResultLine({ toolUseId: 'e1', filePath: '/p/a.ts' })
+    ].join('\n') + '\n')
+    // writing files moved the folder's time: it was last written an hour ago, before the feed starts
+    const past = new Date(Date.now() - 3_600_000)
+    utimesSync(dir, past, past)
+    // no `since` option: the feed's start is its history line
+    const feed = new TranscriptFeed({
+      transcriptPath, sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {}, pollMs: 20,
+      onWorkflowRun: (run) => runs.push(run),
+      onWorkflowJournal: (runId, lines) => journals.push([runId, lines]),
+      onWorkflowTask: (runId, agentId, task) => tasks.push([runId, agentId, task]),
+      onWorkflowEnd: (runId) => ends.push(runId),
+      onEditEvent: (ev) => edits.push(ev.kind === 'prompt' ? 'prompt' : `edit:${ev.toolUseId}`),
+      onSubagentInfo: (id, info) => infos.push([id, info])
+    })
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(runs).toEqual([])
+    expect(journals).toEqual([])
+    expect(tasks).toEqual([])
+    expect(ends).toEqual([])
+    expect(edits).toEqual(['edit:e1'])
+    expect(infos).toEqual([['a0', { model: 'claude-sonnet-5-5', effort: 'medium' }]])
+    // a run that starts after the feed is reported
+    appendFileSync(transcriptPath, launch(OTHER, 'crash-triage', new Date().toISOString()) + '\n')
+    const otherDir = join(projectDir, SID, 'subagents', 'workflows', OTHER)
+    mkdirSync(otherDir, { recursive: true })
+    writeFileSync(join(otherDir, 'journal.jsonl'), '{"type":"started","key":"0"}\n')
+    // the folder's time as the clock reads it now: a file system's coarse clock could put a folder made just now before the feed's start
+    const now = new Date()
+    utimesSync(otherDir, now, now)
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(runs).toEqual([{ runId: OTHER, name: 'crash-triage', taskId: 'w9ehhq53f' }])
+    expect(journals).toEqual([[OTHER, [{ type: 'started', key: '0' }]]])
+  })
+
+  it.runIf(process.platform === 'win32')('on Windows, a transcript path in 8.3 short form still reads the run folder', async () => {
+    const { root, projectDir, transcriptPath, cacheRoot } = setup()
+    writeFileSync(transcriptPath, '')
+    // the folder's short name; a volume without short names gives the long name, and the test still runs
+    // verbatim: cmd reads its quotes as they are, not as Node escapes them
+    const short = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${root}") do @echo %~sI`], { encoding: 'utf8', windowsVerbatimArguments: true }).stdout.trim()
+    const tasks: [string, string, string][] = []
+    const feed = new TranscriptFeed({
+      transcriptPath: join(short, 'projects', 'D--x', `${SID}.jsonl`), sessionId: SID, cacheRoot, fileExists: existsSync, onImage: () => {},
+      onWorkflowTask: (runId, agentId, task) => tasks.push([runId, agentId, task])
+    })
+    const dir = join(projectDir, SID, 'subagents', 'workflows', RUN)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'agent-a0.jsonl'), promptLine('short name') + '\n')
+    await feed.scanSubagents()
+    await feed.poll()
+    expect(tasks).toEqual([[RUN, 'a0', 'short name']])
   })
 })
 
