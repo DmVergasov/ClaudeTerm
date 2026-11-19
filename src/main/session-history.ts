@@ -111,6 +111,14 @@ export interface SessionTail {
   lastPrompt: string | null
   /** the first main-conversation entry with a folder, for transcripts whose head has none */
   folder: { cwd: string; interactive: boolean } | null
+  /** the time (ms) of the last user or assistant entry in the window; null when none carries a valid one */
+  lastMessageAt: number | null
+}
+
+/** an entry's `timestamp` in ms; null when it is not a string Date.parse reads */
+function entryTime(v: unknown): number | null {
+  const ms = typeof v === 'string' ? Date.parse(v) : NaN
+  return Number.isNaN(ms) ? null : ms
 }
 
 /**
@@ -119,12 +127,14 @@ export interface SessionTail {
  * `knownChat` as in parseSessionHead.
  */
 export function parseSessionTail(text: string, fromStart: boolean, knownChat = false): SessionTail {
-  const t: SessionTail = { customTitle: null, aiTitle: null, lastPrompt: null, folder: null }
+  const t: SessionTail = { customTitle: null, aiTitle: null, lastPrompt: null, folder: null, lastMessageAt: null }
   for (const e of entries(text, !fromStart, false)) {
     if (!t.folder && typeof e.cwd === 'string' && e.cwd.length > 0 && e.isSidechain !== true) t.folder = { cwd: e.cwd, interactive: isInteractive(e.entrypoint, knownChat) }
     if (e.type === 'custom-title') t.customTitle = oneLine(e.customTitle) ?? t.customTitle
     else if (e.type === 'ai-title') t.aiTitle = oneLine(e.aiTitle) ?? t.aiTitle
     else if (e.type === 'last-prompt') t.lastPrompt = oneLine(e.lastPrompt) ?? t.lastPrompt
+    // Claude Code's /resume dates a session by its last message: the bookkeeping it appends with no new work does not count
+    else if (e.type === 'user' || e.type === 'assistant') t.lastMessageAt = entryTime(e.timestamp) ?? t.lastMessageAt
   }
   return t
 }
@@ -199,21 +209,30 @@ export class SessionHistory {
   /**
    * The latest `limit` sessions, newest first, plus every starred one however old. Starred sessions do not
    * count against the limit; the transcripts left out are not read. A session under several roots is listed once.
+   * A session's date is never past its file's modification time, so the files are read newest first until `limit`
+   * sessions are dated after the next file's time: a file touched with no new work does not push a later one out.
    */
   async list(limit: number, starred: ReadonlySet<string> = new Set()): Promise<SessionSummary[]> {
     const files = newestCopies(await this.transcripts())
     files.sort((a, b) => b.mtimeMs - a.mtimeMs)
     const out: SessionSummary[] = []
-    let others = 0
+    // the dates of the newest `limit` sessions read that are not starred, newest first
+    const newest: number[] = []
     for (const f of files) {
       const isStarred = starred.has(f.id)
-      if (!isStarred && others >= limit) continue
+      if (!isStarred && newest.length >= limit && (newest[limit - 1] ?? Infinity) >= f.mtimeMs) continue
       const s = await this.summary(f)
       if (!s) continue
       out.push({ ...s, account: f.account })
-      if (!isStarred) others++
+      if (isStarred) continue
+      const at = newest.findIndex((m) => m < s.modifiedAt)
+      newest.splice(at < 0 ? newest.length : at, 0, s.modifiedAt)
+      newest.length = Math.min(newest.length, limit)
     }
-    return out
+    // stable: sessions of the same date keep their files' order
+    out.sort((a, b) => b.modifiedAt - a.modifiedAt)
+    let others = 0
+    return out.filter((s) => starred.has(s.id) || others++ < limit)
   }
 
   /** every root's transcripts, in root order */
@@ -281,7 +300,9 @@ export class SessionHistory {
       // claude --resume finds the conversation only from the project's own folder
       cwd = projectFolder(tail.folder.cwd, basename(dirname(f.path))) ?? tail.folder.cwd
     }
-    return { id: f.id, cwd, title: tail.customTitle ?? tail.aiTitle, firstPrompt: head.firstPrompt, lastPrompt: tail.lastPrompt, modifiedAt: f.mtimeMs }
+    // as Claude Code's /resume: the last message's time, never past the file's (a clock ahead); the file's without one
+    const modifiedAt = tail.lastMessageAt === null ? f.mtimeMs : Math.min(tail.lastMessageAt, f.mtimeMs)
+    return { id: f.id, cwd, title: tail.customTitle ?? tail.aiTitle, firstPrompt: head.firstPrompt, lastPrompt: tail.lastPrompt, modifiedAt }
   }
 
   private async tail(f: TranscriptFile, bytes: number, knownChat: boolean): Promise<SessionTail> {
