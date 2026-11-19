@@ -605,8 +605,11 @@ describe('browser guards', () => {
 
 describe('games guards', () => {
   it('isGamesSave takes a valid save and refuses a bad part or garbage', () => {
-    const save = { game: 'runner', runnerBest: 3, landerBest: 0, pinballBest: 7, sandBest: 0, merge: null, clicker: null }
+    const save = { game: 'runner', runnerBest: 3, landerBest: 0, pinballBest: 7, sandBest: 0, artilleryWins: 2, artilleryStreak: 1, artilleryBest: 1, merge: null, clicker: null }
     expect(isGamesSave(save)).toBe(true)
+    const { artilleryWins, ...withoutArtilleryWins } = save
+    expect(artilleryWins).toBe(2)
+    expect(isGamesSave(withoutArtilleryWins)).toBe(false)
     expect(isGamesSave({ ...save, clicker: { lines: -1, helpers: [0, 0, 0, 0], at: 0 } })).toBe(false)
     expect(isGamesSave({ ...save, game: 'chess' })).toBe(false)
     expect(isGamesSave({ ...save, merge: undefined })).toBe(false)

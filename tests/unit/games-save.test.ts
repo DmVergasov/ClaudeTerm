@@ -3,7 +3,7 @@ import { EMPTY_GAMES, parseGamesSave, type GamesSave, type MergeSave, type Click
 
 const merge: MergeSave = { board: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11], score: 120, best: 340, won: false }
 const clicker: ClickerSave = { lines: 12.5, helpers: [1, 0, 2, 0], at: 1_700_000_000_000 }
-const valid: GamesSave = { game: 'merge', runnerBest: 42, landerBest: 120, pinballBest: 4800, sandBest: 2140, merge, clicker }
+const valid: GamesSave = { game: 'merge', runnerBest: 42, landerBest: 120, pinballBest: 4800, sandBest: 2140, artilleryWins: 3, artilleryStreak: 1, artilleryBest: 2, merge, clicker }
 
 describe('games save', () => {
   it('a full valid save comes back equal, with nothing bad', () => {
@@ -13,7 +13,7 @@ describe('games save', () => {
   })
 
   it('null parts are valid', () => {
-    const save: GamesSave = { game: 'merge', runnerBest: 3, landerBest: 0, pinballBest: 0, sandBest: 0, merge: null, clicker: null }
+    const save: GamesSave = { game: 'merge', runnerBest: 3, landerBest: 0, pinballBest: 0, sandBest: 0, artilleryWins: 0, artilleryStreak: 0, artilleryBest: 0, merge: null, clicker: null }
     const result = parseGamesSave(save)
     expect(result.save).toEqual(save)
     expect(result.bad).toEqual([])
@@ -22,8 +22,25 @@ describe('games save', () => {
   it('a save from before Lander, Pinball and Sand loads whole: their bests are 0 and nothing is bad', () => {
     const old = { game: 'merge', runnerBest: 42, merge, clicker }
     const result = parseGamesSave(old)
-    expect(result.save).toEqual({ ...old, landerBest: 0, pinballBest: 0, sandBest: 0 })
+    expect(result.save).toEqual({ ...old, landerBest: 0, pinballBest: 0, sandBest: 0, artilleryWins: 0, artilleryStreak: 0, artilleryBest: 0 })
     expect(result.bad).toEqual([])
+  })
+
+  it('a save from before Artillery loads whole: its counters are 0 and nothing is bad', () => {
+    const { artilleryWins, artilleryStreak, artilleryBest, ...old } = valid
+    const result = parseGamesSave(old)
+    expect(result.save).toEqual({ ...old, artilleryWins: 0, artilleryStreak: 0, artilleryBest: 0 })
+    expect(result.bad).toEqual([])
+  })
+
+  it('Artillery can be the last game chosen', () => {
+    expect(parseGamesSave({ ...valid, game: 'artillery' })).toEqual({ save: { ...valid, game: 'artillery' }, bad: [] })
+  })
+
+  it('an Artillery counter out of range or not an integer is bad and 0', () => {
+    const result = parseGamesSave({ ...valid, artilleryWins: -1, artilleryStreak: 1.5, artilleryBest: 1e13 })
+    expect(result.save).toMatchObject({ artilleryWins: 0, artilleryStreak: 0, artilleryBest: 0 })
+    expect(result.bad).toEqual(expect.arrayContaining(['artilleryWins', 'artilleryStreak', 'artilleryBest']))
   })
 
   it('Lander, Pinball and Sand can be the last game chosen', () => {
