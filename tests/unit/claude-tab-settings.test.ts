@@ -64,7 +64,12 @@ describe('hook files', () => {
         allow: [
           'mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent',
           'mcp__claudeterm__list_sessions', 'mcp__claudeterm__start_session', 'mcp__claudeterm__attach_session', 'mcp__claudeterm__detach_session',
-          'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session'
+          'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session',
+          'mcp__claudeterm__browser_navigate', 'mcp__claudeterm__browser_navigate_back', 'mcp__claudeterm__browser_navigate_forward', 'mcp__claudeterm__browser_reload',
+          'mcp__claudeterm__browser_snapshot', 'mcp__claudeterm__browser_click', 'mcp__claudeterm__browser_type', 'mcp__claudeterm__browser_press_key',
+          'mcp__claudeterm__browser_hover', 'mcp__claudeterm__browser_select_option', 'mcp__claudeterm__browser_scroll', 'mcp__claudeterm__browser_wait_for',
+          'mcp__claudeterm__browser_take_screenshot', 'mcp__claudeterm__browser_evaluate', 'mcp__claudeterm__browser_console_messages', 'mcp__claudeterm__browser_network_requests',
+          'mcp__claudeterm__browser_network_request', 'mcp__claudeterm__browser_handle_dialog', 'mcp__claudeterm__browser_tabs'
         ]
       },
       hooks: {
@@ -86,7 +91,12 @@ describe('hook files', () => {
       allow: [
         'mcp__claudeterm__set_task_list', 'mcp__claudeterm__get_task_list', 'mcp__claudeterm__list_agents', 'mcp__claudeterm__message_agent',
         'mcp__claudeterm__list_sessions', 'mcp__claudeterm__start_session', 'mcp__claudeterm__attach_session', 'mcp__claudeterm__detach_session',
-        'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session'
+        'mcp__claudeterm__message_session', 'mcp__claudeterm__read_session', 'mcp__claudeterm__resolve_session',
+        'mcp__claudeterm__browser_navigate', 'mcp__claudeterm__browser_navigate_back', 'mcp__claudeterm__browser_navigate_forward', 'mcp__claudeterm__browser_reload',
+        'mcp__claudeterm__browser_snapshot', 'mcp__claudeterm__browser_click', 'mcp__claudeterm__browser_type', 'mcp__claudeterm__browser_press_key',
+        'mcp__claudeterm__browser_hover', 'mcp__claudeterm__browser_select_option', 'mcp__claudeterm__browser_scroll', 'mcp__claudeterm__browser_wait_for',
+        'mcp__claudeterm__browser_take_screenshot', 'mcp__claudeterm__browser_evaluate', 'mcp__claudeterm__browser_console_messages', 'mcp__claudeterm__browser_network_requests',
+        'mcp__claudeterm__browser_network_request', 'mcp__claudeterm__browser_handle_dialog', 'mcp__claudeterm__browser_tabs'
       ]
     })
   })

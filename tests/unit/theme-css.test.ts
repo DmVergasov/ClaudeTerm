@@ -32,7 +32,7 @@ describe('the stylesheets follow the theme', () => {
   })
 
   it('styles.css reads every other colour from the palette', () => {
-    expect(ownVars('styles.css')).toEqual(['--dc', '--dev', '--elapsed', '--fill', '--group-color', '--held-host', '--mail-line', '--meter', '--panel-cover', '--pulse-delay',
+    expect(ownVars('styles.css')).toEqual(['--browser-panel-width', '--dc', '--dev', '--elapsed', '--fill', '--group-color', '--held-host', '--mail-line', '--meter', '--panel-cover', '--pulse-delay',
       '--row-pulse', '--slide-w', '--spin-delay', '--status', '--status-room', '--term-bg', '--used'])
   })
 

@@ -708,7 +708,7 @@ test('the window opens at General, with its tabs in order, and a tab shows only 
   const { app, page } = await launchApp({ settings: QUIET })
   await page.waitForFunction(() => window.__ct!.activeTabId() !== null)
   const win = await openSettings(app, page)
-  await expect(win.locator('#settings-nav .settings-tab:not([hidden])')).toHaveText(['General', 'Appearance', 'Claude Code', 'Notifications', 'Panels', 'Accounts', 'Devices'])
+  await expect(win.locator('#settings-nav .settings-tab:not([hidden])')).toHaveText(['General', 'Appearance', 'Claude Code', 'Notifications', 'Panels', 'Browser', 'Accounts', 'Devices'])
   await expect(win.locator('#settings-nav [data-tab="general"]')).toHaveAttribute('aria-current', 'page')
   await expect(win.locator('[data-key="defaultFolder"]')).toBeVisible()
   await expect(win.locator('[data-key="claude.command"]')).toBeHidden()
@@ -732,6 +732,7 @@ test('every setting lives in its tab', async () => {
     claude: ['chat.copyOnSelect', 'chat.fullWidth', 'chat.mcpAlerts', 'claude.autoContinue', 'claude.command', 'claude.continueAfterLimit', 'claude.continueAfterRestore', 'claude.headsUp', 'claude.limitPace', 'claude.shellProfile', 'claude.statusRefresh', 'claude.statusRefreshInterval', 'claude.view'],
     notifications,
     panels: ['agentMessages.enabled', 'agentMessages.marks', 'imagePanel.autoOpen', 'imageWatch.enabled', 'review.editor', 'review.hideIgnored', 'review.hideTests', 'review.renderMarkdown', 'review.statusBar', 'review.testPatterns'],
+    browser: [],
     accounts: [],
     devices: ['devices.keepAwake']
   })

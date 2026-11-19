@@ -13,6 +13,7 @@ import { MAX_PATH_TEXT, MAX_SNAPSHOT_BYTES, MAX_TRANSFER_FILES } from '../shared
 import { MCP_EDIT_SCOPES, isClientSecret, marketplaceSource, type McpAction, type McpAddRequest, type McpEditScope, type PluginAction, type ReloadAction } from '../shared/mcp'
 import { isServerName } from '../shared/mcp-add'
 import { COORD_KEY_MAX, COORD_NAME_MAX, COORD_TASK_MAX, isWorktreeName, type CoordStartRequest } from '../shared/coordinator'
+import { MAX_PROFILE_NAME as MAX_BROWSER_PROFILE_NAME, MAX_URL, PROFILE_ID_RE, UNSAFE_PROFILE_NAME, type BrowserPanelAction, type BrowserProfileAction } from '../shared/browser'
 
 // Runtime checks for untrusted renderer IPC arguments.
 const MAX_DIM = 4000
@@ -317,6 +318,76 @@ export const isPluginAction = (v: unknown): v is PluginAction => {
 
 /** the reload card's answer: later, or restart now */
 export const isReloadAction = (v: unknown): v is ReloadAction => typeof v === 'string' && RELOAD_ACTIONS.includes(v)
+
+const MAX_CARD_ID = 64
+const SITE_ANSWERS: readonly string[] = ['tab', 'always', 'deny']
+
+/** a page's index in the strip: a whole number from 0 */
+const isPageIndex = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
+
+/** a Browser panel action: a navigation, a page of the strip, a profile, a permission card's answer or a control choice */
+export const isBrowserPanelAction = (v: unknown): v is BrowserPanelAction => {
+  if (typeof v !== 'object' || v === null) return false
+  const a = v as Record<string, unknown>
+  switch (a.type) {
+    case 'navigate': return typeof a.url === 'string' && a.url.length >= 1 && a.url.length <= MAX_URL
+    case 'selectPage':
+    case 'closePage': return isPageIndex(a.index)
+    case 'setProfile': return typeof a.profileId === 'string' && PROFILE_ID_RE.test(a.profileId)
+    case 'answer': return typeof a.cardId === 'string' && a.cardId.length >= 1 && a.cardId.length <= MAX_CARD_ID && typeof a.answer === 'string' && SITE_ANSWERS.includes(a.answer)
+    case 'back':
+    case 'forward':
+    case 'reload':
+    case 'stopLoading':
+    case 'newPage':
+    case 'stop':
+    case 'handBack':
+    case 'devtools':
+    case 'manageProfiles':
+    case 'clearData': return true
+    default: return false
+  }
+}
+
+/** the longest host a site may have, as DNS allows it */
+const MAX_SITE = 253
+
+/** an action on the Browser's profiles from Settings: a name of 1 to MAX_BROWSER_PROFILE_NAME characters, a profile id, or a site */
+export const isBrowserProfileAction = (v: unknown): v is BrowserProfileAction => {
+  if (typeof v !== 'object' || v === null) return false
+  const a = v as Record<string, unknown>
+  const id = typeof a.id === 'string' && PROFILE_ID_RE.test(a.id)
+  const name = typeof a.name === 'string' && a.name.length >= 1 && a.name.length <= MAX_BROWSER_PROFILE_NAME && !UNSAFE_PROFILE_NAME.test(a.name)
+  switch (a.type) {
+    case 'add': return name
+    case 'rename': return id && name
+    case 'remove':
+    case 'setDefault':
+    case 'clearData': return id
+    case 'disallow': return id && typeof a.site === 'string' && a.site.length >= 1 && a.site.length <= MAX_SITE
+    default: return false
+  }
+}
+
+/** the longest id an import takes: a source id (browser and profile folder) or a profile id, or a browser profile's context id */
+const MAX_IMPORT_ARG = 200
+
+/** a source id, a profile id or a context id of the cookie import: text of 1 to MAX_IMPORT_ARG characters */
+export const isImportArg = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= MAX_IMPORT_ARG
+
+/** the largest pixel value of a Browser panel's rect: a window across several wide monitors still fits */
+const MAX_PANEL_PIXELS = 20_000
+/** a finite number from -MAX_PANEL_PIXELS to MAX_PANEL_PIXELS: a position */
+const isPosition = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= -MAX_PANEL_PIXELS && v <= MAX_PANEL_PIXELS
+/** a finite size from 0 to MAX_PANEL_PIXELS */
+const isSize = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_PANEL_PIXELS
+
+/** the Browser panel's body in CSS pixels (main converts it to window pixels): a position and a size of finite numbers, no negative size, nothing over MAX_PANEL_PIXELS */
+export const isPanelRect = (v: unknown): v is { x: number; y: number; width: number; height: number } => {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  return isPosition(r.x) && isPosition(r.y) && isSize(r.width) && isSize(r.height)
+}
 
 /** a coordinator's key of a row or a project: 1 to COORD_KEY_MAX characters, none of them a control character */
 export const isCoordKey = (v: unknown): v is string => oneLine(v, COORD_KEY_MAX)

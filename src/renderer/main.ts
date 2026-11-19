@@ -16,6 +16,7 @@ import { DocPanel } from './doc-panel'
 import { MailPanel } from './mail-panel'
 import { SessionsPanel } from './sessions-panel'
 import { McpPanel } from './mcp/mcp-panel'
+import { BrowserPanel } from './browser-panel'
 import { ImagePanel } from './image-panel'
 import { SidePanel } from './side-panel'
 import { SheetHeader } from './sheet-header'
@@ -23,7 +24,7 @@ import { Lightbox } from './lightbox'
 import { PlanList } from './plan-list'
 import { RemotePopover, type RemotePopoverView } from './remote-popover'
 import { RecentSessionsWindow } from './recent-sessions'
-import { imagePasteInput, imagePasteRoute, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
+import { imagePasteInput, imagePasteRoute, isEditingKey, isImagePasteKey, isPrimaryKey, mapKey, shortcutLabel, type KeyAction } from './keymap'
 import { SearchBar, type FindTarget } from './search'
 import { loadInter } from './dom'
 import { closeMenu, menuIsOpen, showMenu, type MenuItem } from './menu'
@@ -106,10 +107,13 @@ let docPanel: DocPanel
 let mailPanel: MailPanel
 let sessionsPanel: SessionsPanel
 let mcpPanel: McpPanel
+let browserPanel: BrowserPanel
 /** the MCP · Plugins panel's width when it opens: a fixed size, not a setting */
 const MCP_PANEL_WIDTH = 420
 /** the Sessions panel's width when it opens: a fixed size, not a setting */
 const SESSIONS_PANEL_WIDTH = 340
+/** the Browser panel's width when it opens: a page needs room for its address and its strip */
+const BROWSER_PANEL_WIDTH = 460
 /** the unread agent messages per tab, as main last counted them */
 let mailUnread: MailUnread = {}
 const docUpdates = new Map<string, DocsUpdate>()
@@ -362,6 +366,7 @@ function refreshPanelButtons(): void {
   sheetHeader.setImages(sidePanel.isShowing('images'), unseen, activeId)
   sheetHeader.setChanges(claude, sidePanel.isShowing('changes'), unviewed, activeId)
   sheetHeader.setDocs(docs, sidePanel.isShowing('docs'))
+  sheetHeader.setBrowser(browserAvailable(activeId ? tabs.get(activeId) : undefined), sidePanel.isShowing('browser'))
   sheetHeader.setMessages(settings.agentMessages.enabled, sidePanel.isShowing('messages'), unreadMail, activeId)
   const mark = coordMarkOf(activeId)
   const coordinator = mark?.role === 'coordinator' ? mark : null
@@ -381,6 +386,16 @@ const mcpAvailable = (t: TabState | undefined): boolean => t !== undefined && t.
 function syncMcpPanel(): void {
   sidePanel.setAvailable('mcp', mcpAvailable(activeId ? tabs.get(activeId) : undefined))
   refreshMcpStatus()
+}
+
+/** the Browser panel is offered for a local Claude tab in front, and shows that tab's browser */
+const browserAvailable = (t: TabState | undefined): boolean => t !== undefined && t.info.kind === 'claude' && !t.info.remote
+
+/** the Browser panel follows the tab in front: it is offered for a local Claude tab, and that tab's browser is the one it shows */
+function syncBrowserPanel(): void {
+  const on = browserAvailable(activeId ? tabs.get(activeId) : undefined)
+  browserPanel.show(on ? activeId : null)
+  sidePanel.setAvailable('browser', on)
 }
 
 /** the Sessions panel is offered for a coordinator's tab in front, with that tab's view */
@@ -809,6 +824,7 @@ function runAction(a: KeyAction, tabId: string | null): void {
     case 'toggleImages': toggleImagePanel(); break
     case 'toggleChanges': if (t?.info.kind === 'claude') sidePanel.toggle('changes'); break
     case 'toggleDocs': sidePanel.toggle('docs'); break
+    case 'toggleBrowser': if (browserAvailable(t)) sidePanel.toggle('browser'); break
     case 'toggleGames': {
       gamesWindow.toggle()
       if (gamesWindow.state() === 'closed' && activeId) focusTab(activeId)
@@ -1159,6 +1175,7 @@ function activate(tabId: string): void {
   imagePanel.show(imageUpdates.get(tabId) ?? { tabId, cards: [], unseen: 0, notice: null })
   sidePanel.setAvailable('changes', claude)
   syncMcpPanel()
+  syncBrowserPanel()
   if (pendingReveal.delete(tabId)) sidePanel.open('changes')
   showDocs(tabId, claude)
   mailPanel.show(tabId)
@@ -1573,6 +1590,10 @@ async function boot(): Promise<void> {
       runAction({ type: 'toggleDocs' }, activeId)
       if (activeId) focusTab(activeId)
     },
+    toggleBrowser: () => {
+      runAction({ type: 'toggleBrowser' }, activeId)
+      if (activeId) focusTab(activeId)
+    },
     toggleMessages: () => {
       sidePanel.toggle('messages')
       if (activeId) focusTab(activeId)
@@ -1692,7 +1713,7 @@ async function boot(): Promise<void> {
       e.preventDefault()
       return
     }
-    if (!a || a.type === 'send' || a.type === 'copyOrInterrupt' || a.type === 'smartPaste' || a.type === 'paste' || a.type === 'copy') return
+    if (!a || isEditingKey(a)) return
     e.preventDefault()
     runAction(a, activeId)
   })
@@ -1833,7 +1854,7 @@ async function boot(): Promise<void> {
     const text = t?.view ? promptText(t.view.screen().rows) : null
     ct.answerPrompt(queryId, text === null ? 'none' : text === '' ? 'empty' : 'draft')
   })
-  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width, messages: settings.review.width, sessions: SESSIONS_PANEL_WIDTH, mcp: MCP_PANEL_WIDTH }, (width, resize) => ct.setPanel(width, resize))
+  sidePanel = new SidePanel(document.getElementById('image-panel')!, document.getElementById('terminals')!, { images: settings.imagePanel.width, changes: settings.review.width, docs: settings.review.width, messages: settings.review.width, sessions: SESSIONS_PANEL_WIDTH, mcp: MCP_PANEL_WIDTH, browser: BROWSER_PANEL_WIDTH }, (width, resize) => ct.setPanel(width, resize))
   sidePanel.setAvailable('messages', settings.agentMessages.enabled)
   ct.onPanelMode((mode) => sidePanel.setMode(mode))
   imagePanel = new ImagePanel(
@@ -1952,6 +1973,14 @@ async function boot(): Promise<void> {
       if (t && isChatView(t)) t.chat?.runInTerminal('/mcp')
     }
   })
+  browserPanel = new BrowserPanel(sidePanel.bodies.browser, sidePanel, ct)
+  // Claude's browser: the panel's state per tab, the still of a covered page, the tab that closed, and the panel opened by Claude's first navigation
+  ct.onBrowserState((s) => browserPanel.setState(s))
+  ct.onBrowserStill((id, dataUrl) => browserPanel.setStill(id, dataUrl))
+  ct.onBrowserClosed((id) => browserPanel.closed(id))
+  ct.onBrowserOpen((id) => browserPanel.opened(id))
+  // an app shortcut pressed in a Browser page runs as if it were typed in the window
+  ct.onBrowserKey((a) => runAction(a, activeId))
   sidePanel.onChange = () => {
     imagePanel.panelChanged()
     reviewPanel.panelChanged()
@@ -1959,6 +1988,7 @@ async function boot(): Promise<void> {
     mailPanel.refresh()
     mcpPanel.refresh()
     sessionsPanel.refresh()
+    browserPanel.panelChanged()
     refreshPanelButtons()
   }
   // the servers change under the panel: a restart, a sign-in, a change Claude made to the configuration
@@ -2096,6 +2126,8 @@ async function boot(): Promise<void> {
       sidePanel.setAvailable('docs', false)
       sidePanel.setAvailable('mcp', false)
       sidePanel.setAvailable('sessions', false)
+      browserPanel.show(null)
+      sidePanel.setAvailable('browser', false)
     }
     renderTabs()
     // main activates the neighbor of a closed local tab that was in front; in the other cases it activates none, and the

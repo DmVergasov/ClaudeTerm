@@ -1,0 +1,131 @@
+[
+  {
+    "nodeId": "1",
+    "ignored": false,
+    "role": { "type": "role", "value": "RootWebArea" },
+    "name": { "type": "computedString", "value": "Example Portal sign in" },
+    "childIds": ["2", "3"],
+    "backendDOMNodeId": 100
+  },
+  {
+    "nodeId": "2",
+    "parentId": "1",
+    "ignored": false,
+    "role": { "type": "role", "value": "generic" },
+    "name": { "type": "computedString", "value": "" },
+    "childIds": ["4", "6", "8", "9", "10", "11", "13", "14"]
+  },
+  {
+    "nodeId": "3",
+    "parentId": "1",
+    "ignored": false,
+    "role": { "type": "role", "value": "StaticText" },
+    "name": { "type": "computedString", "value": "Need help? Ask the admin desk." }
+  },
+  {
+    "nodeId": "4",
+    "parentId": "2",
+    "ignored": false,
+    "role": { "type": "role", "value": "heading" },
+    "name": { "type": "computedString", "value": "Sign in" },
+    "properties": [{ "name": "level", "value": { "type": "integer", "value": 1 } }],
+    "childIds": ["5"],
+    "backendDOMNodeId": 101
+  },
+  {
+    "nodeId": "5",
+    "parentId": "4",
+    "ignored": false,
+    "role": { "type": "role", "value": "StaticText" },
+    "name": { "type": "computedString", "value": "Sign in" }
+  },
+  {
+    "nodeId": "6",
+    "parentId": "2",
+    "ignored": true,
+    "role": { "type": "role", "value": "paragraph" },
+    "name": { "type": "computedString", "value": "" },
+    "childIds": ["7"]
+  },
+  {
+    "nodeId": "7",
+    "parentId": "6",
+    "ignored": false,
+    "role": { "type": "role", "value": "StaticText" },
+    "name": { "type": "computedString", "value": "Use your work account." }
+  },
+  {
+    "nodeId": "8",
+    "parentId": "2",
+    "ignored": false,
+    "role": { "type": "role", "value": "textbox" },
+    "name": { "type": "computedString", "value": "Email" },
+    "value": { "type": "string", "value": "ada@example.test" },
+    "backendDOMNodeId": 102
+  },
+  {
+    "nodeId": "9",
+    "parentId": "2",
+    "ignored": false,
+    "role": { "type": "role", "value": "textbox" },
+    "name": { "type": "computedString", "value": "Password" },
+    "backendDOMNodeId": 103
+  },
+  {
+    "nodeId": "10",
+    "parentId": "2",
+    "ignored": false,
+    "role": { "type": "role", "value": "checkbox" },
+    "name": { "type": "computedString", "value": "Remember me" },
+    "properties": [{ "name": "checked", "value": { "type": "boolean", "value": true } }],
+    "backendDOMNodeId": 104
+  },
+  {
+    "nodeId": "11",
+    "parentId": "2",
+    "ignored": false,
+    "role": { "type": "role", "value": "button" },
+    "name": { "type": "computedString", "value": "Sign in" },
+    "childIds": ["12"],
+    "backendDOMNodeId": 105
+  },
+  {
+    "nodeId": "12",
+    "parentId": "11",
+    "ignored": false,
+    "role": { "type": "role", "value": "StaticText" },
+    "name": { "type": "computedString", "value": "Sign in" }
+  },
+  {
+    "nodeId": "13",
+    "parentId": "2",
+    "ignored": false,
+    "role": { "type": "role", "value": "link" },
+    "name": { "type": "computedString", "value": "Forgot password?" },
+    "backendDOMNodeId": 106
+  },
+  {
+    "nodeId": "14",
+    "parentId": "2",
+    "ignored": false,
+    "role": { "type": "role", "value": "group" },
+    "name": { "type": "computedString", "value": "Other ways" },
+    "childIds": ["15"]
+  },
+  {
+    "nodeId": "15",
+    "parentId": "14",
+    "ignored": false,
+    "role": { "type": "role", "value": "link" },
+    "name": { "type": "computedString", "value": "Sign in with SSO" },
+    "childIds": ["16"],
+    "backendDOMNodeId": 107
+  },
+  {
+    "nodeId": "16",
+    "parentId": "15",
+    "ignored": false,
+    "role": { "type": "role", "value": "StaticText" },
+    "name": { "type": "computedString", "value": "Use single sign-on" }
+  }
+]

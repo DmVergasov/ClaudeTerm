@@ -1,4 +1,6 @@
 import type { AccountBegin, AccountFlowView, AccountResult, AccountsView, CarryPreview, FlowAction, PickedFolder, RemoveInfo, RemoveOptions, RemoveResult } from './accounts'
+import { PROFILE_ID_RE, type BrowserPanelAction, type BrowserPanelState, type BrowserProfileAction, type BrowserProfilesView, type ImportSourceView, type ImportStatus } from './browser'
+import type { KeyAction } from './keymap'
 import type { AgentPatch, AgentSnapshot, ChatAnswer, ChatAttachment, ChatCommandInfo, ChatItem, ChatModelInfo, ChatPatch, ChatPermissionMode, ChatSend, ChatSnapshot, HeadsUpAction, HeadsUpCard, TabView } from './chat'
 import type { GamesSave } from './games'
 import type { RemoteState } from './remote-control'
@@ -240,8 +242,34 @@ export const IPC = {
   evMcpChanged: 'ev:mcp-changed',
   /** the patches of an agent page, in order; and a member's agent snapshot arrived, so the page asks for it again */
   evChatAgentPatch: 'ev:chat-agent-patch',
-  evChatAgentReload: 'ev:chat-agent-reload'
+  evChatAgentReload: 'ev:chat-agent-reload',
+  /** the Browser panel: the body's rect in CSS pixels, which main converts to window pixels (null hides the page), whether an overlay covers the panel, the person's actions and the state a tab's panel shows */
+  browserBounds: 'browser:bounds',
+  browserCovered: 'browser:covered',
+  browserAction: 'browser:action',
+  browserState: 'browser:state',
+  /** the browser's state changed, a Claude tab's browser closed, a page's still image came (null: the live page is back), or Claude opened the panel for a tab */
+  evBrowserState: 'ev:browser-state',
+  evBrowserClosed: 'ev:browser-closed',
+  evBrowserStill: 'ev:browser-still',
+  evBrowserOpen: 'ev:browser-open',
+  /** an app shortcut pressed while a Browser page had the keyboard: the window runs it */
+  evBrowserKey: 'ev:browser-key',
+  /** the Browser's profiles: the list, and an action on it (answered with the list; a refused action answers the list unchanged) */
+  browserProfiles: 'browser:profiles',
+  browserProfileAction: 'browser:profile-action',
+  /** the profiles changed: every window gets the list */
+  evBrowserProfiles: 'ev:browser-profiles',
+  /** the cookie import: the sources of the browsers (invoke), a start, a pick of a profile and a cancel; the status of the import goes to every window */
+  browserImportSources: 'browser:import-sources',
+  browserImportStart: 'browser:import-start',
+  browserImportPick: 'browser:import-pick',
+  browserImportCancel: 'browser:import-cancel',
+  evBrowserImport: 'ev:browser-import'
 } as const
+
+/** where the Browser panel's body is in the page, in CSS pixels (main converts them to window pixels) */
+export interface BrowserRect { x: number; y: number; width: number; height: number }
 
 export interface AppInfo {
   /** Windows build number, for xterm's ConPTY handling; null elsewhere */
@@ -310,8 +338,16 @@ export interface SettingsView {
 export type SetSettingResult = { ok: true } | { ok: false; error: string }
 
 /** the sections a Settings window can be opened at */
-export type SettingsSection = 'devices' | 'notifications' | 'accounts' | 'add-account' | 'agent-messages'
-export const isSettingsSection = (v: unknown): v is SettingsSection => v === 'devices' || v === 'notifications' || v === 'accounts' || v === 'add-account' || v === 'agent-messages'
+export type SettingsSection = 'devices' | 'notifications' | 'accounts' | 'add-account' | 'agent-messages' | 'browser' | `browser-import:${string}`
+/** the section that opens the cookie import sheet of one Browser profile: `browser-import:<profile id>` */
+const BROWSER_IMPORT_SECTION = 'browser-import:'
+/** the profile id of a browser-import section, or null for any other section (or an id that is not a profile id) */
+export function importSectionProfile(section: string): string | null {
+  if (!section.startsWith(BROWSER_IMPORT_SECTION)) return null
+  const id = section.slice(BROWSER_IMPORT_SECTION.length)
+  return PROFILE_ID_RE.test(id) ? id : null
+}
+export const isSettingsSection = (v: unknown): v is SettingsSection => typeof v === 'string' && (v === 'devices' || v === 'notifications' || v === 'accounts' || v === 'add-account' || v === 'agent-messages' || v === 'browser' || importSectionProfile(v) !== null)
 
 export type Unsubscribe = () => void
 
@@ -674,4 +710,33 @@ export interface CtApi {
   onChatAgentPatch(cb: (tabId: string, agentId: string, fromRev: number, toRev: number, patches: AgentPatch[]) => void): Unsubscribe
   /** a member's agent snapshot arrived: the page asks for its snapshot again */
   onChatAgentReload(cb: (tabId: string, agentId: string) => void): Unsubscribe
+  /** the Browser panel's body rect for the tab whose page it shows (null tab or rect: no page is shown) */
+  browserBounds(tabId: string | null, rect: BrowserRect | null): void
+  /** an overlay of ClaudeTerm covers the Browser panel (true) or no longer does (false) */
+  browserCovered(covered: boolean): void
+  browserAction(tabId: string, action: BrowserPanelAction): void
+  browserState(tabId: string): Promise<BrowserPanelState | null>
+  onBrowserState(cb: (state: BrowserPanelState) => void): Unsubscribe
+  onBrowserClosed(cb: (tabId: string) => void): Unsubscribe
+  /** a page's still image while an overlay covers it: a PNG data URL, or null when the live page is back */
+  onBrowserStill(cb: (tabId: string, dataUrl: string | null) => void): Unsubscribe
+  /** Claude's first navigation in a tab: the panel opens on Browser if that tab is in front */
+  onBrowserOpen(cb: (tabId: string) => void): Unsubscribe
+  /** an app shortcut pressed while a Browser page had the keyboard: the window runs it as if the key were typed in the window */
+  onBrowserKey(cb: (action: KeyAction) => void): Unsubscribe
+  /** the Browser's profiles; an action on one is answered with the list, and a refused action with the list unchanged */
+  browserProfiles(): Promise<BrowserProfilesView>
+  browserProfileAction(a: BrowserProfileAction): Promise<BrowserProfilesView>
+  /** the profiles changed (in any window, or a site was allowed always): the list again */
+  onBrowserProfiles(cb: (view: BrowserProfilesView) => void): Unsubscribe
+  /** the browsers the cookie import can read from: each profile of each browser, and whether it can be read now */
+  browserImportSources(): Promise<ImportSourceView[]>
+  /** starts an import of a source's cookies into a profile; one import runs at a time, and its status comes by onBrowserImport */
+  browserImportStart(sourceId: string, profileId: string): void
+  /** the person's choice of a browser profile (its context id) while the import asks which one */
+  browserImportPick(contextId: string): void
+  /** cancels the running import */
+  browserImportCancel(): void
+  /** the import's status, in every window */
+  onBrowserImport(cb: (status: ImportStatus) => void): Unsubscribe
 }

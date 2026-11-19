@@ -466,3 +466,16 @@ describe('parsePipeMessage: the Remote Control id', () => {
     for (const m of messages) expect('remote' in parsed(m)).toBe(false)
   })
 })
+
+describe('parsePipeMessage: the browser message', () => {
+  it('accepts a browser command for a Claude tab', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'browser', tabId: TAB, command: { op: 'click', ref: 'e3', element: 'Save' } })))
+      .toEqual({ ok: true, message: { v: 1, type: 'browser', tabId: TAB, command: { op: 'click', ref: 'e3', element: 'Save', button: 'left', doubleClick: false } } })
+  })
+
+  it('refuses a tabId that is no UUID, and a bad command', () => {
+    expect(parsePipeMessage(JSON.stringify({ v: 1, type: 'browser', tabId: 'tab-1', command: { op: 'snapshot' } }))).toEqual({ ok: false, error: 'tabId must be a UUID' })
+    const bad = parsePipeMessage(JSON.stringify({ v: 1, type: 'browser', tabId: TAB, command: { op: 'fly' } }))
+    expect(bad.ok).toBe(false)
+  })
+})

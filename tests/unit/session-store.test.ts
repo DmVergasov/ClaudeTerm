@@ -167,6 +167,28 @@ describe('SessionStore', () => {
   })
 })
 
+describe('parseSnapshot browser', () => {
+  const browser = { profile: 'default', pages: ['http://localhost:1/'], current: 0 }
+
+  it('keeps the browser of a claude tab: its profile, its pages and the current one', () => {
+    expect(parseSnapshot(JSON.stringify(snap([{ ...claudeTab, browser }])))?.tabs[0]).toMatchObject({ browser })
+  })
+
+  it('drops the browser of a shell tab, and keeps the tab', () => {
+    const s = parseSnapshot(JSON.stringify(snap([{ ...shellTab, browser } as unknown as SessionSnapshotTab])))
+    expect(s?.tabs).toHaveLength(1)
+    expect(s?.tabs[0]).not.toHaveProperty('browser')
+  })
+
+  it('drops a bad browser value and keeps the tab', () => {
+    for (const bad of [5, 'default', null, [], { pages: [], current: 0 }, { profile: 'Work Profile', pages: [], current: 0 }]) {
+      const s = parseSnapshot(JSON.stringify(snap([{ ...claudeTab, browser: bad } as unknown as SessionSnapshotTab])))
+      expect(s?.tabs).toHaveLength(1)
+      expect(s?.tabs[0]).not.toHaveProperty('browser')
+    }
+  })
+})
+
 describe('parseSnapshot forks', () => {
   it('keeps a fork whose head is another Claude tab, before or after it, and drops a bad one', () => {
     const tabsOf = (tabs: unknown[]) => parseSnapshot(JSON.stringify({ version: 1, savedAt: 'x', tabs }))?.tabs

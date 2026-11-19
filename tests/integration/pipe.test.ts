@@ -30,6 +30,7 @@ const okHandlers: PipeHandlers = {
   agentList: () => ({ ok: true }),
   agentSend: () => ({ ok: true }),
   coord: async () => ({ ok: true }),
+  browser: async () => ({ ok: true }),
   mailWait: async () => ({ ok: true })
 }
 
