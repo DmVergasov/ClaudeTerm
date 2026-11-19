@@ -479,8 +479,16 @@ function killQuestion(proc: ChildProcess | undefined): void {
 }
 
 /**
- * One question to the user's Claude Code, answered in one turn: no tools, no settings, MCP servers or CLAUDE.md of the user,
- * and no session kept in their history. Its answer's text; it fails when Claude Code gives no answer, an error, or none in time.
+ * the environment of a single question: no prompt cache, as the question is never sent again (a cache write costs up to twice
+ * the input, the 1-hour cache of a subscription twice, and nothing would read it), and no auto memory, which is the user's as
+ * their CLAUDE.md is: with no settings Claude Code would load it, and choose from it with a question of its own
+ */
+const questionEnv = (env: Record<string, string>): Record<string, string> => ({ ...env, DISABLE_PROMPT_CACHING: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' })
+
+/**
+ * One question to the user's Claude Code, answered in one turn: no tools, no settings, MCP servers, CLAUDE.md or auto memory of
+ * the user, no prompt cache, and no session kept in their history. Its answer's text; it fails when Claude Code gives no answer,
+ * an error, or none in time.
  */
 export async function askOnce(o: AskOnce): Promise<string> {
   const sdk = await loadSdk()
@@ -495,7 +503,7 @@ export async function askOnce(o: AskOnce): Promise<string> {
       prompt: prompt(),
       options: {
         cwd: o.cwd,
-        env: o.env,
+        env: questionEnv(o.env),
         model: o.model,
         systemPrompt: o.system,
         tools: [],

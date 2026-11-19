@@ -1762,7 +1762,7 @@ function mcpControl(requestId: string, request: Msg): void {
 
 // ---- start ----
 
-// the sign-in variables are logged as set or not, never their values
+// the sign-in variables are logged as set or not, never their values; the switches of the prompt cache and auto memory with theirs
 const env = process.env
 logLine({
   argv,
@@ -1772,7 +1772,9 @@ logLine({
     oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN !== undefined,
     refreshToken: env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN !== undefined,
     apiKey: env.ANTHROPIC_API_KEY !== undefined,
-    authToken: env.ANTHROPIC_AUTH_TOKEN !== undefined
+    authToken: env.ANTHROPIC_AUTH_TOKEN !== undefined,
+    disablePromptCaching: env.DISABLE_PROMPT_CACHING ?? null,
+    disableAutoMemory: env.CLAUDE_CODE_DISABLE_AUTO_MEMORY ?? null
   }
 })
 

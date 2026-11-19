@@ -10,8 +10,12 @@ import type { Logger } from '../log'
  * side agent here is one question to Claude Code on HEADS_UP_MODEL, with no tools, no settings and no session kept.
  */
 
-/** a check after every this many tool calls of a turn: the 6th, the 12th... */
-export const HEADS_UP_EVERY = 6
+/**
+ * The first check of a turn comes after this many of its tool calls, and the gap to the next one doubles each time: the 6th,
+ * the 18th, the 42nd, the 90th... Each check is a question of its own, uncached, with up to EXCERPT_CHARS of the session: a long
+ * turn is checked a few times, not after every few calls.
+ */
+export const HEADS_UP_FIRST = 6
 /** the model the side agent asks */
 export const HEADS_UP_MODEL = 'sonnet'
 /** a question to the side agent is given up after this long */
@@ -224,6 +228,9 @@ export interface HeadsUpDeps {
 interface TabState {
   /** the tool calls of the turn so far */
   calls: number
+  /** the tool call of the turn the next check comes after, and the gap from it to the one after */
+  nextCheck: number
+  gap: number
   /** counts the turns: each init starts one */
   turn: number
   /** a check is under way: no second one starts */
@@ -260,6 +267,8 @@ export class HeadsUp {
       // Claude Code starts every turn with an init
       s.turn++
       s.calls = 0
+      s.nextCheck = HEADS_UP_FIRST
+      s.gap = HEADS_UP_FIRST
       return
     }
     // a subagent's calls are its own work, not the conversation's
@@ -269,7 +278,11 @@ export class HeadsUp {
     for (const block of content) {
       if (typeof block !== 'object' || block === null || (block as { type?: unknown }).type !== 'tool_use') continue
       s.calls++
-      if (s.calls % HEADS_UP_EVERY === 0) this.check(tabId, s)
+      if (s.calls !== s.nextCheck) continue
+      // a check that cannot run now (one under way, a card showing) is not made up later: the next one keeps its time
+      s.gap *= 2
+      s.nextCheck += s.gap
+      this.check(tabId, s)
     }
   }
 
@@ -373,7 +386,7 @@ export class HeadsUp {
   private state(tabId: string): TabState {
     let s = this.tabs.get(tabId)
     if (!s) {
-      s = { calls: 0, turn: 0, checking: false, offeredTurn: -1, card: null, asking: null, topic: '', offered: [], known: [] }
+      s = { calls: 0, nextCheck: HEADS_UP_FIRST, gap: HEADS_UP_FIRST, turn: 0, checking: false, offeredTurn: -1, card: null, asking: null, topic: '', offered: [], known: [] }
       this.tabs.set(tabId, s)
     }
     return s

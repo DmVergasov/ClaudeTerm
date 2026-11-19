@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { HEADS_UP_EVERY } from '../../src/main/chat/heads-up'
+import { HEADS_UP_FIRST } from '../../src/main/chat/heads-up'
 import { IPC } from '../../src/shared/ipc'
 import type { FakeStep } from '../fixtures/fake-claude/install'
 import { CHAT_INPUT, controlResponses, launchChatTab, sendMessage, userMessages } from './chat-helpers'
@@ -27,6 +27,9 @@ const work = (n: number): FakeStep[] => [
 const starts = (log: () => Record<string, unknown>[]): string[][] => (log() as { argv?: string[] }[]).filter((e) => Array.isArray(e.argv)).map((e) => e.argv!)
 /** the processes Heads up started: its questions keep no session */
 const sideStarts = (log: () => Record<string, unknown>[]): string[][] => starts(log).filter((argv) => argv.includes('--no-session-persistence'))
+/** the switches each Heads up process was started with, as the stand-in logs them */
+const sideEnvs = (log: () => Record<string, unknown>[]): unknown[] =>
+  (log() as { argv?: string[]; env?: unknown }[]).filter((e) => Array.isArray(e.argv) && e.argv.includes('--no-session-persistence')).map((e) => e.env)
 /** a flag's value in a command line, given as `--name value` or `--name=value`; undefined when the line has no such flag */
 function flagOf(argv: string[], name: string): string | undefined {
   const at = argv.findIndex((a) => a === name || a.startsWith(`${name}=`))
@@ -37,8 +40,8 @@ function flagOf(argv: string[], name: string): string | undefined {
 const turnIdle = (page: Page, tabId: string): Promise<boolean> =>
   page.evaluate((id) => window.ct.chatSnapshot(id).then((s) => s?.state.turn === 'idle'), tabId)
 
-test(`a Heads up card shows above the message box after the ${HEADS_UP_EVERY}th tool call; Explain more brings more, and Got it closes it`, async () => {
-  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING, explain: MORE } }, { headsUp: true })
+test(`a Heads up card shows above the message box after the ${HEADS_UP_FIRST}th tool call; Explain more brings more, and Got it closes it`, async () => {
+  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_FIRST) }, headsUp: { check: FINDING, explain: MORE } }, { headsUp: true })
   try {
     await sendMessage(page, 'clean up')
     const card = page.locator(CARD)
@@ -62,6 +65,8 @@ test(`a Heads up card shows above the message box after the ${HEADS_UP_EVERY}th 
     expect(argv).toContain('--strict-mcp-config')
     expect(flagOf(argv, '--session-id')).toBeUndefined()
     expect(flagOf(argv, '--resume')).toBeUndefined()
+    // a question is never sent again: it writes no prompt cache, and it loads none of the user's auto memory
+    expect(sideEnvs(log)[0]).toMatchObject({ disablePromptCaching: '1', disableAutoMemory: '1' })
     // the chat's own conversation got the person's message only
     await expect.poll(() => turnIdle(page, tabId)).toBe(true)
     expect(userMessages(log).filter((m) => !m.startsWith('Offered already'))).toEqual(['clean up'])
@@ -80,7 +85,7 @@ test(`a Heads up card shows above the message box after the ${HEADS_UP_EVERY}th 
 })
 
 test("the side question gives the person's own messages apart, so the card comes in their language", async () => {
-  const { app, page, log } = await launchChatTab({ turns: { 'почисти базу': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  const { app, page, log } = await launchChatTab({ turns: { 'почисти базу': work(HEADS_UP_FIRST) }, headsUp: { check: FINDING } }, { headsUp: true })
   try {
     await sendMessage(page, 'почисти базу')
     await expect(page.locator(CARD)).toBeVisible({ timeout: 20_000 })
@@ -92,7 +97,7 @@ test("the side question gives the person's own messages apart, so the card comes
 })
 
 test('Not relevant closes the card, and a turn of fewer tool calls asks nothing', async () => {
-  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY), 'look': work(HEADS_UP_EVERY - 1) }, headsUp: { check: FINDING } }, { headsUp: true })
+  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_FIRST), 'look': work(HEADS_UP_FIRST - 1) }, headsUp: { check: FINDING } }, { headsUp: true })
   try {
     await sendMessage(page, 'clean up')
     const card = page.locator(CARD)
@@ -111,7 +116,7 @@ test('Not relevant closes the card, and a turn of fewer tool calls asks nothing'
 })
 
 test('Ask Claude sends your words with the card to the conversation, and the card closes', async () => {
-  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_FIRST) }, headsUp: { check: FINDING } }, { headsUp: true })
   try {
     await sendMessage(page, 'clean up')
     const card = page.locator(CARD)
@@ -143,7 +148,7 @@ test('Ask Claude sends your words with the card to the conversation, and the car
 
 test('a card that comes while the person types in its field does not take the keyboard', async () => {
   const { app, page, log, config } = await launchChatTab({
-    turns: { go: [...work(HEADS_UP_EVERY), { gate: 'release' }, { ask: { tool: 'Bash', input: { command: 'ls' } }, allowed: [], denied: [] }] },
+    turns: { go: [...work(HEADS_UP_FIRST), { gate: 'release' }, { ask: { tool: 'Bash', input: { command: 'ls' } }, allowed: [], denied: [] }] },
     headsUp: { check: FINDING }
   }, { headsUp: true })
   try {
@@ -166,7 +171,7 @@ test('a card that comes while the person types in its field does not take the ke
 })
 
 test('a new card starts with an empty field', async () => {
-  const { app, page, tabId } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY), again: work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  const { app, page, tabId } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_FIRST), again: work(HEADS_UP_FIRST) }, headsUp: { check: FINDING } }, { headsUp: true })
   try {
     await sendMessage(page, 'clean up')
     const card = page.locator(CARD)
@@ -186,7 +191,7 @@ test('a new card starts with an empty field', async () => {
 
 test('when the chat has ended, Ask Claude shows the error under the field and the words stay in it', async () => {
   const { app, page, config } = await launchChatTab({
-    turns: { 'clean up': [...work(HEADS_UP_EVERY), { gate: 'release' }, { crash: 1, once: true }] },
+    turns: { 'clean up': [...work(HEADS_UP_FIRST), { gate: 'release' }, { crash: 1, once: true }] },
     headsUp: { check: FINDING }
   }, { headsUp: true })
   try {
@@ -208,7 +213,7 @@ test('when the chat has ended, Ask Claude shows the error under the field and th
 })
 
 test('a message that the window cannot hand over shows why under the field, and keeps the words', async () => {
-  const { app, page } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING } }, { headsUp: true })
+  const { app, page } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_FIRST) }, headsUp: { check: FINDING } }, { headsUp: true })
   try {
     await sendMessage(page, 'clean up')
     const card = page.locator(CARD)
@@ -231,7 +236,7 @@ test('a message that the window cannot hand over shows why under the field, and 
 })
 
 test("text typed in the card's field stays when Explain more brings the explanation, and Enter sends it", async () => {
-  const { app, page, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING, explain: MORE } }, { headsUp: true })
+  const { app, page, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_FIRST) }, headsUp: { check: FINDING, explain: MORE } }, { headsUp: true })
   try {
     await sendMessage(page, 'clean up')
     const card = page.locator(CARD)
@@ -259,7 +264,7 @@ test("text typed in the card's field stays when Explain more brings the explanat
 })
 
 test('the field keeps its focus and caret when the card is updated under the person typing', async () => {
-  const { app, page } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY) }, headsUp: { check: FINDING, explain: MORE } }, { headsUp: true })
+  const { app, page } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_FIRST) }, headsUp: { check: FINDING, explain: MORE } }, { headsUp: true })
   try {
     await sendMessage(page, 'clean up')
     const card = page.locator(CARD)
@@ -279,7 +284,7 @@ test('the field keeps its focus and caret when the card is updated under the per
 })
 
 test('with Heads up turned off, a long turn asks no side question and shows no card', async () => {
-  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_EVERY * 2) }, headsUp: { check: FINDING } }, { headsUp: false })
+  const { app, page, tabId, log } = await launchChatTab({ turns: { 'clean up': work(HEADS_UP_FIRST * 2) }, headsUp: { check: FINDING } }, { headsUp: false })
   try {
     await sendMessage(page, 'clean up')
     await expect(page.locator('.chat-host:visible')).toContainText('Cleaned up.')
