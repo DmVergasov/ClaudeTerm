@@ -71,7 +71,10 @@ export function hookMessage(input: Obj, tabId: string): PipeMessage | null {
       cwd: typeof input.cwd === 'string' && isAbsolute(input.cwd) ? input.cwd : null
     }
   }
-  if (event === 'SubagentStart' || event === 'SubagentStop') {
+  // an API error that ends a subagent's turn (the usage limit, an overload) runs StopFailure with its agent_id, and no
+  // SubagentStop follows: it is that subagent's end, not the main conversation's
+  const subagentFailed = event === 'StopFailure' && typeof input.agent_id === 'string' && input.agent_id !== ''
+  if (event === 'SubagentStart' || event === 'SubagentStop' || subagentFailed) {
     if (typeof input.agent_id !== 'string' || input.agent_id === '') return null
     return {
       v: 1,
