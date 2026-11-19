@@ -120,7 +120,28 @@ describe('parseSessionTail', () => {
       { type: 'ai-title', aiTitle: 'A1' }, { type: 'last-prompt', lastPrompt: 'p1' },
       { type: 'custom-title', customTitle: 'Mine' }, { type: 'ai-title', aiTitle: 'A2' }, { type: 'last-prompt', lastPrompt: 'p2' }
     )
-    expect(parseSessionTail(text, true)).toEqual({ customTitle: 'Mine', aiTitle: 'A2', lastPrompt: 'p2', folder: null })
+    expect(parseSessionTail(text, true)).toEqual({ customTitle: 'Mine', aiTitle: 'A2', lastPrompt: 'p2', folder: null, lastMessageAt: null })
+  })
+
+  it('the last message is the time of the last user or assistant entry; bookkeeping and system entries after it do not count', () => {
+    const text = jsonl(
+      user('D:\\a', 'first', { timestamp: '2026-10-01T10:00:00.000Z' }),
+      { type: 'assistant', timestamp: '2026-10-01T10:00:05.000Z', message: { role: 'assistant', content: [] } },
+      { type: 'system', subtype: 'turn_duration', timestamp: '2026-10-01T10:09:00.000Z' },
+      { type: 'attachment', cwd: 'D:\\a', timestamp: '2026-10-01T10:10:00.000Z' },
+      { type: 'file-history-snapshot', messageId: 'm', snapshot: { timestamp: '2026-11-01T00:00:00.000Z' } },
+      { type: 'summary', summary: 's', leafUuid: 'u' }, { type: 'last-prompt', lastPrompt: 'p' }, { type: 'cost-state' }
+    )
+    expect(parseSessionTail(text, true).lastMessageAt).toBe(Date.parse('2026-10-01T10:00:05.000Z'))
+  })
+
+  it('a message with no time or a broken one is passed over for the one before it; none at all → null', () => {
+    const text = jsonl(
+      user('D:\\a', 'dated', { timestamp: '2026-10-01T10:00:00.000Z' }),
+      user('D:\\a', 'no time'), user('D:\\a', 'broken', { timestamp: 'soon' }), user('D:\\a', 'a number', { timestamp: 1_790_000_000_000 })
+    )
+    expect(parseSessionTail(text, true).lastMessageAt).toBe(Date.parse('2026-10-01T10:00:00.000Z'))
+    expect(parseSessionTail(jsonl(user('D:\\a', 'no time'), { type: 'ai-title', aiTitle: 'T' }), true).lastMessageAt).toBeNull()
   })
 
   it('drops the first line when the window starts inside the file', () => {
@@ -130,7 +151,7 @@ describe('parseSessionTail', () => {
 
   it('a half-written last line is ignored', () => {
     const text = jsonl({ type: 'ai-title', aiTitle: 'Done' }) + '{"type":"ai-title","aiTitle":"Half'
-    expect(parseSessionTail(text, true)).toEqual({ customTitle: null, aiTitle: 'Done', lastPrompt: null, folder: null })
+    expect(parseSessionTail(text, true)).toEqual({ customTitle: null, aiTitle: 'Done', lastPrompt: null, folder: null, lastMessageAt: null })
   })
 })
 
@@ -179,6 +200,36 @@ describe('SessionHistory', () => {
     expect((await h.list(1)).map((s) => s.id)).toEqual([SID3])
     // the one left out is never read
     expect(reads.filter((r) => r.includes(SID2))).toEqual([])
+  })
+
+  it('a session is dated by its last message, at most its file time, and listed by that date', async () => {
+    const msg = (text: string, ms: number): object => user('D:\\a', text, { timestamp: new Date(ms).toISOString() })
+    const { fs } = memFs({
+      // touched long after its last message
+      [file('D--a', `${SID1}.jsonl`)]: { text: jsonl(msg('old work', 1_000_000), { type: 'cost-state' }), mtimeMs: 9_000_000 },
+      [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(msg('recent work', 5_000_000)), mtimeMs: 5_000_500 },
+      // a message time past the file's is cut to the file's, as Claude Code does
+      [file('D--a', `${SID3}.jsonl`)]: { text: jsonl(msg('clock ahead', 8_000_000)), mtimeMs: 3_000_000 }
+    })
+    expect((await new SessionHistory(() => main, fs).list(10)).map((s) => [s.id, s.modifiedAt])).toEqual([
+      [SID2, 5_000_000], [SID3, 3_000_000], [SID1, 1_000_000]
+    ])
+  })
+
+  it('a file older than the last of `limit` listed sessions is not read: no session in it can be newer', async () => {
+    const msg = (text: string, ms: number): object => user('D:\\a', text, { timestamp: new Date(ms).toISOString() })
+    const SID4 = '1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d'
+    const { fs, reads } = memFs({
+      [file('D--a', `${SID1}.jsonl`)]: { text: jsonl(msg('touched', 1_000)), mtimeMs: 9_000 },
+      [file('D--a', `${SID2}.jsonl`)]: { text: jsonl(msg('worked on', 6_000)), mtimeMs: 7_000 },
+      [file('D--a', `${SID3}.jsonl`)]: { text: jsonl(msg('also', 4_000)), mtimeMs: 5_000 },
+      [file('D--a', `${SID4}.jsonl`)]: { text: jsonl(msg('older', 2_000)), mtimeMs: 3_000 }
+    })
+    const h = new SessionHistory(() => main, fs)
+    expect((await h.list(2)).map((s) => s.id)).toEqual([SID2, SID3])
+    expect(reads.filter((r) => r.includes(SID4))).toEqual([])
+    // a starred session is read and listed however old
+    expect((await h.list(2, new Set([SID4]))).map((s) => s.id)).toEqual([SID2, SID3, SID4])
   })
 
   it('a starred id with no transcript, or with a claude -p one, is just not listed', async () => {
