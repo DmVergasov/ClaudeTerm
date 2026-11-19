@@ -7,7 +7,7 @@ import { pathKey } from '../../src/main/path-key'
 import type { PermissionAsk, SdkPermissionResult } from '../../src/main/chat/chat-cards'
 import type { ChatEngine, ChatEngineHandlers, ChatEngineStart } from '../../src/main/chat/chat-engine'
 import { resolveChatLaunch, type ChatLaunch } from '../../src/main/chat/claude-spawn'
-import { startSdkEngine } from '../../src/main/chat/sdk-engine'
+import { askOnce, startSdkEngine } from '../../src/main/chat/sdk-engine'
 import { installFakeClaude, type FakeScript } from '../fixtures/fake-claude/install'
 
 // every process the engine starts goes through spawnChatProcess: the spy records which file it was given
@@ -464,6 +464,21 @@ describe('the SDK engine', () => {
     expect(controlRequests(log, 'mcp_reconnect')).toEqual([expect.objectContaining({ serverName: 'docs' })])
     expect(controlRequests(log, 'mcp_toggle')).toEqual([expect.objectContaining({ serverName: 'docs', enabled: false })])
     await stop(engine, h)
+  })
+})
+
+describe('a single question (askOnce)', () => {
+  it("runs a Claude Code that writes no prompt cache and loads no auto memory: the question is never asked again, and the memory is the user's", async () => {
+    const log = join(dir, 'ask.log')
+    const questionEnv = env(log, writeScript({ turns: { 'Anything to know?': [{ text: 'topic: none' }] } }))
+    // the machine's own switches are not what the test sees
+    delete questionEnv.DISABLE_PROMPT_CACHING
+    delete questionEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY
+    const answer = await askOnce({ launch, cwd: work, env: questionEnv, model: 'sonnet', system: 'Answer briefly.', prompt: 'Anything to know?', timeoutMs: 15_000 })
+    expect(answer).toBe('topic: none')
+    const started = logEntries(log).filter(e => Array.isArray(e.argv))
+    expect(started).toHaveLength(1)
+    expect(started[0]!.env).toMatchObject({ disablePromptCaching: '1', disableAutoMemory: '1' })
   })
 })
 

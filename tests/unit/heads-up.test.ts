@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatItem, HeadsUpCard } from '../../src/shared/chat'
-import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_EVERY, HeadsUp, askMessage, checkPrompt, excerpt, explainPrompt, parseFinding, personWords } from '../../src/main/chat/heads-up'
+import { CHECK_SYSTEM, EXPLAIN_SYSTEM, HEADS_UP_FIRST, HeadsUp, askMessage, checkPrompt, excerpt, explainPrompt, parseFinding, personWords } from '../../src/main/chat/heads-up'
 import { BACKGROUND_PROMPT } from '../../src/main/auto-continue'
 import { FORWARD_HEAD } from '../../src/main/chat/agent-forward'
 import { ChatModel } from '../../src/main/chat/chat-model'
@@ -150,10 +150,13 @@ describe('excerpt', () => {
 })
 
 describe('HeadsUp', () => {
-  it(`checks after every ${HEADS_UP_EVERY}th tool call of a turn, not before`, () => {
+  /** the tool call of a turn its kth check comes after: the gap from one check to the next doubles */
+  const nth = (k: number): number => HEADS_UP_FIRST * (2 ** k - 1)
+
+  it(`the first check of a turn comes after its ${HEADS_UP_FIRST}th tool call, not before`, () => {
     const { h, asked } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY - 1))
+    h.message('t', toolUse(HEADS_UP_FIRST - 1))
     expect(asked).toHaveLength(0)
     h.message('t', toolUse(1))
     expect(asked).toHaveLength(1)
@@ -161,35 +164,54 @@ describe('HeadsUp', () => {
     expect(asked[0]!.prompt).toContain('<session>\nPerson: Clean up the old orders\n</session>')
   })
 
+  it('the gap to the next check doubles each time, so a long turn is checked a few times, not after every few tool calls', async () => {
+    const { h, asked, settle } = setup()
+    h.message('t', init)
+    const at: number[] = []
+    for (let call = 1; call <= 200; call++) {
+      h.message('t', toolUse(1))
+      if (asked.length === at.length) continue
+      at.push(call)
+      asked.at(-1)!.resolve('topic: none')
+      await settle()
+    }
+    expect(at).toEqual([6, 18, 42, 90, 186])
+    // the next turn starts again from the first gap
+    h.message('t', init)
+    h.message('t', toolUse(HEADS_UP_FIRST))
+    expect(asked).toHaveLength(6)
+  })
+
   it("a subagent's tool calls do not count, and each turn counts from 0", () => {
     const { h, asked } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY, 'agent-call'))
-    h.message('t', toolUse(HEADS_UP_EVERY - 1))
+    h.message('t', toolUse(HEADS_UP_FIRST, 'agent-call'))
+    h.message('t', toolUse(HEADS_UP_FIRST - 1))
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY - 1))
+    h.message('t', toolUse(HEADS_UP_FIRST - 1))
     expect(asked).toHaveLength(0)
   })
 
   it('a finding shows as a card; one check at a time, and none while a card shows or in the turn that got one', async () => {
     const { h, asked, shown, settle } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(nth(1)))
+    // the second check is due while the first is still asked: it does not start
+    h.message('t', toolUse(nth(2) - nth(1)))
     expect(asked).toHaveLength(1)
     asked[0]!.resolve(FINDING)
     await settle()
     expect(shown).toEqual([{ id: 'card-1', tag: 'heads-up', title: 'The tests run against production', text: expect.stringContaining('production'), more: null, explaining: false, explainError: null }])
     expect(h.card('t')?.id).toBe('card-1')
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(nth(3) - nth(2)))
     expect(asked).toHaveLength(1)
     // closed, the same turn still gets no second card; the next turn does, and the topic offered is named to be skipped
     expect(h.act('t', 'card-1', 'got-it')).toBe(true)
     expect(shown.at(-1)).toBeNull()
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(nth(4) - nth(3)))
     expect(asked).toHaveLength(1)
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     expect(asked).toHaveLength(2)
     expect(asked[1]!.prompt).toContain('Offered already, do not offer again:\n- The test database is the production one')
   })
@@ -197,13 +219,13 @@ describe('HeadsUp', () => {
   it('an answer of none, or a failed check, shows nothing and lets the next check run', async () => {
     const { h, asked, shown, settle } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(nth(1)))
     asked[0]!.resolve('topic: none')
     await settle()
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(nth(2) - nth(1)))
     asked[1]!.reject(new Error('Claude Code ended without an answer'))
     await settle()
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(nth(3) - nth(2)))
     expect(asked).toHaveLength(3)
     expect(shown).toEqual([])
   })
@@ -211,32 +233,32 @@ describe('HeadsUp', () => {
   it('with claude.headsUp off, or no chat running, nothing is asked', () => {
     const off = setup({ enabled: false })
     off.h.message('t', init)
-    off.h.message('t', toolUse(HEADS_UP_EVERY))
+    off.h.message('t', toolUse(HEADS_UP_FIRST))
     expect(off.asked).toHaveLength(0)
     const gone = setup({ items: null })
     gone.h.message('t', init)
-    gone.h.message('t', toolUse(HEADS_UP_EVERY))
+    gone.h.message('t', toolUse(HEADS_UP_FIRST))
     expect(gone.asked).toHaveLength(0)
   })
 
   it('Not relevant closes the card, and its topic is named as not needed in the next checks', async () => {
     const { h, asked, shown, settle } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     asked[0]!.resolve(FINDING)
     await settle()
     expect(h.act('t', 'card-1', 'not-relevant')).toBe(true)
     expect(shown.at(-1)).toBeNull()
     expect(h.card('t')).toBeNull()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     expect(asked[1]!.prompt).toContain('do not need them, do not offer them:\n- The test database is the production one')
   })
 
   it('Explain more asks once, shows that it is on its way, then the longer explanation', async () => {
     const { h, asked, shown, settle } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     asked[0]!.resolve(FINDING)
     await settle()
     expect(h.act('t', 'card-1', 'explain')).toBe(true)
@@ -256,7 +278,7 @@ describe('HeadsUp', () => {
   it('an explanation that fails says so on the card', async () => {
     const { h, asked, shown, settle } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     asked[0]!.resolve(FINDING)
     await settle()
     h.act('t', 'card-1', 'explain')
@@ -278,7 +300,7 @@ describe('HeadsUp', () => {
     ]
     const { h, asked, settle } = setup({ items })
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     const block = '<person>\nПеренеси замеры в отчёт\nче там долго еще?\n</person>'
     expect(asked[0]!.prompt).not.toContain('Person: Перенеси')
     expect(asked[0]!.prompt).toContain(block)
@@ -292,7 +314,7 @@ describe('HeadsUp', () => {
     const { h, asked, shown, settle } = setup()
     expect(h.act('t', 'card-1', 'got-it')).toBe(false)
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     h.forget('t')
     asked[0]!.resolve(FINDING)
     await settle()
@@ -305,7 +327,7 @@ describe('HeadsUp', () => {
   it('Ask Claude sends the words with the card quoted to the conversation, and closes the card', async () => {
     const { h, asked, shown, sent, settle } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     asked[0]!.resolve(FINDING)
     await settle()
     expect(await h.ask('t', 'card-1', '  Fix it now  ')).toBeNull()
@@ -317,7 +339,7 @@ describe('HeadsUp', () => {
   it('the message quotes the longer explanation too once Explain more brought it', async () => {
     const { h, asked, sent, settle } = setup()
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     asked[0]!.resolve(FINDING)
     await settle()
     h.act('t', 'card-1', 'explain')
@@ -330,7 +352,7 @@ describe('HeadsUp', () => {
   it('a second Ask Claude while the first message is still being sent sends nothing, and a failed first send lets the card be asked again', async () => {
     const { h, asked, sent, held, settle } = setup({ hold: true })
     h.message('t', init)
-    h.message('t', toolUse(HEADS_UP_EVERY))
+    h.message('t', toolUse(HEADS_UP_FIRST))
     asked[0]!.resolve(FINDING)
     await settle()
     const first = h.ask('t', 'card-1', 'Fix it now')
@@ -358,7 +380,7 @@ describe('HeadsUp', () => {
 
     const failing = setup({ sendError: 'The chat has ended.' })
     failing.h.message('t', init)
-    failing.h.message('t', toolUse(HEADS_UP_EVERY))
+    failing.h.message('t', toolUse(HEADS_UP_FIRST))
     failing.asked[0]!.resolve(FINDING)
     await failing.settle()
     expect(await failing.h.ask('t', 'card-1', 'x')).toBe('The chat has ended.')
@@ -420,7 +442,7 @@ describe('the language line of the side agent\'s answer', () => {
     const run = async (answer: string): Promise<string | null> => {
       const { h, asked, shown, settle } = setup()
       h.message('t', init)
-      h.message('t', toolUse(HEADS_UP_EVERY))
+      h.message('t', toolUse(HEADS_UP_FIRST))
       asked[0]!.resolve(FINDING)
       await settle()
       h.act('t', 'card-1', 'explain')

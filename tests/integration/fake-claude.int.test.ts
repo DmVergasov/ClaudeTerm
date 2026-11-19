@@ -893,8 +893,8 @@ describe('the stand-in Claude Code', () => {
     expect(await version.exit).toBe(0)
     const runEntries = logEntries().filter(entry => entry.argv !== undefined)
     expect(runEntries).toEqual([
-      { argv: ['auth', 'status'], pid: expect.any(Number), env: { config, oauthToken: true, refreshToken: false, apiKey: true, authToken: false } },
-      { argv: ['--version'], pid: expect.any(Number), env: { config, oauthToken: false, refreshToken: false, apiKey: false, authToken: false } }
+      { argv: ['auth', 'status'], pid: expect.any(Number), env: expect.objectContaining({ config, oauthToken: true, refreshToken: false, apiKey: true, authToken: false }) },
+      { argv: ['--version'], pid: expect.any(Number), env: expect.objectContaining({ config, oauthToken: false, refreshToken: false, apiKey: false, authToken: false }) }
     ])
     const text = readFileSync(log, 'utf8')
     expect(text).not.toContain('token-value-for-test')
