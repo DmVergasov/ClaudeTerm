@@ -673,8 +673,9 @@ export class ChatModel extends ChatFold {
       case 'compact_boundary': return this.compacted(msg)
       case 'session_state_changed': return this.sessionState(msg.state)
       case 'api_retry': return this.retry(msg)
-      case 'task_started': return this.taskStarted(msg)
-      case 'task_notification': return this.agentNotified(msg)
+      case 'task_started': return this.workflowStarted(msg) ?? this.taskStarted(msg)
+      case 'task_progress': return this.workflowProgress(msg) ?? []
+      case 'task_notification': return this.workflowEnded(msg) ?? this.agentNotified(msg)
       default: return []
     }
   }

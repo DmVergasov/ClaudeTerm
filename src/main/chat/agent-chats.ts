@@ -3,11 +3,14 @@
 
 import { agentDuration, isAgentId, type AgentPatch, type ChatAgentInfo, type ChatAgentState, type ChatItem, type ChatPatch, type ChatSubagent } from '../../shared/chat'
 import { ChatFold, NAME_CAP, OUTPUT_CAP, SUBJECT_CAP, TEXT_CAP, cap, elapsed, isClaudeCodeFlag, isClaudeCodeText, isObj, num, resultAgentId, resultText, str, type ChatFoldOptions, type Obj } from './chat-fold'
+import { isRunId, type WorkflowRun } from '../../shared/workflow'
 import type { TranscriptPage } from './agent-history'
 
 export const MAX_AGENT_ITEMS = 1000
 export const MAX_AGENT_MODELS = 50
 export const MAX_AGENT_RECORDS = 500
+/** the records of Workflow run agents have a cap of their own, so a big run never evicts the ordinary agents' records */
+export const MAX_RUN_RECORDS = 400
 export const MAX_EARLY_FRAMES = 200
 export const AGENT_PAGE = 200
 /** the transcript heads of unwatched agents a chat keeps: the least recently used go past this many, so a page left and opened again keeps its items */
@@ -23,8 +26,8 @@ export interface AgentChatsOptions extends ChatFoldOptions { firstRev: number }
 /** a tool result whose call is not held yet: the block and the structured result, by the call's id */
 export interface Orphan { block: Obj; structured: unknown }
 export type Orphans = Map<string, Orphan>
-/** an agent's transcript as read from disk: its items (oldest first), the keys of its lines, the results waiting for their calls, and the cursor of the page before (0: none) */
-interface Head { items: ChatItem[]; keys: Set<string>; orphans: Orphans; cursor: number }
+/** an agent's transcript as read from disk: its items (oldest first), the keys of its lines, the results waiting for their calls, the cursor of the page before (0: none), and the byte its newest page reads up to: a tail starts there */
+interface Head { items: ChatItem[]; keys: Set<string>; orphans: Orphans; cursor: number; end: number }
 /** the cursor that reads the transcript from its end: a page read from it is the newest one */
 const TRANSCRIPT_END = Number.MAX_SAFE_INTEGER
 
@@ -350,6 +353,10 @@ export class AgentChats {
   private readonly used = new Map<string, number>()
   /** agents whose items left memory, or come from a transcript: their history is read when their page opens, unless the head is held */
   private readonly needs = new Set<string>()
+  /** the Workflow run each run agent came from, by agent id: its transcript is in that run's folder */
+  private readonly runIds = new Map<string, string>()
+  /** agents a stream started again after they ended: their state, start and length are the stream's, not the run's */
+  private readonly outOfRun = new Set<string>()
   /** the transcript head of each agent whose history was read: kept while the agent is watched, and dropped with its model */
   private readonly heads = new Map<string, Head>()
   /** agents whose first message from Claude has come: kept when their model is made again */
@@ -414,7 +421,7 @@ export class AgentChats {
   olderPage(agentId: string, page: TranscriptPage): { items: ChatItem[]; hasOlder: boolean } {
     if (!this.records.has(agentId)) return { items: [], hasOlder: false }
     // a page read from the transcript's end, with no head yet, starts the head
-    const head = this.heads.get(agentId) ?? { items: [], keys: new Set<string>(), orphans: new Map<string, Orphan>(), cursor: 0 }
+    const head = this.heads.get(agentId) ?? { items: [], keys: new Set<string>(), orphans: new Map<string, Orphan>(), cursor: 0, end: page.end }
     this.heads.set(agentId, head)
     const fold = this.foldPage(agentId, head, page.lines, page.start === 0)
     const items = fold.items().slice()
@@ -430,16 +437,40 @@ export class AgentChats {
    */
   history(agentId: string, page: TranscriptPage | null): AgentChange[] {
     if (!this.records.has(agentId)) return []
-    const head: Head = { items: [], keys: new Set(), orphans: new Map(), cursor: 0 }
+    const head: Head = { items: [], keys: new Set(), orphans: new Map(), cursor: 0, end: 0 }
     if (page !== null) {
       const fold = this.foldPage(agentId, head, page.lines, page.start === 0)
       head.items = fold.items().slice()
       head.orphans = fold.leftover()
       head.cursor = page.start
+      head.end = page.end
     }
     this.heads.set(agentId, head)
     this.needs.add(agentId)
     return this.change(agentId, [this.window(agentId)])
+  }
+
+  /** the byte the agent's transcript head reads up to: where a tail of the transcript starts; null while no head is held */
+  tailStart(agentId: string): number | null {
+    return this.heads.get(agentId)?.end ?? null
+  }
+
+  /**
+   * New lines of the agent's transcript, read after its head: a line whose key the head or the live model holds is skipped; the others fold
+   * as the stream's frames do, into the live model, and their keys join the head's. The changes are adds and sets, never a reset.
+   */
+  tail(agentId: string, lines: Record<string, unknown>[]): AgentChange[] {
+    const head = this.heads.get(agentId)
+    if (!this.records.has(agentId) || head === undefined) return []
+    const live = this.models.get(agentId)
+    const changes: AgentChange[] = []
+    for (const msg of lines) {
+      const keys = frameKeys(msg)
+      if (keys.some(key => head.keys.has(key) || (live?.holds(key) ?? false))) continue
+      changes.push(...this.fold(agentId, msg))
+      for (const key of keys) head.keys.add(key)
+    }
+    return changes
   }
 
   /** the agent's page as a reset: its transcript head and live items, the newest AGENT_PAGE of them */
@@ -521,6 +552,41 @@ export class AgentChats {
     this.needs.add(agent.id)
   }
 
+  /**
+   * The run agents of a Workflow run, from its rows: an agent with an id gets a record, or its record is brought up to the rows. An agent
+   * the stream started again keeps its state, start and length. A record that changed sends its agent patch; a run with no runId has none.
+   */
+  runAgents(run: WorkflowRun, sessionId: string | null): AgentChange[] {
+    if (!isRunId(run.runId)) return []
+    const runId = run.runId
+    const changes: AgentChange[] = []
+    for (const row of run.agents) {
+      const id = row.agentId
+      if (id === null || !isAgentId(id)) continue
+      const phase = run.phases.find(p => p.index === row.phase)?.title ?? null
+      const fields = { type: row.label, description: row.task ?? '', workflow: { run: run.name, phase, attempt: row.attempt } }
+      const record = this.records.get(id)
+      if (record === undefined) {
+        this.makeRecord({ id, ...fields, state: row.state, startedAt: row.startedAt, ms: row.ms, parentId: null }, true)
+        this.runIds.set(id, runId)
+        this.remember(id, sessionId)
+        this.needs.add(id)
+        continue
+      }
+      this.runIds.set(id, runId)
+      const next = this.outOfRun.has(id) ? fields : { ...fields, state: row.state, startedAt: row.startedAt, ms: row.ms }
+      const before = JSON.stringify(record)
+      Object.assign(record, next)
+      if (JSON.stringify(record) !== before) changes.push(...this.change(id, [this.agentPatch(record)]))
+    }
+    return changes
+  }
+
+  /** the Workflow run an agent came from, by its runId; null for an ordinary agent */
+  runIdOf(agentId: string): string | null {
+    return this.runIds.get(agentId) ?? null
+  }
+
   /** a viewer opens (true) or leaves (false) the agent's page: a watched agent is never evicted; an agent the chat does not know is not watched */
   watch(agentId: string, on: boolean): void {
     if (!this.records.has(agentId)) return
@@ -576,6 +642,8 @@ export class AgentChats {
   private started(msg: Obj, sessionId: string | null): AgentChange[] {
     const id = msg.task_id
     if (!isAgentId(id)) return []
+    // a Workflow run's agents come from the run's rows, not from this message
+    if (msg.task_type === 'local_workflow') return []
     const call = typeof msg.tool_use_id === 'string' && msg.tool_use_id !== '' ? cap(msg.tool_use_id, NAME_CAP) : null
     const owner = call === null ? null : this.ownerOf(call)
     const type = cap(str(msg.subagent_type) ?? str(msg.task_type) ?? 'agent', NAME_CAP)
@@ -599,6 +667,7 @@ export class AgentChats {
       record.state = 'running'
       record.startedAt = now
       record.ms = null
+      this.outOfRun.add(id)
       this.remember(id, sessionId)
       changes.push(...this.change(id, [...this.modelOf(id).divider('Resumed'), this.agentPatch(record)]))
     }
@@ -647,18 +716,22 @@ export class AgentChats {
     this.remember(id, sessionId)
   }
 
-  /** a new record: past MAX_AGENT_RECORDS the least recently touched unwatched agent is forgotten first; it counts its revisions from the highest handed out */
-  private makeRecord(record: ChatAgentInfo): void {
-    if (this.records.size >= MAX_AGENT_RECORDS) this.forget()
+  /**
+   * A new record: at its cap the least recently touched unwatched agent of its kind is forgotten first. Run agents have a cap of their own
+   * (MAX_RUN_RECORDS), apart from the ordinary agents' (MAX_AGENT_RECORDS). It counts its revisions from the highest handed out.
+   */
+  private makeRecord(record: ChatAgentInfo, run = false): void {
+    const full = (): boolean => (run ? this.runIds.size >= MAX_RUN_RECORDS : this.records.size - this.runIds.size >= MAX_AGENT_RECORDS)
+    while (full()) if (!this.forget(id => this.runIds.has(id) === run)) break
     this.records.set(record.id, record)
     this.revs.set(record.id, Math.max(this.o.firstRev, this.top))
     this.touch(record.id)
   }
 
-  /** an agent is forgotten whole: its record, model, history mark, session, touch time and the calls it started; a watched agent is never the one */
-  private forget(): void {
-    const victim = this.leastTouched(this.records.keys(), id => !this.watched(id))
-    if (victim === null) return
+  /** an agent is forgotten whole: its record, model, history mark, session, touch time, run and the calls it started; a watched agent is never the one, and false says none went */
+  private forget(pick: (id: string) => boolean): boolean {
+    const victim = this.leastTouched(this.records.keys(), id => !this.watched(id) && pick(id))
+    if (victim === null) return false
     this.records.delete(victim)
     this.models.delete(victim)
     this.heads.delete(victim)
@@ -668,7 +741,10 @@ export class AgentChats {
     this.revs.delete(victim)
     this.promptSeen.delete(victim)
     this.bubbles.delete(victim)
+    this.runIds.delete(victim)
+    this.outOfRun.delete(victim)
     for (const [call, task] of this.callTasks) if (task === victim) this.callTasks.delete(call)
+    return true
   }
 
   /** the session an agent started in is kept from its first sight */

@@ -2,6 +2,7 @@
 
 import type { ReportOutcome } from './mail'
 import type { ReloadAction } from './mcp'
+import type { WorkflowRun } from './workflow'
 
 export type TabView = 'chat' | 'terminal'
 export const TAB_VIEWS: readonly TabView[] = ['chat', 'terminal']
@@ -42,6 +43,8 @@ export interface ChatSubagent {
 export interface ChatToolCall {
   id: string; name: string; subject: string; detail: string | null; state: ChatCallState
   output: string | null; error: string | null; editPath: string | null; agents: ChatSubagent[]; ms: number | null
+  /** a Workflow call's run: its phases and agents, and its end; absent for any other call and for a failed one */
+  workflow?: WorkflowRun
 }
 export type ChatNoticeAction = 'restart' | 'open-terminal' | 'open-mcp'
 
@@ -161,6 +164,8 @@ export interface ChatAgentInfo {
   startedAt: number | null   // the current or last run's start, main's Date.now()
   ms: number | null          // the last run's length, once it ended
   parentId: string | null    // the agent that started it; null for the main conversation's agents
+  /** a Workflow run's agent: the run's name, its phase's title (null when none) and the agent's attempt */
+  workflow?: { run: string; phase: string | null; attempt: number }
 }
 export type AgentPatch = Exclude<ChatPatch, { op: 'state' }> | { op: 'agent'; agent: ChatAgentInfo }
 export interface AgentSnapshot { tabId: string; agentId: string; rev: number; items: ChatItem[]; hasOlder: boolean; agent: ChatAgentInfo; writable: boolean }

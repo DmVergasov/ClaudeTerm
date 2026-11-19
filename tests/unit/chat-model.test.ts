@@ -5,6 +5,7 @@ import { ChatModel, toolSubject } from '../../src/main/chat/chat-model'
 import { personWords } from '../../src/main/chat/heads-up'
 import { typedMessages, type ChatItem, type ChatPatch, type ChatToolCall } from '../../src/shared/chat'
 import { fixtureHistory, fixtureLines } from '../fixtures/chat-fixtures'
+import { parseWorkflowProgress } from '../../src/shared/workflow'
 
 const MIB = 1024 * 1024
 
@@ -1531,5 +1532,141 @@ describe('a forward in the main conversation', () => {
     m.apply(sendResult('t1', delivered))
     m.apply(done)
     expect(m.forwards()).toEqual([expect.objectContaining({ state: 'failed', reason: 'The agent page was closed' })])
+  })
+})
+
+describe('a Workflow call holds its run in the chat', () => {
+  const wfCall = { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tw', name: 'Workflow', input: { name: 'crash-triage' } }] } }
+  const wfResult = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tw', content: 'Workflow launched in background.\nTask ID: w9ehhq53f\nTranscript dir: C:\\p\\s\\subagents\\workflows\\wf_55e3c3ec-b29' }] } }
+  const wfStarted = { type: 'system', subtype: 'task_started', task_id: 'w9ehhq53f', tool_use_id: 'tw', task_type: 'local_workflow', workflow_name: 'crash-triage', description: 'Triage crashes' }
+  const progress = (rows: unknown[]) => ({ type: 'system', subtype: 'task_progress', task_id: 'w9ehhq53f', workflow_progress: rows })
+  const phase = { type: 'workflow_phase', index: 0, title: 'Triage' }
+  const agent = (i: number, state: string, attempt = 1) => ({ type: 'workflow_agent', index: i, label: `triage-${i}`, phaseIndex: 0, phaseTitle: 'Triage', agentId: `a${i}`, model: 'claude-haiku-5-5', state, attempt, promptPreview: `Look at crash ${i}`, startedAt: 1000 + i })
+
+  it('a Workflow call holds its run: name, subject, rows, and its end', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult, wfStarted, progress([phase, agent(0, 'progress'), agent(1, 'start')])])
+    const call = callsOf(m)[0]!
+    expect(call.subject).toBe('crash-triage')
+    expect(call.detail).toBe('2 agents')
+    expect(call.workflow).toMatchObject({ key: 'tw', runId: 'wf_55e3c3ec-b29', taskId: 'w9ehhq53f', name: 'crash-triage', state: 'running', phases: [{ index: 0, title: 'Triage' }] })
+    expect(call.workflow?.agents.map(a => a.agentId)).toEqual(['a0', 'a1'])
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'w9ehhq53f', status: 'completed', usage: { duration_ms: 134_000 }, workflow_progress: [phase, agent(0, 'done'), agent(1, 'done')] })
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'done', ms: 134_000 })
+    expect(m.runs()).toEqual([expect.objectContaining({ key: 'tw', state: 'done' })])
+  })
+
+  it('one run when task_started comes before the call\'s result', () => {
+    const { m } = model()
+    run(m, [wfCall, wfStarted, wfResult])
+    expect(m.runs()).toEqual([expect.objectContaining({ key: 'tw', runId: 'wf_55e3c3ec-b29', taskId: 'w9ehhq53f', name: 'crash-triage' })])
+  })
+
+  it('a progress that changes nothing sends no patch', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult, wfStarted])
+    const same = progress([phase, agent(0, 'progress')])
+    expect(m.apply(same).length).toBeGreaterThan(0)
+    expect(m.apply(same)).toEqual([])
+  })
+
+  it('a run without progress shows its head', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult, wfStarted])
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'running', agents: [] })
+  })
+
+  it('the "workflow ended" event row stays in the conversation', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult, wfStarted, progress([phase, agent(0, 'done')])])
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'w9ehhq53f', status: 'completed', usage: { duration_ms: 1000 } })
+    m.apply(userMessage(TASK_NOTICE.replace('<task-id>a1</task-id>', '<task-id>w9ehhq53f</task-id>'), { kind: 'task-notification' }))
+    expect(m.items().at(-1)).toMatchObject({ kind: 'event', source: 'task' })
+  })
+
+  it('the process end and the history load end a running run as stopped, its running agents failed', () => {
+    const live = model()
+    run(live.m, [wfCall, wfResult, wfStarted, progress([phase, agent(0, 'progress'), agent(1, 'done')])])
+    live.m.processEnded()
+    expect(callsOf(live.m)[0]!.workflow).toMatchObject({ state: 'stopped', agents: [{ state: 'failed' }, { state: 'done' }] })
+
+    const resumed = model()
+    run(resumed.m, [wfCall, wfResult, wfStarted, progress([phase, agent(0, 'progress')])])
+    resumed.m.historyLoaded()
+    expect(callsOf(resumed.m)[0]!.workflow).toMatchObject({ state: 'stopped', agents: [{ state: 'failed' }] })
+  })
+
+  it('a failed Workflow call holds no run', () => {
+    const { m } = model()
+    run(m, [wfCall, { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tw', is_error: true, content: 'Workflow failed' }] } }])
+    expect(callsOf(m)[0]!.workflow).toBeUndefined()
+    expect(m.runs()).toEqual([])
+  })
+
+  it('a run of 300 agents keeps 200', () => {
+    const { m } = model()
+    const rows = Array.from({ length: 300 }, (_, i) => agent(i, 'done'))
+    run(m, [wfCall, wfResult, wfStarted, progress([phase, ...rows])])
+    expect(callsOf(m)[0]!.workflow?.agents).toHaveLength(200)
+    expect(callsOf(m)[0]!.detail).toBe('200 agents')
+  })
+
+  it('an interrupt stops a run that goes on in the background: its later progress runs it again, and its end still lands', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult, wfStarted, progress([phase, agent(0, 'progress')])])
+    m.markInterrupted()
+    m.apply({ type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools' })
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'stopped' })
+    m.apply(progress([phase, agent(0, 'done'), agent(1, 'progress')]))
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'running', agents: [{ agentId: 'a0', state: 'done' }, { agentId: 'a1', state: 'running' }] })
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'w9ehhq53f', status: 'completed', usage: { duration_ms: 9_000 }, workflow_progress: [phase, agent(0, 'done'), agent(1, 'done')] })
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'done', ms: 9_000 })
+  })
+
+  it('a process end stops a run, and the run\'s late end still lands as done', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult, wfStarted, progress([phase, agent(0, 'progress')])])
+    m.processEnded()
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'stopped' })
+    m.apply({ type: 'system', subtype: 'task_notification', task_id: 'w9ehhq53f', status: 'completed', usage: { duration_ms: 9_000 } })
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'done', ms: 9_000 })
+  })
+
+  it('history with a run file ends the run as the file says', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult])
+    const rows = parseWorkflowProgress([phase, agent(0, 'done'), agent(1, 'done')])
+    const patches = m.applyRunFile('wf_55e3c3ec-b29', { taskId: 'w9ehhq53f', name: 'crash-triage', state: 'done', startedAt: 1000, ms: 134_000, rows })
+    expect(patches).toEqual([expect.objectContaining({ op: 'call' })])
+    m.historyLoaded()
+    expect(callsOf(m)[0]!.subject).toBe('crash-triage')
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'done', ms: 134_000, name: 'crash-triage', taskId: 'w9ehhq53f', phases: [{ index: 0, title: 'Triage' }] })
+    expect(callsOf(m)[0]!.workflow?.agents.map(a => a.agentId)).toEqual(['a0', 'a1'])
+    expect(m.runs()).toEqual([expect.objectContaining({ key: 'tw', state: 'done' })])
+  })
+
+  it('history with a run file that has agents gives the call the same "N agents" detail as a live run', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult])
+    const rows = parseWorkflowProgress([phase, agent(0, 'done'), agent(1, 'done')])
+    m.applyRunFile('wf_55e3c3ec-b29', { taskId: 'w9ehhq53f', name: 'crash-triage', state: 'done', startedAt: 1000, ms: 134_000, rows })
+    m.historyLoaded()
+    expect(callsOf(m)[0]!.detail).toBe('2 agents')
+  })
+
+  it('history without one shows the head, stopped', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult, wfStarted, progress([phase, agent(0, 'progress'), agent(1, 'done')])])
+    expect(m.openRunIds()).toEqual(['wf_55e3c3ec-b29'])
+    m.historyLoaded()
+    expect(m.openRunIds()).toEqual([])
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'stopped', name: 'crash-triage', agents: [{ state: 'failed' }, { state: 'done' }] })
+  })
+
+  it('a run file for a run no call holds changes nothing', () => {
+    const { m } = model()
+    run(m, [wfCall, wfResult])
+    expect(m.applyRunFile('wf_other-run', { taskId: null, name: null, state: 'done', startedAt: null, ms: null, rows: null })).toEqual([])
+    expect(callsOf(m)[0]!.workflow).toMatchObject({ state: 'running' })
   })
 })

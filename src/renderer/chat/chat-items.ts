@@ -56,7 +56,7 @@ const button = (label: string, onClick: () => void): HTMLButtonElement => {
 const drawnStable = new WeakMap<HTMLElement, number>()
 
 /** a prompt's fold as its column keeps it: unfolded is whether Show all was clicked, and unfold() keeps that for the item's redraws */
-export interface PromptFold { unfolded: boolean; unfold(): void }
+export interface PromptFold { unfolded: boolean; unfold(): void; asker?: string }
 
 /** one item of the column, drawn plainly: the text is always set as text, never as markup, except Claude's Markdown */
 export function renderItem(item: ChatItem, cb: ItemCallbacks, keep: StepKeep | null = null, settled = true, prompt: PromptFold = { unfolded: false, unfold: () => undefined }): HTMLElement {
@@ -88,7 +88,7 @@ const PROMPT_FOLD_CHARS = 600
  */
 function promptItem(item: Extract<ChatItem, { kind: 'prompt' }>, cb: ItemCallbacks, fold: PromptFold): HTMLElement {
   const box = el('div', 'chat-prompt')
-  box.append(el('div', 'chat-prompt-head', item.first ? 'Claude asked' : 'From Claude'))
+  box.append(el('div', 'chat-prompt-head', item.first ? `${fold.asker ?? 'Claude'} asked` : 'From Claude'))
   const body = el('div', 'chat-prompt-body')
   body.innerHTML = chatMarkdownHtml(item.text)
   body.addEventListener('click', (e) => markdownClick(e, cb))

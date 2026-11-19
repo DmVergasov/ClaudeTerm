@@ -1010,7 +1010,7 @@
 }
 
 .chat-agents-dock.shown {
-  max-height: 260px;
+  max-height: 320px;
   margin-top: 0;
   opacity: 1;
   visibility: visible;
@@ -1024,9 +1024,9 @@
   margin: 0;
 }
 
-/* five rows at most, then the list scrolls inside the dock */
+/* eight rows at most, and only whole ones (fitRows), then the list scrolls inside the dock */
 .chat-agents-dock .chat-agents-list {
-  max-height: 160px;
+  max-height: 240px;
   overflow-y: auto;
 }
 
@@ -1162,6 +1162,37 @@
 .chat-agent-state .chat-agent-track {
   flex: 1;
   min-width: 32px;
+}
+
+/* a Workflow run's group: its head's chevron, its phase lines quiet under the head, its agents' rows indented, and the amber chip of a retry */
+.chat-run-chevron {
+  display: inline-block;
+  width: 12px;
+  margin-right: 4px;
+  color: var(--text-3);
+}
+
+.chat-run-phase {
+  padding: 6px 12px 6px 30px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-agent.chat-run-agent {
+  padding-left: 30px;
+}
+
+.chat-agent-attempt {
+  margin-right: 6px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--amber);
 }
 
 /* a well with no output yet draws no box */
@@ -2169,6 +2200,14 @@
   color: var(--text-3);
 }
 
+.agent-attempt {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 11.5px;
+  border-radius: 4px;
+  color: var(--text-3);
+}
+
 .agent-desc {
   flex: 1;
   min-width: 0;
@@ -2264,6 +2303,12 @@
 
 .agent-hint {
   padding: 6px 4px 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.agent-hint-run {
+  padding: 2px 4px 0;
   color: var(--text-3);
   font-size: 12px;
 }

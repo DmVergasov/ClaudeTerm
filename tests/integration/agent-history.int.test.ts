@@ -1,10 +1,10 @@
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { symlink } from 'node:fs/promises'
+import { realpath, symlink } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { LINE_CAP, agentTranscriptPath, readAgentPage, resolveAgentTranscript } from '../../src/main/chat/agent-history'
+import { LINE_CAP, agentTranscriptPath, readAgentPage, resolveAgentTranscript, resolveRunAgentTranscript, runAgentTranscriptPath } from '../../src/main/chat/agent-history'
 
 // An agent's transcript is read from disk in pages: its paths are checked, its lines parsed backward from the end, and its links refused
 // when they lead outside the project folder. Every file is under a temp folder of the test's own.
@@ -141,6 +141,61 @@ describe('agent history', () => {
     const short = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${root}") do @echo %~sI`], { encoding: 'utf8', windowsVerbatimArguments: true }).stdout.trim()
     const shortAgent = join(short, 'projects', 'acme', SESSION, 'subagents', `agent-${AGENT}.jsonl`)
     const resolved = await resolveAgentTranscript(shortAgent)
+    expect(resolved).not.toBeNull()
+    expect(numbers((await readAgentPage(resolved!, null)).lines)).toEqual([0, 1, 2])
+  })
+})
+
+describe('run agent history', () => {
+  const RUN = 'wf_55e3c3ec-b29'
+  /** the run's folder under the session's subagents folder, and the agent's file in it */
+  const runDir = () => join(subagents, 'workflows', RUN)
+  const runFile = () => join(runDir(), `agent-${AGENT}.jsonl`)
+
+  it("a run agent's file inside the run folder resolves to its real path", async () => {
+    mkdirSync(runDir(), { recursive: true })
+    writeLines(runFile(), 3)
+    const path = runAgentTranscriptPath(transcript, SESSION, RUN, AGENT)
+    expect(path).toBe(runFile())
+    expect(await resolveRunAgentTranscript(path!)).toBe(await realpath(runFile()))
+  })
+
+  it('a workflows folder that is a junction or symlink to outside is not read', async () => {
+    const outside = join(root, 'outside')
+    mkdirSync(join(outside, RUN), { recursive: true })
+    writeLines(join(outside, RUN, `agent-${AGENT}.jsonl`), 3)
+    await linkDir(outside, join(subagents, 'workflows'))
+    const path = runAgentTranscriptPath(transcript, SESSION, RUN, AGENT)
+    expect(path).not.toBeNull()
+    expect(await resolveRunAgentTranscript(path!)).toBeNull()
+  })
+
+  it('a subagents folder that is a junction or symlink to outside is not read for a run agent', async () => {
+    const outside = join(root, 'outside')
+    mkdirSync(join(outside, 'workflows', RUN), { recursive: true })
+    writeLines(join(outside, 'workflows', RUN, `agent-${AGENT}.jsonl`), 3)
+    rmSync(subagents, { recursive: true, force: true })
+    await linkDir(outside, subagents)
+    const path = runAgentTranscriptPath(transcript, SESSION, RUN, AGENT)
+    expect(path).not.toBeNull()
+    expect(await resolveRunAgentTranscript(path!)).toBeNull()
+  })
+
+  it('a bad runId or agent id builds no path', () => {
+    expect(runAgentTranscriptPath(transcript, SESSION, '../x', AGENT)).toBeNull()
+    expect(runAgentTranscriptPath(transcript, SESSION, 'wf_abc', AGENT)).toBeNull()
+    expect(runAgentTranscriptPath(transcript, SESSION, 'a\\b', AGENT)).toBeNull()
+    expect(runAgentTranscriptPath(transcript, SESSION, RUN, '../x')).toBeNull()
+    expect(runAgentTranscriptPath(transcript, 'not-a-session', RUN, AGENT)).toBeNull()
+  })
+
+  it.runIf(process.platform === 'win32')('on Windows, a run folder reached through the 8.3 short name of the temp folder is read', async () => {
+    mkdirSync(runDir(), { recursive: true })
+    writeLines(runFile(), 3)
+    // the same short name as the test above makes; a volume without short names gives the long name, and the test still runs
+    const short = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${root}") do @echo %~sI`], { encoding: 'utf8', windowsVerbatimArguments: true }).stdout.trim()
+    const shortAgent = join(short, 'projects', 'acme', SESSION, 'subagents', 'workflows', RUN, `agent-${AGENT}.jsonl`)
+    const resolved = await resolveRunAgentTranscript(shortAgent)
     expect(resolved).not.toBeNull()
     expect(numbers((await readAgentPage(resolved!, null)).lines)).toEqual([0, 1, 2])
   })

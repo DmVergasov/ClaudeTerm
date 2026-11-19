@@ -17,7 +17,7 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 .tb-right { height: 100%; padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)); }
 #titlebar button, #titlebar input, #titlebar a, #titlebar [role=button] { -webkit-app-region: no-drag; }
 /* the overlays and menus cover the window's top strip too: without this, a press there drags the window */
-.menu, #lightbox, #sessions, #folder-dialog, #plan-list, #search, #toasts { -webkit-app-region: no-drag; }
+.menu, #lightbox, #sessions, #folder-dialog, #plan-list, #agents-card, #search, #toasts { -webkit-app-region: no-drag; }
 .tb-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: var(--accent); color: #0A0A0C; font: 700 11px ui-monospace, Consolas, monospace; }
 .tb-name { color: var(--text); font-weight: 600; white-space: nowrap; }
 .tb-meters { display: flex; align-items: center; gap: 14px; -webkit-app-region: no-drag; }
@@ -675,6 +675,12 @@ body.platform-darwin:not(.fullscreen) .tb-left { padding-left: 84px; }
 #plan-list .plan-task.done { color: var(--muted); }
 #plan-list .plan-task.current { background: var(--chrome-2); color: var(--fg); }
 #plan-list .plan-task.current .plan-mark { color: var(--accent); }
+/* the ⚙ card: the agents and Workflow runs of the tab, a box above the bar like the plan list; its list scrolls past about ten rows */
+#agents-card { position: fixed; z-index: 50; width: min(640px, calc(100vw - 16px)); background: var(--raised); border: 1px solid var(--line-2); border-radius: 12px; padding: 6px 0; box-shadow: 0 16px 40px #000a; }
+#agents-card .chat-agents { margin: 0; border: 0; border-radius: 0; }
+#agents-card .chat-agents-list { max-height: 300px; overflow-y: auto; }
+#statusbar .status-agents { cursor: pointer; }
+#statusbar .status-agents:hover { color: var(--fg); }
 #statusbar .status-account { cursor: pointer; }
 #statusbar .status-account:hover { color: var(--fg); }
 #statusbar .status-remote { cursor: pointer; gap: 6px; }

@@ -1,4 +1,5 @@
 import { type ChatCallState, type ChatItem, isAgentId, type ChatSubagent, type ChatToolCall } from '../../shared/chat'
+import { runHead, type WorkflowAgentRow, type WorkflowPhase, type WorkflowRun } from '../../shared/workflow'
 import type { ImageCard } from '../../shared/types'
 import { icon } from '../icons'
 import { imageUrl } from '../image-url'
@@ -241,7 +242,7 @@ function disarmLong(root: HTMLElement): void {
   longTimers.delete(root)
 }
 
-function childWith(parent: HTMLElement, key: 'call' | 'agent', id: string): HTMLElement | null {
+function childWith(parent: HTMLElement, key: 'call' | 'agent' | 'run' | 'phase', id: string): HTMLElement | null {
   for (const child of Array.from(parent.children)) {
     if (child instanceof HTMLElement && child.dataset[key] === id) return child
   }
@@ -403,59 +404,240 @@ function fillError(entry: HTMLElement, error: string | null): void {
   setText(node, error)
 }
 
+/** a row of the card: a subagent, or a Workflow run drawn as a group (its head, its phase lines and its agents, indented) */
+export type AgentCardRow = { kind: 'agent'; agent: ChatSubagent } | { kind: 'run'; run: WorkflowRun }
+
+/** an agent as the card draws it: its colour's index (one counter over the heads and the agent rows), and for a run's agent its try and phase */
+interface DrawnAgent { agent: ChatSubagent; color: number; attempt: number; phase: number | null }
+/** a card's row as drawn: an agent, or a run with its agents in the order its body draws them */
+type Drawn = { kind: 'agent'; item: DrawnAgent } | { kind: 'run'; run: WorkflowRun; color: number; agents: DrawnAgent[] }
+
+/** the card's rows in drawing order: a run's head takes a colour, then its agents take the next ones */
+function drawCard(rows: AgentCardRow[]): Drawn[] {
+  let color = 0
+  return rows.map((row): Drawn => {
+    if (row.kind === 'agent') return { kind: 'agent', item: { agent: row.agent, color: color++, attempt: 1, phase: null } }
+    const head = color++
+    const phases = row.run.phases.map((phase) => phase.index)
+    const agents = runAgentOrder(row.run).map((agent): DrawnAgent => ({
+      agent: runAgent(row.run, agent), color: color++, attempt: agent.attempt, phase: phases.includes(agent.phase ?? -1) ? agent.phase : null
+    }))
+    return { kind: 'run', run: row.run, color: head, agents }
+  })
+}
+
+const agentsOf = (drawn: Drawn[]): DrawnAgent[] => drawn.flatMap((item) => (item.kind === 'agent' ? [item.item] : item.agents))
+
+/** every agent of the card in drawing order, a run's agents among them as agents */
+export function cardAgents(rows: AgentCardRow[]): ChatSubagent[] {
+  return agentsOf(drawCard(rows)).map((item) => item.agent)
+}
+
+/** whether the card has something running: an agent, or a Workflow run */
+export function cardRunning(rows: AgentCardRow[]): boolean {
+  return rows.some((row) => (row.kind === 'agent' ? row.agent.state === 'running' : row.run.state === 'running'))
+}
+
+/** the colour index of an agent of the card, the same index its row takes; -1 when the card has no such agent */
+export function cardColor(rows: AgentCardRow[], agentId: string): number {
+  return agentsOf(drawCard(rows)).find((item) => item.agent.id === agentId)?.color ?? -1
+}
+
+/** the card's state for one drawing: the open choice and whether rows are buttons */
+interface CardDraw { button: boolean; current: string | null; open(row: HTMLElement): void }
+
 /**
- * The subagents' card, drawn into `box` (the chat's dock): a head with its count, one row per agent, in the order given. A row is
- * kept by its agent's id, so its ring and bar carry on when the card is drawn again. A row is a button that opens the agent's
- * page through `o.open`; the row of `o.current` is marked as the open one.
+ * The subagents' card, drawn into `box` (the chat's dock): a head with its count, then the rows in the order given. A row is kept by
+ * its agent's id (a run by its key), so its ring and bar carry on when the card is drawn again. A row is a button that opens the
+ * agent's page through `o.open`; the row of `o.current` is marked as the open one.
  */
-export function fillAgentsCard(box: HTMLElement, agents: ChatSubagent[], o: { open?(agentId: string): void; current?: string | null } = {}): void {
+export function fillAgentsCard(box: HTMLElement, rows: AgentCardRow[], o: { open?(agentId: string): void; current?: string | null } = {}): void {
   let card = box.querySelector<HTMLElement>(':scope > .chat-agents')
   if (card === null) {
     card = el('div', 'chat-agents')
     card.append(el('div', 'chat-agents-head'), followingList())
     box.append(card)
   }
+  const drawn = drawCard(rows)
+  const agents = agentsOf(drawn).map((item) => item.agent)
   const n = agents.length
   const done = agents.filter((agent) => agent.state === 'done').length
   card.querySelector<HTMLElement>('.chat-agents-head')!.innerHTML = `${icon('users', 13)}<span>${n} agent${n === 1 ? '' : 's'} · ${done} done</span>`
   const list = card.querySelector<HTMLElement>('.chat-agents-list')!
-  let added = false
-  const open = (row: HTMLElement): void => {
-    if (isAgentId(row.dataset.agent)) o.open?.(row.dataset.agent)
-  }
-  agents.forEach((agent, index) => {
-    let row = childWith(list, 'agent', agent.id)
-    if (row === null) {
-      row = el('div', 'chat-agent')
-      row.dataset.agent = agent.id
-      row.tabIndex = 0
-      row.setAttribute('role', 'button')
-      row.title = 'Open this agent'
-      row.addEventListener('click', () => open(row!))
-      row.addEventListener('keydown', (e) => {
-        // Space opens the row without scrolling the conversation
-        if (e.key !== 'Enter' && e.key !== ' ') return
-        e.preventDefault()
-        open(row!)
-      })
-      row.append(el('span', 'chat-step-state'), el('span', 'chat-agent-type'), el('span', 'chat-agent-desc'), el('span', 'chat-agent-meta'), el('span', 'chat-agent-state'))
-      list.append(row)
-      added = true
+  const draw: CardDraw = {
+    button: o.open !== undefined,
+    current: o.current ?? null,
+    open: (row) => {
+      if (isAgentId(row.dataset.agent)) o.open?.(row.dataset.agent)
     }
-    if (o.current === agent.id) row.setAttribute('aria-current', 'true')
-    else row.removeAttribute('aria-current')
-    // a row keeps its colour and its bar's offset by its place in the card, which does not change when another row ends. The
-    // offset is a negative delay: the bar starts that far into its slide, so the bars are staggered and none stands still when
-    // its slide starts again (a chat that comes back from another tab starts its animations anew)
-    row.style.setProperty('--agent', agentColor(index))
-    row.style.setProperty('--bar-delay', `-${(index * 0.5).toFixed(1)}s`)
-    fillAgent(row, agent)
-  })
-  const ids = new Set(agents.map((agent) => agent.id))
-  for (const child of Array.from(list.children)) {
-    if (child instanceof HTMLElement && !ids.has(child.dataset.agent ?? '')) child.remove()
   }
-  if (added) followEnd(list)
+  const top = drawn.map((item) => (item.kind === 'agent' ? agentRow(list, item.item, false, draw) : runGroup(list, item, draw)))
+  keepOnly(list, top)
+  arrange(list, top)
+  followEnd(list)
+}
+
+/** a subagent's row, kept by its id in `parent`; a run's agent (`inRun`) is drawn in its run's body */
+function agentRow(parent: HTMLElement, item: DrawnAgent, inRun: boolean, draw: CardDraw): HTMLElement {
+  const { agent } = item
+  const row = childWith(parent, 'agent', agent.id) ?? makeAgentRow(agent.id, inRun, draw)
+  // a row is a button only when it has an agent's id to open
+  if (draw.button && isAgentId(agent.id)) {
+    row.tabIndex = 0
+    row.setAttribute('role', 'button')
+    row.title = 'Open this agent'
+  } else {
+    row.removeAttribute('tabindex')
+    row.removeAttribute('role')
+    row.removeAttribute('title')
+  }
+  if (draw.current === agent.id) row.setAttribute('aria-current', 'true')
+  else row.removeAttribute('aria-current')
+  // a row keeps its colour and its bar's offset by its place in the card, which does not change when another row ends. The
+  // offset is a negative delay: the bar starts that far into its slide, so the bars are staggered and none stands still when
+  // its slide starts again (a chat that comes back from another tab starts its animations anew)
+  row.style.setProperty('--agent', agentColor(item.color))
+  row.style.setProperty('--bar-delay', `-${(item.color * 0.5).toFixed(1)}s`)
+  fillAgent(row, agent, item.attempt)
+  return row
+}
+
+function makeAgentRow(id: string, inRun: boolean, draw: CardDraw): HTMLElement {
+  const row = el('div', 'chat-agent')
+  row.dataset.agent = id
+  if (inRun) row.classList.add('chat-run-agent')
+  row.addEventListener('click', () => draw.open(row))
+  row.addEventListener('keydown', (e) => {
+    // Space opens the row without scrolling the conversation
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    draw.open(row)
+  })
+  row.append(el('span', 'chat-step-state'), el('span', 'chat-agent-type'), el('span', 'chat-agent-desc'), el('span', 'chat-agent-meta'), el('span', 'chat-agent-state'))
+  return row
+}
+
+/**
+ * A Workflow run's group in `parent`: its head row, then its body with the phase lines and the agents' rows. The head folds the
+ * group on a click or Enter/Space. Until the person toggles it, a run is folded exactly when it is not running.
+ */
+function runGroup(parent: HTMLElement, item: Extract<Drawn, { kind: 'run' }>, draw: CardDraw): HTMLElement {
+  const { run } = item
+  const group = childWith(parent, 'run', run.key) ?? makeRunGroup(run.key)
+  const head = group.querySelector<HTMLElement>(':scope > .chat-run-head')!
+  fillAgent(head, runHeadAgent(run), 1)
+  setText(head.querySelector<HTMLElement>('.chat-agent-meta')!, 'workflow')
+  if (run.state === 'stopped') head.querySelector<HTMLElement>('.chat-agent-state')!.textContent = 'stopped'
+  head.style.setProperty('--agent', agentColor(item.color))
+  head.style.setProperty('--bar-delay', `-${(item.color * 0.5).toFixed(1)}s`)
+  const folding = group.dataset.fold
+  foldRun(group, folding === 'closed' || (folding === undefined && run.state !== 'running'))
+  const body = group.querySelector<HTMLElement>(':scope > .chat-run-body')!
+  const nodes: HTMLElement[] = []
+  for (const phase of run.phases) {
+    nodes.push(phaseLine(body, phase))
+    for (const agent of item.agents) if (agent.phase === phase.index) nodes.push(agentRow(body, agent, true, draw))
+  }
+  for (const agent of item.agents) if (agent.phase === null) nodes.push(agentRow(body, agent, true, draw))
+  keepOnly(body, nodes)
+  arrange(body, nodes)
+  return group
+}
+
+function makeRunGroup(key: string): HTMLElement {
+  const group = el('div', 'chat-run')
+  group.dataset.run = key
+  const head = el('div', 'chat-agent chat-run-head')
+  head.tabIndex = 0
+  head.setAttribute('role', 'button')
+  head.append(el('span', 'chat-step-state'), el('span', 'chat-agent-type'), el('span', 'chat-agent-desc'), el('span', 'chat-agent-meta'), el('span', 'chat-agent-state'))
+  head.addEventListener('click', () => toggleRun(group))
+  head.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    toggleRun(group)
+  })
+  group.append(head, el('div', 'chat-run-body'))
+  return group
+}
+
+/** the person's fold choice is kept on the group while it lives: `closed` or `open` */
+function toggleRun(group: HTMLElement): void {
+  const folded = group.dataset.folded === undefined
+  foldRun(group, folded)
+  group.dataset.fold = folded ? 'closed' : 'open'
+  const list = group.closest<HTMLElement>('.chat-agents-list')
+  if (list !== null) followEnd(list)
+}
+
+/** a run's group folded or unfolded: its body hidden, its chevron and its head's expanded state set */
+function foldRun(group: HTMLElement, folded: boolean): void {
+  if (folded) group.dataset.folded = ''
+  else delete group.dataset.folded
+  group.querySelector<HTMLElement>(':scope > .chat-run-body')!.hidden = folded
+  const head = group.querySelector<HTMLElement>(':scope > .chat-run-head')!
+  head.setAttribute('aria-expanded', String(!folded))
+  const type = head.querySelector<HTMLElement>('.chat-agent-type')!
+  let chevron = type.querySelector<HTMLElement>(':scope > .chat-run-chevron')
+  if (chevron === null) {
+    chevron = el('span', 'chat-run-chevron')
+    type.prepend(chevron)
+  }
+  chevron.textContent = folded ? '▸' : '▾'
+}
+
+/** a run's phase line in its body, kept by the phase's index */
+function phaseLine(body: HTMLElement, phase: WorkflowPhase): HTMLElement {
+  let line = childWith(body, 'phase', String(phase.index))
+  if (line === null) {
+    line = el('div', 'chat-run-phase')
+    line.dataset.phase = String(phase.index)
+  }
+  setText(line, phase.title)
+  return line
+}
+
+/** the run as the head row draws it: its name, `<phase> · N of M done`, and its state (a stopped run reads failed here, then stopped) */
+function runHeadAgent(run: WorkflowRun): ChatSubagent {
+  const head = runHead(run)
+  const count = `${head.done} of ${head.total} done`
+  const agent: ChatSubagent = {
+    id: run.key, type: run.name, description: head.phase === null ? count : `${head.phase} · ${count}`,
+    state: run.state === 'running' ? 'running' : run.state === 'done' ? 'done' : 'failed', ms: run.ms
+  }
+  if (run.startedAt !== null) agent.startedAt = run.startedAt
+  return agent
+}
+
+/** a run's agent as a card row: its label, its task, its state and the call's model and effort, as far as they are known */
+function runAgent(run: WorkflowRun, row: WorkflowAgentRow): ChatSubagent {
+  const agent: ChatSubagent = { id: row.agentId ?? `${run.key}:${row.key}`, type: row.label, description: row.task ?? '', state: row.state, ms: row.ms }
+  if (row.model !== null) agent.model = row.model
+  if (row.effort !== null) agent.effort = row.effort
+  if (row.startedAt !== null) agent.startedAt = row.startedAt
+  return agent
+}
+
+/** a run's agents in the order its body draws them: by phase in the phases' order, the agents of no phase last; each keeps its start order */
+function runAgentOrder(run: WorkflowRun): WorkflowAgentRow[] {
+  const rank = (phase: number | null): number => {
+    const at = run.phases.findIndex((p) => p.index === phase)
+    return at === -1 ? run.phases.length : at
+  }
+  return [...run.agents].sort((a, b) => rank(a.phase) - rank(b.phase))
+}
+
+/** the children of `parent` that are not in `nodes` go: a row that left the card */
+function keepOnly(parent: HTMLElement, nodes: HTMLElement[]): void {
+  const keep = new Set<Element>(nodes)
+  for (const child of Array.from(parent.children)) if (!keep.has(child)) child.remove()
+}
+
+/** the nodes in `parent` in the order given: a node is moved only when it is not in its place yet */
+function arrange(parent: HTMLElement, nodes: HTMLElement[]): void {
+  nodes.forEach((node, i) => {
+    if (parent.children[i] !== node) parent.insertBefore(node, parent.children[i] ?? null)
+  })
 }
 
 /**
@@ -470,18 +652,47 @@ function followingList(): HTMLElement {
     if (list.clientHeight === 0) return
     list.dataset.follow = list.scrollHeight - list.scrollTop - list.clientHeight <= 2 ? '' : 'off'
   })
-  new ResizeObserver(() => followEnd(list)).observe(list)
+  // a size changed inside a ResizeObserver callback raises "ResizeObserver loop completed with undelivered notifications": fitRows waits a frame
+  new ResizeObserver(() => requestAnimationFrame(() => followEnd(list))).observe(list)
   return list
 }
 
+/**
+ * The list shows whole rows: when its rows are taller than its max-height, its height is the rows from the first one that fits to the
+ * end, so a list at its end never cuts its top row; a list whose rows fit takes their height. A list with no max-height is left alone
+ */
+function fitRows(list: HTMLElement): void {
+  const cap = parseFloat(getComputedStyle(list).maxHeight)
+  if (!Number.isFinite(cap) || (list.clientHeight === 0 && list.style.height === '')) return
+  const total = list.scrollHeight
+  if (total <= cap + 0.5) {
+    if (list.style.height !== '') list.style.height = ''
+    return
+  }
+  const base = list.getBoundingClientRect().top - list.scrollTop
+  for (const row of list.querySelectorAll<HTMLElement>('.chat-agent, .chat-run-phase')) {
+    if (row.getClientRects().length === 0) continue // a row of a folded run
+    const top = row.getBoundingClientRect().top - base
+    if (total - top <= cap + 0.5) {
+      const height = `${total - top}px`
+      if (list.style.height !== height) list.style.height = height
+      return
+    }
+  }
+}
+
 function followEnd(list: HTMLElement): void {
+  fitRows(list)
   if (list.dataset.follow !== 'off') list.scrollTop = list.scrollHeight
 }
 
-function fillAgent(row: HTMLElement, agent: ChatSubagent): void {
+function fillAgent(row: HTMLElement, agent: ChatSubagent, attempt: number): void {
   setStateIcon(row.querySelector<HTMLElement>('.chat-step-state')!, agent.state)
   setText(row.querySelector<HTMLElement>('.chat-agent-type')!, agent.type)
-  setText(row.querySelector<HTMLElement>('.chat-agent-desc')!, agent.description)
+  const desc = row.querySelector<HTMLElement>('.chat-agent-desc')!
+  // a retried agent says so before its task: the amber chip of its try
+  if (attempt > 1) desc.replaceChildren(el('span', 'chat-agent-attempt', `attempt ${attempt}`), ` ${agent.description}`)
+  else setText(desc, agent.description)
   fillAgentMeta(row.querySelector<HTMLElement>('.chat-agent-meta')!, agent)
   const text = row.querySelector<HTMLElement>('.chat-agent-state')!
   if (agent.state === 'running') {

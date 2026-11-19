@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { accountSegment, changesSegment, formatTokens, levelFor, limitPace, mcpSegment, modelFamily, planSegment, remoteSegment, statusSegments } from '../../src/renderer/status-bar'
+import { accountSegment, AGENTS_TITLE, agentsText, bareAgents, changesSegment, formatTokens, levelFor, limitPace, mcpSegment, modelFamily, planSegment, remoteSegment, statusSegments } from '../../src/renderer/status-bar'
+import { statusRows } from '../../src/renderer/agents-card'
 import type { McpReload, McpServerView, McpServersView, McpStatus } from '../../src/shared/mcp'
 import type { AgentStatus, MainStatus, PlanStatus } from '../../src/shared/types'
+import type { WorkflowRun } from '../../src/shared/workflow'
 import { taskListStatus } from '../../src/shared/task-list'
 
 const H = 3_600_000
@@ -26,7 +28,7 @@ describe('statusSegments', () => {
     expect(segments).toEqual([
       { key: 'model', text: 'Opus 5.5', pill: 'xhigh', title: 'claude-opus-5-5', level: 'normal' },
       { key: 'context', text: 'ctx 41% · 82k/200k', title: '82,314 of 200,000 tokens', level: 'normal', fill: expect.closeTo(0.412, 10) },
-      { key: 'agents', text: '⚙ 1: opus·high', title: 'code-reviewer · opus·high · 3 min · "Review font fix"', level: 'normal' }
+      { key: 'agents', text: '⚙ 1: opus·high', title: AGENTS_TITLE, level: 'normal' }
     ])
     expect(segments.map((s) => s.key)).not.toContain('limit')
     expect(segments.map((s) => s.key)).not.toContain('week')
@@ -79,10 +81,50 @@ describe('statusSegments', () => {
     expect(statusSegments({ tabId: 't', main, agents, background: [] }, 0).at(-1)?.text).toBe('⚙ 10: sonnet·medium ×6, opus·xhigh ×2, haiku, …')
   })
 
-  it('agent tooltip: under a minute, no description', () => {
-    expect(statusSegments({ tabId: 't', main, agents: [agent({ startedAt: 1000 })], background: [] }, 30_000).at(-1)?.title).toBe('Explore · opus·high · <1 min')
+  it('the agents segment is the card\'s button: its tooltip says so, and the agents are not listed in it', () => {
+    expect(statusSegments({ tabId: 't', main, agents: [agent({ startedAt: 1000 })], background: [] }, 30_000).at(-1)?.title).toBe(AGENTS_TITLE)
+  })
+
+  it('the segment counts run agents and names each run', () => {
+    const runs = [run({ state: 'running' })]
+    const agents = [agent({ agentId: 'b1' }), agent({ agentId: 'a1', runId: 'wf_e2e-run1' }), agent({ agentId: 'a2', runId: 'wf_e2e-run1' })]
+    expect(agentsText({ tabId: 't', main, agents, background: [], runs })).toBe('⚙ 3: opus·high, crash-triage ×2')
+    expect(statusSegments({ tabId: 't', main, agents, background: [], runs }, NOW).at(-1)).toEqual({ key: 'agents', text: '⚙ 3: opus·high, crash-triage ×2', title: AGENTS_TITLE, level: 'normal' })
+  })
+
+  it('a running run with no agent running names the run alone', () => {
+    expect(agentsText({ tabId: 't', main, agents: [], background: [], runs: [run({ state: 'running' })] })).toBe('⚙ crash-triage')
+  })
+
+  it('a kept finished run shows with a mark', () => {
+    expect(agentsText({ tabId: 't', main, agents: [], background: [], runs: [run({ state: 'done' })] })).toBe('⚙ crash-triage ✓')
+    expect(agentsText({ tabId: 't', main, agents: [], background: [], runs: [run({ state: 'failed' })] })).toBe('⚙ crash-triage ✕')
+    expect(agentsText({ tabId: 't', main, agents: [], background: [], runs: [run({ state: 'stopped' })] })).toBe('⚙ crash-triage ✕')
+    expect(statusSegments({ tabId: 't', main, agents: [], background: [], runs: [run({ state: 'done' })] }, NOW).at(-1)).toMatchObject({ key: 'agents', text: '⚙ crash-triage ✓' })
+  })
+
+  it('bareAgents leaves out the agents of a run the status names, and keeps an agent whose run it does not name', () => {
+    const agents = [agent({ agentId: 'b1' }), agent({ agentId: 'a1', runId: 'wf_e2e-run1' }), agent({ agentId: 'x1', runId: 'wf_other-run' })]
+    expect(bareAgents({ tabId: 't', main, agents, background: [], runs: [run({})] }).map((a) => a.agentId)).toEqual(['b1', 'x1'])
+  })
+
+  it('nothing running and no run: no segment', () => {
+    expect(agentsText({ tabId: 't', main, agents: [], background: [] })).toBeNull()
+    expect(agentsText({ tabId: 't', main, agents: [], background: [], runs: [] })).toBeNull()
+    expect(statusSegments({ tabId: 't', main, agents: [], background: [], runs: [] }, NOW).map((s) => s.key)).toEqual(['model', 'context'])
+  })
+
+  it('statusRows puts a bare agent and a run in start order, and no run agent twice', () => {
+    const agents = [agent({ agentId: 'a1', runId: 'wf_e2e-run1', startedAt: 50 }), agent({ agentId: 'b1', startedAt: 10 }), agent({ agentId: 'c1', startedAt: 90 })]
+    const runs = [run({ startedAt: 30, agents: [wfAgent('a1', 50)] })]
+    const rows = statusRows({ tabId: 't', main, agents, background: [], runs })
+    expect(rows.map((r) => (r.kind === 'agent' ? r.agent.id : r.run.runId))).toEqual(['b1', 'wf_e2e-run1', 'c1'])
   })
 })
+
+/** a Workflow run as the status carries it: running unless the test says otherwise */
+const run = (over: Partial<WorkflowRun>): WorkflowRun => ({ key: 'k1', runId: 'wf_e2e-run1', taskId: 'w9ehhq53f', name: 'crash-triage', state: 'running', startedAt: 0, ms: null, phases: [], agents: [], ...over })
+const wfAgent = (agentId: string, startedAt: number): WorkflowRun['agents'][number] => ({ key: agentId, agentId, label: 'triage-a', phase: null, state: 'running', attempt: 1, model: 'claude-opus-5-5', effort: 'high', task: null, startedAt, ms: null })
 
 describe('helpers', () => {
   it('levelFor', () => {

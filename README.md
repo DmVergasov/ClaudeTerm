@@ -59,7 +59,7 @@ Audio and video files (`mp4`, `mov`, `webm`, `mkv`, `mp3`, `wav`, `m4a`, `ogg`) 
 
 ### 📊 A status bar that answers "how much is left?"
 
-Under every Claude tab: the current model with its reasoning effort as a small pill, how full the context window is with a small bar (measured against the auto-compact window when your settings set one, such as `"autoCompactWindow": 512000`, since that is where the conversation compacts), and which subagents are running right now with their model and effort. Hover for exact token counts and a list of the agents with their tasks.
+Under every Claude tab: the current model with its reasoning effort as a small pill, how full the context window is with a small bar (measured against the auto-compact window when your settings set one, such as `"autoCompactWindow": 512000`, since that is where the conversation compacts), and which subagents are running right now with their model and effort. Hover for exact token counts, and click ⚙ for a list of the agents with their tasks, a Workflow run's agents grouped by run.
 
 **Remote** at the start of the status bar says whether you can continue the tab's session from your phone or claude.ai/code (Claude Code's Remote Control), and is green, with a radio mark on the tab, while it is connected. Click it to turn Remote Control on or off for the tab, open the session on claude.ai or copy its link, and tick **Connect every new session of this account** to start every new Claude tab of that account with it.
 

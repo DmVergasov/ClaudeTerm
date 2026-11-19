@@ -2,6 +2,8 @@ import { type ChatCallState, type ChatItem, type ChatPatch, type ChatSubagent, t
 import { DEFAULT_IMAGE_EXTENSIONS, hasImageExtension } from '../../shared/image-file'
 import type { ImageCard } from '../../shared/types'
 import { isWithin, nativePath, pathKey } from '../path-key'
+import { endRun, parseWorkflowProgress, RUN_LABEL_CAP, runEndState, runOfResult, sameRun, type WorkflowRun } from '../../shared/workflow'
+import type { RunFile } from '../workflow-files'
 
 // The folding both conversations share: an assistant message's blocks, the results of its tool calls, the subagents of Agent calls and the
 // list of items the chat view draws. Everything here is untrusted input: a field of the wrong type is ignored, an unknown kind gives no patch.
@@ -46,6 +48,8 @@ export const str = (v: unknown): string | null => (typeof v === 'string' ? v : n
 export const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
 export const cap = (s: string, max: number): string => (s.length > max ? s.slice(0, max) : s)
+/** a text as one line: its whitespace collapsed and its ends trimmed */
+const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
 const pathOf = (v: unknown): string | null => {
   const s = str(v)
   return s === null ? null : cap(s, PATH_CAP)
@@ -162,6 +166,12 @@ function imageOf(name: string, input: Obj): string | null {
   return path !== null && path !== '' && nativePath.isAbsolute(path) ? path : null
 }
 
+/** the run a Workflow call holds once its result is in: the call's own run with the ids the result names, or a new run when it holds none yet */
+function launchedRun(call: ChatToolCall, ids: { runId: string | null; taskId: string | null }, start: number): WorkflowRun {
+  if (call.workflow === undefined) return { key: call.id, runId: ids.runId, taskId: ids.taskId, name: 'workflow', state: 'running', startedAt: start, ms: null, phases: [], agents: [] }
+  return { ...call.workflow, runId: ids.runId ?? call.workflow.runId, taskId: ids.taskId ?? call.workflow.taskId }
+}
+
 export class ChatFold {
   protected readonly o: ChatFoldOptions
   protected readonly list: ChatItem[] = []
@@ -183,6 +193,8 @@ export class ChatFold {
   protected readonly callTypes = new Map<string, string>()
   /** the background tasks whose end the chat has drawn from a system message: their notice in the conversation adds no row */
   protected readonly ended = new Set<string>()
+  /** the Workflow runs whose task has not ended (an interrupt stops a run, its task goes on), by the task's id: the tools item and the call that holds the run */
+  protected readonly runTasks = new Map<string, { itemId: string; callId: string }>()
   /** the images item of each step, by the step's tools item */
   protected readonly stepImages = new Map<string, string>()
   /** the ids of all images items, so a change of the Media cards does not scan the whole chat */
@@ -350,10 +362,14 @@ export class ChatFold {
         ? null
         : { id: foundId, description: call.subject, type: this.callTypes.get(callId) ?? 'agent', state: failed ? 'failed' : 'done', ms: null }
       if (found !== null) this.agentCalls.set(found.id, { itemId: item.id, callId })
+      // a Workflow call's result names its run: the run is kept from here, with the ids the result gives (the task's may come first, from task_started)
+      const workflow = call.name === 'Workflow' && !failed ? launchedRun(call, runOfResult(text), link.start) : null
+      if (workflow?.taskId) this.runTasks.set(workflow.taskId, { itemId: item.id, callId })
       const next: ChatToolCall = {
         ...call, state: failed ? 'failed' : 'done', output, error: failed ? output : null, ms,
         detail: failed ? call.detail : (resultDetail(call.name, output, ms) ?? call.detail),
         ...(found === null ? {} : { agents: [found] }),
+        ...(workflow === null ? {} : { workflow }),
       }
       const calls = item.calls.map(c => (c.id === next.id ? next : c))
       // the step's own time goes out when its last call ends; until then the call that changed is all the window gets
@@ -486,17 +502,121 @@ export class ChatFold {
     return this.callPatch(item, item.calls.map(c => (c.id === next.id ? next : c)), next)
   }
 
-  /** every call still running fails with the reason, and so does every agent still running: none is left animating */
+  /** a Workflow run's task has started: its name and task id go on the run, and the call's subject is the name; null for any other task */
+  protected workflowStarted(msg: Obj): ChatPatch[] | null {
+    if (msg.task_type !== 'local_workflow') return null
+    const callId = typeof msg.tool_use_id === 'string' ? cap(msg.tool_use_id, NAME_CAP) : null
+    const link = callId === null ? undefined : this.calls.get(callId)
+    const item = link ? this.get(link.itemId) : undefined
+    const call = item?.kind === 'tools' ? item.calls.find(c => c.id === callId) : undefined
+    if (item?.kind !== 'tools' || !call || call.name !== 'Workflow') return null
+    const taskId = typeof msg.task_id === 'string' ? cap(msg.task_id, NAME_CAP) : null
+    if (taskId === null || !isAgentId(taskId)) return []
+    const name = cap(oneLine(str(msg.workflow_name) ?? ''), RUN_LABEL_CAP) || 'workflow'
+    const run: WorkflowRun = call.workflow === undefined
+      ? { key: call.id, runId: null, taskId, name, state: 'running', startedAt: link?.start ?? null, ms: null, phases: [], agents: [] }
+      : { ...call.workflow, taskId, name }
+    this.runTasks.set(taskId, { itemId: item.id, callId: call.id })
+    return this.runPatch(item, { ...call, subject: name, workflow: run })
+  }
+
+  /** a Workflow run's rows as its progress gives them: its phases and agents replaced, and the agent count on the call; null for a task that holds no run */
+  protected workflowProgress(msg: Obj): ChatPatch[] | null {
+    const held = this.heldRun(msg.task_id)
+    if (held === null) return null
+    const rows = parseWorkflowProgress(msg.workflow_progress)
+    if (rows === null) return []
+    // a progress after an interrupt: the run is background work that goes on, so it is running again
+    const run: WorkflowRun = { ...held.run, state: 'running', ms: null, phases: rows.phases, agents: rows.agents }
+    if (sameRun(held.run, run)) return []
+    return this.runPatch(held.item, { ...held.call, detail: `${run.agents.length} agents`, workflow: run })
+  }
+
+  /** a Workflow run's task has ended: the run takes its end, its rows as the end gives them, and its running agents fail; null for a task that holds no run */
+  protected workflowEnded(msg: Obj): ChatPatch[] | null {
+    const held = this.heldRun(msg.task_id)
+    if (held === null) return null
+    const state = runEndState(msg.status)
+    if (state === null) return []
+    // the stream's own duration when it gives one, never below zero; the clock's time from the run's start when it gives none
+    const now = this.o.now()
+    const reported = isObj(msg.usage) ? num(msg.usage.duration_ms) : null
+    const ms = reported !== null && reported >= 0 ? reported : elapsed(held.run.startedAt ?? now, now)
+    const rows = parseWorkflowProgress(msg.workflow_progress)
+    const run = rows === null ? held.run : { ...held.run, phases: rows.phases, agents: rows.agents }
+    this.runTasks.delete(held.taskId)
+    return this.runPatch(held.item, { ...held.call, workflow: endRun(run, state, ms) })
+  }
+
+  /** the Workflow call that holds the run of a task, with the run; null for a task the chat holds no run of */
+  private heldRun(taskValue: unknown): { taskId: string; item: ToolsItem; call: ChatToolCall; run: WorkflowRun } | null {
+    const taskId = typeof taskValue === 'string' ? cap(taskValue, NAME_CAP) : null
+    const link = taskId === null ? undefined : this.runTasks.get(taskId)
+    const item = link ? this.get(link.itemId) : undefined
+    const call = item?.kind === 'tools' ? item.calls.find(c => c.id === link?.callId) : undefined
+    if (taskId === null || item?.kind !== 'tools' || call?.workflow === undefined) return null
+    return { taskId, item, call, run: call.workflow }
+  }
+
+  /** the call with its run changed: the tools item keeps it, and the window gets it */
+  private runPatch(item: ToolsItem, next: ChatToolCall): ChatPatch[] {
+    return this.callPatch(item, item.calls.map(c => (c.id === next.id ? next : c)), next)
+  }
+
+  /** the run of every Workflow call the chat holds, in item order */
+  runs(): WorkflowRun[] {
+    const runs: WorkflowRun[] = []
+    for (const item of this.list) {
+      if (item.kind === 'tools') for (const call of item.calls) if (call.workflow !== undefined) runs.push(call.workflow)
+    }
+    return runs
+  }
+
+  /** the runIds of the Workflow runs still running, in item order: a run file may end them */
+  openRunIds(): string[] {
+    return this.runs().flatMap(run => run.state === 'running' && run.runId !== null ? [run.runId] : [])
+  }
+
+  /**
+   * The run of the Workflow call that holds this runId ends as its run file says: its state and ms, its task id, its name (which is the
+   * call's subject) and its rows when the file gives them; [] when no call holds the runId
+   */
+  applyRunFile(runId: string, file: RunFile): ChatPatch[] {
+    for (const item of this.list) {
+      if (item.kind !== 'tools') continue
+      const call = item.calls.find(c => c.workflow?.runId === runId)
+      if (call?.workflow === undefined) continue
+      const held = call.workflow
+      const rows = file.rows
+      const run: WorkflowRun = {
+        ...held,
+        name: file.name ?? held.name,
+        taskId: file.taskId ?? held.taskId,
+        startedAt: file.startedAt ?? held.startedAt,
+        ...(rows === null ? {} : { phases: rows.phases, agents: rows.agents }),
+      }
+      // the call's detail says the agents as the live run does (see workflowProgress); a run with none keeps the call's own
+      const detail = run.agents.length > 0 ? `${run.agents.length} agents` : call.detail
+      return this.runPatch(item, { ...call, subject: file.name ?? call.subject, detail, workflow: endRun(run, file.state, file.ms) })
+    }
+    return []
+  }
+
+  /** every call still running fails with the reason, and so does every agent still running: none is left animating; a run still running is stopped */
   protected failRunning(reason: string): ChatPatch[] {
     const patches: ChatPatch[] = []
+    const now = this.o.now()
     for (const [callId, link] of this.calls) {
       const item = this.get(link.itemId)
       const call = item?.kind === 'tools' ? item.calls.find(c => c.id === callId) : undefined
       if (item?.kind !== 'tools' || call === undefined) continue
       const agents = call.agents.map(a => (a.state === 'running' ? { ...a, state: 'failed' as const } : a))
       const agentsChanged = agents.some((a, i) => a !== call.agents[i])
-      if (call.state !== 'running' && !agentsChanged) continue
-      const next: ChatToolCall = call.state === 'running' ? { ...call, state: 'failed', error: reason, agents } : { ...call, agents }
+      const run = call.workflow?.state === 'running' ? endRun(call.workflow, 'stopped', elapsed(call.workflow.startedAt ?? now, now)) : call.workflow
+      const runChanged = run !== call.workflow
+      if (call.state !== 'running' && !agentsChanged && !runChanged) continue
+      const workflow = run === undefined ? {} : { workflow: run }
+      const next: ChatToolCall = call.state === 'running' ? { ...call, state: 'failed', error: reason, agents, ...workflow } : { ...call, agents, ...workflow }
       patches.push(...this.callPatch(item, item.calls.map(c => (c.id === callId ? next : c)), next))
     }
     return patches
@@ -546,6 +666,7 @@ export class ChatFold {
       this.callTypes.delete(callId)
     }
     for (const [taskId, link] of this.tasks) if (dropped.has(link.itemId)) this.tasks.delete(taskId)
+    for (const [taskId, link] of this.runTasks) if (dropped.has(link.itemId)) this.runTasks.delete(taskId)
     for (const [taskId, link] of this.agentCalls) if (dropped.has(link.itemId)) this.agentCalls.delete(taskId)
     for (const id of dropped) {
       this.stepStart.delete(id)

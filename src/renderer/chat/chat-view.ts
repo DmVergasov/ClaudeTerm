@@ -9,7 +9,8 @@ import { FileLinker } from './file-linker'
 import type { FileLink } from '../../shared/chat-paths'
 import { renderItem, type ItemCallbacks } from './chat-items'
 import { focusCard, renderCard, waitingCard } from './chat-cards'
-import { agentColor, elapsedText, fillAgentsCard, setSettled, tickAgentTimes, type StepKeep } from './chat-steps'
+import { agentColor, cardColor, cardRunning, elapsedText, fillAgentsCard, setSettled, tickAgentTimes, type AgentCardRow, type StepKeep } from './chat-steps'
+import type { WorkflowRun } from '../../shared/workflow'
 import { AgentPage } from './agent-page'
 import { BOTTOM_SLACK, drawCallInPlace, drawInPlace, drawSafely, EDGE_ZONE, FrameQueue, joinSnapshot, keepAtNode, keepFold, OlderPages, pageDownWin, pageUpInView, pageUpWin, revealWin, scrollToMiddle, settledAfter, stepBefore, tailWin, topItemOf, windowAt } from './column-draw'
 import type { FindView } from './chat-find'
@@ -123,7 +124,7 @@ export class ChatView {
   /** the dock is open: a running agent opened it, and it stays open until its linger ends */
   private dockOpen = false
   /** the rows the dock draws while it is open: an agent that ends keeps its row through the linger, even when it began in an earlier turn */
-  private dockRows: ChatSubagent[] = []
+  private dockRows: AgentCardRow[] = []
   private dockTimer: ReturnType<typeof setTimeout> | null = null
   /** the window: items[from] to items[to - 1] are drawn, the others are held only */
   private from = 0
@@ -489,11 +490,11 @@ export class ChatView {
     const anchor = shown !== null ? this.pageAnchor : this.drawing() && !this.stick ? this.topItem() : null
     shown?.dispose()
     this.pageAnchor = anchor
-    const index = this.dockRows.findIndex((row) => row.id === agentId)
+    // the page takes the colour its row has in the dock
     const page = new AgentPage({
       agentId,
       cb: this.cb,
-      color: agentColor(Math.max(0, index)),
+      color: agentColor(Math.max(0, cardColor(this.dockRows, agentId))),
       back: () => this.closeAgent(),
       backToCard: () => this.closeAgent(true),
       older: (beforeId) => this.o.agentOlder(agentId, beforeId),
@@ -867,30 +868,30 @@ export class ChatView {
    * unless an agent runs. The dock shows the agents of the current turn only: those of the Agent calls since the person's last message.
    */
   private syncDock(): void {
-    const agents = this.turnAgents()
-    if (agents.some((agent) => agent.state === 'running')) {
+    const rows = this.turnRows()
+    if (cardRunning(rows)) {
       this.stopDockTimer()
       this.dockOpen = true
-      this.dockRows = agents
-      this.fillDock(agents)
+      this.dockRows = rows
+      this.fillDock(rows)
       this.dock.classList.add('shown')
       this.syncClock()
       return
     }
     if (!this.dockOpen) return
-    this.dockRows = this.dockRows.map((row) => this.agentNow(row.id) ?? row)
+    this.dockRows = this.dockRows.map((row) => this.rowNow(row))
     this.fillDock(this.dockRows)
     this.syncClock()
     if (this.dockTimer === null) this.dockTimer = setTimeout(() => this.closeDock(), DOCK_LINGER_MS)
   }
 
   /** the dock's card: its rows open the agents' pages, and the row of the open page is marked */
-  private fillDock(agents: ChatSubagent[]): void {
-    fillAgentsCard(this.dock, agents, { open: (agentId) => this.cb.openAgent(agentId), current: this.page?.agentId ?? null })
+  private fillDock(rows: AgentCardRow[]): void {
+    fillAgentsCard(this.dock, rows, { open: (agentId) => this.cb.openAgent(agentId), current: this.page?.agentId ?? null })
   }
 
-  /** the subagents of the Agent calls from the person's last message on, in the order they started; an agent of an earlier turn stays while it runs, as a background one outlives its turn */
-  private turnAgents(): ChatSubagent[] {
+  /** the rows of the Workflow runs and the Agent calls from the person's last message on, in the order they started: a call's run first, then its agents; a run or an agent of an earlier turn stays while it runs, as a background one outlives its turn */
+  private turnRows(): AgentCardRow[] {
     let from = 0
     for (let i = this.items.length - 1; i >= 0; i--) {
       const item = this.items[i]!
@@ -899,9 +900,22 @@ export class ChatView {
         break
       }
     }
-    const agentsOf = (items: ChatItem[]): ChatSubagent[] => items.flatMap((item) => (item.kind === 'tools' ? item.calls.flatMap((call) => call.agents) : []))
-    const running = agentsOf(this.items.slice(0, from)).filter((agent) => agent.state === 'running')
-    return [...running, ...agentsOf(this.items.slice(from))]
+    const rowsOf = (items: ChatItem[]): AgentCardRow[] => items.flatMap((item) => (item.kind === 'tools' ? item.calls.flatMap((call) => [
+      ...(call.workflow === undefined ? [] : [{ kind: 'run' as const, run: call.workflow }]),
+      ...call.agents.map((agent) => ({ kind: 'agent' as const, agent }))
+    ]) : []))
+    const running = rowsOf(this.items.slice(0, from)).filter((row) => (row.kind === 'run' ? row.run.state === 'running' : row.agent.state === 'running'))
+    return [...running, ...rowsOf(this.items.slice(from))]
+  }
+
+  /** the latest state of a row: an agent's, whichever turn its Agent call is in, or a run's */
+  private rowNow(row: AgentCardRow): AgentCardRow {
+    if (row.kind === 'run') {
+      const run = this.runNow(row.run.key)
+      return run === undefined ? row : { kind: 'run', run }
+    }
+    const agent = this.agentNow(row.agent.id)
+    return agent === undefined ? row : { kind: 'agent', agent }
   }
 
   /** the latest state of an agent, whichever turn its Agent call is in */
@@ -912,6 +926,15 @@ export class ChatView {
         const agent = call.agents.find((a) => a.id === id)
         if (agent !== undefined) return agent
       }
+    }
+    return undefined
+  }
+
+  /** the latest state of a Workflow run, by its key (its Workflow call's id) */
+  private runNow(key: string): WorkflowRun | undefined {
+    for (const item of this.items) {
+      if (item.kind !== 'tools') continue
+      for (const call of item.calls) if (call.workflow?.key === key) return call.workflow
     }
     return undefined
   }
@@ -1218,7 +1241,7 @@ export class ChatView {
   /** the elapsed time ticks once a second while the chat is shown and a turn runs, and so do the times of the agents running in the dock, which outlive their turn */
   private syncClock(): void {
     // the dock's times count while it shows, on an agent page too; the working line's only while the conversation is drawn
-    const agents = this.visible && this.dockOpen && this.dockRows.some((agent) => agent.state === 'running')
+    const agents = this.visible && this.dockOpen && cardRunning(this.dockRows)
     const run = agents || (this.drawing() && (this.state.turn !== 'idle' || this.state.activity !== undefined || this.waitShown))
     if (run && this.clock === null) {
       // a chat shown again catches up at once

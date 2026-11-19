@@ -706,7 +706,7 @@ function bootstrap(): void {
       // the session snapshot keeps it: a restore must wake a conversation whose background work stopped with ClaudeTerm
       tabs.setBackgroundWork(tabId, status.background.length > 0)
       send(IPC.evStatus, status)
-      pushToMembers(tabId, 'status', { main: status.main, agents: status.agents, background: status.background })
+      pushToMembers(tabId, 'status', { main: status.main, agents: status.agents, background: status.background, ...(status.runs ? { runs: status.runs } : {}) })
     }, 50))
   }
   /** a timer the hub cancels when the person's answer comes first */
@@ -716,9 +716,10 @@ function bootstrap(): void {
   }
   const statusHub: StatusHub = new StatusHub({
     now: () => Date.now(),
-    readMeta: (tabId, agentId) => {
-      const dir = sources.get(tabId)?.feed?.subagentDir
-      return dir ? readAgentMeta(dir, agentId) : null
+    readMeta: (tabId, agentId, runId) => {
+      const feed = sources.get(tabId)?.feed
+      if (!feed) return null
+      return readAgentMeta(runId ? join(feed.workflowsDir, runId) : feed.subagentDir, agentId)
     },
     onChange: statusSoon,
     remoteChanged: (tabId, id, previous) => remoteControl.reported(tabId, id, previous),
@@ -870,9 +871,15 @@ function bootstrap(): void {
       cacheRoot: imageCacheRoot,
       fileExists: existsSync,
       locate: () => findTranscript(transcriptPath, sessionId),
+      // what the transcript and its runs held before the switch are history: no workflow run there is live
+      since,
       onImage: (img) => images.add(tabId, img.path, img.source, img.caption, img.at ?? undefined, false, gen),
       onError: (m) => log.warn(m),
       onSubagentInfo: (agentId, info) => statusHub.subagentInfo(tabId, agentId, info),
+      onWorkflowRun: (run) => statusHub.workflowRun(tabId, sessionId, run),
+      onWorkflowJournal: (runId, lines) => statusHub.workflowJournal(tabId, sessionId, runId, lines),
+      onWorkflowTask: (runId, agentId, task) => statusHub.workflowTask(tabId, sessionId, runId, agentId, task),
+      onWorkflowEnd: (runId, file) => statusHub.workflowEnd(tabId, sessionId, runId, file),
       onEditEvent: (ev) => review.transcriptEvent(tabId, ev),
       onAssistant: (agentId, at) => review.assistantEntry(tabId, agentId, at),
       onInterrupt: (agentId, at) => {
@@ -2994,6 +3001,8 @@ function bootstrap(): void {
     turn: (msg) => {
       if (!isClaudeTab(msg.tabId)) return { ok: false, error: `unknown claude tab: ${msg.tabId}` }
       if (msg.remote !== undefined) statusHub.remote(msg.tabId, msg.sessionId, msg.remote)
+      // a prompt of the user ends the runs that ended before it: they are no longer shown
+      statusHub.turn(msg.tabId, msg.sessionId)
       // a prompt of the user starts a turn that is the user's, not a mail turn
       mailHub.userTurn(msg.tabId)
       wakeFeed(msg.tabId)

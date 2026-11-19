@@ -17,6 +17,8 @@ export const EMPTY_LOST = "This agent's conversation was not saved"
 
 /** the line under the page's composer: a message is sent through Claude, and it takes a turn of the main conversation */
 export const WRITE_HINT = 'Claude forwards it with SendMessage · uses a turn of the main conversation'
+/** the second line under it on a workflow agent's page: the agent answers in the main conversation, not to its workflow */
+export const RUN_HINT = 'The agent answers in the main conversation, not to its workflow'
 /** the composer's line for a stopped agent: it may not come back when a message is sent to it */
 export const STOPPED_HINT = 'You stopped this agent: Claude may not be able to resume it'
 /** the composer's line when the chat has exited: nothing can be sent to the agent */

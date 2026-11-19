@@ -1563,4 +1563,127 @@ describe('the stand-in Claude Code runs subagents', () => {
     expect(ignoring.out.some(m => m.message?.content?.[0]?.type === 'tool_use')).toBe(false)
     await finish(ignoring)
   })
+
+  it('a workflow step launches a run as a background task: its call, its progress, its files and its end as Claude Code writes them', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{ workflow: { name: 'crash-triage', phases: ['Triage'], agents: [{ label: 'triage-a', task: 'Look at crash 1', attempts: 2 }, { label: 'triage-b', task: 'Look at crash 2' }], ms: 200 } }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+
+    // the Workflow call ends at once with the launch result: its task id and its transcript dir
+    const call = run.out.find(m => m.type === 'assistant' && m.message?.content?.[0]?.name === 'Workflow')?.message.content[0].id as string
+    const launch = resultOf(run, call)?.message.content[0] as Msg
+    expect(launch.content).toMatch(/Task ID: wfake\d+/)
+    expect(launch.content).toMatch(/Transcript dir: .*subagents[\\/]workflows[\\/]wf_fake-\d+/)
+    const taskId = /Task ID: (\S+)/.exec(launch.content as string)?.[1] as string
+    const runId = /(wf_fake-\d+)/.exec(launch.content as string)?.[1] as string
+
+    const started = run.out.find(m => m.type === 'system' && m.subtype === 'task_started' && m.task_id === taskId)
+    expect(started).toMatchObject({ task_type: 'local_workflow', workflow_name: 'crash-triage', tool_use_id: call })
+
+    // the run goes on outside the turn: its progress rows name the phase and the agents, and a retry shows as attempt 2
+    await until(() => run.out.some(m => m.type === 'system' && m.subtype === 'task_notification' && m.task_id === taskId), 'the run ends')
+    const progress = run.out.filter(m => m.type === 'system' && m.subtype === 'task_progress' && m.task_id === taskId)
+    expect(progress.some(m => m.workflow_progress.some((r: Msg) => r.type === 'workflow_phase' && r.title === 'Triage') && m.workflow_progress.some((r: Msg) => r.type === 'workflow_agent'))).toBe(true)
+    expect(progress.some(m => m.workflow_progress.some((r: Msg) => r.type === 'workflow_agent' && r.attempt === 2))).toBe(true)
+    // an agent without a phase is in phase 0 of a run that has phases
+    expect(progress[0].workflow_progress.filter((r: Msg) => r.type === 'workflow_agent')).toEqual([
+      expect.objectContaining({ label: 'triage-a', phaseIndex: 0, phaseTitle: 'Triage' }),
+      expect.objectContaining({ label: 'triage-b', phaseIndex: 0, phaseTitle: 'Triage' })
+    ])
+
+    const end = run.out.find(m => m.type === 'system' && m.subtype === 'task_notification' && m.task_id === taskId)
+    expect(end).toMatchObject({ status: 'completed', tool_use_id: call, usage: { duration_ms: expect.any(Number) } })
+    const endRows = end?.workflow_progress.filter((r: Msg) => r.type === 'workflow_agent') as Msg[]
+    expect(endRows).toHaveLength(2)
+    expect(endRows.every(r => r.state === 'done')).toBe(true)
+    await finish(run)
+
+    // the files: the journal (a retry is a failed try and a new started under the next agent id), the agents' transcripts and
+    // meta files, and the run file
+    const sessionFolder = join(config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'), session)
+    const runFolder = join(sessionFolder, 'subagents', 'workflows', runId)
+    const journal = transcriptLines(join(runFolder, 'journal.jsonl'))
+    expect(journal.map(line => line.type)).toEqual(['launched', 'started', 'started', 'failed', 'started', 'result', 'result'])
+    expect(journal[1]).toMatchObject({ key: '0', agentId: 'awf1', label: 'triage-a', phase: 'Triage' })
+    expect(journal[3]).toMatchObject({ key: '0', agentId: 'awf1' })
+    expect(journal[4]).toMatchObject({ key: '0', agentId: 'awf3', phase: 'Triage' })
+
+    for (const [agentId, label] of [['awf1', 'triage-a'], ['awf2', 'triage-b'], ['awf3', 'triage-a']]) {
+      const lines = transcriptLines(join(runFolder, `agent-${agentId}.jsonl`))
+      expect(lines[0]).toMatchObject({ type: 'user', isSidechain: true, agentId })
+      expect(lines[0].message.content).toMatch(/^\[Workflow harness — computed task\]/)
+      expect(lines[1].type).toBe('assistant')
+      expect(readJson(join(runFolder, `agent-${agentId}.meta.json`))).toMatchObject({ description: label, workflowPhase: 'Triage', model: expect.any(String) })
+    }
+    expect(readJson(join(sessionFolder, 'workflows', `${runId}.json`))).toMatchObject({ runId, taskId, workflowName: 'crash-triage', status: 'completed', startTime: expect.any(Number), durationMs: expect.any(Number), workflowProgress: expect.any(Array) })
+  })
+
+  it('a later line goes to the last try of its agent once its gate exists, and the run ends only at its own gate', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{ workflow: { name: 'crash-triage', phases: ['Triage'], agents: [{ label: 'triage-a', task: 'Look at crash 1' }, { label: 'triage-b', task: 'Look at crash 2', attempts: 2, later: { gate: 'later', text: 'Second look' } }], gate: 'end' } }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+
+    const call = run.out.find(m => m.type === 'assistant' && m.message?.content?.[0]?.name === 'Workflow')?.message.content[0].id as string
+    const launch = resultOf(run, call)?.message.content[0] as Msg
+    const taskId = /Task ID: (\S+)/.exec(launch.content as string)?.[1] as string
+    const runId = /(wf_fake-\d+)/.exec(launch.content as string)?.[1] as string
+    const runFolder = join(config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'), session, 'subagents', 'workflows', runId)
+    const ended = (): boolean => run.out.some(m => m.type === 'system' && m.subtype === 'task_notification' && m.task_id === taskId)
+    const lines = (agentId: string): Msg[] => (existsSync(join(runFolder, `agent-${agentId}.jsonl`)) ? transcriptLines(join(runFolder, `agent-${agentId}.jsonl`)) : [])
+    const says = (agentId: string): boolean => lines(agentId).some(line => line.type === 'assistant' && textOf(line) === 'Second look')
+
+    // the second agent's first try (awf2) fails at half the run's time, and its retry (awf3) is the last try: the line waits for it
+    await until(() => lines('awf3').length > 0, 'the retry')
+    expect(says('awf3')).toBe(false)
+    expect(ended()).toBe(false)
+
+    writeFileSync(join(config, 'later'), '')
+    await until(() => says('awf3'), 'the later line')
+    expect(says('awf2')).toBe(false)
+    expect(ended()).toBe(false)
+
+    writeFileSync(join(config, 'end'), '')
+    await until(ended, 'the run ends')
+    expect(run.out.find(m => m.type === 'system' && m.subtype === 'task_notification' && m.task_id === taskId)).toMatchObject({ status: 'completed' })
+    await finish(run)
+  })
+
+  it('a failed run ends its running agents as failed: a failed journal line, error rows, and status failed in the run file and the notification', async () => {
+    const session = randomUUID()
+    const run = start([...STREAM, '--session-id', session], {
+      turns: {
+        Go: [{ workflow: { name: 'crash-triage', agents: [{ label: 'triage-a', task: 'Look at crash 1' }], ms: 200, status: 'failed' } }]
+      }
+    })
+    send(run, initWith(true))
+    await turn(run, 'Go')
+
+    const call = run.out.find(m => m.type === 'assistant' && m.message?.content?.[0]?.name === 'Workflow')?.message.content[0].id as string
+    const launch = resultOf(run, call)?.message.content[0] as Msg
+    const taskId = /Task ID: (\S+)/.exec(launch.content as string)?.[1] as string
+    const runId = /(wf_fake-\d+)/.exec(launch.content as string)?.[1] as string
+    await until(() => run.out.some(m => m.type === 'system' && m.subtype === 'task_notification' && m.task_id === taskId), 'the run ends')
+    await finish(run)
+
+    const end = run.out.find(m => m.type === 'system' && m.subtype === 'task_notification' && m.task_id === taskId)
+    expect(end).toMatchObject({ status: 'failed' })
+    expect(end?.workflow_progress.filter((r: Msg) => r.type === 'workflow_agent')).toEqual([expect.objectContaining({ state: 'error', agentId: 'awf1' })])
+    expect(run.out.some(m => m.type === 'system' && m.subtype === 'task_progress' && m.task_id === taskId && m.workflow_progress.some((r: Msg) => r.type === 'workflow_agent' && r.state === 'error'))).toBe(true)
+
+    const sessionFolder = join(config, 'projects', realpathSync.native(work).replace(/[^a-zA-Z0-9]/g, '-'), session)
+    const journal = transcriptLines(join(sessionFolder, 'subagents', 'workflows', runId, 'journal.jsonl'))
+    expect(journal.map(line => line.type)).toEqual(['launched', 'started', 'failed'])
+    expect(journal[2]).toMatchObject({ key: '0', agentId: 'awf1' })
+    expect(readJson(join(sessionFolder, 'workflows', `${runId}.json`))).toMatchObject({ status: 'failed' })
+  })
 })

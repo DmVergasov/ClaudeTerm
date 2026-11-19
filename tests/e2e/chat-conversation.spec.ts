@@ -527,14 +527,14 @@ test('the bars of running subagents move at once when their chat comes back from
 })
 
 test('the agents list shows its newest rows once it has more than it holds, and leaves a reader who scrolled up in it where they are', async () => {
-  const agents = Array.from({ length: 7 }, (_, i) => ({ type: 'general-purpose', description: `Check region ${i + 1}`, ms: i === 0 ? 3000 : 20_000 }))
+  const agents = Array.from({ length: 10 }, (_, i) => ({ type: 'general-purpose', description: `Check region ${i + 1}`, ms: i === 0 ? 3000 : 20_000 }))
   const { app, page } = await launchChatTab({
     turns: { team: [{ task: { description: 'Check the regions', result: 'Checked.', agents } }, { text: 'Done.' }] }
   })
   try {
     await send(page, 'team')
     const rows = page.locator('.chat-agents-dock .chat-agent')
-    await expect(rows).toHaveCount(7)
+    await expect(rows).toHaveCount(10)
     const list = page.locator('.chat-agents-dock .chat-agents-list')
     // the list scrolls, and stands at its end: the last row shows
     await expect.poll(() => list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)

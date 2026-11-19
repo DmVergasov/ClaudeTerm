@@ -1,17 +1,18 @@
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { isAgentId, type AgentPatch, type AgentSnapshot, type ChatAnswer, type ChatAttachment, type ChatCard, type ChatCommandInfo, type ChatItem, type ChatModelInfo, type ChatPatch, type ChatPermissionMode, type ChatSend, type ChatSendOrigin, type ChatSnapshot } from '../../shared/chat'
 import type { ReloadAction } from '../../shared/mcp'
 import { isUuid } from '../../shared/protocol'
 import { MAX_CHAT_PUSH_BYTES } from '../../shared/remote'
 import type { ImageCard, TabInfo } from '../../shared/types'
+import type { WorkflowRun } from '../../shared/workflow'
 import type { ChatHandle, ChatStartRequest } from '../tab-manager'
 import { touchesConfig } from '../mcp/mcp-config'
 import { AttachedFiles, prepareMessage, type AttachDeps } from './chat-attachments'
 import { capItems, capSnapshot, itemForMembers, patchForMembers } from './chat-mirror'
 import { AgentChats, type AgentChange } from './agent-chats'
-import { agentTranscriptPath, readAgentPage, resolveAgentTranscript, type TranscriptPage } from './agent-history'
+import { agentTranscriptPath, readAgentPage, resolveAgentTranscript, resolveRunAgentTranscript, runAgentTranscriptPath, type TranscriptPage } from './agent-history'
 import { forwardNonce, forwardText } from './agent-forward'
 import { answeredLine, cardFor, resultFor, type PermissionAsk, type SdkPermissionResult } from './chat-cards'
 import type { ChatEngine, ChatEngineHandlers, McpLiveServer, StartChatEngine } from './chat-engine'
@@ -19,6 +20,8 @@ import { TEXT_CAP } from './chat-fold'
 import { ChatModel, isPermissionMode } from './chat-model'
 import { sessionFolderOf, startFolderOf } from './chat-folder'
 import type { ChatLaunch } from './claude-spawn'
+import { LineTailer } from '../transcript-feed'
+import { readRunFile } from '../workflow-files'
 
 // One conversation model per Claude tab, in the main process: the engine's messages fold into it, the chat window gets
 // its patches in batches, and the permission cards wait here for the user's answers.
@@ -29,6 +32,8 @@ const BATCH_MS = 16
 const REMOTE_BATCH_MS = 50
 /** the viewer name of the window in the agent pages it watches; a member's viewer is its device id */
 export const WINDOW_VIEWER = 'window'
+/** a shown run agent's page reads the new lines of its transcript this often, while the agent runs */
+export const RUN_TAIL_MS = 2000
 const NOT_RUNNING = 'Claude Code is not running in this tab'
 const UNKNOWN_AGENT = 'Unknown agent'
 const PLAN_MODE = 'Not sent: plan mode'
@@ -130,6 +135,12 @@ interface PendingCard {
 /** the patches of one agent waiting for their batch: the revision before the first of them, and the batch's timer */
 interface AgentBatch { agentId: string; from: number; patches: AgentPatch[]; timer: ReturnType<typeof setTimeout> | null }
 
+/** the new lines of a run agent's transcript that a watched page reads, every RUN_TAIL_MS: the reader starts at `from` (the head's end) */
+interface RunTail { live: Live; agentId: string; from: number | null; tailer: LineTailer | null; busy: boolean; timer: ReturnType<typeof setInterval> }
+
+/** the key of a run agent's tail: one per tab and agent */
+const runTailKey = (tabId: string, agentId: string): string => `${tabId}\n${agentId}`
+
 /** a Claude tab's chat, from its start to its end */
 interface Live {
   tabId: string
@@ -216,6 +227,20 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e)).slice(0, 500)
 const cancelled = (): SdkPermissionResult => ({ behavior: 'deny', message: CANCELLED })
 
+/** the transcript lines a read gives, as objects: a line that does not parse, or is no object, is skipped */
+function parseTranscriptLines(raw: string[]): Record<string, unknown>[] {
+  const lines: Record<string, unknown>[] = []
+  for (const text of raw) {
+    try {
+      const value: unknown = JSON.parse(text)
+      if (isObj(value)) lines.push(value)
+    } catch {
+      // a line that does not parse is skipped
+    }
+  }
+  return lines
+}
+
 export class ChatHub {
   private readonly tabs = new Map<string, Live>()
   /** the files the window was handed per tab: the only files its messages may carry */
@@ -238,6 +263,8 @@ export class ChatHub {
   private readonly views = new Map<string, { tabId: string; agentId: string }>()
   /** the revision each tab's agents stood at when its chat ended: the next chat's agents count on from it */
   private readonly agentRevs = new Map<string, number>()
+  /** the tails of the run agents whose pages are watched and run, by runTailKey */
+  private readonly runTails = new Map<string, RunTail>()
 
   constructor(private readonly d: ChatHubDeps) {}
 
@@ -629,6 +656,7 @@ export class ChatHub {
     if (!live || live.agents.info(agentId) === null) return
     live.agents.watch(agentId, true)
     this.views.set(viewer, { tabId, agentId })
+    this.startRunTail(live, agentId)
   }
 
   /** a viewer is gone: the page it watched is no longer watched */
@@ -926,10 +954,18 @@ export class ChatHub {
     }
     try {
       for (const msg of messages) live.model.apply(msg)
+      // the runs the history left running end as their run files say, before the history is in (their patches are in the reset below)
+      await this.applyRunFiles(live, sessionId)
+      if (this.tabs.get(live.tabId) !== live) {
+        this.cancelQueued(live)
+        return
+      }
       // the history is in: a call it left running was cut off, so it ends here (its patches are in the reset below)
       live.model.historyLoaded()
       // the forwards the history holds reach their agents, settled, before the agents are known: their transcripts place their bubbles
       for (const item of live.model.forwards()) for (const change of live.agents.forward(item)) this.emitAgent(live, change)
+      // the Workflow runs the history holds: their run agents get their records from the rows
+      for (const run of live.model.runs()) for (const change of live.agents.runAgents(run, sessionId)) this.emitAgent(live, change)
       // the agents the history names are known: their items are read from their transcripts when their pages open
       for (const agent of live.model.agents()) live.agents.known(agent, sessionId)
       // the images of the history take the cards the panel holds; their change is in the reset below
@@ -948,6 +984,34 @@ export class ChatHub {
     }
   }
 
+  /** the Workflow runs the history left running end as their run files say; a run with no readable file stays as its head shows it */
+  private async applyRunFiles(live: Live, sessionId: string): Promise<void> {
+    const open = live.model.openRunIds()
+    if (open.length === 0) return
+    try {
+      const transcript = await this.d.transcript(live.tabId, sessionId)
+      if (transcript === null) return
+      // the session's folder is next to its transcript: <projects>/<sessionId>/workflows/<runId>.json
+      const sessionDir = join(dirname(transcript), sessionId)
+      for (const runId of open) {
+        const file = await readRunFile(sessionDir, runId)
+        if (file !== null) live.model.applyRunFile(runId, file)
+      }
+    } catch (e) {
+      this.d.log.warn(`cannot read the run files of ${sessionId}: ${errorText(e)}`)
+    }
+  }
+
+  /** the Workflow runs a patch carries: those of its calls, and of the calls of a tools item it sets or adds */
+  private runsOf(patches: ChatPatch[]): WorkflowRun[] {
+    const runs: WorkflowRun[] = []
+    for (const p of patches) {
+      if (p.op === 'call' && p.call.workflow !== undefined) runs.push(p.call.workflow)
+      else if ((p.op === 'set' || p.op === 'add') && p.item.kind === 'tools') for (const call of p.item.calls) if (call.workflow !== undefined) runs.push(call.workflow)
+    }
+    return runs
+  }
+
   /** the agent snapshots that waited for the history answer now: the agents are known, or the tab has gone */
   private releaseHistoryWaiters(live: Live): void {
     for (const resolve of live.historyWaiters.splice(0)) resolve()
@@ -958,6 +1022,8 @@ export class ChatHub {
     for (const change of live.agents.apply(msg, live.model.state().sessionId)) this.emitAgent(live, change)
     const sessionBefore = live.model.state().sessionId
     const patches = live.model.apply(msg)
+    // a Workflow run's agents get their records from the run's rows: the runs this patch carries
+    for (const run of this.runsOf(patches)) for (const change of live.agents.runAgents(run, live.model.state().sessionId)) this.emitAgent(live, change)
     this.publish(live, patches)
     // an image the chat shows may have its card already: the panel does not change again to bring it
     if (patches.some(p => (p.op === 'add' || p.op === 'set') && p.item.kind === 'images')) this.publish(live, live.model.attachCards(this.d.cards(live.tabId)))
@@ -1251,8 +1317,11 @@ export class ChatHub {
     try {
       const session = live.agents.sessionOf(agentId) ?? live.model.state().sessionId
       const transcript = session === null ? null : await this.d.transcript(live.tabId, session)
-      const path = session === null || transcript === null ? null : agentTranscriptPath(transcript, session, agentId)
-      const file = path === null ? null : await resolveAgentTranscript(path)
+      // a Workflow run's agent is written in the run's folder, under the session's subagents folder
+      const runId = live.agents.runIdOf(agentId)
+      const path = session === null || transcript === null ? null
+        : runId === null ? agentTranscriptPath(transcript, session, agentId) : runAgentTranscriptPath(transcript, session, runId, agentId)
+      const file = path === null ? null : runId === null ? await resolveAgentTranscript(path) : await resolveRunAgentTranscript(path)
       if (file === null) this.d.log.warn(`no transcript found for agent ${agentId}`)
       return file
     } catch (e) {
@@ -1287,6 +1356,65 @@ export class ChatHub {
     if (view === undefined) return
     this.views.delete(viewer)
     this.tabs.get(view.tabId)?.agents.watch(view.agentId, false)
+    if (!this.viewed(view.tabId, view.agentId)) this.stopRunTail(runTailKey(view.tabId, view.agentId))
+  }
+
+  /** whether a viewer watches the agent's page of the tab */
+  private viewed(tabId: string, agentId: string): boolean {
+    return [...this.views.values()].some(view => view.tabId === tabId && view.agentId === agentId)
+  }
+
+  /** a watched run agent that runs gets a tail: its transcript's new lines reach the page every RUN_TAIL_MS, one tail per agent */
+  private startRunTail(live: Live, agentId: string): void {
+    if (live.agents.runIdOf(agentId) === null || live.agents.info(agentId)?.state !== 'running') return
+    const key = runTailKey(live.tabId, agentId)
+    if (this.runTails.has(key)) return
+    const timer = setInterval(() => void this.readRunTail(key), RUN_TAIL_MS)
+    this.runTails.set(key, { live, agentId, from: null, tailer: null, busy: false, timer })
+  }
+
+  private stopRunTail(key: string): void {
+    const tail = this.runTails.get(key)
+    if (tail === undefined) return
+    clearInterval(tail.timer)
+    this.runTails.delete(key)
+  }
+
+  /**
+   * One tick of a run agent's tail: the transcript's lines after the head are folded into the page as adds and sets. The tail stops when no
+   * viewer watches the page, the chat has ended, or the agent is no longer running (after this last read).
+   */
+  private async readRunTail(key: string): Promise<void> {
+    const tail = this.runTails.get(key)
+    if (tail === undefined || tail.busy) return
+    const { live, agentId } = tail
+    if (this.tabs.get(live.tabId) !== live || live.ended || !this.viewed(live.tabId, agentId)) {
+      this.stopRunTail(key)
+      return
+    }
+    // the head is not held yet: the tail waits for it
+    const start = live.agents.tailStart(agentId)
+    if (start === null) return
+    tail.busy = true
+    try {
+      let tailer = tail.tailer
+      // a new head reads from another byte: the tail starts again there
+      if (tailer === null || tail.from !== start) {
+        const file = await this.agentFile(live, agentId)
+        if (file === null || this.runTails.get(key) !== tail) return
+        tailer = new LineTailer(file, undefined, start)
+        tail.tailer = tailer
+        tail.from = start
+      }
+      const raw = await tailer.readNew()
+      if (this.tabs.get(live.tabId) !== live || this.runTails.get(key) !== tail) return
+      if (raw !== null) for (const change of live.agents.tail(agentId, parseTranscriptLines(raw))) this.emitAgent(live, change)
+      if (live.agents.info(agentId)?.state !== 'running') this.stopRunTail(key)
+    } catch (e) {
+      this.d.log.warn(`cannot read the transcript of agent ${agentId}: ${errorText(e)}`)
+    } finally {
+      tail.busy = false
+    }
   }
 
   /** the viewers that are members and watch the agent of the tab */
@@ -1301,6 +1429,7 @@ export class ChatHub {
   /** a tab's chat ended: the pages its viewers watched are no longer watched */
   private dropViews(tabId: string): void {
     for (const [viewer, view] of [...this.views]) if (view.tabId === tabId) this.views.delete(viewer)
+    for (const [key, tail] of [...this.runTails]) if (tail.live.tabId === tabId) this.stopRunTail(key)
   }
 
   /** an agent's change goes to the window when the window watches that agent, and to the members that watch it */

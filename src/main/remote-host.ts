@@ -7,6 +7,7 @@ import type { DeviceResult } from '../shared/devices'
 import { IMAGE_PART_BYTES, MAX_CHAT_PUSH_BYTES, MAX_PATH_TEXT, MAX_REVIEW_PARTS, REMOTE_COPY, REVIEW_FILE_BYTES, REVIEW_PART_BYTES, type FolderResult, type PushKind, type RemoteCoordFacts, type RemoteTab } from '../shared/remote'
 import { MAX_HASH, type ReviewCounter, type ReviewUpdate } from '../shared/review'
 import type { PlanUpdate } from '../shared/ipc'
+import { isWorkflowRun, type WorkflowRun } from '../shared/workflow'
 import type { RecentSession, TabInfo, TabKind, TabPlace } from '../shared/types'
 import { MAIN_ACCOUNT, type AccountView } from '../shared/accounts'
 import { capItems, capSnapshot, itemForMember, MAX_CHAT_PATCHES } from './chat/chat-mirror'
@@ -40,6 +41,8 @@ const MAX_REASON = 500
 const MAX_STATUS = 200
 const MAX_AGENTS = 64
 const MAX_BACKGROUND = 64
+export const MAX_PUSH_RUNS = 8
+export const MAX_PUSH_RUN_AGENTS = 64
 const MAX_PLAN_TITLE = 500
 const MAX_PLAN_TASKS = 500
 const MAX_CARDS = 10_000
@@ -830,7 +833,7 @@ async function pushesOf(ctx: HostContext, tabId: string): Promise<Array<{ k: Pus
   const status = ctx.status.get(tabId)
   const out: Array<{ k: PushKind; v: unknown }> = [
     ...(chat === null ? [] : [chat]),
-    { k: 'status', v: clampPush('status', { main: status.main, agents: status.agents, background: status.background }) },
+    { k: 'status', v: clampPush('status', { main: status.main, agents: status.agents, background: status.background, runs: status.runs }) },
     { k: 'plan', v: clampPush('plan', planPush(ctx.shownPlan(tabId))) },
     {
       k: 'images',
@@ -970,7 +973,9 @@ function accountEntries(list: unknown): unknown {
 function clampStatus(v: unknown): unknown {
   if (!isRecord(v) || !Array.isArray(v.agents)) return v
   const background = Array.isArray(v.background) ? fit(v.background, MAX_BACKGROUND, clampBackground) : v.background
-  return { main: clampMain(v.main), agents: fit(v.agents, MAX_AGENTS, clampAgent), background }
+  // a status without runs has no runs field; a run that does not fit is dropped alone
+  const runs = Array.isArray(v.runs) ? { runs: fit(v.runs, MAX_PUSH_RUNS, clampRun) } : {}
+  return { main: clampMain(v.main), agents: fit(v.agents, MAX_AGENTS, clampAgent), background, ...runs }
 }
 
 function clampMain(m: unknown): unknown {
@@ -992,8 +997,15 @@ function clampAgent(a: unknown): Record<string, unknown> | null {
     description: nullableText(a.description, MAX_STATUS),
     model: nullableText(a.model, MAX_STATUS),
     effort: nullableText(a.effort, MAX_STATUS),
-    startedAt: a.startedAt
+    startedAt: a.startedAt,
+    ...(typeof a.runId === 'string' ? { runId: text(a.runId, MAX_STATUS) } : {})
   }
+}
+
+/** a run as a push carries it: cleaned by isWorkflowRun, its agents cut to the push's cap; null when it does not fit */
+function clampRun(r: unknown): WorkflowRun | null {
+  if (!isRecord(r) || !Array.isArray(r.agents)) return isWorkflowRun(r)
+  return isWorkflowRun({ ...r, agents: r.agents.slice(0, MAX_PUSH_RUN_AGENTS) })
 }
 
 function clampBackground(t: unknown): Record<string, unknown> | null {

@@ -2,7 +2,7 @@ import { acceptPatches, type AgentPatch, type AgentSnapshot, type ChatAgentInfo,
 import { icon } from '../icons'
 import { AgentColumn } from './agent-column'
 import type { ItemCallbacks } from './chat-items'
-import { agentStateText, NOT_REACHED, OFF_EXITED, OFF_MEMBER, STOPPED_HINT, WRITE_HINT } from './agent-text'
+import { agentStateText, NOT_REACHED, OFF_EXITED, OFF_MEMBER, RUN_HINT, STOPPED_HINT, WRITE_HINT } from './agent-text'
 import type { FindView } from './chat-find'
 
 // The agent page: an agent's conversation in the chat view, in place of the main conversation and its composer. The header says
@@ -52,6 +52,8 @@ export class AgentPage {
   private readonly refusal = el('div', 'agent-refusal')
   private readonly input = document.createElement('textarea')
   private readonly hint = el('div', 'agent-hint', WRITE_HINT)
+  /** the hint's second line on a workflow agent's page: its answers go to the main conversation; hidden for any other agent */
+  private readonly hintRun = el('div', 'agent-hint-run', RUN_HINT)
   /** the line in place of the message box while writing is off */
   private readonly off = el('div', 'agent-off')
   private readonly readOnly: boolean
@@ -64,6 +66,8 @@ export class AgentPage {
   private disposed = false
   private readonly back = el('button', 'agent-back') as HTMLButtonElement
   private readonly type = el('span', 'agent-type')
+  /** a workflow agent's attempt, when it is a retry: "attempt N"; hidden otherwise */
+  private readonly attempt = el('span', 'agent-attempt')
   private readonly desc = el('span', 'agent-desc')
   private readonly state = el('span', 'agent-state')
   private readonly mark = el('span', 'agent-mark')
@@ -97,7 +101,8 @@ export class AgentPage {
       e.preventDefault()
       void this.submit(o)
     })
-    this.compose.append(this.refusal, this.input, this.hint)
+    this.hintRun.hidden = true
+    this.compose.append(this.refusal, this.input, this.hint, this.hintRun)
     this.footer.append(this.compose, this.off)
     this.back.type = 'button'
     this.back.setAttribute('aria-label', 'Back to the conversation')
@@ -106,7 +111,7 @@ export class AgentPage {
     this.back.addEventListener('click', () => o.back())
     this.state.append(this.mark, this.stateText)
     const head = el('div', 'agent-head')
-    head.append(this.back, this.type, this.desc, this.state)
+    head.append(this.back, this.type, this.attempt, this.desc, this.state)
     this.wait.type = 'button'
     this.wait.hidden = true
     this.wait.append('Claude is waiting for your answer · ', el('strong', '', 'Back to the conversation'))
@@ -135,8 +140,9 @@ export class AgentPage {
     this.rev = s.rev
     this.agent = s.agent
     this.writable = s.writable
-    this.column.setItems(s.items, s.agent.state === 'running', s.hasOlder)
+    // the header first: it tells the column who asked the first prompt, so the column is drawn once with it
     this.fillHeader()
+    this.column.setItems(s.items, s.agent.state === 'running', s.hasOlder)
     this.syncFooter()
     this.syncClock()
   }
@@ -196,12 +202,17 @@ export class AgentPage {
     this.syncClock()
   }
 
-  /** the header as the agent is now: its type and description, its mark for the state, and the state's text */
+  /** the header as the agent is now: its type and description, its mark for the state, and the state's text; a workflow agent's header says its run, its task and its attempt */
   private fillHeader(): void {
     const a = this.agent
     if (a === null) return
-    setText(this.type, a.type)
-    setText(this.desc, a.description)
+    const w = a.workflow
+    setText(this.type, w ? `${w.run}${w.phase ? ` · ${w.phase}` : ''}` : a.type)
+    setText(this.desc, w ? (a.description === '' ? a.type : `${a.type} — ${a.description}`) : a.description)
+    setText(this.attempt, w && w.attempt > 1 ? `attempt ${w.attempt}` : '')
+    this.attempt.hidden = !w || w.attempt <= 1
+    this.hintRun.hidden = !w
+    this.column.setAsker(w ? 'The workflow' : undefined)
     this.state.dataset.state = a.state
     setText(this.hint, a.state === 'stopped' ? STOPPED_HINT : WRITE_HINT)
     this.input.placeholder = `Message the ${a.type} agent…`
