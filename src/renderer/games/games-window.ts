@@ -1,5 +1,6 @@
 import type { GameId, GamesSave } from '../../shared/games'
 import { icon } from '../icons'
+import { ArtilleryView } from './artillery-view'
 import { ClickerView } from './clicker-view'
 import type { GameView } from './game-view'
 import { gameKeyRoute } from './game-keys'
@@ -123,7 +124,8 @@ export class GamesWindow {
       new ClickerView(save.clicker, () => this.changed()),
       new LanderView(save.landerBest, () => this.changed()),
       new PinballView(save.pinballBest, () => this.changed()),
-      new SandView(save.sandBest, () => this.changed())
+      new SandView(save.sandBest, () => this.changed()),
+      new ArtilleryView({ wins: save.artilleryWins, streak: save.artilleryStreak, best: save.artilleryBest }, () => this.changed())
     ]
     this.current = this.views.find((v) => v.id === save.game) ?? this.views[0]
     this.draw()

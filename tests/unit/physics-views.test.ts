@@ -4,16 +4,22 @@ import { LanderView } from '../../src/renderer/games/lander-view'
 import { PinballView } from '../../src/renderer/games/pinball-view'
 import { grain, newGame, PIECES, SAND, spawn, type SandState } from '../../src/renderer/games/sand-rules'
 import { SandView } from '../../src/renderer/games/sand-view'
+import { ArtilleryView } from '../../src/renderer/games/artillery-view'
+import { newBattle } from '../../src/renderer/games/artillery-rules'
+import type { ArtilleryState } from '../../src/renderer/games/artillery-types'
 import { EMPTY_GAMES } from '../../src/shared/games'
 
 /** a canvas context that takes any drawing call and does nothing with it */
 const ctx = new Proxy({} as Record<string | symbol, unknown>, {
   get: (t, p) => (p in t ? t[p] : () => undefined),
   set: (t, p, v) => {
+    if (p === 'fillStyle') fillLog.push(v)
     t[p] = v
     return true
   }
 })
+/** every fill colour the canvas stub was given, in order */
+const fillLog: unknown[] = []
 
 /** the DOM the views build: elements that keep their class, text, dataset, style and children */
 class FakeElement {
@@ -340,5 +346,207 @@ describe('SandView', () => {
     expect(Number(view.el.dataset.score)).toBeGreaterThan(0)
     expect(changed).toBeGreaterThan(0)
     expect(view.menuNote()).toBe(`best ${view.el.dataset.score}`)
+  })
+})
+
+describe('ArtilleryView', () => {
+  const record = { wins: 0, streak: 0, best: 0 }
+
+  /** Space taken as a tap: a key down and up, then one frame that sets the clock */
+  function startBattle(view: ArtilleryView): void {
+    view.setState(true, true)
+    view.key('Space', true)
+    view.key('Space', false)
+    frame(0)
+  }
+
+  it('asks for a frame only while live and in a battle', () => {
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    view.setState(true, true)
+    expect(pending).toBeNull()
+    view.key('Space', true)
+    expect(pending).not.toBeNull()
+    view.setState(true, false)
+    expect(pending).toBeNull()
+    view.setState(true, true)
+    expect(pending).not.toBeNull()
+    view.setState(false, false)
+    expect(pending).toBeNull()
+  })
+
+  it('takes the game keys and passes the others on', () => {
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    expect(view.key('KeyA', true)).toBe(false)
+    expect(view.key('ArrowLeft', true)).toBe(true)
+    expect(view.key('Digit3', true)).toBe(true)
+  })
+
+  it('drops held keys and the charge when the keyboard leaves', () => {
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    startBattle(view)
+    // Space held for 0.3 s charges the rocket; then the keyboard leaves and comes back, Space still down
+    view.key('Space', true)
+    for (let now = 16; now <= 300; now += 16) frame(now)
+    view.setState(true, false)
+    view.setState(true, true)
+    // more than a full charge later the rocket would have fired, had the charge and the held key been kept
+    for (let now = 316; now <= 1600; now += 16) frame(now)
+    expect(view.el.dataset.phase).toBe('aim')
+  })
+
+  it('walks the active fighter while an arrow is held, and stops when it leaves', () => {
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    startBattle(view)
+    const x = Number(view.el.dataset.x)
+    view.key('ArrowRight', true)
+    for (let now = 16; now <= 500; now += 16) frame(now)
+    expect(Number(view.el.dataset.x)).toBeGreaterThan(x)
+    view.setState(true, false)
+    view.setState(true, true)
+    const stopped = Number(view.el.dataset.x)
+    for (let now = 516; now <= 1000; now += 16) frame(now)
+    expect(Number(view.el.dataset.x)).toBe(stopped)
+  })
+
+  it('puts the battle on its data attributes', () => {
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    startBattle(view)
+    expect(view.el.dataset.phase).toBe('aim')
+    expect(view.el.dataset.turn).toBe('you')
+    expect(view.el.dataset.weapon).toBe('rocket')
+    expect(view.el.dataset.ammo).toBe('∞')
+    expect(view.el.dataset.time).toBe('45')
+    view.key('Digit2', true)
+    view.key('Digit2', false)
+    frame(16)
+    expect(view.el.dataset.weapon).toBe('grenade')
+  })
+
+  it('Tab cycles the weapons and Shift+Tab goes back', () => {
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    startBattle(view)
+    view.key('Tab', true)
+    view.key('Tab', false)
+    frame(16)
+    expect(view.el.dataset.weapon).toBe('grenade')
+    // Shift is let go before the frame: the Tab press alone decides the direction
+    view.key('ShiftLeft', true)
+    view.key('Tab', true)
+    view.key('ShiftLeft', false)
+    view.key('Tab', false)
+    frame(32)
+    expect(view.el.dataset.weapon).toBe('rocket')
+  })
+
+  it('the hint between the two shots of Ping offers only the keys that work then', () => {
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    startBattle(view)
+    const hint = find(view.el as unknown as FakeElement, 'artillery-hint')!
+    view.key('Digit4', true)
+    view.key('Digit4', false)
+    frame(16)
+    expect(hint.textContent).toBe('←/→ walk · ↑/↓ aim · Space fire · Tab weapon')
+    view.key('Space', true)
+    view.key('Space', false)
+    frame(32)
+    expect(view.el.dataset.weapon).toBe('ping')
+    expect(hint.textContent).toBe('↑/↓ aim · Space fire')
+  })
+
+  it('the field and the minimap do not smooth the ground when it is scaled', () => {
+    delete (ctx as Record<string, unknown>).imageSmoothingEnabled
+    new ArtilleryView(record, () => {}, () => 1)
+    expect((ctx as Record<string, unknown>).imageSmoothingEnabled).toBe(false)
+  })
+
+  it('the Teleport crosshair turns red over a spot that would refuse the Teleport', () => {
+    const colors: Record<string, string> = { '--red': '#F2867E', '--accent': '#7AD7F0' }
+    vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: (name: string) => colors[name] ?? '' }))
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    startBattle(view)
+    view.key('Digit8', true)
+    view.key('Digit8', false)
+    fillLog.length = 0
+    frame(16)
+    // the cursor starts above the feet, in free air: its crosshair is the accent colour, not red
+    expect(view.el.dataset.weapon).toBe('teleport')
+    expect(fillLog).toContain('#7AD7F0')
+    expect(fillLog).not.toContain('#F2867E')
+    // the cursor is moved down into the rock: its crosshair turns red
+    view.key('ArrowDown', true)
+    for (let now = 32; now <= 400; now += 16) frame(now)
+    view.key('ArrowDown', false)
+    fillLog.length = 0
+    frame(416)
+    expect(fillLog).toContain('#F2867E')
+  })
+
+  it('a Space tap fires the weapon in hand', () => {
+    const view = new ArtilleryView(record, () => {}, () => 1)
+    startBattle(view)
+    view.key('Space', true)
+    view.key('Space', false)
+    frame(16)
+    frame(32)
+    expect(view.el.dataset.phase).toBe('flight')
+  })
+
+  it('saves its record and shows its wins in the menu', () => {
+    const view = new ArtilleryView({ wins: 3, streak: 1, best: 2 }, () => {}, () => 1)
+    const save = { ...EMPTY_GAMES }
+    view.saveInto(save)
+    expect(save.artilleryWins).toBe(3)
+    expect(save.artilleryStreak).toBe(1)
+    expect(save.artilleryBest).toBe(2)
+    expect(view.menuNote()).toBe('wins 3')
+  })
+})
+
+describe('ArtilleryView battle end', () => {
+  /** a battle that is already settling with one team out: the next step ends it */
+  function finished(seed: number, streak: number, out: 'clawd' | 'bug'): ArtilleryState {
+    const s = newBattle(seed, streak, 0)
+    return {
+      ...s,
+      phase: 'settle',
+      fighters: s.fighters.map((f) => (f.team === out ? { ...f, hp: 0, out: true } : f))
+    }
+  }
+
+  it('a win tallies the record once, stops the loop, and Space starts a battle at the new streak', () => {
+    const streaks: number[] = []
+    const make = (seed: number, streak: number): ArtilleryState => {
+      streaks.push(streak)
+      return streaks.length === 1 ? finished(seed, streak, 'bug') : newBattle(seed, streak, 0)
+    }
+    let changed = 0
+    const view = new ArtilleryView({ wins: 3, streak: 1, best: 1 }, () => changed++, () => 1, make)
+    view.setState(true, true)
+    frame(0)
+    frame(16)
+    expect(view.el.dataset.phase).toBe('over')
+    expect(changed).toBe(1)
+    expect(pending).toBeNull()
+    const save = { ...EMPTY_GAMES }
+    view.saveInto(save)
+    expect([save.artilleryWins, save.artilleryStreak, save.artilleryBest]).toEqual([4, 2, 2])
+    expect(view.menuNote()).toBe('wins 4')
+    view.key('Space', true)
+    expect(view.el.dataset.phase).toBe('aim')
+    expect(streaks).toEqual([1, 2])
+    expect(changed).toBe(1)
+  })
+
+  it('a loss ends the streak and tallies no win', () => {
+    let changed = 0
+    const view = new ArtilleryView({ wins: 3, streak: 2, best: 2 }, () => changed++, () => 1, (seed, streak) => finished(seed, streak, 'clawd'))
+    view.setState(true, true)
+    frame(0)
+    frame(16)
+    expect(view.el.dataset.phase).toBe('over')
+    expect(changed).toBe(1)
+    const save = { ...EMPTY_GAMES }
+    view.saveInto(save)
+    expect([save.artilleryWins, save.artilleryStreak, save.artilleryBest]).toEqual([3, 0, 2])
   })
 })

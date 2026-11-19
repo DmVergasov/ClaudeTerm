@@ -193,6 +193,63 @@
 .sand-score, .sand-best { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: var(--text); }
 .sand-hint { text-align: center; font-size: 11px; color: var(--text-3); }
 
+/* Artillery: the field is 276 × 160 px and the minimap 276 × 34 (the map at a third); the body is 274 px inside its padding, so the block takes 276 px, a px into each side's padding */
+.artillery { display: flex; flex-direction: column; gap: 4px; width: 276px; margin: 0 -1px; }
+.artillery-hud { display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 16px; font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.artillery-team { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.artillery-team.bug { justify-content: flex-end; }
+.artillery-num { font-weight: 600; }
+.artillery-team.clawd .artillery-num { color: var(--accent); }
+.artillery-team.bug .artillery-num { color: var(--purple); }
+.artillery-bar { flex: 1; min-width: 0; height: 6px; background: var(--raised-2); border-radius: 3px; overflow: hidden; }
+.artillery-bar-fill { height: 100%; }
+.artillery-team.clawd .artillery-bar-fill { background: var(--accent); }
+.artillery-team.bug .artillery-bar-fill { background: var(--purple); }
+.artillery-mid { flex: none; display: flex; align-items: center; gap: 6px; color: var(--text-3); white-space: nowrap; }
+.artillery-wind { min-width: 18px; text-align: center; }
+.artillery-time { color: var(--text); }
+.artillery-flood { color: var(--blue); }
+.artillery-mini { display: block; width: 276px; height: 34px; }
+.artillery-stage { position: relative; width: 276px; height: 160px; }
+.artillery-field { display: block; width: 276px; height: 160px; }
+.artillery-message {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 12px;
+  text-align: center;
+  white-space: pre-line;
+  pointer-events: none;
+}
+.artillery-weapons { display: flex; gap: 3px; height: 24px; }
+.artillery-weapons.bot { opacity: 0.5; }
+.artillery-weapon {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--raised-2);
+  color: var(--text);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+}
+.artillery-weapon.chosen { border-color: var(--accent); color: var(--accent); }
+.artillery-weapon.empty { opacity: 0.35; }
+.artillery-ammo { color: var(--text-3); font-size: 10px; }
+.artillery-info { display: flex; justify-content: space-between; gap: 8px; height: 14px; font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--text-3); white-space: nowrap; }
+.artillery-name { color: var(--text); }
+.artillery-hint { height: 14px; text-align: center; font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; }
+
 .merge { display: flex; flex-direction: column; gap: 10px; }
 .merge-head { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .merge-score { flex: 1; color: var(--text-3); font-family: ui-monospace, Consolas, monospace; }

@@ -13,6 +13,9 @@ const save: GamesSave = {
   landerBest: 120,
   pinballBest: 4800,
   sandBest: 2140,
+  artilleryWins: 3,
+  artilleryStreak: 1,
+  artilleryBest: 2,
   merge: { board: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11], score: 120, best: 340, won: false },
   clicker: { lines: 12.5, helpers: [1, 0, 2, 0], at: 1_700_000_000_000 },
 }
@@ -69,6 +72,19 @@ describe('GamesStore', () => {
     writeFileSync(join(d, 'games.json'), JSON.stringify(old))
     const store = new GamesStore(d, (m) => errors.push(m))
     expect(store.get()).toEqual({ ...old, landerBest: 0, pinballBest: 0, sandBest: 0 })
+    expect(errors).toEqual([])
+    store.set(save)
+    expect(new GamesStore(d).get()).toEqual(save)
+  })
+
+  it('a games.json from before Artillery loads with no error, its counters at 0', () => {
+    const d = dir()
+    const errors: string[] = []
+    const { artilleryWins, artilleryStreak, artilleryBest, ...old } = save
+    expect([artilleryWins, artilleryStreak, artilleryBest]).toEqual([3, 1, 2])
+    writeFileSync(join(d, 'games.json'), JSON.stringify(old))
+    const store = new GamesStore(d, (m) => errors.push(m))
+    expect(store.get()).toEqual({ ...old, artilleryWins: 0, artilleryStreak: 0, artilleryBest: 0 })
     expect(errors).toEqual([])
     store.set(save)
     expect(new GamesStore(d).get()).toEqual(save)

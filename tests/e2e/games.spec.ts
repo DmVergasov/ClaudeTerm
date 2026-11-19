@@ -10,6 +10,7 @@ const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']
 const win = (page: Page) => page.locator('#games .games-window')
 const toggle = (page: Page) => page.locator('#sheet-header .tab-games-toggle')
 const board = (page: Page) => page.locator('#games .merge-board')
+const artillery = (page: Page) => page.locator('#games .artillery')
 
 /** the input of the terminal in front */
 const terminalInput = (page: Page) => page.locator('.terminal-host:visible .xterm-helper-textarea')
@@ -18,7 +19,7 @@ const terminalInput = (page: Page) => page.locator('.terminal-host:visible .xter
 const ptyInput = (page: Page): Promise<string> => page.evaluate(() => window.__ct!.ptyInput!())
 
 /** opens the game menu and picks the game in it */
-async function pick(page: Page, game: 'runner' | 'merge' | 'clicker' | 'lander' | 'pinball' | 'sand'): Promise<void> {
+async function pick(page: Page, game: 'runner' | 'merge' | 'clicker' | 'lander' | 'pinball' | 'sand' | 'artillery'): Promise<void> {
   await page.locator('#games .games-name').click()
   await page.locator(`#games .games-menu-item[data-game="${game}"]`).click()
 }
@@ -641,15 +642,16 @@ function savedGames(dataDir: string): Record<string, unknown> | null {
   }
 }
 
-test('the game menu lists all six games; Lander, Pinball and Sand can be picked', async () => {
+test('the game menu lists all seven games; Lander, Pinball, Sand and Artillery can be picked', async () => {
   const { app, page } = await launchApp()
   await toggle(page).click()
   await page.locator('#games .games-name').click()
   const ids = await page.locator('#games .games-menu-item').evaluateAll((items) => items.map((i) => (i as HTMLElement).dataset.game))
-  expect(ids).toEqual(['runner', 'merge', 'clicker', 'lander', 'pinball', 'sand'])
+  expect(ids).toEqual(['runner', 'merge', 'clicker', 'lander', 'pinball', 'sand', 'artillery'])
   for (const game of ['lander', 'pinball', 'sand']) {
     await expect(page.locator(`#games .games-menu-item[data-game="${game}"] .games-menu-note`)).toHaveText('best 0')
   }
+  await expect(page.locator('#games .games-menu-item[data-game="artillery"] .games-menu-note')).toHaveText('wins 0')
 
   // the menu is open: its item is picked directly, as pick() would open it again
   await page.locator('#games .games-menu-item[data-game="lander"]').click()
@@ -663,6 +665,10 @@ test('the game menu lists all six games; Lander, Pinball and Sand can be picked'
   await pick(page, 'sand')
   await expect(win(page)).toHaveAttribute('data-game', 'sand')
   await expect(page.locator('#games .games-title')).toHaveText('Sand')
+
+  await pick(page, 'artillery')
+  await expect(win(page)).toHaveAttribute('data-game', 'artillery')
+  await expect(page.locator('#games .games-title')).toHaveText('Artillery')
   await app.close()
 })
 
@@ -822,4 +828,136 @@ test('the best scores of Lander, Pinball and Sand survive a restart', async () =
   await expect(second.page.locator('#games .games-menu-item[data-game="pinball"] .games-menu-note')).toHaveText(`best ${score.toLocaleString('en-US')}`)
   await expect(second.page.locator('#games .games-menu-item[data-game="sand"] .games-menu-note')).toHaveText('best 340')
   await second.app.close()
+})
+
+test('in Artillery, the keys move, jump and pick weapons; nothing reaches the terminal or leaves the window', async () => {
+  const { app, page } = await launchApp()
+  const arty = artillery(page)
+  await toggle(page).click()
+  await pick(page, 'artillery')
+  await expect(arty).toHaveAttribute('data-phase', 'title')
+
+  const before = await ptyInput(page)
+  await page.keyboard.press('Space')
+  await expect(arty).toHaveAttribute('data-phase', 'aim')
+
+  const x0 = Number(await arty.getAttribute('data-x'))
+  await page.keyboard.down('ArrowRight')
+  await page.waitForTimeout(600)
+  await page.keyboard.up('ArrowRight')
+  await expect.poll(async () => Number(await arty.getAttribute('data-x'))).toBeGreaterThan(x0)
+
+  await page.keyboard.press('Enter')
+  await expect(arty).toHaveAttribute('data-air', 'true')
+
+  await page.keyboard.press('Digit2')
+  await expect(arty).toHaveAttribute('data-weapon', 'grenade')
+  await page.keyboard.press('Tab')
+  await expect(arty).toHaveAttribute('data-weapon', 'fork')
+  await page.keyboard.press('Shift+Tab')
+  await expect(arty).toHaveAttribute('data-weapon', 'grenade')
+  await page.keyboard.press('Digit8')
+  await expect(arty).toHaveAttribute('data-weapon', 'teleport')
+
+  expect(await ptyInput(page)).toBe(before)
+  await expect(win(page)).toHaveAttribute('data-keyboard', 'game')
+  await app.close()
+})
+
+test('a shot hands the turn to the bot, and the bot hands it back', async () => {
+  test.setTimeout(90_000)
+  const { app, page } = await launchApp()
+  const arty = artillery(page)
+  await toggle(page).click()
+  await pick(page, 'artillery')
+  await page.keyboard.press('Space')
+  await expect(arty).toHaveAttribute('data-phase', 'aim')
+
+  // a full charge: the shot is fired when Space is let go
+  await page.keyboard.down('Space')
+  await page.waitForTimeout(1100)
+  await page.keyboard.up('Space')
+  await expect(arty).not.toHaveAttribute('data-phase', 'aim')
+
+  await expect(arty).toHaveAttribute('data-turn', 'bot', { timeout: 30_000 })
+  await expect.poll(async () => (await arty.getAttribute('data-turn')) === 'you' || (await arty.getAttribute('data-phase')) === 'over', { timeout: 30_000 }).toBe(true)
+  await app.close()
+})
+
+test("pause and a click in the terminal stop Artillery's clock", async () => {
+  const { app, page } = await launchApp()
+  const arty = artillery(page)
+  await toggle(page).click()
+  await pick(page, 'artillery')
+  await page.keyboard.press('Space')
+  await expect(arty).toHaveAttribute('data-phase', 'aim')
+
+  const clock = async (): Promise<number> => Number(await arty.getAttribute('data-time'))
+  const first = await clock()
+  await expect.poll(clock).toBeLessThan(first)
+
+  // a frozen clock stands still over 1.5 s
+  await page.locator('#games .games-pause').click()
+  await expect(win(page)).toHaveAttribute('data-paused', 'true')
+  const paused = await clock()
+  await page.waitForTimeout(1500)
+  expect(await clock()).toBe(paused)
+
+  // ▶ starts it again: the clock falls
+  await page.locator('#games .games-pause').click()
+  await expect(win(page)).toHaveAttribute('data-paused', 'false')
+  await expect.poll(clock).toBeLessThan(paused)
+
+  // a click in the terminal pauses it, and the clock stands still
+  await page.locator('.terminal-host:visible .xterm').click()
+  await expect(win(page)).toHaveAttribute('data-paused', 'true')
+  const stopped = await clock()
+  await page.waitForTimeout(1500)
+  expect(await clock()).toBe(stopped)
+  await app.close()
+})
+
+test("Artillery's wins survive a restart", async () => {
+  const dataDir = makeDataDir()
+  writeFileSync(join(dataDir, 'games.json'), JSON.stringify({ game: 'artillery', runnerBest: 0, landerBest: 0, sandBest: 0, artilleryWins: 3, artilleryStreak: 1, artilleryBest: 2, merge: null, clicker: null }))
+
+  const first = await launchApp({ dataDir })
+  await toggle(first.page).click()
+  await pick(first.page, 'artillery')
+  await expect(win(first.page)).toHaveAttribute('data-game', 'artillery')
+  await first.page.locator('#games .games-name').click()
+  await expect(first.page.locator('#games .games-menu-item[data-game="artillery"] .games-menu-note')).toHaveText('wins 3')
+  await first.page.locator('#games .games-menu-item[data-game="artillery"]').click()
+  await first.page.locator('#games .games-close').click()
+  await expect(win(first.page)).toBeHidden()
+  await closeWindow(first.app)
+
+  const second = await launchApp({ dataDir })
+  await toggle(second.page).click()
+  await expect(win(second.page)).toHaveAttribute('data-game', 'artillery')
+  await second.page.locator('#games .games-name').click()
+  await expect(second.page.locator('#games .games-menu-item[data-game="artillery"] .games-menu-note')).toHaveText('wins 3')
+  await expect.poll(() => savedGames(dataDir)).toMatchObject({ artilleryWins: 3, artilleryStreak: 1, artilleryBest: 2 })
+  await second.app.close()
+})
+
+test('the window with Artillery stays within 300 × 350 px', async () => {
+  test.setTimeout(60_000)
+  const { app, page } = await launchApp()
+  const arty = artillery(page)
+  await toggle(page).click()
+  await pick(page, 'artillery')
+  await expect(arty).toHaveAttribute('data-phase', 'title')
+
+  const size = async () => {
+    const box = await win(page).boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.width).toBeLessThanOrEqual(302)
+    expect(box!.height).toBeLessThanOrEqual(350)
+  }
+  await size()
+  await page.keyboard.press('Space')
+  await expect(arty).toHaveAttribute('data-phase', 'aim')
+  await size()
+  await app.close()
 })

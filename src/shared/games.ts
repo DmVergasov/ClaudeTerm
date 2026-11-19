@@ -1,4 +1,4 @@
-export const GAME_IDS = ['runner', 'merge', 'clicker', 'lander', 'pinball', 'sand'] as const
+export const GAME_IDS = ['runner', 'merge', 'clicker', 'lander', 'pinball', 'sand', 'artillery'] as const
 
 export type GameId = (typeof GAME_IDS)[number]
 
@@ -24,14 +24,29 @@ export interface GamesSave {
   landerBest: number
   pinballBest: number
   sandBest: number
+  /** Artillery: the games won, the current win streak and the best win streak */
+  artilleryWins: number
+  artilleryStreak: number
+  artilleryBest: number
   merge: MergeSave | null
   clicker: ClickerSave | null
 }
 
-export const EMPTY_GAMES: GamesSave = { game: 'runner', runnerBest: 0, landerBest: 0, pinballBest: 0, sandBest: 0, merge: null, clicker: null }
+export const EMPTY_GAMES: GamesSave = {
+  game: 'runner',
+  runnerBest: 0,
+  landerBest: 0,
+  pinballBest: 0,
+  sandBest: 0,
+  artilleryWins: 0,
+  artilleryStreak: 0,
+  artilleryBest: 0,
+  merge: null,
+  clicker: null
+}
 
-/** the best scores a save from before these games lacks: a missing one is 0, not a bad part */
-export const LATER_BESTS = ['landerBest', 'pinballBest', 'sandBest'] as const
+/** the counters a save from before these games lacks: a missing one is 0, not a bad part */
+export const LATER_BESTS = ['landerBest', 'pinballBest', 'sandBest', 'artilleryWins', 'artilleryStreak', 'artilleryBest'] as const
 
 const MAX_SCORE = 1e12
 const MAX_LINES = 1e15
@@ -87,7 +102,14 @@ export function parseGamesSave(raw: unknown): { save: GamesSave; bad: string[] }
   const runnerBest = isScore(r.runnerBest) ? r.runnerBest : EMPTY_GAMES.runnerBest
   if (runnerBest !== r.runnerBest) bad.push('runnerBest')
 
-  const later: Record<(typeof LATER_BESTS)[number], number> = { landerBest: 0, pinballBest: 0, sandBest: 0 }
+  const later: Record<(typeof LATER_BESTS)[number], number> = {
+    landerBest: 0,
+    pinballBest: 0,
+    sandBest: 0,
+    artilleryWins: 0,
+    artilleryStreak: 0,
+    artilleryBest: 0
+  }
   for (const key of LATER_BESTS) {
     const v = r[key]
     if (v === undefined) continue
