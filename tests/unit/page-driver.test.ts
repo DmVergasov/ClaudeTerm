@@ -640,9 +640,81 @@ describe('viewShot: the page view, by Electron\'s own capture', () => {
     }
   })
 
-  it('an empty image is an error, with the message of a CDP capture that came back empty', async () => {
-    const { wc } = fakeView(1, Buffer.from('PNG'), { empty: true })
-    await expect(viewShot(wc, null)).rejects.toThrow('The screenshot came back empty.')
+  it('an image that stays empty is an error that says so, after the 10 s', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wc } = fakeView(1, Buffer.from('PNG'), { empty: true })
+      const failed = expect(viewShot(wc, null)).rejects.toThrow('The page did not paint in time; try again. (the capture came back empty)')
+      await vi.advanceTimersByTimeAsync(10_000)
+      await failed
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('tries again when the view has no frame yet: two refusals, then the image', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wc, capturePage, image } = fakeView(1, Buffer.from('PNG'))
+      capturePage.mockRejectedValueOnce(new Error('Current display surface not available for capture'))
+      capturePage.mockRejectedValueOnce(new Error('Current display surface not available for capture'))
+      const shot = viewShot(wc, null)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await expect(shot).resolves.toEqual({ data: Buffer.from('PNG').toString('base64'), mimeType: 'image/png' })
+      expect(capturePage).toHaveBeenCalledTimes(3)
+      expect(image.toJPEG).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('tries again after an empty image and returns the good one', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wc, capturePage } = fakeView(1, Buffer.from('PNG'))
+      capturePage.mockResolvedValueOnce({ isEmpty: () => true })
+      const shot = viewShot(wc, null)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await expect(shot).resolves.toEqual({ data: Buffer.from('PNG').toString('base64'), mimeType: 'image/png' })
+      expect(capturePage).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('names the last refusal when the view never has a frame, and stops trying afterwards', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wc, capturePage } = fakeView(1)
+      capturePage.mockRejectedValue(new Error('Current display surface not available for capture'))
+      const failed = expect(viewShot(wc, null)).rejects.toThrow(
+        'The page did not paint in time; try again. (Current display surface not available for capture)',
+      )
+      await vi.advanceTimersByTimeAsync(10_000)
+      await failed
+      const calls = capturePage.mock.calls.length
+      expect(calls).toBeGreaterThan(1)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(capturePage).toHaveBeenCalledTimes(calls)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('makes no more attempts once it has returned an image', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wc, capturePage } = fakeView(1)
+      capturePage.mockRejectedValueOnce(new Error('Current display surface not available for capture'))
+      const shot = viewShot(wc, null)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await shot
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(capturePage).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

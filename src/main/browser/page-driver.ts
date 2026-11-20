@@ -72,6 +72,8 @@ const ERROR_LIMIT = 2000
 const DIALOG_NEWS_LIMIT = 20
 const SCREENSHOT_LIMIT = 4_000_000
 const SCREENSHOT_TIMEOUT = 10_000
+// the pause before a capture is asked again: a view with no frame yet refuses at once, so it is asked until it has drawn
+const SCREENSHOT_RETRY = 100
 const WAIT_POLL = 250
 const WAIT_LIMIT = 60_000
 
@@ -219,9 +221,25 @@ function deviceArea(rect: Rect, zoom: number): Rect {
 export async function viewShot(wc: WebContents, rect: Rect | null): Promise<PipeImage> {
   // Electron takes the rect in DIP, which is CSS px times the page's zoom factor
   const zoom = wc.getZoomFactor()
-  const work = rect === null ? wc.capturePage() : wc.capturePage(deviceArea(rect, zoom))
-  const image = await withTimeout(work, SCREENSHOT_TIMEOUT, 'The page did not paint in time; try again.')
-  if (image.isEmpty()) throw new Error('The screenshot came back empty.')
+  const area = rect === null ? undefined : deviceArea(rect, zoom)
+  const message = 'The page did not paint in time; try again.'
+  const deadline = Date.now() + SCREENSHOT_TIMEOUT
+  let reason = ''
+  let image: Awaited<ReturnType<WebContents['capturePage']>> | null = null
+  // a view that has not drawn its first frame is refused at once (or comes back empty) and never waits, so ask again until it has one
+  while (image === null) {
+    const left = deadline - Date.now()
+    if (left <= 0) throw new Error(`${message} (${reason})`)
+    try {
+      const taken = await withTimeout(area === undefined ? wc.capturePage() : wc.capturePage(area), left, 'no answer')
+      if (!taken.isEmpty()) image = taken
+      else reason = 'the capture came back empty'
+    } catch (error) {
+      // a refusal, or no answer by the deadline: the error at the deadline names it
+      reason = error instanceof Error ? error.message : String(error)
+    }
+    if (image === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, Math.min(SCREENSHOT_RETRY, deadline - Date.now())))
+  }
   const png = image.toPNG().toString('base64')
   if (png.length <= SCREENSHOT_LIMIT) return { data: png, mimeType: 'image/png' }
   return { data: image.toJPEG(70).toString('base64'), mimeType: 'image/jpeg' }

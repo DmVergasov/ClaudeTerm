@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type ElectronApplication } from '@playwright/test'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { browserCmd, leavePromptsToClaudeTerm, startSiteServer, type Reply } from './browser-helpers'
@@ -17,6 +17,24 @@ function refOf(info: string | undefined, line: RegExp): string {
   const found = line.exec(info ?? '')
   if (!found) throw new Error(`no line matches ${line} in:\n${info}`)
   return found[1]
+}
+
+/** what to print when a screenshot is refused: the window, its views and the web contents, to see why the page did not draw */
+async function screenState(app: ElectronApplication): Promise<string> {
+  const state = await app.evaluate(({ BrowserWindow, webContents }) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    return {
+      window: { visible: win.isVisible(), opacity: win.getOpacity(), focused: win.isFocused(), content: win.getContentBounds() },
+      views: win.contentView.children.map((v) => v.getBounds()),
+      contents: webContents.getAllWebContents().map((w) => ({ url: w.getURL(), beingCaptured: w.isBeingCaptured() })),
+    }
+  })
+  return JSON.stringify(state)
+}
+
+/** a reply that is ok, or the whole reply and the screen state when it is not */
+async function expectOk(app: ElectronApplication, reply: Reply): Promise<void> {
+  expect(reply, reply.ok ? '' : `${JSON.stringify(reply).slice(0, 500)}\n${await screenState(app)}`).toMatchObject({ ok: true })
 }
 
 test('navigates and snapshots a local page', async () => {
@@ -60,7 +78,7 @@ test('returns a screenshot image', async () => {
   try {
     await browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/form') })
     const shot: Reply = await browserCmd(pipeName, tabId, { op: 'screenshot' })
-    expect(shot.ok).toBe(true)
+    await expectOk(app, shot)
     expect(shot.image?.mimeType).toBe('image/png')
     expect(shot.image?.data.length).toBeGreaterThan(1000)
   } finally {
@@ -78,7 +96,7 @@ test('a screenshot works while the window is hidden', async () => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide())
     try {
       const shot: Reply = await browserCmd(pipeName, tabId, { op: 'screenshot' })
-      expect(shot.ok).toBe(true)
+      await expectOk(app, shot)
       expect(shot.image?.mimeType).toBe('image/png')
     } finally {
       await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].showInactive())
@@ -97,7 +115,7 @@ test('a screenshot of one element is that element\'s content box, in device pixe
     const snap = await browserCmd(pipeName, tabId, { op: 'snapshot' })
     const save = refOf(snap.info, /button "Save"[^\n]*\[ref=(e\d+)\]/)
     const element = await browserCmd(pipeName, tabId, { op: 'screenshot', ref: save })
-    expect(element.ok).toBe(true)
+    await expectOk(app, element)
     expect(element.image?.mimeType).toBe('image/png')
     // the content box of the button, without its padding and border (the capture takes the content box), in device pixels
     const box = await app.evaluate(async ({ webContents }) => {
