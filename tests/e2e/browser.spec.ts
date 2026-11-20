@@ -4,6 +4,14 @@ import { join } from 'node:path'
 import { browserCmd, leavePromptsToClaudeTerm, startSiteServer, type Reply } from './browser-helpers'
 import { KEYS, launchClaudeTab, openTabInFront } from './helpers'
 
+const PANEL = '.panel-browser'
+
+/** the size of a PNG in pixels, read from its header (the IHDR chunk: width at 16, height at 20) */
+function pngSize(base64: string): { width: number; height: number } {
+  const header = Buffer.from(base64, 'base64')
+  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) }
+}
+
 /** the ref of the first snapshot line that matches the pattern, e.g. `textbox "Name"` */
 function refOf(info: string | undefined, line: RegExp): string {
   const found = line.exec(info ?? '')
@@ -55,6 +63,58 @@ test('returns a screenshot image', async () => {
     expect(shot.ok).toBe(true)
     expect(shot.image?.mimeType).toBe('image/png')
     expect(shot.image?.data.length).toBeGreaterThan(1000)
+  } finally {
+    await site.close()
+    await app.close()
+  }
+})
+
+test('a screenshot works while the window is hidden', async () => {
+  const { app, pipeName, tabId } = await launchClaudeTab()
+  const site = await startSiteServer()
+  try {
+    await browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/form') })
+    // a hidden window draws no frames: the capture must still get one
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide())
+    try {
+      const shot: Reply = await browserCmd(pipeName, tabId, { op: 'screenshot' })
+      expect(shot.ok).toBe(true)
+      expect(shot.image?.mimeType).toBe('image/png')
+    } finally {
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].showInactive())
+    }
+  } finally {
+    await site.close()
+    await app.close()
+  }
+})
+
+test('a screenshot of one element is that element\'s content box, in device pixels', async () => {
+  const { app, pipeName, tabId } = await launchClaudeTab()
+  const site = await startSiteServer()
+  try {
+    await browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/form') })
+    const snap = await browserCmd(pipeName, tabId, { op: 'snapshot' })
+    const save = refOf(snap.info, /button "Save"[^\n]*\[ref=(e\d+)\]/)
+    const element = await browserCmd(pipeName, tabId, { op: 'screenshot', ref: save })
+    expect(element.ok).toBe(true)
+    expect(element.image?.mimeType).toBe('image/png')
+    // the content box of the button, without its padding and border (the capture takes the content box), in device pixels
+    const box = await app.evaluate(async ({ webContents }) => {
+      const host = webContents.getAllWebContents().find((w) => w.getURL().endsWith('/form'))
+      return host?.executeJavaScript(`(() => {
+        const el = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Save')
+        const r = el.getBoundingClientRect()
+        const cs = getComputedStyle(el)
+        const h = (k) => parseFloat(cs[k])
+        const width = r.width - h('paddingLeft') - h('paddingRight') - h('borderLeftWidth') - h('borderRightWidth')
+        const height = r.height - h('paddingTop') - h('paddingBottom') - h('borderTopWidth') - h('borderBottomWidth')
+        return { width: width * window.devicePixelRatio, height: height * window.devicePixelRatio }
+      })()`) as Promise<{ width: number; height: number }>
+    })
+    const size = pngSize(element.image!.data)
+    expect(Math.abs(size.width - box!.width)).toBeLessThanOrEqual(2)
+    expect(Math.abs(size.height - box!.height)).toBeLessThanOrEqual(2)
   } finally {
     await site.close()
     await app.close()
@@ -273,11 +333,17 @@ test('an overlay covers the page with a still; the still goes when the panel sho
       w.__stills = []
       window.ct.onBrowserStill((id, url) => { w.__stills.push([id, url]) })
     })
-    await page.evaluate((id) => window.ct.browserBounds(id, { x: 0, y: 0, width: 400, height: 300 }), first)
+    // the first tab is in front again: its page shows in its panel, and the renderer tells main where the panel is
+    await page.evaluate((id) => window.ct.activateTab(id), first)
+    await page.waitForFunction((id) => window.__ct!.activeTabId() === id, first)
+    await expect(page.locator(`${PANEL} .browser-page-tab.current .browser-page`)).toHaveAttribute('title', site.url('/form'))
     await page.evaluate(() => window.ct.browserCovered(true))
     await expect.poll(() => page.evaluate((id) => (window as unknown as { __stills: [string, string | null][] }).__stills.some(([t, u]) => t === id && u?.startsWith('data:image/png') === true), first), { timeout: 15_000 }).toBe(true)
-    await page.evaluate((id) => window.ct.browserBounds(id, { x: 0, y: 0, width: 400, height: 300 }), second)
+    // the person switches to the second tab: the still of the first goes
+    await page.evaluate((id) => window.ct.activateTab(id), second)
+    await page.waitForFunction((id) => window.__ct!.activeTabId() === id, second)
     await expect.poll(() => page.evaluate((id) => (window as unknown as { __stills: [string, string | null][] }).__stills.some(([t, u]) => t === id && u === null), first), { timeout: 15_000 }).toBe(true)
+    await page.evaluate(() => window.ct.browserCovered(false))
   } finally {
     await site.close()
     await app.close()

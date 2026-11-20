@@ -1364,6 +1364,57 @@ describe('TabBrowser task 10b: a guarded unload, and the person\'s load over a h
   })
 })
 
+describe('TabBrowser: a page whose first load has not committed', () => {
+  beforeEach(() => {
+    // the load never commits: the page's web contents has no address yet, as before a page's first navigation commits
+    g.__ctLoad = (wc) => {
+      (wc as unknown as { url: string }).url = ''
+      return new Promise<void>(() => undefined)
+    }
+  })
+
+  it('saved keeps the address the page was made for', () => {
+    const tab = new TabBrowser('tab-uncommitted-saved', 'default', deps())
+    tab.restoreSaved([URL_A], 0)
+    tab.personAction({ type: 'selectPage', index: 0 })
+    expect(tab.saved()).toEqual({ profile: 'default', pages: [URL_A], current: 0 })
+    tab.dispose()
+  })
+
+  it('the list and the footer give that address; a page the tab may not use is named by its site only', async () => {
+    const tab = new TabBrowser('tab-uncommitted-list', 'default', deps())
+    tab.restoreSaved([URL_A, OTHER], 0)
+    tab.personAction({ type: 'selectPage', index: 0 })
+    const reply = await run(tab, { op: 'tabs', action: 'list', index: null, url: null })
+    expect(reply.ok && reply.info).toContain(`- URL: ${URL_A}`)
+    expect(reply.ok && reply.info).toContain(`0:  — ${URL_A}`)
+    expect(reply.ok && reply.info).toContain('1: a page on other.test')
+    expect(reply.ok && reply.info).not.toContain(OTHER)
+    tab.dispose()
+  })
+})
+
+describe('TabBrowser: a first load that redirects', () => {
+  it('a page made for a local address whose first load commits on another site asks before the command reads it', async () => {
+    const { gate, shown } = cardGate(20)
+    // the first load has no address until it commits, and it commits on other.test a moment later: a redirect of the load
+    g.__ctLoad = (wc) => {
+      (wc as unknown as { url: string }).url = ''
+      return new Promise<void>((resolve) => setTimeout(() => {
+        (wc as unknown as { url: string }).url = OTHER
+        resolve()
+      }, 10))
+    }
+    const tab = new TabBrowser('tab-redirect-first', 'default', { ...deps(), gate })
+    tab.restoreSaved([URL_A], 0)
+    tab.personAction({ type: 'selectPage', index: 0 })
+    const reply = await run(tab, { op: 'snapshot' })
+    expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('other.test') })
+    expect(shown).toEqual(['other.test'])
+    tab.dispose()
+  })
+})
+
 describe('TabBrowser profiles', () => {
   const withWork: Pick<TabBrowserDeps, 'profiles'> = { profiles: () => [{ id: 'default', name: 'Default' }, { id: 'work', name: 'Work' }] }
 

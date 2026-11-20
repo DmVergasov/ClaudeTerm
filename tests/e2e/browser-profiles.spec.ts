@@ -1,9 +1,9 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BrowserProfileAction, BrowserPanelState } from '../../src/shared/browser'
 import { settingsWindow } from './account-helpers'
-import { browserCmd, startSiteServer, type SiteServer } from './browser-helpers'
+import { browserCmd, closeWindow, nameConversation, restoreTab, startSiteServer, type SiteServer } from './browser-helpers'
 import { launchApp, launchClaudeTab, openTabInFront } from './helpers'
 
 // The Browser's profiles: a profile is its own set of cookies and storage, the panel's profile menu picks one for a tab, and
@@ -16,8 +16,6 @@ const CLEAR = `${PANEL} .browser-clear`
 const CARD = `${PANEL} .browser-card`
 const CARD_TEXT = `${CARD} .browser-card-text`
 const SHORTCUT = process.platform === 'darwin' ? 'Meta+KeyB' : 'Control+Shift+KeyB'
-/** a session id for the saved tab, so that Restore brings the tab back (the tab's conversation is not part of this test) */
-const SID = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
 
 /** a profile action, as the Settings page sends it */
 function profileAction(page: Page, a: BrowserProfileAction): Promise<unknown> {
@@ -74,13 +72,6 @@ async function cookieSeen(pipeName: string, tabId: string, site: SiteServer): Pr
 
 /** the Settings profile row at this index: Default is the first */
 const rowAt = (win: Page, index: number) => win.locator('.browser-profile-row').nth(index)
-
-/** every window closes, Settings' too, and the app with them: the session is saved on the way out */
-async function closeWindow(app: ElectronApplication): Promise<void> {
-  const closed = app.waitForEvent('close')
-  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.close() }).catch(() => {})
-  await closed
-}
 
 /** the always-allowed sites of a profile, as the profiles file has them */
 function allowedSitesOf(dataDir: string, id: string): string[] {
@@ -190,18 +181,11 @@ test('pages come back after a restart', async () => {
     await browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/form') })
     await browserCmd(pipeName, tabId, { op: 'tabs', action: 'new', url: site.url('/page') })
     await closeWindow(app)
-    // the saved tab names a conversation, as a Claude tab with a session does, so that Restore offers it
-    const file = join(dataDir, 'session-state.json')
-    const saved = JSON.parse(readFileSync(file, 'utf8')) as { tabs: { claudeSessionId: string | null }[] }
-    saved.tabs[0].claudeSessionId = SID
-    writeFileSync(file, JSON.stringify(saved))
+    nameConversation(dataDir)
     const again = await launchApp({ dataDir })
     const { page: back } = again
     try {
-      await expect.poll(() => back.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
-      await back.locator('.banner-restore').click()
-      await back.waitForFunction(() => window.__ct!.tabIds().length === 1)
-      const id = (await back.evaluate(() => window.__ct!.activeTabId()))!
+      const id = await restoreTab(back)
       // the pages wait for the panel: none is loaded before the Browser panel shows the tab
       const loaded = await again.app.evaluate(({ webContents }, prefix) => webContents.getAllWebContents().map((w) => w.getURL()).filter((u) => u.startsWith(prefix)), `http://127.0.0.1:${site.port}`)
       expect(loaded).toEqual([])
@@ -209,6 +193,29 @@ test('pages come back after a restart', async () => {
       await expect(back.locator(`${PANEL} .browser-page-tab`)).toHaveCount(2)
       await expect(back.locator(`${PANEL} .browser-page-tab.current .browser-page`)).toHaveAttribute('title', site.url('/page'))
       await pageAt(back, id, site.url('/form'))
+      const listed = await browserCmd(again.pipeName, id, { op: 'tabs', action: 'list' })
+      expect(listed.info).toContain(site.url('/form'))
+      expect(listed.info).toContain(site.url('/page'))
+    } finally {
+      await again.app.close().catch(() => undefined)
+    }
+  } finally {
+    await site.close()
+  }
+})
+
+test('the first command after a restart lists the saved pages, before the panel shows them', async () => {
+  const { app, pipeName, tabId, dataDir } = await launchClaudeTab()
+  const site = await startSiteServer()
+  try {
+    await browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/form') })
+    await browserCmd(pipeName, tabId, { op: 'tabs', action: 'new', url: site.url('/page') })
+    await closeWindow(app)
+    nameConversation(dataDir)
+    const again = await launchApp({ dataDir })
+    try {
+      const id = await restoreTab(again.page)
+      // the panel has not shown the tab: the command makes the saved pages, and lists them in the same instant
       const listed = await browserCmd(again.pipeName, id, { op: 'tabs', action: 'list' })
       expect(listed.info).toContain(site.url('/form'))
       expect(listed.info).toContain(site.url('/page'))
@@ -244,21 +251,6 @@ test('the always list can be edited', async () => {
     await app.close()
   }
 })
-
-/** the saved session names a conversation for its Claude tab, so that Restore offers the tab back */
-function nameConversation(dataDir: string): void {
-  const file = join(dataDir, 'session-state.json')
-  const saved = JSON.parse(readFileSync(file, 'utf8')) as { tabs: { claudeSessionId: string | null }[] }
-  saved.tabs[0].claudeSessionId = SID
-  writeFileSync(file, JSON.stringify(saved))
-}
-
-/** the restore banner brings the saved tab back */
-async function restoreTab(page: Page): Promise<void> {
-  await expect.poll(() => page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
-  await page.locator('.banner-restore').click()
-  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
-}
 
 test('a profile change closes the clear row of the tab', async () => {
   const { app, page } = await launchClaudeTab()

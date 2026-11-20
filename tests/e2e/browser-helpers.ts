@@ -1,6 +1,8 @@
-import type { ElectronApplication } from '@playwright/test'
+import { expect, type ElectronApplication, type Page } from '@playwright/test'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { PipeMessage } from '../../src/shared/protocol'
 
@@ -125,4 +127,27 @@ export function leavePromptsToClaudeTerm(app: ElectronApplication): void {
 export function browserCmd(pipeName: string, tabId: string, command: object, timeoutMs = 60_000): Promise<Reply> {
   const msg = { v: 1, type: 'browser', tabId, command }
   return sendPipeMessage(pipeName, msg as unknown as PipeMessage, timeoutMs) as Promise<Reply>
+}
+
+/** every window closes, Settings' too, and the app with them: the session is saved on the way out */
+export async function closeWindow(app: ElectronApplication): Promise<void> {
+  const closed = app.waitForEvent('close')
+  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.close() }).catch(() => {})
+  await closed
+}
+
+/** the saved session names a conversation for its Claude tab, so that Restore offers the tab back */
+export function nameConversation(dataDir: string): void {
+  const file = join(dataDir, 'session-state.json')
+  const saved = JSON.parse(readFileSync(file, 'utf8')) as { tabs: { claudeSessionId: string | null }[] }
+  saved.tabs[0].claudeSessionId = '5d2c1b7a-8e4f-4a3b-b1c2-d3e4f5a6b7c8'
+  writeFileSync(file, JSON.stringify(saved))
+}
+
+/** the restore banner brings the saved tab back; returns the restored tab's id */
+export async function restoreTab(page: Page): Promise<string> {
+  await expect.poll(() => page.evaluate(() => window.__ct!.restoreVisible!())).toBe(true)
+  await page.locator('.banner-restore').click()
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  return (await page.evaluate(() => window.__ct!.activeTabId()))!
 }

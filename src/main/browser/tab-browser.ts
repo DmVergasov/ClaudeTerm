@@ -2,7 +2,7 @@ import { WebContentsView, type DownloadItem, type WebContents } from 'electron'
 import { MAX_PAGES, partitionOf, type BrowserCommand, type BrowserControl, type BrowserPageView, type BrowserPanelAction, type BrowserPanelState, type BrowserTabState } from '../../shared/browser'
 import type { PipeImage, PipeResponse } from '../../shared/protocol'
 import { canonicalUrl, isFileUrl, isWebUrl, siteOf } from '../../shared/site'
-import { PageDriver, type Cdp, type DialogNews } from './page-driver'
+import { PageDriver, viewShot, type Cdp, type DialogNews } from './page-driver'
 import { subjectOf, type GateResult, type SiteGate } from './site-gate'
 import { withFooter, type PageFooter } from './result-text'
 import { appKeyFor } from './app-keys'
@@ -80,6 +80,8 @@ interface Done {
 /** a page: its view, its driver once the debugger is attached, and the CDP events its driver listens to */
 interface Page {
   view: WebContentsView
+  /** the address the page was made for: its web contents has no address until the first navigation commits */
+  firstUrl: string
   driver: PageDriver | null
   handlers: Map<string, ((params: unknown) => void)[]>
   /** the first load is done and the debugger is attached (or failed): resolves to the load's error text, or null; never rejects */
@@ -294,6 +296,11 @@ function loadEnd(wc: WebContents, limitMs: number, start: () => Promise<unknown>
   })
 }
 
+/** the address a page has now: the last committed one, or the address it was made for while its first load has not committed */
+function urlNow(page: Page): string {
+  return page.view.webContents.getURL() || page.firstUrl
+}
+
 /** closes a page for good: its debugger is detached and its web contents destroyed */
 function destroy(page: Page): void {
   const wc = page.view.webContents
@@ -431,7 +438,7 @@ export class TabBrowser {
 
   /** the saved state: the profile, the pages' URLs and the current one; null for a tab with no page on the default profile */
   saved(): BrowserTabState | null {
-    const pages = this.pending ? [...this.pending.pages] : this.pages.map((p) => p.view.webContents.getURL())
+    const pages = this.pending ? [...this.pending.pages] : this.pages.map((p) => urlNow(p))
     const current = this.pending ? this.pending.current : this.cur ?? 0
     if (pages.length === 0 && this.profileId === this.d.defaultProfile()) return null
     return { profile: this.profileId, pages, current }
@@ -608,7 +615,13 @@ export class TabBrowser {
       })
       case 'screenshot': {
         if (this.d.stage.minimized()) return fail(MINIMIZED)
-        return this.onPage(run, async (_page, d) => ({ text: 'Screenshot taken.', image: await d.screenshot(command.fullPage, command.ref) }))
+        // the page beyond the viewport is a CDP capture, which needs the window to draw; the view or an element in it is Electron's own capture, which draws it even while the window is hidden
+        return this.onPage(run, async (page, d) => ({
+          text: 'Screenshot taken.',
+          image: command.fullPage
+            ? await d.fullShot(command.ref)
+            : await viewShot(page.view.webContents, command.ref === null ? null : await d.elementRect(command.ref))
+        }))
       }
       case 'evaluate': return this.onPage(run, async (_page, d) => ({ text: await d.evaluate(command.function, command.ref) }))
       case 'console': return this.onPage(run, async (_page, d) => ({
@@ -713,7 +726,7 @@ export class TabBrowser {
     const signal = run.signal
     const page = this.currentPage()
     if (page === null) return fail(NO_PAGE)
-    const url = page.view.webContents.getURL() || 'about:blank'
+    const url = urlNow(page) || 'about:blank'
     const denied = gateError(await this.checkGate(run, url, 'use'), url, 'use')
     if (denied !== null) return fail(denied)
     signal.throwIfAborted()
@@ -721,6 +734,13 @@ export class TabBrowser {
       const driver = await this.driverOf(page)
       // stopped or timed out while the page was being readied: the command answered already, so it does not act
       signal.throwIfAborted()
+      // a first load that committed on another address while the page was readied is checked for that address too
+      const now = urlNow(page) || 'about:blank'
+      if (now !== url) {
+        const refused = gateError(await this.checkGate(run, now, 'use'), now, 'use')
+        if (refused !== null) return fail(refused)
+        signal.throwIfAborted()
+      }
       const requests = driver.requestCount()
       const checks = page.checks
       const out = await act(page, driver)
@@ -742,20 +762,19 @@ export class TabBrowser {
   private async reply(page: Page, out: Done, run: Run, fenced = false): Promise<PipeResponse> {
     try {
       await this.downloadsSettled()
-      const wc = page.view.webContents
       // the page's own navigation reaches main before the hold check, so a reply that is not fenced fences first
-      if (!fenced && this.d.gate.isAllowed(this.tabId, this.profileId, wc.getURL())) await this.fence(page)
+      if (!fenced && this.d.gate.isAllowed(this.tabId, this.profileId, urlNow(page))) await this.fence(page)
       // a navigation the page started during the command and the person has not allowed answers the command with its denial
       const denial = await this.paused(run, this.holdsDone())
       if (denial !== null) return fail(denial)
-      const before = wc.getURL()
+      const before = urlNow(page)
       const readable = this.d.gate.isAllowed(this.tabId, this.profileId, before)
       const titled = readable ? await this.titleOf(page) : undefined
       // a page that closed while the command ran has no footer to give
       if (page.closed) return fail(PAGE_CLOSED)
       // the page may have moved while its title was read: the footer then gives the address it has now and its own title, with no
       // news (the news may be the old page's); an address the tab may not use is masked
-      const url = wc.getURL()
+      const url = urlNow(page)
       const moved = url !== before
       const nowReadable = this.d.gate.isAllowed(this.tabId, this.profileId, url)
       const shown = readable && !moved
@@ -827,9 +846,8 @@ export class TabBrowser {
   private listText(): string {
     if (this.pages.length === 0) return 'No pages open.'
     return this.pages.map((p, i) => {
-      const wc = p.view.webContents
-      const url = wc.getURL()
-      const shown = this.d.gate.isAllowed(this.tabId, this.profileId, url) ? `${wc.getTitle()} — ${url}` : this.addressOf(url)
+      const url = urlNow(p)
+      const shown = this.d.gate.isAllowed(this.tabId, this.profileId, url) ? `${p.view.webContents.getTitle()} — ${url}` : this.addressOf(url)
       return `${i === this.cur ? '* ' : '  '}${i}: ${shown}`
     }).join('\n')
   }
@@ -871,7 +889,7 @@ export class TabBrowser {
       this.changed()
       return
     }
-    const urls = this.pages.map((p) => p.view.webContents.getURL() || 'about:blank')
+    const urls = this.pages.map((p) => urlNow(p) || 'about:blank')
     const at = this.cur
     while (this.pages.length > 0) this.removePage(0)
     this.profileId = profileId
@@ -882,7 +900,7 @@ export class TabBrowser {
   /** the pages the panel lists: the saved ones before they are made (their titles are not known yet), else the tab's pages */
   private shownPages(): BrowserPageView[] {
     if (this.pending !== null) return this.pending.pages.map((url) => ({ url, title: '', loading: false }))
-    return this.pages.map((p) => ({ url: p.view.webContents.getURL(), title: p.view.webContents.getTitle(), loading: p.view.webContents.isLoading() }))
+    return this.pages.map((p) => ({ url: urlNow(p), title: p.view.webContents.getTitle(), loading: p.view.webContents.isLoading() }))
   }
 
   private currentPage(): Page | null {
@@ -909,7 +927,7 @@ export class TabBrowser {
       }
     })
     const wc = view.webContents
-    const page: Page = { view, driver: null, handlers: new Map(), ready: Promise.resolve(null), closed: false, attaching: null, personLoad: null, checks: 0, heldLoad: false, hold: null, settles: new Set(), answered: [] }
+    const page: Page = { view, firstUrl: url, driver: null, handlers: new Map(), ready: Promise.resolve(null), closed: false, attaching: null, personLoad: null, checks: 0, heldLoad: false, hold: null, settles: new Set(), answered: [] }
     wc.on('will-navigate', (e) => this.pageNavigates(page, e, 'navigate'))
     wc.on('will-redirect', (e) => this.pageNavigates(page, e, 'redirect'))
     wc.setWindowOpenHandler(({ url: to }) => {
