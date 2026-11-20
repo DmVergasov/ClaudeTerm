@@ -709,7 +709,10 @@ test('app shortcuts work while a page has the keyboard', async () => {
     await pageDo(app, form, "document.getElementById('name').focus()")
     await pageDo(app, form, RECORD_KEYS)
     await pageDo(app, form, 'undefined', [{ type: 'keyDown', keyCode: 'a' }, { type: 'char', keyCode: 'a' }, { type: 'keyUp', keyCode: 'a' }])
-    expect(await pageDo(app, form, "document.getElementById('name').value")).toBe('a')
+    // the key goes through the page's input pipeline, not with a script's answer: the field shows it a moment later (on failure, the
+    // poll prints what the page saw and where its focus was)
+    const typed = "({ value: document.getElementById('name').value, keys: window.__keys, active: document.activeElement?.id ?? null, focused: document.hasFocus() })"
+    await expect.poll(() => pageDo(app, form, typed)).toMatchObject({ value: 'a' })
     expect(await pageDo(app, form, 'window.__keys')).toContain('KeyA')
     // the shortcut that shows and hides the panel goes to the window, not to the page: the panel hides, the page keeps its text
     const returns = await keyboardReturns(app)
