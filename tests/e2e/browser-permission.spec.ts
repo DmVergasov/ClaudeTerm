@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { encodeMessage, type PipeMessage } from '../../src/shared/protocol'
-import { browserCmd, startSiteServer, type SiteServer } from './browser-helpers'
+import { browserCmd, closeWindow, nameConversation, restoreTab, startSiteServer, type SiteServer } from './browser-helpers'
 import { FAKE_CLAUDE_SETTINGS, launchApp, openTabInFront } from './helpers'
 
 // The permission cards of the Browser: a card asks before Claude opens another site, a held navigation waits for the
@@ -275,10 +275,11 @@ test('a response body is not shown on any hop of a redirect to a site the tab ma
     await browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/fetch') })
     // the page's own no-cors fetch: its first hop is local, and the last hop of its redirect is on other.test
     await browserCmd(pipeName, tabId, { op: 'evaluate', function: '() => { void fetch("/redirect", { mode: "no-cors" }); return 0 }' })
+    // the request is listed when the page makes it, but its redirect to other.test has started only when the list shows its 302
     let hop = ''
     await expect.poll(async () => {
       const listed = (await browserCmd(pipeName, tabId, { op: 'network' })).info ?? ''
-      hop = /^(r\d+) GET \S*\/redirect\b/m.exec(listed)?.[1] ?? ''
+      hop = /^(r\d+) GET \S*\/redirect\b.* → 302\b/m.exec(listed)?.[1] ?? ''
       return hop
     }, { timeout: 15_000 }).not.toBe('')
     const shown = await browserCmd(pipeName, tabId, { op: 'network_request', id: hop })
@@ -287,6 +288,60 @@ test('a response body is not shown on any hop of a redirect to a site the tab ma
   } finally {
     await site?.close()
     await app.close()
+  }
+})
+
+test('a restored page on a site the tab may not use asks before Claude\'s first command reads it', async () => {
+  const { app, page, pipeName, tabId, dataDir } = await claudeTab()
+  let site: SiteServer | null = null
+  let again: Awaited<ReturnType<typeof launchApp>> | null = null
+  try {
+    site = await startSiteServer()
+    // the person allows the site in this tab, so the tab saves the page on the site's address
+    const pending = browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/page', 'other.test') })
+    await expect(page.locator(CARD_TEXT)).toHaveText('Claude wants to open other.test')
+    await cardButton(page, 'Allow in this tab').click()
+    expect(await pending).toMatchObject({ ok: true })
+    await closeWindow(app)
+    nameConversation(dataDir)
+    again = await launchApp({ dataDir })
+    const restored = await restoreTab(again.page)
+    // the restored page is not on the site the restarted tab may use: Claude's first command asks before it reads the page
+    const snap = browserCmd(again.pipeName, restored, { op: 'snapshot' })
+    await expect(again.page.locator(CARD_TEXT)).toHaveText('Claude wants to use other.test')
+    await cardButton(again.page, 'Deny').click()
+    expect(await snap).toEqual({ ok: false, error: 'The person did not allow other.test.' })
+  } finally {
+    await site?.close()
+    await again?.app.close().catch(() => undefined)
+    await app.close().catch(() => undefined)
+  }
+})
+
+test('a restored page whose first load redirects to a site the tab may not use asks before Claude\'s first command reads it', async () => {
+  const { app, page, pipeName, tabId, dataDir } = await claudeTab()
+  let site: SiteServer | null = null
+  let again: Awaited<ReturnType<typeof launchApp>> | null = null
+  try {
+    site = await startSiteServer()
+    // the redirect of Claude's page to other.test is denied: the page keeps the local address it was made for, and the tab saves it
+    const pending = browserCmd(pipeName, tabId, { op: 'navigate', url: site.url('/redirect') })
+    await expect(page.locator(CARD_TEXT)).toHaveText('Claude wants to open other.test')
+    await cardButton(page, 'Deny').click()
+    expect(await pending).toMatchObject({ ok: false })
+    await closeWindow(app)
+    nameConversation(dataDir)
+    again = await launchApp({ dataDir })
+    const restored = await restoreTab(again.page)
+    // the restored page loads its local address, which redirects to other.test: Claude's first command asks before it reads that page
+    const snap = browserCmd(again.pipeName, restored, { op: 'snapshot' })
+    await expect(again.page.locator(CARD_TEXT)).toHaveText('Claude wants to use other.test')
+    await cardButton(again.page, 'Deny').click()
+    expect(await snap).toEqual({ ok: false, error: 'The person did not allow other.test.' })
+  } finally {
+    await site?.close()
+    await again?.app.close().catch(() => undefined)
+    await app.close().catch(() => undefined)
   }
 })
 

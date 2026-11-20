@@ -1,3 +1,4 @@
+import type { WebContents } from 'electron'
 import { REQUEST_ID_RE } from '../../shared/browser'
 import type { PipeImage } from '../../shared/protocol'
 import { siteOf } from '../../shared/site'
@@ -100,6 +101,9 @@ interface Layout {
 
 interface Clip { x: number; y: number; width: number; height: number; scale: number }
 
+/** a rect in CSS px of a page's viewport */
+export interface Rect { x: number; y: number; width: number; height: number }
+
 interface EvalResult {
   result?: { value?: unknown }
   exceptionDetails?: { text?: string; exception?: { description?: string } }
@@ -190,6 +194,37 @@ function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<
     timer = setTimeout(() => reject(new Error(message)), ms)
   })
   return Promise.race([work, expired]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * A CSS rect in DIP of a page with this zoom factor: the near edges round down and the far edges round up, so the rect
+ * covers the element, and it is at least one pixel wide and high (an empty rect would mean the whole view to Electron).
+ */
+function deviceArea(rect: Rect, zoom: number): Rect {
+  const left = Math.floor(rect.x * zoom)
+  const top = Math.floor(rect.y * zoom)
+  return {
+    x: left,
+    y: top,
+    width: Math.max(1, Math.ceil((rect.x + rect.width) * zoom) - left),
+    height: Math.max(1, Math.ceil((rect.y + rect.height) * zoom) - top),
+  }
+}
+
+/**
+ * A capture of the page view by Electron itself. It draws the view even while the window is hidden, where a CDP capture waits for
+ * a frame the window does not draw. The whole view, or a rect in CSS px of its viewport; a PNG, or a JPEG when the PNG is too long
+ * to send, and the time limit of a CDP capture.
+ */
+export async function viewShot(wc: WebContents, rect: Rect | null): Promise<PipeImage> {
+  // Electron takes the rect in DIP, which is CSS px times the page's zoom factor
+  const zoom = wc.getZoomFactor()
+  const work = rect === null ? wc.capturePage() : wc.capturePage(deviceArea(rect, zoom))
+  const image = await withTimeout(work, SCREENSHOT_TIMEOUT, 'The page did not paint in time; try again.')
+  if (image.isEmpty()) throw new Error('The screenshot came back empty.')
+  const png = image.toPNG().toString('base64')
+  if (png.length <= SCREENSHOT_LIMIT) return { data: png, mimeType: 'image/png' }
+  return { data: image.toJPEG(70).toString('base64'), mimeType: 'image/jpeg' }
 }
 
 /** work that stops at once with the cancelled error when the signal aborts while it is pending */
@@ -394,20 +429,39 @@ export class PageDriver {
     return untilAborted(read, signal)
   }
 
-  /** The page as a PNG, or as a JPEG when the PNG is too long to send; the element's box or the whole page when asked */
-  async screenshot(fullPage: boolean, ref: string | null): Promise<PipeImage> {
-    let clip: Clip | undefined
+  /**
+   * The page beyond the viewport, as CDP captures it: an element's box (which may lie beyond the viewport), or the whole content
+   * when no ref is given. This capture needs the window to draw a frame. A PNG, or a JPEG when the PNG is too long to send.
+   */
+  async fullShot(ref: string | null): Promise<PipeImage> {
+    let clip: Clip
     if (ref !== null) clip = await this.elementClip(ref)
-    else if (fullPage) {
+    else {
       const layout = await this.layout()
       clip = { x: 0, y: 0, width: layout.cssContentSize.width, height: layout.cssContentSize.height, scale: 1 }
     }
-    const params: Record<string, unknown> = { format: 'png', captureBeyondViewport: fullPage }
-    if (clip) params.clip = clip
+    const params: Record<string, unknown> = { format: 'png', captureBeyondViewport: true, clip }
     const png = await this.capture(params)
     if (png.length <= SCREENSHOT_LIMIT) return { data: png, mimeType: 'image/png' }
     const jpeg = await this.capture({ ...params, format: 'jpeg', quality: 70 })
     return { data: jpeg, mimeType: 'image/jpeg' }
+  }
+
+  /**
+   * The rect of an element in CSS px of the viewport, after the element is scrolled into view: the part of its box that is in the
+   * viewport, which is what a capture of the page view takes. An element with no part in the viewport has nothing to capture.
+   */
+  async elementRect(ref: string): Promise<Rect> {
+    const q = await this.boxOf(ref)
+    const xs = [q[0], q[2], q[4], q[6]]
+    const ys = [q[1], q[3], q[5], q[7]]
+    const viewport = (await this.layout()).cssVisualViewport
+    const x0 = Math.max(0, Math.min(...xs))
+    const y0 = Math.max(0, Math.min(...ys))
+    const x1 = Math.min(viewport.clientWidth, Math.max(...xs))
+    const y1 = Math.min(viewport.clientHeight, Math.max(...ys))
+    if (x1 <= x0 || y1 <= y0) throw new Error('The element has no part in the page to capture.')
+    return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
   }
 
   /** The function run in the page (given the element when a ref is set), its JSON result cut to 50 000 characters */
@@ -454,8 +508,17 @@ export class PageDriver {
     const entry = REQUEST_ID_RE.test(id) ? this.networkEntries.find((e) => e.id === id) : undefined
     if (!entry) throw new Error(`No request ${id} in the list.`)
     // the body is the last hop's, and CDP keeps it under the requestId all hops share: every hop must be readable
-    const unreadable = entry.chain.find((url) => !hopReadable(url, readable))
-    const body = unreadable === undefined ? await this.responseBody(entry.requestId) : `(not shown: ${siteOf(unreadable) ?? 'another address'} is not allowed in this tab)`
+    const unreadable = (): string | undefined => entry.chain.find((url) => !hopReadable(url, readable))
+    const notShown = (url: string): string => `(not shown: ${siteOf(url) ?? 'another address'} is not allowed in this tab)`
+    const first = unreadable()
+    let body: string
+    if (first !== undefined) body = notShown(first)
+    else {
+      body = await this.responseBody(entry.requestId)
+      // a redirect that completed during the read is in the chain now, and its body is the one just read: checked again
+      const late = unreadable()
+      if (late !== undefined) body = notShown(late)
+    }
     return [
       networkLine(entry),
       '### Request headers',

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DIALOG_SHIM, PageDriver, StaleRefError } from '../../src/main/browser/page-driver'
+import { DIALOG_SHIM, PageDriver, StaleRefError, viewShot } from '../../src/main/browser/page-driver'
 import type { Cdp } from '../../src/main/browser/page-driver'
 import type { AXNode } from '../../src/main/browser/snapshot'
 import ax from '../fixtures/ax-tree-login.json'
@@ -514,18 +514,11 @@ describe('PageDriver: screenshot', () => {
     vi.useRealTimers()
   })
 
-  it('captures the viewport as a png', async () => {
-    const cdp = new FakeCdp()
-    cdp.answer('Page.captureScreenshot', { data: 'AAAA' })
-    await expect(new PageDriver(cdp).screenshot(false, null)).resolves.toEqual({ data: 'AAAA', mimeType: 'image/png' })
-    expect(cdp.calls('Page.captureScreenshot')[0].params).toEqual({ format: 'png', captureBeyondViewport: false })
-  })
-
   it('clips a full page to the content size and captures beyond the viewport', async () => {
     const cdp = new FakeCdp()
     cdp.answer('Page.getLayoutMetrics', { cssContentSize: { width: 1000, height: 3000 } })
     cdp.answer('Page.captureScreenshot', { data: 'AAAA' })
-    await new PageDriver(cdp).screenshot(true, null)
+    await new PageDriver(cdp).fullShot(null)
     expect(cdp.calls('Page.captureScreenshot')[0].params).toEqual({
       format: 'png',
       captureBeyondViewport: true,
@@ -540,25 +533,116 @@ describe('PageDriver: screenshot', () => {
     cdp.answer('Page.getLayoutMetrics', { cssVisualViewport: { clientWidth: 800, clientHeight: 600, pageX: 5, pageY: 7 } })
     cdp.answer('Page.captureScreenshot', { data: 'AAAA' })
     await snapshotted(cdp, driver)
-    await driver.screenshot(false, 'e2')
+    await driver.fullShot('e2')
     expect(cdp.calls('Page.captureScreenshot')[0].params?.clip).toEqual({ x: 15, y: 27, width: 100, height: 40, scale: 1 })
+  })
+
+  it('gives an element\'s rect in CSS px of the viewport, after it is scrolled into view and clipped to the viewport', async () => {
+    const cdp = new FakeCdp()
+    const driver = new PageDriver(cdp)
+    // the element starts left of the viewport: the part in view is what the capture takes
+    cdp.answer('DOM.getBoxModel', { model: { content: [-20, 20, 110, 20, 110, 60, -20, 60] } })
+    cdp.answer('Page.getLayoutMetrics', { cssVisualViewport: { clientWidth: 100, clientHeight: 600, pageX: 5, pageY: 7 } })
+    await snapshotted(cdp, driver)
+    expect(await driver.elementRect('e2')).toEqual({ x: 0, y: 20, width: 100, height: 40 })
+    expect(cdp.calls('DOM.scrollIntoViewIfNeeded')).toHaveLength(1)
+  })
+
+  it('rejects an element with no part in the viewport, since there is nothing to capture', async () => {
+    const cdp = new FakeCdp()
+    const driver = new PageDriver(cdp)
+    cdp.answer('DOM.getBoxModel', { model: { content: [-90, 20, -10, 20, -10, 60, -90, 60] } })
+    cdp.answer('Page.getLayoutMetrics', { cssVisualViewport: { clientWidth: 100, clientHeight: 600, pageX: 0, pageY: 0 } })
+    await snapshotted(cdp, driver)
+    await expect(driver.elementRect('e2')).rejects.toThrow('The element has no part in the page to capture.')
   })
 
   it('captures again as a jpeg of quality 70 when the png is over 4 000 000 characters', async () => {
     const cdp = new FakeCdp()
+    cdp.answer('Page.getLayoutMetrics', { cssContentSize: { width: 800, height: 600 } })
     cdp.answer('Page.captureScreenshot', (p: Record<string, unknown> | undefined) => ({ data: p?.format === 'jpeg' ? 'JPEG' : 'x'.repeat(4_000_001) }))
-    await expect(new PageDriver(cdp).screenshot(false, null)).resolves.toEqual({ data: 'JPEG', mimeType: 'image/jpeg' })
+    await expect(new PageDriver(cdp).fullShot(null)).resolves.toEqual({ data: 'JPEG', mimeType: 'image/jpeg' })
     expect(cdp.calls('Page.captureScreenshot').map((c) => c.params?.format)).toEqual(['png', 'jpeg'])
     expect(cdp.calls('Page.captureScreenshot')[1].params).toMatchObject({ format: 'jpeg', quality: 70 })
   })
 
   it('gives up after 10 s when the page does not paint', async () => {
     const cdp = new FakeCdp()
+    cdp.answer('Page.getLayoutMetrics', { cssContentSize: { width: 800, height: 600 } })
     cdp.answer('Page.captureScreenshot', () => new Promise(() => {}))
-    const shot = new PageDriver(cdp).screenshot(false, null)
+    const shot = new PageDriver(cdp).fullShot(null)
     const failed = expect(shot).rejects.toThrow('The page did not paint in time; try again.')
     await vi.advanceTimersByTimeAsync(10_000)
     await failed
+  })
+})
+
+/**
+ * The web contents viewShot uses, as far as it uses it: the zoom factor and capturePage, which answers with an image whose PNG is
+ * `png`, or never answers when `hangs` is set. Returns the image too, to see the encoding asked for.
+ */
+function fakeView(zoom: number, png: Buffer = Buffer.from('PNG'), options: { empty?: boolean; hangs?: boolean } = {}) {
+  const image = { isEmpty: (): boolean => options.empty === true, toPNG: (): Buffer => png, toJPEG: vi.fn((): Buffer => Buffer.from('JPEG')) }
+  const capturePage = vi.fn((_area?: unknown): Promise<unknown> => (options.hangs === true ? new Promise(() => undefined) : Promise.resolve(image)))
+  const wc = { getZoomFactor: (): number => zoom, capturePage } as unknown as Parameters<typeof viewShot>[0]
+  return { wc, capturePage, image }
+}
+
+describe('viewShot: the page view, by Electron\'s own capture', () => {
+  it('takes the CSS rect times the zoom factor, in DIP (zoom 2)', async () => {
+    const { wc, capturePage } = fakeView(2)
+    await viewShot(wc, { x: 10, y: 20, width: 100, height: 50 })
+    expect(capturePage).toHaveBeenCalledWith({ x: 20, y: 40, width: 200, height: 100 })
+  })
+
+  it('rounds the near edge down and the far edge up, so the rect covers the element (zoom 0.75)', async () => {
+    const { wc, capturePage } = fakeView(0.75)
+    await viewShot(wc, { x: 10, y: 20, width: 100, height: 40 })
+    expect(capturePage).toHaveBeenCalledWith({ x: 7, y: 15, width: 76, height: 30 })
+  })
+
+  it('never takes an empty rect: a 0.4 px element is one device pixel, since an empty rect would mean the whole view', async () => {
+    const { wc, capturePage } = fakeView(1)
+    await viewShot(wc, { x: 0, y: 0, width: 0.4, height: 0.4 })
+    const area = capturePage.mock.calls[0][0] as { width: number; height: number }
+    expect(area.width).toBeGreaterThanOrEqual(1)
+    expect(area.height).toBeGreaterThanOrEqual(1)
+  })
+
+  it('captures the whole view when no rect is given', async () => {
+    const { wc, capturePage } = fakeView(1)
+    await viewShot(wc, null)
+    expect(capturePage.mock.calls[0]).toEqual([])
+  })
+
+  it('a PNG under the size limit comes back as it is', async () => {
+    const { wc, image } = fakeView(1, Buffer.from('PNG'))
+    await expect(viewShot(wc, null)).resolves.toEqual({ data: Buffer.from('PNG').toString('base64'), mimeType: 'image/png' })
+    expect(image.toJPEG).not.toHaveBeenCalled()
+  })
+
+  it('a PNG whose base64 is over the size limit comes back as a JPEG of quality 70', async () => {
+    const { wc, image } = fakeView(1, Buffer.alloc(3_000_001))
+    await expect(viewShot(wc, null)).resolves.toEqual({ data: Buffer.from('JPEG').toString('base64'), mimeType: 'image/jpeg' })
+    expect(image.toJPEG).toHaveBeenCalledWith(70)
+  })
+
+  it('gives up after 10 s when the view does not paint', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wc } = fakeView(1, Buffer.from('PNG'), { hangs: true })
+      const shot = viewShot(wc, null)
+      const failed = expect(shot).rejects.toThrow('The page did not paint in time; try again.')
+      await vi.advanceTimersByTimeAsync(10_000)
+      await failed
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('an empty image is an error, with the message of a CDP capture that came back empty', async () => {
+    const { wc } = fakeView(1, Buffer.from('PNG'), { empty: true })
+    await expect(viewShot(wc, null)).rejects.toThrow('The screenshot came back empty.')
   })
 })
 
@@ -809,6 +893,24 @@ describe('PageDriver: network', () => {
     cdp.emit('Network.responseReceived', { requestId: '9', type: 'Fetch', response: { status: 200, url: 'http://localhost:1/done', headers: {} } })
     const local = (u: string): boolean => u.startsWith('http://localhost:1/')
     expect((await driver.requestText('r1', local)).endsWith('### Response body\n(not shown: other.test is not allowed in this tab)')).toBe(true)
+  })
+
+  it('a redirect that completes while its body is read is not shown: the chain is checked again once the body comes', async () => {
+    const cdp = new FakeCdp()
+    const driver = new PageDriver(cdp)
+    let deliver: (body: unknown) => void = () => undefined
+    // the body waits for the test: the redirect to another site starts and completes during that wait
+    cdp.answer('Network.getResponseBody', () => new Promise((resolve) => {
+      deliver = resolve
+    }))
+    cdp.emit('Network.requestWillBeSent', { requestId: '10', request: { url: 'http://localhost:1/go', method: 'GET', headers: {} } })
+    const local = (u: string): boolean => u.startsWith('http://localhost:1/')
+    const text = driver.requestText('r1', local)
+    cdp.emit('Network.requestWillBeSent', { requestId: '10', request: { url: 'http://other.test:1/bank', method: 'GET', headers: {} }, redirectResponse: { status: 302 } })
+    cdp.emit('Network.responseReceived', { requestId: '10', type: 'Fetch', response: { status: 200, url: 'http://other.test:1/bank', headers: {} } })
+    deliver({ body: 'bank body', base64Encoded: false })
+    expect((await text).endsWith('### Response body\n(not shown: other.test is not allowed in this tab)')).toBe(true)
+    expect(cdp.calls('Network.getResponseBody')).toHaveLength(1)
   })
 
   it('a data: body is readable, and a blob: body is readable when the origin inside it is', async () => {
