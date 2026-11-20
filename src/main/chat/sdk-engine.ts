@@ -10,6 +10,8 @@ import { spawnChatProcess, type ChatLaunch } from './claude-spawn'
 const DEFAULT_GRACE_MS = 2500
 const EXIT_WAIT_MS = 1000
 const GROUP_KILL_MS = 2000
+/** Windows: how long taskkill is given to end a claude.exe and its tree before the claude.exe is ended by itself */
+const TREE_KILL_MS = 1000
 const SHELL_NOTICE = /^(?:bash|zsh): (?:cannot set terminal process group|no job control in this shell|can't set tty pgrp)/
 const NAME_CAP = 500
 const TEXT_CAP = 64 * 1024
@@ -192,6 +194,7 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
   }
 
   let groupTimer: ReturnType<typeof setTimeout> | undefined
+  let treeTimer: ReturnType<typeof setTimeout> | undefined
 
   // POSIX: the process leads a group of its own (spawnChatProcess), and the group gets the signal, so the commands and
   // servers Claude Code started end with it. A group that is gone (ESRCH) is not an error.
@@ -223,6 +226,15 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
     if (process.platform === 'win32') {
       // the claude command may be a cmd.exe shim: its tree goes too
       spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).unref()
+      // taskkill finds the tree through WMI, which takes seconds or fails on some machines. A claude.exe still alive after
+      // TREE_KILL_MS is ended by itself, and what it started goes with it: Node and Bun put a process's children in a job
+      // that Windows ends with it. Not a cmd.exe shim: ending cmd.exe would leave the Claude Code it runs alive
+      if (o.launch.how === 'direct' && treeTimer === undefined) {
+        treeTimer = setTimeout(() => {
+          if (proc.exitCode === null && proc.signalCode === null) proc.kill()
+        }, TREE_KILL_MS)
+        treeTimer.unref()
+      }
       return
     }
     if (hard) {

@@ -12,15 +12,31 @@ import { installFakeClaude, type FakeScript } from '../fixtures/fake-claude/inst
 
 // every process the engine starts goes through spawnChatProcess: the spy records which file it was given
 const spawnedFiles = vi.hoisted(() => [] as string[])
+// a Claude Code started directly, as a claude.exe is: its file stands for the stand-in, run by node without a cmd.exe shim
+const direct = vi.hoisted(() => ({ file: '', standIn: '' }))
 vi.mock('../../src/main/chat/claude-spawn', async original => {
   const actual = await original<typeof import('../../src/main/chat/claude-spawn')>()
   return {
     ...actual,
     spawnChatProcess: (launch: Exclude<ChatLaunch, { how: 'none' }>, args: string[], cwd: string, env: Record<string, string | undefined>) => {
       spawnedFiles.push(launch.how === 'shell' ? launch.shell : launch.file)
+      if (launch.how === 'direct' && launch.file === direct.file) {
+        return actual.spawnChatProcess({ how: 'direct', file: process.execPath }, ['--experimental-strip-types', '--no-warnings', direct.standIn, ...args], cwd, env)
+      }
       return actual.spawnChatProcess(launch, args, cwd, env)
     }
   }
+})
+// taskkill finds a process tree through WMI: where WMI is slow or cancels the call, it ends nothing for seconds, or at all.
+// With `broken`, taskkill is a command that fails at once, as it does there
+const taskkill = vi.hoisted(() => ({ broken: false }))
+vi.mock('node:child_process', async original => {
+  const actual = await original<typeof import('node:child_process')>()
+  const spawn = ((command: string, ...rest: unknown[]) => {
+    if (taskkill.broken && command === 'taskkill') return actual.spawn('cmd.exe', ['/d', '/c', 'exit', '1'], { windowsHide: true, stdio: 'ignore' })
+    return (actual.spawn as (...a: unknown[]) => unknown)(command, ...rest)
+  }) as typeof actual.spawn
+  return { ...actual, spawn, default: { ...actual, spawn } }
 })
 
 // The SDK engine (sdk-engine.ts) driving the stand-in Claude Code (tests/fixtures/fake-claude) through the real query()
@@ -86,10 +102,10 @@ function env(log: string, script?: string): Record<string, string> {
   return result
 }
 
-function start(h: Harness, o: { script?: FakeScript; settingsPath?: string | null; sessionId?: string | null; newSessionId?: string; fork?: boolean; log?: string } = {}): ChatEngine {
+function start(h: Harness, o: { script?: FakeScript; settingsPath?: string | null; sessionId?: string | null; newSessionId?: string; fork?: boolean; log?: string; launch?: Exclude<ChatLaunch, { how: 'none' }> } = {}): ChatEngine {
   const log = o.log ?? join(dir, 'fake-claude.log')
   const options: ChatEngineStart = {
-    launch,
+    launch: o.launch ?? launch,
     cwd: work,
     env: env(log, o.script === undefined ? undefined : writeScript(o.script)),
     settingsPath: o.settingsPath ?? null,
@@ -165,10 +181,13 @@ beforeEach(async () => {
   })
   if (resolved.how === 'none') throw new Error(resolved.reason)
   launch = resolved
+  direct.file = join(dir, 'bin', 'claude.exe')
+  direct.standIn = join(import.meta.dirname, '..', 'fixtures', 'fake-claude', 'fake-claude.ts')
 })
 
 afterEach(async () => {
   for (const { engine, h } of engines.splice(0)) await stop(engine, h)
+  taskkill.broken = false
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -269,6 +288,21 @@ describe('the SDK engine', () => {
     const h = harness()
     const log = join(dir, 'fake-claude.log')
     const engine = start(h, { log, script: { turns: { Hang: [{ wait: 20_000 }] } } })
+    engine.send('Hang', [], 'send-uuid')
+    await until(() => logEntries(log).some(e => e.in?.type === 'user'), 'the message in the stand-in')
+    const began = Date.now()
+    engine.close(500)
+    await until(() => h.exits.length === 1, 'the exit after the grace period', 6_000)
+    expect(Date.now() - began).toBeLessThan(500 + 3_000)
+  })
+
+  // a tab waits 5 s for its Claude Code to end before it starts another one (a switch of account, a restart): a claude.exe
+  // still alive then leaves the tab with no Claude Code at all
+  it.runIf(process.platform === 'win32')('close ends a claude.exe that ignores the end of its input soon after graceMs, also where taskkill ends nothing', async () => {
+    taskkill.broken = true
+    const h = harness()
+    const log = join(dir, 'fake-claude.log')
+    const engine = start(h, { log, launch: { how: 'direct', file: direct.file }, script: { turns: { Hang: [{ wait: 20_000 }] } } })
     engine.send('Hang', [], 'send-uuid')
     await until(() => logEntries(log).some(e => e.in?.type === 'user'), 'the message in the stand-in')
     const began = Date.now()
