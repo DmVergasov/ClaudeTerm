@@ -663,6 +663,81 @@ describe('ChatHub', () => {
     expect(items.filter(item => item.kind === 'notice' && item.text === 'Not sent: Claude Code did not start')).toHaveLength(1)
   })
 
+  it('a Claude Code that does not answer its start in 60 s is started again once, on the same session, and gets the messages it never took', async () => {
+    const { hub, engines } = harness()
+    const { req, exit } = startReq()
+    hub.start(req)
+    await settle()
+    expect(await hub.send(TAB, { text: 'hello', attachments: [] })).toBeNull()
+    expect(engines[0].sent).toEqual(['hello'])
+
+    vi.advanceTimersByTime(59_999)
+    expect(engines[0].kills).toBe(0)
+    vi.advanceTimersByTime(1)
+    expect(engines[0].kills).toBe(1)
+    expect(hub.snapshot(TAB)!.items).toContainEqual(expect.objectContaining({ kind: 'notice', tone: 'info', text: 'Claude Code did not answer in 60 s: it starts again', action: null }))
+    // the new one starts only once the old one has ended: two processes never run one session
+    await settle()
+    expect(engines).toHaveLength(1)
+
+    engines[0].h.exit(1)
+    await settle()
+    expect(exit).not.toHaveBeenCalled()
+    expect(engines).toHaveLength(2)
+    expect(engines[1].start.newSessionId).toBe(engines[0].start.newSessionId)
+    expect(engines[1].sent).toEqual(['hello'])
+    // one bubble for the message, and the start goes on
+    const items = hub.snapshot(TAB)!.items
+    expect(items.filter(item => item.kind === 'user')).toHaveLength(1)
+    expect(last(items)).toMatchObject({ kind: 'notice', text: 'Starting Claude…' })
+
+    engines[1].h.ready({ permissionMode: 'default' })
+    vi.advanceTimersByTime(120_000)
+    expect(engines[1].kills).toBe(0)
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'notice' && item.text === 'Starting Claude…')).toBe(false)
+  })
+
+  it('a Claude Code that does not answer its start again ends the chat: it did not start, with Restart, and the message was not sent', async () => {
+    const { hub, engines } = harness()
+    const { req, exit } = startReq()
+    hub.start(req)
+    await settle()
+    await hub.send(TAB, { text: 'hello', attachments: [] })
+    vi.advanceTimersByTime(60_000)
+    engines[0].h.exit(1)
+    await settle()
+
+    vi.advanceTimersByTime(60_000)
+    expect(engines[1].kills).toBe(1)
+    engines[1].h.exit(1)
+    await settle()
+
+    expect(engines).toHaveLength(2)
+    expect(exit).toHaveBeenCalledWith(1, null)
+    const s = hub.snapshot(TAB)!
+    expect(s.items).toContainEqual(expect.objectContaining({ kind: 'notice', tone: 'error', text: 'Claude Code did not start: it did not answer in 60 s', action: 'restart' }))
+    expect(s.items).toContainEqual(expect.objectContaining({ kind: 'notice', tone: 'error', text: 'Not sent: Claude Code did not start', action: null }))
+    expect(s.items.some(item => item.kind === 'notice' && (item.text === 'Starting Claude…' || item.text === 'Claude Code stopped'))).toBe(false)
+    expect(s.state).toMatchObject({ turn: 'idle', exited: true })
+  })
+
+  it('a chat stopped while its Claude Code starts again ends as a stop, and nothing more starts', async () => {
+    const { hub, engines } = harness()
+    const { req, exit } = startReq()
+    const handle = hub.start(req)
+    await settle()
+    vi.advanceTimersByTime(60_000)
+    expect(engines[0].kills).toBe(1)
+
+    handle.stop()
+    engines[0].h.exit(1)
+    await settle()
+
+    expect(engines).toHaveLength(1)
+    expect(exit).toHaveBeenCalledWith(1, null)
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'notice' && item.tone === 'error')).toBe(false)
+  })
+
   it('a snapshot does not take the window\'s patches', async () => {
     const { hub, engines, windows } = harness()
     hub.start(startReq().req)

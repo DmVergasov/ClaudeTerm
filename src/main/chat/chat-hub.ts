@@ -40,6 +40,11 @@ const PLAN_MODE = 'Not sent: plan mode'
 const TOO_LONG = 'Not sent: the message is too long'
 const ENDED_FORWARD = 'Claude Code stopped'
 const STARTING = 'Starting Claude…'
+/** how long Claude Code is given to answer its start (initialize): it is started again once, then the chat gives up */
+const START_LIMIT_MS = 60_000
+const START_AGAIN = `Claude Code did not answer in ${START_LIMIT_MS / 1000} s: it starts again`
+const NO_START = `Claude Code did not start: it did not answer in ${START_LIMIT_MS / 1000} s`
+const NOT_SENT = 'Not sent: Claude Code did not start'
 const CANCELLED = 'Cancelled'
 /** exit codes of a command that cannot run: 126 and 127 (POSIX), 9009 (cmd.exe "not recognized") */
 const CANNOT_RUN = new Set([126, 127, 9009])
@@ -138,6 +143,9 @@ interface AgentBatch { agentId: string; from: number; patches: AgentPatch[]; tim
 /** the new lines of a run agent's transcript that a watched page reads, every RUN_TAIL_MS: the reader starts at `from` (the head's end) */
 interface RunTail { live: Live; agentId: string; from: number | null; tailer: LineTailer | null; busy: boolean; timer: ReturnType<typeof setInterval> }
 
+/** a message on its way to Claude Code; `tapped`: the Remote Control has heard of it */
+interface Outgoing { text: string; images: { mediaType: string; data: string }[]; id: string; from?: ChatSendOrigin; tapped?: boolean }
+
 /** the key of a run agent's tail: one per tab and agent */
 const runTailKey = (tabId: string, agentId: string): string => `${tabId}\n${agentId}`
 
@@ -151,7 +159,17 @@ interface Live {
   /** how the engine's Claude Code was started; null until the support check has passed */
   launch: Exclude<ChatLaunch, { how: 'none' }> | null
   /** messages sent while the engine starts: shown at once, sent to the engine when it runs, in the order typed; their files are read already */
-  waiting: { text: string; images: { mediaType: string; data: string }[]; id: string; from?: ChatSendOrigin }[]
+  waiting: Outgoing[]
+  /** messages handed to the engine before Claude Code answered its start: a start made again sends them again */
+  handed: Outgoing[]
+  /** gives Claude Code START_LIMIT_MS to answer its start; null once it has, or the chat has ended */
+  startTimer: ReturnType<typeof setTimeout> | null
+  /** Claude Code did not answer its start once, and was started again */
+  retried: boolean
+  /** the engine that did not answer is being ended: its end starts the next one (or ends the chat), and nothing it says counts */
+  retrying: boolean
+  /** Claude Code did not answer its start again: its end is the chat's, and says it did not start */
+  startFailed: boolean
   /** the process ended or the start was cancelled: nothing more is started, sent or drawn */
   ended: boolean
   /** Claude Code has answered initialize: the start is over, and an exit now is not a failed start */
@@ -305,7 +323,7 @@ export class ChatHub {
     this.remove(tabId)
     const newSessionId = resume === null ? randomUUID() : ''
     const live: Live = {
-      tabId, req, engine: null, launch: null, waiting: [], ended: false, ready: false, inited: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
+      tabId, req, engine: null, launch: null, waiting: [], handed: [], startTimer: null, retried: false, retrying: false, startFailed: false, ended: false, ready: false, inited: false, models: [], autoRefused: null, unready: 0, newSessionId, firstStderr: null, starting: null, early: null,
       historyWaiters: [], kept: null, restarted: restart,
       queued: new Map(), stopping: false, exitDue: false, working: false,
       rev: this.revs.get(tabId) ?? 0, batch: [], batchFrom: 0, timer: null, remoteBatch: [], remoteFrom: 0, remoteTimer: null, cards: new Map(), contextAt: null,
@@ -485,15 +503,27 @@ export class ChatHub {
       live.unready += 1
       return null
     }
-    const engine = live.engine
     if (!live.ready) live.unready += 1
     this.whenLoaded(live, () => {
       if (live.ended) return
       this.publish(live, live.model.userSent(shown, id))
-      engine.send(prepared.text, prepared.images, id)
-      this.tap(t => t.userSent(tabId, id, prepared.text, s.from ?? null))
+      this.hand(live, { text: prepared.text, images: prepared.images, id, ...(s.from === undefined ? {} : { from: s.from }) })
     })
     return null
+  }
+
+  /** a message goes to the running engine; while Claude Code is started again, it waits for the new one */
+  private hand(live: Live, m: Outgoing): void {
+    const engine = live.engine
+    if (engine === null || live.retrying) {
+      live.waiting.push(m)
+      return
+    }
+    engine.send(m.text, m.images, m.id)
+    if (!live.ready) live.handed.push(m)
+    if (m.tapped) return
+    m.tapped = true
+    this.tap(t => t.userSent(live.tabId, m.id, m.text, m.from ?? null))
   }
 
   interrupt(tabId: string): void {
@@ -805,6 +835,7 @@ export class ChatHub {
     this.clearAgents(live)
     this.clearBatch(live)
     this.clearRemote(live)
+    this.clearStartTimer(live)
     if (live.ended) return
     live.ended = true
     this.cancelQueued(live)
@@ -834,17 +865,29 @@ export class ChatHub {
       return
     }
     const { req } = live
+    // what an engine that did not answer its start says while it is ended does not count: only its end does
     const handlers: ChatEngineHandlers = {
-      ready: info => this.whenLoaded(live, () => this.becomeReady(live, info)),
-      message: m => this.whenLoaded(live, () => this.apply(live, m)),
-      ask: (ask, signal) => this.ask(live, ask, signal),
-      dialog: () => this.whenLoaded(live, () => this.publish(live, live.model.notice('Claude Code asked something the chat cannot show yet', 'info', 'open-terminal'))),
+      ready: info => {
+        if (live.retrying) return
+        this.clearStartTimer(live)
+        this.whenLoaded(live, () => this.becomeReady(live, info))
+      },
+      message: m => {
+        if (!live.retrying) this.whenLoaded(live, () => this.apply(live, m))
+      },
+      ask: (ask, signal) => (live.retrying ? Promise.resolve(cancelled()) : this.ask(live, ask, signal)),
+      dialog: () => {
+        if (!live.retrying) this.whenLoaded(live, () => this.publish(live, live.model.notice('Claude Code asked something the chat cannot show yet', 'info', 'open-terminal')))
+      },
       stderr: text => {
         if (!live.ready && live.firstStderr === null) live.firstStderr = firstLine(text)
         this.d.log.warn(`Claude Code wrote to stderr: ${text.slice(0, 500)}`)
       },
       // not held while the history loads: an exit ends the queued asks at once
-      exit: code => this.stopped(live, code),
+      exit: code => {
+        if (live.retrying && !live.startFailed && !live.stopping && !live.ended && this.tabs.get(live.tabId) === live) this.startAgain(live, support)
+        else this.stopped(live, code)
+      },
     }
     try {
       const engine = this.d.engine(
@@ -856,16 +899,48 @@ export class ChatHub {
       )
       live.engine = engine
       live.launch = support.launch
+      live.startTimer = setTimeout(() => this.startTooLong(live), START_LIMIT_MS)
       // the messages sent while it started go out now, in the order they were typed
       const waiting = live.waiting
       live.waiting = []
-      for (const message of waiting) {
-        engine.send(message.text, message.images, message.id)
-        this.tap(t => t.userSent(live.tabId, message.id, message.text, message.from ?? null))
-      }
+      for (const message of waiting) this.hand(live, message)
     } catch (e) {
       this.finish(live, null, `Claude Code could not start: ${errorText(e)}`)
     }
+  }
+
+  /**
+   * Claude Code has not answered its start in START_LIMIT_MS: it is ended, and once it has ended it starts again, once
+   * (startAgain). When the second one does not answer either, its end ends the chat, saying Claude Code did not start.
+   */
+  private startTooLong(live: Live): void {
+    live.startTimer = null
+    const engine = live.engine
+    if (live.ended || live.ready || live.stopping || live.retrying || engine === null || this.tabs.get(live.tabId) !== live) return
+    live.retrying = true
+    if (live.retried) {
+      live.startFailed = true
+      this.d.log.warn(`Claude Code did not answer its start again in ${START_LIMIT_MS / 1000} s: the chat ends`)
+    } else {
+      live.retried = true
+      this.d.log.warn(`Claude Code did not answer its start in ${START_LIMIT_MS / 1000} s: it starts again`)
+      this.whenLoaded(live, () => this.publish(live, live.model.notice(START_AGAIN, 'info', null)))
+    }
+    engine.kill()
+  }
+
+  /** the Claude Code that did not answer has ended: another one starts on the same session, and gets the messages the first one never took */
+  private startAgain(live: Live, support: Exclude<Support, { reason: string }>): void {
+    live.retrying = false
+    live.engine = null
+    live.waiting = [...live.handed, ...live.waiting]
+    live.handed = []
+    this.begin(live, support)
+  }
+
+  private clearStartTimer(live: Live): void {
+    if (live.startTimer !== null) clearTimeout(live.startTimer)
+    live.startTimer = null
   }
 
   /** Claude Code has answered initialize: the start is over, and the mode it reports is the chat's */
@@ -873,6 +948,7 @@ export class ChatHub {
     if (live.ended || live.ready) return
     live.ready = true
     live.unready = 0
+    live.handed = []
     live.models = info.models ?? []
     this.dropStarting(live)
     if (info.permissionMode === 'auto') this.autoTabs.add(live.tabId)
@@ -915,6 +991,7 @@ export class ChatHub {
   /** the process has ended before it ran, or its start was cancelled: the tab gets its exit now */
   private finish(live: Live, code: number | null, fallback: string | null): void {
     live.ended = true
+    this.clearStartTimer(live)
     for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
     this.tap(t => t.ended(live.tabId))
     live.restarted = false
@@ -926,7 +1003,7 @@ export class ChatHub {
     if (live.unready > 0) {
       live.waiting = []
       live.unready = 0
-      this.publish(live, live.model.notice('Not sent: Claude Code did not start', 'error', null))
+      this.publish(live, live.model.notice(NOT_SENT, 'error', null))
     }
     live.req.exit(code, fallback)
   }
@@ -1172,8 +1249,9 @@ export class ChatHub {
    */
   private stopped(live: Live, code: number | null): void {
     if (live.ended || this.tabs.get(live.tabId) !== live) return
+    this.clearStartTimer(live)
     // before ready, a command that cannot run is a failed start: the tab falls back to its terminal, as a failed support check does
-    if (!live.ready && !live.stopping && code !== null && CANNOT_RUN.has(code)) {
+    if (!live.ready && !live.stopping && !live.startFailed && code !== null && CANNOT_RUN.has(code)) {
       this.cancelQueued(live)
       for (const id of [...live.cards.keys()]) this.settle(live, id, cancelled(), CANCELLED, 'cancelled')
       this.finish(live, null, `Claude Code could not be started for the chat: ${live.firstStderr ?? `exit code ${code}`}`)
@@ -1194,7 +1272,14 @@ export class ChatHub {
     this.publish(live, live.model.endForwards(ENDED_FORWARD))
     this.publish(live, live.model.processEnded())
     this.publish(live, live.model.setState({ turn: 'idle', turnStartedAt: null, exited: true, activity: undefined }))
-    if (!live.stopping) this.publish(live, live.model.notice('Claude Code stopped', 'error', 'restart'))
+    if (live.startFailed && !live.stopping) {
+      // Claude Code never took the messages: they are not sent, and Restart starts the tab again
+      this.publish(live, live.model.notice(NO_START, 'error', 'restart'))
+      if (live.unready > 0) this.publish(live, live.model.notice(NOT_SENT, 'error', null))
+      live.unready = 0
+      live.waiting = []
+      live.handed = []
+    } else if (!live.stopping) this.publish(live, live.model.notice('Claude Code stopped', 'error', 'restart'))
   }
 
   private dropStarting(live: Live): void {
