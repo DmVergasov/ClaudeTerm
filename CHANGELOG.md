@@ -2,6 +2,17 @@
 
 What changed in each ClaudeTerm release. The GitHub release of a version shows its section from this file.
 
+## 0.25.1
+
+### Changes
+
+- **A muted tab stays quiet.** **Mute notifications** in a tab's menu (it was **Mute sound**) now turns off every notification of that tab, not only its sound: no highlight on the tab, no system notification, no taskbar flash, no count on the app icon, and your other devices don't show it waiting either. **Unmute notifications** brings them back.
+
+### Fixes
+
+- **A chat whose Claude Code hangs at its start starts it again.** When Claude Code hung while starting — after it refreshed its sign-in, for example — the chat showed **Starting Claude…** for good and your message never reached Claude. Claude Code now gets 60 seconds to answer: the first time it doesn't, the chat starts it again on the same conversation and hands it the messages it missed; if it hangs a second time, the chat says Claude Code did not start and offers **Restart**.
+- **Switching a chat tab's account works on slow Windows machines.** Where Windows took nine seconds or more to end the old Claude Code, the switch gave up and left the tab without Claude Code until a restart, and every message got "Claude Code is not running in this tab". ClaudeTerm now ends the old Claude Code itself when Windows is slow to.
+
 ## 0.25.0
 
 ### New
