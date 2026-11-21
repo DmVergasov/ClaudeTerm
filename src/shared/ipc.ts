@@ -382,7 +382,7 @@ export interface CtApi {
   restartTab(tabId: string, live?: boolean): void
   /** restarts a Claude tab on another account (null: the main one), resuming its conversation */
   switchAccount(tabId: string, account: string | null): void
-  /** a muted tab makes no notification sound; it is still marked and still flashes the taskbar */
+  /** a muted tab gives no notification: no sound, no mark, no system notification, no taskbar flash */
   muteTab(tabId: string, muted: boolean): void
   /** a Claude tab with a saved conversation can be forked */
   canForkTab(tabId: string): Promise<boolean>

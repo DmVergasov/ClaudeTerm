@@ -1039,30 +1039,36 @@ test('a waiting row\'s word stands at the row\'s right end whatever marks come b
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const plain = await openTab(page, 'claude', folder)
-  const muted = await openTab(page, 'claude', folder)
+  const noted = await openTab(page, 'claude', folder)
   const idle = await openTab(page, 'claude', folder)
-  await page.evaluate((id) => window.ct.muteTab(id, true), muted)
+  // a note puts its mark before the word: typed in the tab, with the note's shortcut
+  await page.evaluate((id) => window.ct.activateTab(id), noted)
+  await page.waitForFunction((id) => window.__ct!.activeTabId() === id, noted)
+  await page.locator('.terminal-host:visible .xterm').click()
+  await page.keyboard.press(KEYS.note)
+  await expect(page.locator('#note .note-text')).toBeFocused()
+  await page.keyboard.type('TODO')
+  await expect(row(page, noted).locator('.tab-note')).toHaveCount(1)
   await page.evaluate((id) => window.ct.activateTab(id), home)
   await page.waitForFunction((id) => window.__ct!.activeTabId() === id, home)
-  for (const id of [plain, muted]) {
+  for (const id of [plain, noted]) {
     expect(await sendPipeMessage(pipeName, { v: 1, type: 'attention', tabId: id, sessionId: SID, reason: 'question' })).toEqual({ ok: true })
     await expect(row(page, id).locator('.tab-status')).toHaveText('Question')
   }
-  await expect(row(page, muted).locator('.tab-muted')).toHaveCount(1)
   // the pointer is off the rows: a row pointed at shows its × in its word's place (where the runner's cursor lies is not the test's)
   await page.mouse.move(1, 1)
-  for (const id of [plain, muted]) await expect(row(page, id).locator('.tab-status')).toBeVisible()
+  for (const id of [plain, noted]) await expect(row(page, id).locator('.tab-status')).toBeVisible()
   // the rows are read at one moment, as the panel draws its rows again when a tab changes (on the Windows runner a shell's
   // title comes late): a row found first and read a moment later may have gone from the page, and reads as no style at all
   const rows = await page.evaluate((ids) => ids.map((id) => {
     const el = document.querySelector(`#tabpanel .tp-tab[data-tab-id="${id}"]`)!
     return { right: el.querySelector('.tab-status')?.getBoundingClientRect().right ?? NaN, background: getComputedStyle(el).backgroundColor }
-  }), [plain, muted, idle])
-  const [p, m, i] = [rows[0]!, rows[1]!, rows[2]!]
-  expect(Math.abs(p.right - m.right)).toBeLessThanOrEqual(0.5)
+  }), [plain, noted, idle])
+  const [p, n, i] = [rows[0]!, rows[1]!, rows[2]!]
+  expect(Math.abs(p.right - n.right)).toBeLessThanOrEqual(0.5)
   // the pulse is a layer under the row's content: the row's own background is a row's like any other, so a hover still shows
   expect(p.background).toBe(i.background)
-  expect(m.background).toBe(i.background)
+  expect(n.background).toBe(i.background)
   await app.close()
 })
 

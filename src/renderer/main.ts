@@ -1324,7 +1324,7 @@ function tabMenu(id: string, at: { x: number; y: number }): void {
       { label: claude ? 'Restart session' : 'Restart shell', action: () => ct.restartTab(id, true) },
       ...(claude ? [{ label: 'Fork session', disabled: !canFork, action: () => ct.forkTab(id) }] : []),
       ...(sessionId ? [{ label: isStarred ? 'Unstar session' : 'Star session', action: () => void ct.setSessionStarred(sessionId, !isStarred) }] : []),
-      { label: t.info.muted ? 'Unmute sound' : 'Mute sound', action: () => ct.muteTab(id, !t.info.muted) },
+      { label: t.info.muted ? 'Unmute notifications' : 'Mute notifications', action: () => ct.muteTab(id, !t.info.muted) },
       { label: 'Mark as unread', action: () => markUnread(id) },
       { label: REMOTE_COPY.changeFolder, action: () => openFolderDialog(id) },
       ...(switches.length > 0 ? [{ label: '', separator: true }, ...switches] : []),

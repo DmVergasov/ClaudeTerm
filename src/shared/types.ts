@@ -41,7 +41,7 @@ export interface TabInfo {
   claudeSessionId: string | null
   /** the extra account a Claude tab runs on; null: the main account (and every shell tab) */
   account: string | null
-  /** the user muted the tab: it makes no notification sound */
+  /** the user muted the tab: it gives no notification */
   muted: boolean
   /** the Claude tab is a fork of another tab's conversation; null: an ordinary tab */
   fork: TabFork | null

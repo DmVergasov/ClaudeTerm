@@ -292,7 +292,7 @@ export class TabManager {
     this.deps.onFolderChanged?.(rec.info.id, folder)
   }
 
-  /** a muted tab makes no notification sound */
+  /** a muted tab gives no notification */
   setMuted(tabId: string, muted: boolean): void {
     const rec = this.tabs.get(tabId)
     if (!rec || rec.info.muted === muted) return

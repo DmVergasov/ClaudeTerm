@@ -155,21 +155,20 @@ describe('Attention', () => {
     expect(calls).toContain('play:system')
   })
 
-  it('a muted tab gives no sound; it is still marked, the taskbar still flashes and the system notification still shows', () => {
+  it('a muted tab gives no signal at all: no mark, no flash, no system notification, no sound; other tabs still give theirs', () => {
     const { a, calls, state } = setup({ focused: false, active: 't2' })
     state.n.bell.sound = true
     state.muted.add('t1')
-    expect(a.notify('t1', 'permission')).toBe(true)
-    a.notify('t1', 'bell')
-    expect(calls).toEqual(['mark:t1:permission', 'flash', 'banner:t1:permission', 'mark:t1:bell', 'flash'])
-    calls.length = 0
+    for (const reason of ['permission', 'question', 'done', 'bell'] as const) expect(a.notify('t1', reason)).toBe(false)
+    expect(a.notify('t1', 'done', true)).toBe(false)
+    expect(calls).toEqual([])
     a.notify('t3', 'done')
-    expect(calls).toContain('play:system')
+    expect(calls).toEqual(['mark:t3:done', 'flash', 'banner:t3:done', 'play:system'])
   })
 
-  it('a muted tab with only the sound on for the case gives no signal and reports it', () => {
-    const { a, calls, state } = setup({ focused: true, active: 't2' })
-    state.n.done = { sound: true, flash: true, tab: false, front: false, banner: true }
+  it('a muted tab in front gives nothing, even for a case set to Even in front', () => {
+    const { a, calls, state } = setup({ focused: true, active: 't1' })
+    state.n.done = { sound: true, flash: true, tab: true, front: true, banner: true }
     state.muted.add('t1')
     expect(a.notify('t1', 'done')).toBe(false)
     expect(calls).toEqual([])

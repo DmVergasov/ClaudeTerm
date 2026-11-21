@@ -120,7 +120,7 @@ export function tabParts(item: TabBarItem, platform: string, cb: Pick<TabBarCall
   if (item.muted) {
     const m = document.createElement('span')
     m.className = 'tab-muted'
-    m.title = 'Sound muted'
+    m.title = 'Notifications muted'
     m.innerHTML = MUTED_ICON
     marks.push(m)
   }

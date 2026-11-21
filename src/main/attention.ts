@@ -13,14 +13,15 @@ export interface AttentionDeps {
   markTab(tabId: string, reason: NotificationCase): void
   /** a system notification for the tab; a click on it opens the tab */
   banner(tabId: string, reason: NotificationCase): void
-  /** the user muted that tab: it gives every signal but the sound */
+  /** the user muted that tab: it gives no signal at all */
   muted(tabId: string): boolean
   now?(): number
 }
 
 /**
  * Tells the user that a tab needs them, with the signals set for the case; while they look at it, only the sound of a case
- * set to Even in front. A turn that ends with background work still running gives none when doneWithBackgroundWork is off.
+ * set to Even in front. A turn that ends with background work still running gives none when doneWithBackgroundWork is off,
+ * and a muted tab none at all.
  */
 export class Attention {
   private readonly lastSound = new Map<string, number>()
@@ -29,6 +30,7 @@ export class Attention {
 
   /** backgroundWork: the turn ended while background work Claude started still runs. Returns true when any signal was given. */
   notify(tabId: string, reason: NotificationCase, backgroundWork = false): boolean {
+    if (this.d.muted(tabId)) return false
     const s = this.d.settings()
     // Claude goes on once that work ends, and the turn after which nothing runs is signalled
     if (backgroundWork && !s.doneWithBackgroundWork) return false
@@ -50,7 +52,7 @@ export class Attention {
       this.d.banner(tabId, reason)
       signalled = true
     }
-    if (c.sound && !this.d.muted(tabId) && this.sound(tabId, s.sound)) signalled = true
+    if (c.sound && this.sound(tabId, s.sound)) signalled = true
     return signalled
   }
 

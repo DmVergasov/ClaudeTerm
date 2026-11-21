@@ -2232,12 +2232,16 @@ function bootstrap(): void {
    * An attention starts on a tab of this device. When the person is present here with the tab in front, it starts nowhere
    * else: each device present with the tab in front rings for it, and this one signals it here (see Presence). Otherwise it
    * starts as before. share: false for a turn that ends with background work while doneWithBackgroundWork is off: it starts
-   * nothing and rings nobody.
+   * nothing and rings nobody. A muted tab starts nothing either: no device shows it waiting, now or when it comes later.
    */
   const raiseAttention = (tabId: string, reason: NotificationCase, o: { background?: boolean; share?: boolean } = {}): void => {
     const background = o.background === true
     if (o.share === false) {
       log.info(`attention ${reason} tab=${tabId} quiet`)
+      return
+    }
+    if (tabs.get(tabId)?.muted === true) {
+      log.info(`attention ${reason} tab=${tabId} muted`)
       return
     }
     const here = activeRemote === null && tabs.activeTabId() === tabId && presence.present()

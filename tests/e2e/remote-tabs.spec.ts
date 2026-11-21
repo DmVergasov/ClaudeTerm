@@ -886,6 +886,38 @@ test('an attention on the tab in front on A pulses on B; typing into it on A sto
   expect(await marksOf(b, claude)).toEqual({ attention: false, unread: false })
 })
 
+test('Claude waiting in a tab muted on A gives no signal on any device: B neither pulses nor sounds, there when it starts or started after it', async () => {
+  test.setTimeout(240_000)
+  // B writes the sounds it would play to this file instead
+  const sounds = join(mkdtempSync(join(tmpdir(), 'ct-sound-')), 'sounds.txt')
+  const played = (): string => (existsSync(sounds) ? readFileSync(sounds, 'utf8') : '')
+  const work = mkdtempSync(join(tmpdir(), 'ct-work-'))
+  const { a, b } = await pairedApps({
+    a: { settings: quietNotifications(), args: ['--claude', work] },
+    b: { settings: quietNotifications({ permission: { sound: true, flash: false, tab: true } }), env: { CLAUDETERM_TEST_SOUND_LOG: sounds } }
+  })
+  const claude = a.firstTab
+  // a second tab on A, so the Claude tab is behind
+  await a.page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd }), work)
+  await a.page.waitForFunction((id) => window.__ct!.activeTabId() !== id, claude)
+  await a.page.evaluate((id) => window.ct.muteTab(id, true), claude)
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"] .tab-muted`)).toHaveCount(1, SLOW)
+
+  expect(await sendPipeMessage(a.pipeName, { v: 1, type: 'attention', tabId: claude, sessionId: ATTENTION_SID, reason: 'permission' })).toEqual({ ok: true })
+  // a pulse or a sound on B would come within a moment of the pipe answer
+  await b.page.waitForTimeout(1000)
+  expect(await marksOf(a, claude)).toEqual({ attention: false, unread: false })
+  expect(await marksOf(b, claude)).toEqual({ attention: false, unread: false })
+  expect(played()).toBe('')
+
+  // a device that comes after the attention learns what each tab waits with from its first list: this one waits with nothing
+  await relaunch(b)
+  await expect(b.page.locator(`.tab.remote[data-tab-id="${claude}"]`)).toBeVisible(SLOW)
+  await b.page.waitForTimeout(1000)
+  expect(await marksOf(b, claude)).toEqual({ attention: false, unread: false })
+  expect(played()).toBe('')
+})
+
 test('an attention on A while A is present with its tab in front reaches no other device: B neither pulses nor sounds', async () => {
   test.setTimeout(180_000)
   // A's presence is a file: 'present' while the test says so; B writes the sounds it would play to a file
