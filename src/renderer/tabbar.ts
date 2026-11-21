@@ -1,7 +1,7 @@
 import type { CoordMark } from '../shared/coordinator'
 import { REMOTE_COPY } from '../shared/remote'
 import { WORKTREE_COLORS, type TabActivity, type TabKind, type TabPlace } from '../shared/types'
-import { arrangeCoordinators, dropAttaches, groupLabels, moveInGroup, panelOrder, showsGroupLabels, storedGroups, type DropRow, type PanelGroup } from './tab-groups'
+import { arrangeCoordinators, dropAttaches, groupLabels, moveInGroup, panelOrder, showsGroupLabels, storedGroups, type DropRow, type FolderGroup, type PanelGroup } from './tab-groups'
 import { TabHeader } from './tab-header'
 import { beginRename, bindTab, mailMark, pulseDelay, shownActivity, spinner, tabParts } from './tab-row'
 
@@ -33,6 +33,8 @@ export interface TabBarItem {
   note: boolean
   /** where the tab's folder is in git; null outside a repository (or before git has answered) */
   place: TabPlace | null
+  /** the folder group of a tab git confirmed to be outside any repository; null otherwise */
+  outside: FolderGroup | null
   /** the head of the tab's family when the tab is a fork; null for an ordinary tab */
   forkOf: string | null
   /** the id of the device the tab runs on; null: this device's own tab */

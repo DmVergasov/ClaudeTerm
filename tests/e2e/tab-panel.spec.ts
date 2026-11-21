@@ -1,7 +1,7 @@
 import { expect as baseExpect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { sendPipeMessage } from '../../src/shared/pipe-client'
 import type { AttentionReason } from '../../src/shared/protocol'
@@ -14,7 +14,7 @@ const expect = baseExpect.configure({ timeout: 15_000 })
 
 const freshFolder = (): string => mkdtempSync(join(tmpdir(), 'ct-folder-'))
 
-/** the settings of a test: the left panel, and a default folder outside git so the first tab is in No project */
+/** the settings of a test: the left panel with this default folder; the home folder puts the first tab in No project, a temp folder outside git gives it a group of that folder */
 const left = (defaultFolder: string): object => ({ ...FAKE_CLAUDE_SETTINGS, defaultFolder, tabs: { position: 'left' } })
 
 const readSettings = (dataDir: string): Record<string, any> => JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8'))
@@ -187,10 +187,10 @@ test('the active row is raised, not barred', async () => {
 })
 
 test('tabs are grouped by project, with No project last', async () => {
-  const folder = freshFolder()
+  const folder = homedir()
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const plain = freshFolder()
+  const plain = homedir()
   const { app, page } = await launchApp({ settings: left(folder) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   await openTab(page, 'shell', repoA)
@@ -208,8 +208,29 @@ test('tabs are grouped by project, with No project last', async () => {
   await app.close()
 })
 
+test('a tab in a folder outside git is grouped by its folder, with no + Coordinator; a tab in a repository keeps its project\'s group, and one in the home folder stays in No project', async () => {
+  const space = join(freshFolder(), 'SpaceGame')
+  mkdirSync(space)
+  const repo = gitRepo('acme')
+  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
+  const shellInSpace = await openTab(page, 'shell', space)
+  const claudeInSpace = await openTab(page, 'claude', space)
+  const inRepo = await openTab(page, 'shell', repo)
+  const atHome = await openTab(page, 'shell', homedir())
+
+  await expect(groupNamed(page, 'SpaceGame').locator('.tp-tab')).toHaveCount(2)
+  await expect(groupNamed(page, 'SpaceGame').locator(`[data-tab-id="${shellInSpace}"]`)).toHaveCount(1)
+  await expect(groupNamed(page, 'SpaceGame').locator(`[data-tab-id="${claudeInSpace}"]`)).toHaveCount(1)
+  await expect(groupNamed(page, 'SpaceGame').locator('.tp-coord-chip')).toHaveCount(0)
+  await expect(groupNamed(page, 'SpaceGame').locator('.tp-branch span')).toHaveCount(0)
+  await expect(groupNamed(page, 'acme').locator(`[data-tab-id="${inRepo}"]`)).toHaveCount(1)
+  await expect(groupNamed(page, 'No project').locator(`[data-tab-id="${atHome}"]`)).toHaveCount(1)
+  await app.close()
+})
+
 test('every tab in git shows its branch; a linked worktree\'s tab has a colored bar', async () => {
-  const folder = freshFolder()
+  const folder = homedir()
   const repo = gitRepo()
   const branch = currentBranch(repo)
   const worktree = gitWorktree(repo, 'feat/x')
@@ -259,6 +280,21 @@ test('a Claude tab follows its session into another folder (/cd, a worktree): it
   expect(await sendPipeMessage(pipeName, statusIn(tabId, repo))).toMatchObject({ ok: true })
   await expect(row(page, tabId).locator('.tp-branch')).toHaveText(branch)
   await expect.poll(async () => (await row(page, tabId).getAttribute('title'))?.split('\n')[1]).toBe(repo)
+  await app.close()
+})
+
+test('a Claude tab that moves to another folder outside git follows it into that folder\'s group', async () => {
+  const alpha = join(freshFolder(), 'alpha')
+  const beta = join(freshFolder(), 'beta')
+  mkdirSync(alpha, { recursive: true })
+  mkdirSync(beta, { recursive: true })
+  const { app, page, pipeName, tabId } = await launchClaudeTab(left(freshFolder()), alpha)
+  await expect(groupNamed(page, 'alpha').locator(`[data-tab-id="${tabId}"]`)).toHaveCount(1)
+
+  // the session moved to another folder outside git: the status line names it
+  expect(await sendPipeMessage(pipeName, statusIn(tabId, beta))).toMatchObject({ ok: true })
+  await expect(groupNamed(page, 'beta').locator(`[data-tab-id="${tabId}"]`)).toHaveCount(1)
+  await expect(groupNamed(page, 'alpha')).toHaveCount(0)
   await app.close()
 })
 
@@ -361,7 +397,7 @@ test('the terminal is not resized when nothing in the layout changes', async () 
 
 test('a tab in a folded group unfolds its group when it becomes the active tab', async () => {
   const repo = gitRepo()
-  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  const { app, page } = await launchApp({ settings: left(homedir()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repo)
@@ -381,7 +417,7 @@ test('a tab in a folded group unfolds its group when it becomes the active tab',
 
 test('with tabs on the left, a new tab unfolds its project group and leaves No project folded', async () => {
   const repo = gitRepo()
-  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  const { app, page } = await launchApp({ settings: left(homedir()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   await openTab(page, 'shell', repo)
   const groupA = groupNamed(page, basename(repo))
@@ -402,7 +438,7 @@ test('with tabs on the left, a new tab unfolds its project group and leaves No p
 })
 
 test('a fold is kept however many groups were folded before: the ones folded longest ago give way', async () => {
-  const dataDir = makeDataDir(left(freshFolder()))
+  const dataDir = makeDataDir(left(homedir()))
   // projects folded over a long time, most of them gone since
   const old = Array.from({ length: 200 }, (_, i) => `gone-project-${i}`)
   writeFileSync(join(dataDir, 'tab-layout.json'), JSON.stringify({ width: 240, folded: old }))
@@ -417,7 +453,7 @@ test('a fold is kept however many groups were folded before: the ones folded lon
 
 test('with tabs on top, activating a tab leaves the saved fold state alone', async () => {
   const repo = gitRepo()
-  const dataDir = makeDataDir({ ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() })
+  const dataDir = makeDataDir({ ...FAKE_CLAUDE_SETTINGS, defaultFolder: homedir() })
   writeFileSync(join(dataDir, 'tab-layout.json'), JSON.stringify({ width: 240, folded: ['~none'] }))
   const { app, page } = await launchApp({ dataDir })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
@@ -434,7 +470,7 @@ test('with tabs on top, activating a tab leaves the saved fold state alone', asy
 test('Ctrl+Tab and Ctrl+Alt+N follow the panel\'s order', async () => {
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  const { app, page } = await launchApp({ settings: left(homedir()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repoA)
@@ -463,7 +499,7 @@ test('Ctrl+Tab and Ctrl+Alt+N follow the panel\'s order', async () => {
 test('with the tabs on top, Ctrl+Tab and Ctrl+Alt+N walk the grouped order the bar shows', async () => {
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder(), tabs: { position: 'top' } } })
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: homedir(), tabs: { position: 'top' } } })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repoA)
@@ -491,7 +527,7 @@ test('with the tabs on top, Ctrl+Tab and Ctrl+Alt+N walk the grouped order the b
 test('a tab is dragged within its group, not into another', async () => {
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  const { app, page } = await launchApp({ settings: left(homedir()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repoA)
@@ -513,7 +549,7 @@ test('a tab is dragged within its group, not into another', async () => {
 test('a group is dragged by its header', async () => {
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  const { app, page } = await launchApp({ settings: left(homedir()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repoA)
@@ -558,7 +594,7 @@ test('a family moves together, and a fork stays in its family', async () => {
 test("tabs on the left keep the order the panel shows: a project's tabs stay together, and closing the active one goes to the next", async () => {
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  const { app, page } = await launchApp({ settings: left(homedir()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repoA)
@@ -664,7 +700,7 @@ test('switching the tabs from the top to the left shows the active row', async (
 
 test("a drag that never ended leaves no tab to move: a file dragged over a row is not a tab drop", async () => {
   const repo = gitRepo()
-  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  const { app, page } = await launchApp({ settings: left(homedir()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repo)
@@ -690,7 +726,7 @@ test("a drag that never ended leaves no tab to move: a file dragged over a row i
 
 test("a file dragged over a tab of the top bar is not a tab drop", async () => {
   const repo = gitRepo()
-  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() } })
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: homedir() } })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repo)
@@ -715,7 +751,7 @@ test("a file dragged over a tab of the top bar is not a tab drop", async () => {
 
 test('a drag that ends off the rows leaves no tab to move, so a later drop reorders nothing', async () => {
   const repo = gitRepo()
-  const { app, page } = await launchApp({ settings: left(freshFolder()) })
+  const { app, page } = await launchApp({ settings: left(homedir()) })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openTab(page, 'shell', repo)

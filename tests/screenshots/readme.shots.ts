@@ -90,7 +90,10 @@ test('README screenshots', async () => {
   await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight, window.devicePixelRatio].join('x'))).toBe('1280x800x2')
 
   await page.evaluate((cwd) => window.ct.openTab({ kind: 'claude', cwd }), api)
-  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd, title: 'PowerShell' }), root)
+  // a folder with a fixed name: a tab outside git is grouped under its folder's name, and the random temp name would show
+  const shellFolder = join(root, 'project')
+  mkdirSync(shellFolder)
+  await page.evaluate((cwd) => window.ct.openTab({ kind: 'shell', cwd, title: 'PowerShell' }), shellFolder)
   await page.evaluate((id) => window.ct.activateTab(id), tabId)
   await expect.poll(() => page.evaluate(() => window.__ct!.activeTabId())).toBe(tabId)
   await expect.poll(() => bufferText(page, tabId), { timeout: 20_000 }).toContain('North America leads Q3')

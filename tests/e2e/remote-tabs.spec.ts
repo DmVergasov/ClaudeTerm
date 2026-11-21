@@ -1687,15 +1687,16 @@ test("B's own groups come first, then one section per device with tabs: A's proj
 
   // this device's own group comes first, then the device's section; B's own tab is not in the section
   const order = await b.page.evaluate(() => [...document.querySelector('#tabpanel .tp-list')!.children].map((c) => (c.classList.contains('tp-section') ? 'device' : c.querySelector('.tp-group-name')?.textContent ?? '')))
-  expect(order).toEqual(['No project', 'device'])
+  expect(order).toEqual([basename(b.work), 'device'])
   const section = sectionOfDevice(b, a)
   await expect(deviceHead(b, a)).toContainText('Studio')
   await expect(section.locator(`[data-tab-id="${b.firstTab}"]`)).toHaveCount(0)
 
-  // the section's groups: acme, then No project; its rows in the panel's order. A tab sits in No project until git has
-  // answered for its folder, so the names are waited for
-  await expect(section.locator('.tp-group-name')).toHaveText(['acme', 'No project'], SLOW)
-  await expect.poll(() => rowIdsIn(section), SLOW).toEqual([inRepo, inWorktree, a.firstTab])
+  // the section's groups come in the order of their first tab: A's first tab is outside git, so its group is its work folder,
+  // then acme; the rows in the panel's order. A tab sits in No project until git has answered for its folder, so the names
+  // are waited for
+  await expect(section.locator('.tp-group-name')).toHaveText([basename(a.work), 'acme'], SLOW)
+  await expect.poll(() => rowIdsIn(section), SLOW).toEqual([a.firstTab, inRepo, inWorktree])
   await expect(rowIn(b, inRepo).locator('.tp-branch span')).toHaveText('main')
   await expect(rowIn(b, inWorktree).locator('.tp-branch span')).toHaveText('feature')
   await expect(rowIn(b, inRepo).locator('.tp-wtbar')).toHaveCount(0)
@@ -1756,14 +1757,14 @@ test("a click on a device header folds its section, and the tab in front moves t
   await expect.poll(() => b.page.evaluate(async () => (await window.ct.getTabLayout()).folded), SLOW).toHaveLength(1)
   expect((await b.page.evaluate(async () => (await window.ct.getTabLayout()).folded))[0]!.startsWith(`${a.id}\n`)).toBe(true)
 
-  // A's tabs come back to B after its restart: its section is there, its ACME group is still folded (no rows), and its
-  // No project group is not folded
+  // A's tabs come back to B after its restart: its section is there, its ACME group is still folded (no rows), and the
+  // folder group of its first tab is not folded
   await expect(deviceHead(b, a)).toBeVisible(SLOW)
   const restored = sectionOfDevice(b, a)
   await expect(groupNamedIn(b, restored, 'acme')).toHaveClass(/folded/, SLOW)
   await expect(restored.locator(`[data-tab-id="${inRepo}"]`)).toHaveCount(0)
   await expect(restored.locator(`[data-tab-id="${inWorktree}"]`)).toHaveCount(0)
-  await expect(groupNamedIn(b, restored, 'No project')).not.toHaveClass(/folded/)
+  await expect(groupNamedIn(b, restored, basename(a.work))).not.toHaveClass(/folded/)
   await expect(restored.locator(`[data-tab-id="${a.firstTab}"]`)).toBeVisible()
 })
 
@@ -1782,9 +1783,9 @@ test("Ctrl+Tab walks B's tabs, then A's tabs in the panel's order, and comes bac
   await b.page.evaluate((id) => window.ct.activateTab(id), b.firstTab)
   await expect.poll(() => front(b), SLOW).toBe(b.firstTab)
 
-  // this device's tabs, then the section: its acme group (inRepo, inWorktree), then its No project group (A's first tab)
+  // this device's tabs, then the section: the folder group of A's first tab, then its acme group (inRepo, inWorktree)
   // each press goes to the terminal in front: a click on it gives it the keys, as a user's would
-  for (const next of [own, inRepo, inWorktree, a.firstTab, b.firstTab]) {
+  for (const next of [own, a.firstTab, inRepo, inWorktree, b.firstTab]) {
     await b.page.locator('.terminal-host:visible .xterm').click()
     await b.page.keyboard.press(KEYS.nextTab)
     await expect.poll(() => front(b), SLOW).toBe(next)

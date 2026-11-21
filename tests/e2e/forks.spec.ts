@@ -202,7 +202,7 @@ test('a fork whose conversation was cleared is not forked again: a restart befor
   await app.close()
 })
 
-/** the settings of the left panel, with a default folder outside git so the tabs of the test are in No project */
+/** the settings of the left panel, with a default folder outside git: the tabs of the test are in folder groups, not in No project (their folders are outside git too) */
 const leftSettings = (): object => ({ ...FAKE_CLAUDE_SETTINGS, defaultFolder: mkdtempSync(join(tmpdir(), 'ct-folder-')), tabs: { position: 'left' } })
 
 const panelRow = (page: Page, id: string): Locator => page.locator(`#tabpanel .tp-tab[data-tab-id="${id}"]`)

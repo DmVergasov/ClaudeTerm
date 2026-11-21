@@ -1,10 +1,35 @@
 import type { CoordMark } from '../shared/coordinator'
 import type { TabPlace } from '../shared/types'
 
-/** The group of tabs that are not in a git repository; always the last group. */
+/** The group of tabs with neither a project nor a folder group; always the last group. */
 export const NO_PROJECT = '~none'
 
-export interface GroupInput { id: string; place: TabPlace | null; forkOf: string | null }
+/** the key prefix of a folder group, so that no project key can equal a folder group's key */
+export const FOLDER_KEY_PREFIX = 'folder:'
+/** a folder outside any git repository: its key, and its name and parent folder's name in their own case */
+export interface FolderGroup { key: string; name: string; parent: string }
+
+/**
+ * The folder group of a tab whose folder git confirmed to be outside any repository, or null when the folder has none: the home
+ * folder (`home`), the usual home folders, a drive root, a network share's root (`\\server\share`) and a file-system root.
+ */
+export function folderGroupOf(folder: string, home: string | null): FolderGroup | null {
+  const path = pathKey(folder)
+  if (path === '' || /^[a-z]:$/.test(path) || /^\/\/[^/]+\/[^/]+$/.test(path)) return null
+  if (home !== null && path === pathKey(home)) return null
+  if (/^[a-z]:\/users\/[^/]+$/.test(path) || /^\/(Users|home)\/[^/]+$/.test(path) || path === '/root') return null
+  const parts = folder.split(/[\\/]/).filter((part) => part !== '')
+  return { key: FOLDER_KEY_PREFIX + path, name: parts[parts.length - 1], parent: parts[parts.length - 2] ?? '' }
+}
+
+/** a path as a key: `/` separators, no trailing one, and a Windows path (a drive letter or a `\`) lower-cased */
+function pathKey(folder: string): string {
+  const slashed = folder.replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[a-zA-Z]:/.test(folder) || folder.includes('\\') ? slashed.toLowerCase() : slashed
+}
+
+/** outside: the folder group of a tab whose folder git confirmed to be outside any repository; absent or null otherwise */
+export interface GroupInput { id: string; place: TabPlace | null; forkOf: string | null; outside?: FolderGroup | null }
 /** a tab as the left panel reads it: a GroupInput with its device (null: this device's own tab) and its part in a coordinator */
 export interface PanelItem extends GroupInput { group: string | null; coord: CoordMark | null }
 export interface PanelRow {
@@ -16,17 +41,18 @@ export interface PanelRow {
   /** a paired device's session shown in its coordinator's block: its device owns its order, and it is not in its device's section */
   pulled?: true
 }
-export interface PanelGroup { key: string; project: TabPlace['project'] | null; rows: PanelRow[] }
+/** a folder group has `folder` set, and its project is its FolderGroup */
+export interface PanelGroup { key: string; project: TabPlace['project'] | null; rows: PanelRow[]; folder?: true }
 
 /**
- * The left panel's groups. Groups come in the order of their first tab, `NO_PROJECT` last; rows keep the tab
- * order, except that a fork stands right after its head and the head's earlier forks. A fork whose head is
- * missing from its group (closed, or in another group) is an ordinary row.
+ * The left panel's groups: by git project, else by folder group (a tab outside git), else No project. Groups come in the order
+ * of their first tab, `NO_PROJECT` last; rows keep the tab order, except that a fork stands right after its head and the
+ * head's earlier forks. A fork whose head is missing from its group (closed, or in another group) is an ordinary row.
  */
 export function panelGroups(tabs: GroupInput[]): PanelGroup[] {
   const members = new Map<string, GroupInput[]>()
   for (const tab of tabs) {
-    const key = tab.place?.project.key ?? NO_PROJECT
+    const key = tab.place?.project.key ?? tab.outside?.key ?? NO_PROJECT
     members.set(key, [...(members.get(key) ?? []), tab])
   }
   const keys = [...members.keys()].sort((a, b) => Number(a === NO_PROJECT) - Number(b === NO_PROJECT))
@@ -46,7 +72,9 @@ export function panelGroups(tabs: GroupInput[]): PanelGroup[] {
       rows.push({ id: tab.id, fork: false })
       for (const fork of forks.get(tab.id) ?? []) rows.push({ id: fork.id, fork: true })
     }
-    return { key, project: list[0].place?.project ?? null, rows }
+    const first = list[0]
+    const project = first.place?.project ?? first.outside ?? null
+    return { key, project, rows, ...(!first.place && first.outside ? { folder: true as const } : {}) }
   })
 }
 
@@ -219,7 +247,7 @@ export function groupLabels(groups: PanelGroup[]): Map<string, string> {
   return labels
 }
 
-/** The tab bar names its groups only when there are several: one project (or only tabs outside git) needs no label. */
+/** The tab bar names its groups only when there are several: one group (one project, one folder, or only No project) needs no label. */
 export const showsGroupLabels = (groups: PanelGroup[]): boolean => groups.length > 1
 
 /**
@@ -258,12 +286,12 @@ export function moveInGroup(groups: PanelGroup[], dragId: string, targetId: stri
 export type GroupChip = { kind: 'running'; tabId: string } | { kind: 'start'; tabId: string }
 
 /**
- * The chip on a group's header: none (null) for a group of another device, and for No project. `running` when one of the group's
+ * The chip on a group's header: none (null) for a group of another device, for No project and for a folder group. `running` when one of the group's
  * tabs is this device's coordinator (its mark has role 'coordinator'); a pulled row is never the coordinator of this device, and
  * never the tab a start is asked from. Otherwise `start`, from the group's first row that is not pulled; null when no row is.
  */
 export function groupChip(group: PanelGroup, own: boolean, coordOf: (id: string) => CoordMark | null): GroupChip | null {
-  if (!own || group.project === null) return null
+  if (!own || group.project === null || group.folder) return null
   const rows = group.rows.filter((row) => !row.pulled)
   const coordinator = rows.find((row) => coordOf(row.id)?.role === 'coordinator')
   if (coordinator) return { kind: 'running', tabId: coordinator.id }

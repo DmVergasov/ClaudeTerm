@@ -15,6 +15,7 @@ import {
   orderToWrite,
   panelDrop,
   panelDropOut,
+  folderGroupOf,
   panelGroups,
   panelOrder,
   showsGroupLabels,
@@ -458,5 +459,52 @@ describe("the coordinator chip on a group's header", () => {
     expect(groupChip(none, true, marks({}))).toBeNull()
     const [remote] = deviceGroups('dev-a', [tab('C', acme)])
     expect(groupChip(remote, false, marks({ C }))).toBeNull()
+  })
+})
+
+describe('folder groups', () => {
+  const out = (id: string, folder: string): GroupInput => ({ id, place: null, forkOf: null, outside: folderGroupOf(folder, 'C:\\Users\\dev') })
+
+  it('a Windows folder is keyed lower-cased with / separators and named by its own folder, its parent kept', () => {
+    expect(folderGroupOf('D:\\Workspace\\SpaceGame', null)).toEqual({ key: 'folder:d:/workspace/spacegame', name: 'SpaceGame', parent: 'Workspace' })
+    expect(folderGroupOf('d:/workspace/SPACEGAME\\', null)?.key).toBe('folder:d:/workspace/spacegame')
+    expect(folderGroupOf('\\\\nas\\games\\Space', null)).toEqual({ key: 'folder://nas/games/space', name: 'Space', parent: 'games' })
+  })
+  it('a POSIX folder keeps its case', () => {
+    expect(folderGroupOf('/srv/Games/Space/', null)).toEqual({ key: 'folder:/srv/Games/Space', name: 'Space', parent: 'Games' })
+  })
+  it('the home folder, the usual home folders and the roots have no folder group; a folder inside home has one', () => {
+    for (const f of ['C:\\Users\\Dev', 'c:/users/dev/']) expect(folderGroupOf(f, 'C:\\Users\\dev')).toBeNull()
+    for (const f of ['C:\\Users\\someone', '/Users/someone', '/home/someone', '/root', 'D:\\', 'D:', '/']) expect(folderGroupOf(f, null)).toBeNull()
+    // a network share's root is a root like a drive; a folder inside the share has a group
+    for (const f of ['\\\\nas\\share', '\\\\nas\\share\\']) expect(folderGroupOf(f, null)).toBeNull()
+    expect(folderGroupOf('\\\\nas\\share\\Space', null)?.name).toBe('Space')
+    expect(folderGroupOf('C:\\Users\\dev\\games\\Space', 'C:\\Users\\dev')?.name).toBe('Space')
+  })
+  it('tabs outside git are grouped by their folder; unknown places and the home folder stay in No project, last', () => {
+    const groups = panelGroups([tab('A', acme), out('S1', 'D:\\w\\Space'), tab('N', null), out('S2', 'd:/w/space/'), out('H', 'C:\\Users\\dev')])
+    expect(groups.map((g) => g.key)).toEqual(['c:/w/acme', 'folder:d:/w/space', NO_PROJECT])
+    expect(rows(groups[1])).toEqual(['S1', 'S2'])
+    expect(groups[1].project).toEqual({ key: 'folder:d:/w/space', name: 'Space', parent: 'w' })
+    expect(groups[1].folder).toBe(true)
+    expect(groups[0].folder).toBeUndefined()
+    expect(rows(groups[2])).toEqual(['N', 'H'])
+  })
+  it('a git place wins over a folder group', () => {
+    const groups = panelGroups([{ id: 'G', place: acme, forkOf: null, outside: folderGroupOf('D:\\w\\Space', null) }])
+    expect(groups.map((g) => g.key)).toEqual(['c:/w/acme'])
+    expect(groups[0].folder).toBeUndefined()
+  })
+  it('a folder group has no coordinator chip, takes its parent in its label beside a project of its name, and moves like a project group', () => {
+    const groups = panelGroups([tab('A', place('C:/w/acme')), out('F', 'D:\\games\\acme'), tab('B', blog)])
+    expect(groupChip(groups[1], true, () => null)).toBeNull()
+    expect(groupLabels(groups).get('folder:d:/games/acme')).toBe('acme (games)')
+    expect(groupLabels(groups).get('c:/w/acme')).toBe('acme (w)')
+    expect(moveGroup(groups, 'folder:d:/games/acme', 'c:/w/acme')).toEqual(['F', 'A', 'B'])
+  })
+  it('a paired device keeps the folder flag on its folder groups', () => {
+    const [g] = deviceGroups('dev1', [out('S', 'D:\\w\\Space')])
+    expect(g.folder).toBe(true)
+    expect(g.project?.name).toBe('Space')
   })
 })

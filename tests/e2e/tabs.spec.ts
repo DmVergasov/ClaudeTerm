@@ -164,7 +164,7 @@ test('a click on a tab activates it even when the tab bar is drawn again between
   await app.close()
 })
 
-/** a fresh folder outside git: the first tab of an app opened with it is in No project */
+/** a fresh temp folder outside git: its tabs get a group of that folder */
 const freshFolder = (): string => mkdtempSync(join(tmpdir(), 'ct-folder-'))
 
 /** opens a shell tab in the folder and waits until main has it; the new tab is the active one */
@@ -178,7 +178,7 @@ const shownTabIds = (page: Page): Promise<string[]> => page.locator('#tabbar .ta
 test('tabs on top are grouped by project, each group after its label', async () => {
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() } })
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: homedir() } })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openShell(page, repoA)
@@ -209,7 +209,7 @@ test('one project shows no label', async () => {
 test('a tab is dragged within its group, not into another', async () => {
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() } })
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: homedir() } })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const a1 = await openShell(page, repoA)
@@ -230,7 +230,7 @@ test('a tab is dragged within its group, not into another', async () => {
 test('order waits for places: no temporary order reaches main while a tab\'s project is unknown', async () => {
   const repoA = gitRepo()
   const repoB = gitRepo()
-  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: freshFolder() } })
+  const { app, page } = await launchApp({ settings: { ...FAKE_CLAUDE_SETTINGS, defaultFolder: homedir() } })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
   const home = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   await page.evaluate(() => {
@@ -338,8 +338,8 @@ test('a fork on top can be dragged to the end of its group', async () => {
   await page.locator('.banner-restore').click()
   await page.waitForFunction(() => window.__ct!.tabIds().length === 3)
   const [fork, head, last] = await page.evaluate(() => window.__ct!.tabIds())
-  // the drag waits until git has answered for every tab: the bar shows this order as well while the Claude tabs are in the
-  // project and the shell is still in No project, and a tab is not dropped into another group
+  // the drag waits until git has answered for every tab: until then a tab is still in No project, though the Claude tabs and the
+  // shell all belong to the repository's group, and a tab is not dropped into another group
   await expect.poll(() => page.evaluate((ids) => ids.every((id) => window.__ct!.placeOf!(id) !== undefined), [fork!, head!, last!])).toBe(true)
   await expect.poll(() => shownTabIds(page)).toEqual([fork, head, last])
 

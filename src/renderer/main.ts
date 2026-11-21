@@ -38,7 +38,7 @@ import { UpdateBanner } from './update-banner'
 import { TabBar, type TabBarCallbacks, type TabBarGroup, type TabBarItem, type TabWaiting } from './tabbar'
 import { shownActivity } from './tab-row'
 import { TabPanel } from './tab-panel'
-import { orderToWrite, pulledBy, tabBarOrder } from './tab-groups'
+import { folderGroupOf, orderToWrite, pulledBy, tabBarOrder } from './tab-groups'
 import { coordMenuEntries, type CoordMenuAction } from './coord-menu'
 import { TerminalView } from './terminal-view'
 import { ChatView } from './chat/chat-view'
@@ -262,6 +262,10 @@ function tabBarItem(id: string): TabBarItem | null {
     exited: t.info.exited,
     note: noteOverlay.hasText(id),
     place: places.get(id) ?? null,
+    // a paired device's home folder is not known here: only the usual home folders are recognised for its tabs
+    // main publishes no new place when a tab moves between two folders outside git, so the group follows the tab's folder;
+    // right after a move into a repository the tab sits in that folder's group until git answers
+    outside: places.has(id) && places.get(id) === null ? folderGroupOf(t.info.folder, remote ? null : appInfo.homeDir) : null,
     forkOf: t.info.fork?.of ?? null,
     group: remote?.device ?? null,
     deviceName: remote ? remoteDeviceOf(remote.device)?.name ?? null : null,

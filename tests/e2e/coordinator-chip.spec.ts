@@ -1,8 +1,8 @@
 import { expect as baseExpect, test, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { rmSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { basename } from 'node:path'
 import { COORD_REFUSED } from '../../src/shared/coordinator'
 import { startSession } from './agent-mail'
 import { claudeTabIn, coordApp, coordDevices, makeCoordinator } from './coordinator-helpers'
@@ -35,7 +35,7 @@ test('a project group shows + Coordinator between its name and its count, ● Co
   const l = await coordApp(1, { settings: LEFT })
   const { page, tabs: [t0], repo } = l
   try {
-    const plain = await openTabInFront(page, 'shell', mkdtempSync(join(tmpdir(), 'ct-plain-')))
+    const plain = await openTabInFront(page, 'shell', homedir())
     const group = groupNamed(page, basename(repo))
     const chip = chipOf(page, basename(repo))
     await expect(chip).toHaveClass(/\bstart\b/)
