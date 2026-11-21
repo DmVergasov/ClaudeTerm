@@ -65,6 +65,20 @@ class FakeEngine implements ChatEngine {
 
   async interrupt(): Promise<void> {
     this.interrupts++
+    this.order.push('interrupt')
+  }
+
+  /** the interrupts and the sends to the background, in the order the hub asked for them */
+  order: string[] = []
+  /** Claude Code refuses to send a task to the background (background tasks are turned off for the session) */
+  backgroundFails = false
+  /** no foreground task has the id any more (its subagent ended meanwhile) */
+  backgroundMisses = false
+
+  async backgroundTask(toolUseId: string): Promise<boolean> {
+    if (this.backgroundFails) throw new Error('background tasks are disabled')
+    this.order.push(`background:${toolUseId}`)
+    return !this.backgroundMisses
   }
 
   async setPermissionMode(mode: ChatPermissionMode): Promise<void> {
@@ -902,6 +916,69 @@ describe('ChatHub', () => {
     const items = hub.snapshot(TAB)!.items
     expect(items.some(item => item.kind === 'notice' && item.text === 'Interrupted')).toBe(true)
     expect(items.some(item => item.kind === 'notice' && item.tone === 'error')).toBe(false)
+  })
+
+  /** a chat whose turn runs an Agent call `toolUseId` that has no result yet: its subagent runs in the foreground */
+  async function foregroundAgent(toolUseId = 'toolu_fg') {
+    const { hub, engines, calls } = harness()
+    hub.start(startReq().req)
+    await settle()
+    engines[0].h.ready({ permissionMode: 'default' })
+    engines[0].h.message(init())
+    await hub.send(TAB, { text: 'review the branch', attachments: [] })
+    engines[0].h.message({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input: { description: 'Review', prompt: 'review it' } }] } })
+    return { hub, engines, calls }
+  }
+
+  it('interrupt while a message waits sends the foreground subagent to the background instead: the turn goes on and takes the message', async () => {
+    const { hub, engines } = await foregroundAgent()
+    await hub.send(TAB, { text: 'what is taking so long?', attachments: [] })
+
+    hub.interrupt(TAB)
+    await settle()
+    expect(engines[0].order).toEqual(['background:toolu_fg'])
+    // the turn was not interrupted: its result is no interruption
+    engines[0].h.message(result())
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'notice' && item.text === 'Interrupted')).toBe(false)
+  })
+
+  it('when the subagent is no longer in the foreground (it ended meanwhile), the turn is interrupted', async () => {
+    const { hub, engines } = await foregroundAgent()
+    engines[0].backgroundMisses = true
+    await hub.send(TAB, { text: 'are you there?', attachments: [] })
+
+    hub.interrupt(TAB)
+    await settle()
+    expect(engines[0].order).toEqual(['background:toolu_fg', 'interrupt'])
+  })
+
+  it('interrupt with no message waiting ends the turn with its foreground subagent, as before', async () => {
+    const { hub, engines } = await foregroundAgent()
+
+    hub.interrupt(TAB)
+    await settle()
+    expect(engines[0].order).toEqual(['interrupt'])
+  })
+
+  it('an Agent call that already has its result (a background launch) is not sent to the background again', async () => {
+    const { hub, engines } = await foregroundAgent('toolu_bg')
+    engines[0].h.message({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bg', content: 'Async agent launched successfully.' }] } })
+    await hub.send(TAB, { text: 'and the tests?', attachments: [] })
+
+    hub.interrupt(TAB)
+    await settle()
+    expect(engines[0].order).toEqual(['interrupt'])
+  })
+
+  it('when Claude Code cannot send the subagent to the background, the turn is interrupted all the same', async () => {
+    const { hub, engines, calls } = await foregroundAgent()
+    engines[0].backgroundFails = true
+    await hub.send(TAB, { text: 'stop and answer me', attachments: [] })
+
+    hub.interrupt(TAB)
+    await settle()
+    expect(engines[0].order).toEqual(['interrupt'])
+    expect(calls.warn).toEqual([expect.stringContaining('cannot send the subagent to the background')])
   })
 
   it('the effort Claude Code applies is read when ready, after a result and after a model change; an unknown value keeps the last', async () => {

@@ -376,6 +376,10 @@ export const startSdkEngine: StartChatEngine = (o: ChatEngineStart, h: ChatEngin
       await (await query).interrupt()
     },
 
+    async backgroundTask(toolUseId) {
+      return (await query).backgroundTasks(toolUseId)
+    },
+
     async accountInfo() {
       await (await query).accountInfo()
     },

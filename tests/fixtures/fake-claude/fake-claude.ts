@@ -563,6 +563,9 @@ interface AgentRun {
   stopNow: () => void
   stopped: Promise<void>
   ended: Promise<void>
+  from: AgentRun | null // the agent whose nested call started it, null for the main conversation's call
+  moveNow: () => void
+  moved: Promise<void> // background_tasks moved it from the foreground to the background
 }
 
 // the agents the stand-in started and has not ended, by task id: stop_task ends one of them
@@ -590,7 +593,7 @@ function agentCallInput(agent: FakeAgent, background: boolean): Msg {
   }
 }
 
-function newRun(agent: FakeAgent, task: FakeTask, background: boolean, toolId: string): AgentRun {
+function newRun(agent: FakeAgent, task: FakeTask, background: boolean, toolId: string, from: AgentRun | null): AgentRun {
   const framesGiven = agent.frames !== undefined
   const pieces: Piece[] = [{ ownPrompt: agent.prompt ?? agent.description }, ...(agent.frames ?? [])]
   const sent = pieces.map(piece => pieceSent(piece, framesGiven))
@@ -598,10 +601,14 @@ function newRun(agent: FakeAgent, task: FakeTask, background: boolean, toolId: s
   const stopped = new Promise<void>(resolve => {
     stopNow = resolve
   })
+  let moveNow: () => void = () => undefined
+  const moved = new Promise<void>(resolve => {
+    moveNow = resolve
+  })
   return {
     agent, result: task.result, background, toolId, taskId: `task_fake_${++seq}`, transcript: agent.transcript !== false,
     pieces, sent, earlyAt: agent.early === true ? sent.indexOf(true) : -1, tail: null,
-    stopRequested: false, stopNow, stopped, ended: stopped
+    stopRequested: false, stopNow, stopped, ended: stopped, from, moveNow, moved
   }
 }
 
@@ -611,17 +618,20 @@ function stoppedOf(run: AgentRun): boolean {
 }
 
 // a pause of an agent: it ends after ms, at once when the agent is stopped, and, for a foreground agent, when the turn is
-// interrupted (a background agent outlives the turn)
+// interrupted (a background agent outlives the turn, one moved to the background in the pause too)
 function pause(run: AgentRun, ms: number): Promise<void> {
   return new Promise(resolve => {
+    const wake = (): void => {
+      if (!run.background) finish()
+    }
     const finish = (): void => {
       clearTimeout(timer)
-      waiting.delete(finish)
+      waiting.delete(wake)
       resolve()
     }
     const timer = setTimeout(finish, ms)
     void run.stopped.then(finish)
-    if (!run.background) waiting.add(finish)
+    waiting.add(wake)
   })
 }
 
@@ -727,9 +737,11 @@ function sendResult(from: AgentRun | null, toolId: string, content: string, isEr
   })
 }
 
-// a foreground agent: its notification and its call's result when it ends, unless the turn was interrupted
+// a foreground agent: its notification and its call's result when it ends, unless the turn was interrupted; one moved to the
+// background has its call's result already, and its notification comes when it ends
 async function finishForeground(run: AgentRun, from: AgentRun | null): Promise<void> {
-  await run.ended
+  await Promise.race([run.ended, run.moved])
+  if (run.background) return
   if (aborted) {
     running.delete(run.taskId)
     return
@@ -754,7 +766,7 @@ async function runTask(task: FakeTask, from: AgentRun | null): Promise<Outcome> 
   const background = task.background === true
   const calls = task.agents.map(agent => ({ name: 'Agent', input: agentCallInput(agent, background) }))
   const toolIds = from === null ? emitToolUses(calls) : nestedCalls(from, calls)
-  const runs = task.agents.map((agent, i) => newRun(agent, task, background, toolIds[i]))
+  const runs = task.agents.map((agent, i) => newRun(agent, task, background, toolIds[i], from))
   for (const run of runs) {
     running.set(run.taskId, run)
     agents.set(run.taskId, run)
@@ -776,6 +788,20 @@ function stopTask(taskId: string): void {
   if (run === undefined) return
   run.stopRequested = true
   run.stopNow()
+}
+
+// background_tasks (Ctrl+B): the foreground agent its tool_use started goes to the background, or every foreground agent without
+// one. Its call returns at once with a "running in the background" result, it outlives an interrupt, and its notification comes
+// when it ends. false: the id matched no foreground agent
+function backgroundTasks(toolUseId: string | null): boolean {
+  const runs = [...running.values()].filter(run => !run.background && (toolUseId === null || run.toolId === toolUseId))
+  for (const run of runs) {
+    run.background = true
+    sendResult(run.from, run.toolId, `Agent is running in the background.\n\nagentId: ${run.taskId}`, false)
+    void run.ended.then(() => notify(run))
+    run.moveNow()
+  }
+  return toolUseId === null || runs.length > 0
 }
 
 // a forward, read as Claude reads its template (src/main/chat/agent-forward.ts, forwardText): the agent's id is in the first line, the
@@ -1297,6 +1323,9 @@ function onControl(msg: Msg): void {
     case 'stop_task':
       stopTask(String(request.task_id ?? ''))
       reply(requestId, {})
+      return
+    case 'background_tasks':
+      reply(requestId, { backgrounded: backgroundTasks(typeof request.tool_use_id === 'string' ? request.tool_use_id : null) })
       return
     case 'get_settings':
       // the effort Claude Code applies (appliedEffort): the one a host that the init does not tell reads from here

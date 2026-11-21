@@ -622,6 +622,15 @@ export class ChatFold {
     return patches
   }
 
+  /** the Task and Agent calls of the main conversation still waiting for their result: their subagents run in the foreground */
+  foregroundAgentCalls(): string[] {
+    return [...this.callTypes.keys()].filter(id => {
+      const link = this.calls.get(id)
+      const item = link === undefined ? undefined : this.get(link.itemId)
+      return item?.kind === 'tools' && item.calls.some(c => c.id === id && c.state === 'running')
+    })
+  }
+
   protected get(id: string): ChatItem | undefined {
     const i = this.at.get(id)
     return i === undefined ? undefined : this.list[i]

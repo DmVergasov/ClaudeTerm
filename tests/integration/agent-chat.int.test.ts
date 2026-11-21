@@ -207,6 +207,52 @@ describe('the agent chat on the SDK engine', () => {
     expect(hub.quietTurn(TAB)).toBe(true)
   }, 30_000)
 
+  it('an interrupt while a message waits behind a foreground agent sends the agent to the background: Claude answers the message, and the agent goes on and ends done', async () => {
+    const script: FakeScript = {
+      turns: {
+        'Review it': [
+          { task: { description: 'Review', result: 'Reviewed.', agents: [{ type: 'general-purpose', description: 'Review the code', ms: 1500 }] } },
+          { text: 'The review is done.' },
+        ],
+        'Answer me': [{ text: 'Here I am.' }],
+      },
+    }
+    const scriptFile = join(dir, 'script.json')
+    writeFileSync(scriptFile, JSON.stringify(script))
+    const log = join(dir, 'fake-claude.log')
+    hub = hubOnSdk()
+    chat = hub.start({
+      tab: tabInfo(),
+      claude: { command: 'claude', settingsPath: null, resumeSessionId: null, forkSession: false },
+      env: env(log, scriptFile),
+      exit: () => {
+        exits++
+      },
+    } satisfies ChatStartRequest)
+    await until(() => hub!.isRunning(TAB), 'the chat running')
+    await hub.send(TAB, { text: 'Review it', attachments: [] })
+    const call = await until(() => hub!.snapshot(TAB)?.items.flatMap(item => (item.kind === 'tools' ? item.calls : [])).find(c => c.agents.length > 0), 'the agent of the Agent call')
+
+    // the message waits: the turn is blocked in the Agent call until its agent ends
+    await hub.send(TAB, { text: 'Answer me', attachments: [] })
+    hub.interrupt(TAB)
+
+    // the answer comes while the agent still runs (it ends 1.5 s after its start)
+    await until(() => hub!.snapshot(TAB)?.items.some(item => item.kind === 'text' && item.markdown === 'Here I am.'), 'the answer to the waiting message')
+    expect((await hub.agentSnapshot(TAB, call.agents[0].id))?.agent.state).toBe('running')
+    const page = await until(async () => {
+      const got = await hub!.agentSnapshot(TAB, call.agents[0].id)
+      return got !== null && got.agent.state !== 'running' ? got : null
+    }, 'the agent to end')
+    expect(page.agent.state).toBe('done')
+    expect(hub.snapshot(TAB)!.items.some(item => item.kind === 'notice' && item.text === 'Interrupted')).toBe(false)
+    const requests = readFileSync(log, 'utf8').split(/\r?\n/).filter(line => line.trim() !== '')
+      .map(line => (JSON.parse(line) as { in?: { type?: string; request?: { subtype?: string; tool_use_id?: string } } }).in)
+      .flatMap(m => (m?.type === 'control_request' && m.request !== undefined ? [m.request] : []))
+    expect(requests.filter(r => r.subtype === 'background_tasks').map(r => r.tool_use_id)).toEqual([call.id])
+    expect(requests.filter(r => r.subtype === 'interrupt')).toEqual([])
+  }, 30_000)
+
   it("a shown run agent's page gets the lines written after it is read, as adds, never a reset", async () => {
     const script: FakeScript = {
       turns: {

@@ -36,6 +36,8 @@ export interface ChatEngine {
   /** the uuid is the send's id: Claude Code names it in the frames of the turn that takes it */
   send(text: string, images: { mediaType: string; data: string }[], uuid: string): void
   interrupt(): Promise<void>
+  /** the task a tool_use started in the foreground goes to the background (Claude Code's Ctrl+B): its call returns at once, the task goes on and reports when it ends; false when no foreground task has that id */
+  backgroundTask(toolUseId: string): Promise<boolean>
   setPermissionMode(mode: ChatPermissionMode): Promise<void>
   setModel(model: string | null): Promise<void>
   /** the effort of the model: null for the default */

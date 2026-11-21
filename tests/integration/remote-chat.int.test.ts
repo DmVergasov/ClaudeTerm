@@ -64,6 +64,10 @@ class FakeEngine implements ChatEngine {
 
   async interrupt(): Promise<void> {}
 
+  async backgroundTask(): Promise<boolean> {
+    return true
+  }
+
   async setPermissionMode(): Promise<void> {}
 
   async setModel(): Promise<void> {}

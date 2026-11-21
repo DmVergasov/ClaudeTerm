@@ -283,6 +283,11 @@ export class ChatModel extends ChatFold {
     if (this.st.turn !== 'idle') this.interrupted = true
   }
 
+  /** a message sent while a turn ran waits for Claude Code to take it */
+  hasQueued(): boolean {
+    return this.queue.length > 0
+  }
+
   /** a permission or question card is shown and waits for the user: the turn waits */
   cardOpened(id: string, card: ChatCard): ChatPatch[] {
     const patches = this.add({ kind: 'card', id, card, answered: null })

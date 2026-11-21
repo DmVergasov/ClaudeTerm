@@ -306,6 +306,36 @@ test('Esc interrupts a running turn', async () => {
   }
 })
 
+test('Esc while a message waits behind a foreground agent sends the agent to the background: Claude answers the message, and the agent goes on', async () => {
+  const { app, page, tabId, log } = await launchChatTab({
+    turns: {
+      'Review it': [
+        { task: { description: 'Review', result: 'Reviewed.', agents: [{ type: 'general-purpose', description: 'Review the code', ms: 5000 }] } },
+        { text: 'The review is done.' }
+      ],
+      'Answer me': [{ text: 'Here I am.' }]
+    }
+  })
+  /** the state of the Agent call's agent, once it has one */
+  const agentState = async (): Promise<string | null> => (await snapshot(page, tabId))?.items.flatMap((item) => (item.kind === 'tools' ? item.calls : [])).find((c) => c.agents.length > 0)?.agents[0]?.state ?? null
+  const requests = (subtype: string): Entry[] => (log() as Entry[]).filter((e) => e.in?.type === 'control_request' && e.in.request?.subtype === subtype)
+  try {
+    await send(page, 'Review it')
+    await expect.poll(agentState, { timeout: 15_000 }).toBe('running')
+    // the turn is blocked in the Agent call: the message waits
+    await send(page, 'Answer me')
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.chat-text', { hasText: 'Here I am.' })).toHaveCount(1, { timeout: 15_000 })
+    // the agent is still at work when Claude answers, and ends done
+    expect(await agentState()).toBe('running')
+    await expect.poll(agentState, { timeout: 15_000 }).toBe('done')
+    expect(requests('background_tasks')).toHaveLength(1)
+    expect(requests('interrupt')).toEqual([])
+  } finally {
+    await app.close()
+  }
+})
+
 test('a permission card allows once and denies', async () => {
   const input = { command: 'ls' }
   const { app, page, log } = await launchChatTab({

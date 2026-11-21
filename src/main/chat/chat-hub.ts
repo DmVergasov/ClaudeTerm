@@ -529,8 +529,25 @@ export class ChatHub {
   interrupt(tabId: string): void {
     const run = this.running(tabId)
     if (!run) return
-    run.live.model.markInterrupted()
-    run.engine.interrupt().catch((e: unknown) => this.d.log.warn(`cannot interrupt the turn: ${errorText(e)}`))
+    const model = run.live.model
+    const stop = async (): Promise<void> => {
+      model.markInterrupted()
+      await run.engine.interrupt()
+    }
+    // a message waits while subagents run in the foreground: Claude Code takes it only once their calls return. They go to the
+    // background instead of the turn ending: each call returns at once, Claude takes the message, and the subagents go on and
+    // report when they end. An interrupt would end the turn the message is taken into, and the message with it. The turn is
+    // interrupted only when no subagent went to the background, and, with nothing waiting, as before
+    const agents = model.hasQueued() ? model.foregroundAgentCalls() : []
+    const answer = async (): Promise<void> => {
+      const moved = await Promise.all(agents.map(id => run.engine.backgroundTask(id).catch((e: unknown) => {
+        this.d.log.warn(`cannot send the subagent to the background: ${errorText(e)}`)
+        return false
+      })))
+      if (!moved.includes(true)) await stop()
+    }
+    const done = agents.length > 0 ? answer() : stop()
+    done.catch((e: unknown) => this.d.log.warn(`cannot interrupt the turn: ${errorText(e)}`))
   }
 
   /** the user answered a card; false when there is no such card waiting, or the answer does not fit it */
