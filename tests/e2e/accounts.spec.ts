@@ -1,4 +1,4 @@
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -45,6 +45,9 @@ async function openClaude(page: Page, cwd: string, account: string | null): Prom
   const tab = await page.evaluate(({ cwd, account }) => window.ct.openTab({ kind: 'claude', cwd, account }), { cwd, account })
   return tab!.id
 }
+
+/** a tab on top, by its id: a tab in a folder outside git groups by that folder, so its place in the bar is not the order it opened in */
+const tabOf = (page: Page, id: string): Locator => page.locator(`.tab[data-tab-id="${id}"]`)
 
 test('a Claude tab on an extra account gets its token instead of the API key; the main account keeps the key', async () => {
   const { app, page, work } = await launchWithAccounts({ ANTHROPIC_API_KEY: API_KEY })
@@ -155,7 +158,7 @@ test('Continue as … in the tab menu resumes the conversation on another accoun
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toMatch(/fake-claude token=/)
   expect(await sendPipeMessage(pipeName, { v: 1, type: 'session', tabId: id, sessionId: SID, source: 'startup', transcriptPath: null })).toEqual({ ok: true })
   await expect(page.locator('#statusbar .status-account .status-text')).toHaveText('Main account')
-  await page.locator('.tab').nth(1).click({ button: 'right' })
+  await tabOf(page, id).click({ button: 'right' })
   await expect(page.locator('.menu-item', { hasText: 'Continue as Main account' })).toHaveCount(0)
   await page.locator('.menu-item', { hasText: 'Continue as Work' }).click()
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`--resume ${SID}`)
@@ -181,14 +184,15 @@ test('a click on the account in the status bar switches it', async () => {
 
 test('the window title names the extra account of the active tab, and follows a rename and a switch', async () => {
   const { app, page, work } = await launchWithAccounts()
+  const shell = (await page.evaluate(() => window.__ct!.tabIds()))[0]!
   const id = await openClaude(page, work, WORK)
   await expect(page).toHaveTitle(/ — Work — ClaudeTerm$/)
   expect(await page.evaluate((a) => window.ct.renameAccount(a, 'Office'), WORK)).toEqual({ ok: true })
   await expect(page).toHaveTitle(/ — Office — ClaudeTerm$/)
   // the shell tab has no account
-  await page.locator('.tab').first().click()
+  await tabOf(page, shell).click()
   await expect(page).not.toHaveTitle(/Office/)
-  await page.locator('.tab').nth(1).click()
+  await tabOf(page, id).click()
   await expect(page).toHaveTitle(/ — Office — ClaudeTerm$/)
   // nor does a tab on the main account
   await page.evaluate((i) => window.ct.switchAccount(i, null), id)
@@ -288,7 +292,7 @@ test('a tab on the last extra account, deleted, shows Removed account and can go
   await expect.poll(() => bufferText(page, id), { timeout: 15_000 }).toContain(`token=${WORK_TOKEN}`)
   expect(await page.evaluate((a) => window.ct.removeAccount(a), WORK)).toEqual({ ok: true, problems: [] })
   await expect(page.locator('#statusbar .status-account .status-text')).toHaveText('Removed account')
-  await page.locator('.tab').nth(1).click({ button: 'right' })
+  await tabOf(page, id).click({ button: 'right' })
   await page.locator('.menu-item', { hasText: 'Continue as Main account' }).click()
   await expect(page.locator('#statusbar .status-account')).toHaveCount(0)
   // the first run's line is there until the restart clears the screen

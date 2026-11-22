@@ -1,4 +1,4 @@
-import { expect, test, type ElectronApplication, type Locator } from '@playwright/test'
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -275,6 +275,18 @@ async function unfoldAll(win: Locator): Promise<void> {
   }
 }
 
+/** a tab on top, by its id: a tab in a folder outside git groups by that folder, so its place in the bar is not the order it opened in */
+const tabOf = (page: Page, id: string): Locator => page.locator(`.tab[data-tab-id="${id}"]`)
+
+/** opens the session in a Claude tab beside the app's one tab, and gives the new tab's id */
+async function openBeside(page: Page, sessionId: string): Promise<string> {
+  const [first] = await page.evaluate(() => window.__ct!.tabIds())
+  await page.evaluate(() => window.ct.listSessions())
+  await page.evaluate((id) => window.ct.openSession(id), sessionId)
+  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
+  return (await page.evaluate(() => window.__ct!.tabIds())).find((id) => id !== first)!
+}
+
 const stars = (win: Locator): Promise<string[][]> =>
   win.locator('.session-row').evaluateAll((rows) => rows.map((r) => [r.querySelector('.session-title')!.textContent!, r.querySelector('.session-star')!.textContent!]))
 
@@ -381,10 +393,8 @@ test('the tab menu stars the session of a Claude tab; a shell tab has no such it
   await page.keyboard.press('Escape')
   await page.mouse.click(300, 300)
 
-  await page.evaluate(() => window.ct.listSessions())
-  await page.evaluate((id) => window.ct.openSession(id), SID_A)
-  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
-  await page.locator('.tab').nth(1).click({ button: 'right' })
+  const claude = await openBeside(page, SID_A)
+  await tabOf(page, claude).click({ button: 'right' })
   await page.locator('.menu-item', { hasText: 'Star session' }).click()
   await expect.poll(async () => (await page.evaluate(() => window.ct.listSessions())).find((s) => s.id === SID_A)?.starred).toBe(true)
 
@@ -395,7 +405,7 @@ test('the tab menu stars the session of a Claude tab; a shell tab has no such it
   expect(await stars(win)).toEqual([['Fix the login bug', '★'], ['Payments', '☆']])
 
   await page.keyboard.press('Escape')
-  await page.locator('.tab').nth(1).click({ button: 'right' })
+  await tabOf(page, claude).click({ button: 'right' })
   await page.locator('.menu-item', { hasText: 'Unstar session' }).click()
   await expect.poll(async () => (await page.evaluate(() => window.ct.listSessions())).find((s) => s.id === SID_A)?.starred).toBe(false)
   await app.close()
@@ -446,10 +456,7 @@ test('a menu left open does not stay above the window; bad star requests are ign
   const { config } = makeConfig()
   const { app, page } = await launchApp({ settings: FAKE_CLAUDE_SETTINGS, env: { CLAUDE_CONFIG_DIR: config } })
   await page.waitForFunction(() => window.__ct!.tabIds().length === 1)
-  await page.evaluate(() => window.ct.listSessions())
-  await page.evaluate((id) => window.ct.openSession(id), SID_A)
-  await page.waitForFunction(() => window.__ct!.tabIds().length === 2)
-  await page.locator('.tab').nth(1).click({ button: 'right' })
+  await tabOf(page, await openBeside(page, SID_A)).click({ button: 'right' })
   await expect(page.locator('.menu-item', { hasText: 'Star session' })).toBeVisible()
   await page.keyboard.press(KEYS.recentSessions)
   await expect(page.locator('#sessions')).toBeVisible()
